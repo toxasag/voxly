@@ -85,6 +85,13 @@ export interface ImpersonateResponse {
   refresh_token?: string;
   accessToken?: string;
   refreshToken?: string;
+  admin_access_token?: string;
+  admin_refresh_token?: string;
+  admin_user?: {
+    id: string;
+    email: string;
+    name?: string;
+  };
   expires_in?: number;
   user?: {
     id: string;

@@ -81,14 +81,14 @@ export function RecordCellShell({
     >
       <div
         className={cn(
-          "flex h-[26px] w-full min-w-0 items-center justify-between rounded-[5px] border border-transparent px-1.5 transition-all duration-100",
+          "flex min-h-[26px] h-full w-full min-w-0 items-center justify-between rounded-[5px] border border-transparent px-1.5 transition-all duration-100",
           editable && "group-hover/cell:border-[#d1d5db] group-hover/cell:bg-white group-hover/cell:shadow-2xs",
           align === "right" && "justify-end",
         )}
       >
         <div
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-1.5 truncate",
+            "flex min-w-0 flex-1 items-center gap-1.5",
             align === "right" && "justify-end",
           )}
         >

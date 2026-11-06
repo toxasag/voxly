@@ -4,266 +4,67 @@ import React from "react";
 import { useForm } from "react-hook-form";
 import { RepairClientSection } from "./RepairClientSection";
 import type { CreateRepairPayload } from "@/schemas/repair.schema";
-import type { DealDTO, PipelineDTO, KanbanColumnDTO } from "@/lib/api/use-deals";
-import type { ContactDTO } from "@/lib/api/use-contacts";
-import type { CompanyDTO } from "@/lib/api/use-companies";
+import type { ClientLookupResultDTO } from "@/lib/api/use-repairs";
 
-const mockDeals: DealDTO[] = [
-  {
-    id: "deal-101",
-    pipelineId: "pipe-1",
-    stageId: "stage-1",
-    contactId: "contact-55",
-    companyId: "comp-10",
-    title: "Ремонт iMac 27",
-    description: "Замена матрицы",
-    budget: 35000,
-    currency: "RUB",
-    customFields: {},
-    createdBy: "user-1",
-    ownerId: null,
-    closeDate: null,
-    position: 0,
-    closedAt: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    companyName: "ООО СпецСервис",
-    contactName: "Алексей Смирнов",
-    contactPhone: "+79997776655",
-    ownerName: "Менеджер",
-  },
-];
-
-const mockContacts: ContactDTO[] = [
-  {
+// Mock useRepairClientLookup
+const mockLookupData: ClientLookupResultDTO = {
+  found: true,
+  client: {
     id: "contact-55",
     firstName: "Алексей",
     lastName: "Смирнов",
-    middleName: "",
+    middleName: "Иванович",
     phone: "+79997776655",
-    phones: [],
     email: "smirnov@test.ru",
-    telegramUsername: null,
-    whatsapp: null,
-    socials: [],
-    jobTitle: "",
-    companyName: "ООО СпецСервис",
     companyId: "comp-10",
-    channel: "phone",
-    linkedinLink: "",
-    customFields: {},
-    notes: "",
-    createdBy: "user-1",
-    createdByName: "Менеджер",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    dealsCount: 1,
-    tasksCount: 0,
+    companyName: "ООО СпецСервис",
   },
-  {
-    id: "contact-77",
-    firstName: "Екатерина",
-    lastName: "Павлова",
-    middleName: "",
-    phone: "+79993332211",
-    phones: [],
-    email: "pavlova@test.ru",
-    telegramUsername: null,
-    whatsapp: null,
-    socials: [],
-    jobTitle: "",
-    companyName: "",
-    companyId: null,
-    channel: "website",
-    linkedinLink: "",
-    customFields: {},
-    notes: "",
-    createdBy: "user-1",
-    createdByName: "Менеджер",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    dealsCount: 0,
-    tasksCount: 0,
-  },
-];
-
-const mockMatchedContact: ContactDTO = {
-  id: "contact-99",
-  firstName: "Дмитрий",
-  lastName: "Ковалев",
-  middleName: "",
-  phone: "+79998881122",
-  phones: [],
-  email: "kovalev@test.ru",
-  telegramUsername: null,
-  whatsapp: null,
-  socials: [],
-  jobTitle: "",
-  companyName: "Вектор Плюс",
-  companyId: "comp-99",
-  channel: "phone",
-  linkedinLink: "",
-  customFields: {},
-  notes: "",
-  createdBy: "user-1",
-  createdByName: "Менеджер",
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-  dealsCount: 1,
-  tasksCount: 0,
-};
-
-const mockCompanies: CompanyDTO[] = [
-  {
+  company: {
     id: "comp-10",
     name: "ООО СпецСервис",
-    domainName: "specservice.ru",
-    phone: "+74951234567",
-    email: "info@specservice.ru",
-    requisites: {
-      inn: "7701987654",
-      ogrn: "1027700132195",
-      bik: "044525225",
-      accountNumber: "40702810938000000000",
-      legalAddress: "г. Москва, ул. Промышленная, д. 5",
+    inn: "7701234567",
+    ogrn: "1027700132195",
+    bik: "044525225",
+    accountNumber: "40702810000000000000",
+    legalAddress: "г. Москва, ул. Складочная, д. 1",
+  },
+  activeDeals: [
+    {
+      id: "deal-101",
+      title: "Ремонт iMac 27",
+      description: "Замена матрицы и чистка от пыли",
+      budget: 35000,
+      currency: "RUB",
+      stageId: "stage-1",
+      stageName: "В работе",
+      stageColor: "#4a38f5",
+      pipelineId: "pipe-1",
+      pipelineName: "Основная воронка",
+      createdAt: "2026-11-01T10:00:00.000Z",
+      ownerName: "Иван Мастер",
     },
-    managerName: "Менеджер",
-    managerId: null,
-    annualRevenue: null,
-    linkedinLink: "",
-    address: { city: "Москва", street: "Промышленная 5", country: "РФ", postcode: "101000" },
-    notes: "",
-    customFields: {},
-    createdBy: null,
-    createdByName: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    contactsCount: 1,
-    dealsCount: 1,
-    dealsBudgetTotal: 35000,
-  },
-];
+  ],
+};
 
-const mockPipelines: PipelineDTO[] = [
-  { id: "pipe-1", name: "Сервисный центр", sortOrder: 0 },
-];
+let currentLookupResponse: {
+  data: ClientLookupResultDTO | undefined;
+  isLoading: boolean;
+  isFetching: boolean;
+} = {
+  data: undefined,
+  isLoading: false,
+  isFetching: false,
+};
 
-const mockStages: KanbanColumnDTO[] = [
-  {
-    stageId: "stage-1",
-    stageName: "Новая заявка",
-    sortOrder: 0,
-    isWon: false,
-    isLost: false,
-    isSystem: true,
-    stageColor: "sky",
-    dealCount: 1,
-    budgetTotal: 35000,
-    deals: mockDeals,
-  },
-];
+vi.mock("@/lib/api/use-repairs", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    useRepairClientLookup: () => currentLookupResponse,
+  };
+});
 
-const mockMutateAsync = vi.fn().mockImplementation((payload) =>
-  Promise.resolve({
-    id: "deal-new-202",
-    pipelineId: payload.pipeline_id,
-    stageId: payload.stage_id,
-    contactId: payload.contact_id,
-    companyId: payload.company_id,
-    title: payload.title,
-    description: "",
-    budget: payload.budget,
-    currency: "RUB",
-    customFields: {},
-    createdBy: "user-1",
-    ownerId: null,
-    closeDate: null,
-    position: 0,
-    closedAt: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    companyName: null,
-    contactName: "Алексей Смирнов",
-    contactPhone: "+79997776655",
-    ownerName: "Менеджер",
-  }),
-);
-
-vi.mock("@/lib/api/use-deals", () => ({
-  useDeals: ({ search, contactId }: { search?: string; contactId?: string }) => {
-    let items = mockDeals;
-    if (contactId) {
-      items = items.filter((d) => d.contactId === contactId);
-    }
-    if (search) {
-      items = items.filter(
-        (d) =>
-          d.title.toLowerCase().includes(search.toLowerCase()) ||
-          (d.contactName && d.contactName.toLowerCase().includes(search.toLowerCase())) ||
-          (d.contactPhone && d.contactPhone.includes(search)),
-      );
-    }
-    return {
-      data: { items, total: items.length },
-      isLoading: false,
-    };
-  },
-  useCreateDeal: () => ({
-    mutateAsync: mockMutateAsync,
-    isPending: false,
-  }),
-  usePipelines: () => ({
-    data: mockPipelines,
-    isLoading: false,
-  }),
-  useKanban: () => ({
-    data: mockStages,
-    isLoading: false,
-  }),
-}));
-
-vi.mock("@/lib/api/use-contacts", () => ({
-  useContacts: ({ search }: { search?: string }) => ({
-    data: {
-      items: search
-        ? mockContacts.filter((c) =>
-            `${c.firstName} ${c.lastName}`.toLowerCase().includes(search.toLowerCase()),
-          )
-        : mockContacts,
-      total: mockContacts.length,
-    },
-    isLoading: false,
-  }),
-  useContact: (id: string | null) => ({
-    data: mockContacts.find((c) => c.id === id) ?? null,
-    isLoading: false,
-  }),
-  useContactLookup: (phone: string | null | undefined) => {
-    const isMatch = Boolean(phone && phone.replace(/[^\d]/g, "").includes("9998881122"));
-    return {
-      data: isMatch ? mockMatchedContact : null,
-      isFetching: false,
-    };
-  },
-}));
-
-vi.mock("@/lib/api/use-companies", () => ({
-  useCompanies: ({ search }: { search?: string }) => ({
-    data: {
-      items: search
-        ? mockCompanies.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
-        : mockCompanies,
-      total: mockCompanies.length,
-    },
-    isLoading: false,
-  }),
-  useCompany: (id: string | null) => ({
-    data: mockCompanies.find((c) => c.id === id) ?? null,
-    isLoading: false,
-  }),
-}));
-
-function TestWrapper() {
+function TestWrapper({ defaultValues }: { defaultValues?: Partial<CreateRepairPayload> }) {
   const form = useForm<CreateRepairPayload>({
     defaultValues: {
       deal_id: "",
@@ -285,6 +86,7 @@ function TestWrapper() {
       master_id: "m-1",
       master_name: "Master",
       estimated_cost: 0,
+      ...defaultValues,
     },
   });
 
@@ -295,201 +97,155 @@ function TestWrapper() {
       <div data-testid="form-customer-id">{form.watch("customer_id")}</div>
       <div data-testid="form-customer-name">{form.watch("customer_name")}</div>
       <div data-testid="form-customer-phone">{form.watch("customer_phone")}</div>
+      <div data-testid="form-customer-email">{form.watch("customer_email")}</div>
       <div data-testid="form-company-name">{form.watch("company_name")}</div>
       <div data-testid="form-company-id">{form.watch("company_id")}</div>
       <div data-testid="form-company-inn">{form.watch("company_inn")}</div>
+      <div data-testid="form-company-bik">{form.watch("company_bik")}</div>
     </div>
   );
 }
 
-describe("RepairClientSection Component", () => {
+describe("RepairClientSection Component (Unified Reactive Flow)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentLookupResponse = {
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+    };
   });
 
-  it("renders with Deal selection mode by default and lists active deals", async () => {
+  it("renders unified inputs without 3 mode-switching buttons", () => {
     render(<TestWrapper />);
 
-    expect(screen.getByText("Выбрать сделку")).toBeDefined();
-    expect(screen.getByText("Клиент")).toBeDefined();
-    expect(screen.getByText("Новый клиент / сделка")).toBeDefined();
+    // Header and unified inputs
+    expect(screen.getByText("Клиент и сделка")).toBeDefined();
+    expect(screen.getByPlaceholderText("+7 (999) 000-00-00")).toBeDefined();
+    expect(screen.getByPlaceholderText("Иванов Иван Иванович")).toBeDefined();
+    expect(screen.getByPlaceholderText("client@example.ru")).toBeDefined();
 
-    const searchInput = screen.getByPlaceholderText(
-      "Поиск активной сделки по названию, контакту или телефону...",
-    );
-    expect(searchInput).toBeDefined();
+    // The old mode buttons MUST NOT exist
+    expect(screen.queryByText("Выбрать сделку")).toBeNull();
+    expect(screen.queryByText("Новый клиент / сделка")).toBeNull();
 
-    // Focus input to open deals dropdown
-    fireEvent.focus(searchInput);
-
-    await waitFor(() => {
-      expect(screen.getByText("Ремонт iMac 27")).toBeDefined();
-      expect(screen.getByText("Алексей Смирнов")).toBeDefined();
-      expect(screen.getByText("35 000 ₽")).toBeDefined();
-    });
+    // Default note about auto-creation
+    expect(
+      screen.getByText("Новый заказ: контакт и сделка будут созданы в CRM при сохранении"),
+    ).toBeDefined();
   });
 
-  it("selects an active deal and populates form values", async () => {
+  it("auto-populates client, company, requisites, and lists active deals when customer is found", async () => {
+    currentLookupResponse = {
+      data: mockLookupData,
+      isLoading: false,
+      isFetching: false,
+    };
+
     render(<TestWrapper />);
 
-    const searchInput = screen.getByPlaceholderText(
-      "Поиск активной сделки по названию, контакту или телефону...",
-    );
-    fireEvent.focus(searchInput);
-
+    // Client badge
     await waitFor(() => {
-      expect(screen.getByText("Ремонт iMac 27")).toBeDefined();
+      expect(screen.getByText("Клиент в CRM")).toBeDefined();
+      expect(screen.getByTestId("form-customer-id").textContent).toBe("contact-55");
+      expect(screen.getByTestId("form-customer-name").textContent).toBe(
+        "Смирнов Алексей Иванович",
+      );
+      expect(screen.getByTestId("form-customer-email").textContent).toBe("smirnov@test.ru");
+      expect(screen.getByTestId("form-company-id").textContent).toBe("comp-10");
+      expect(screen.getByTestId("form-company-name").textContent).toBe("ООО СпецСервис");
+      expect(screen.getByTestId("form-company-inn").textContent).toBe("7701234567");
+      expect(screen.getByTestId("form-company-bik").textContent).toBe("044525225");
     });
 
-    // Click on the deal
+    // Active deals list should show the deal
+    expect(screen.getByText("Ремонт iMac 27")).toBeDefined();
+    expect(screen.getByText("В работе")).toBeDefined();
+    expect(screen.getByText("35 000 ₽")).toBeDefined();
+
+    // Click on active deal to bind deal_id
     fireEvent.click(screen.getByText("Ремонт iMac 27"));
 
     await waitFor(() => {
-      expect(screen.getByText("Сделка CRM")).toBeDefined();
-      expect(screen.getByText("Сменить")).toBeDefined();
       expect(screen.getByTestId("form-deal-id").textContent).toBe("deal-101");
-      expect(screen.getByTestId("form-customer-name").textContent).toBe("Алексей Смирнов");
-      expect(screen.getByTestId("form-customer-phone").textContent).toBe("+79997776655");
-      expect(screen.getByTestId("form-company-name").textContent).toBe("ООО СпецСервис");
+      expect(screen.getByText("Выбрана сделка для привязки")).toBeDefined();
     });
 
-    // Click «Сменить» to clear
-    fireEvent.click(screen.getByText("Сменить"));
+    // Option to create a new deal instead
+    const newDealOption = screen.getByText(
+      "+ Создать отдельную новую сделку под данный ремонт",
+    );
+    fireEvent.click(newDealOption);
 
     await waitFor(() => {
       expect(screen.getByTestId("form-deal-id").textContent).toBe("");
+      expect(screen.getByText("Будет создана новая сделка под ремонт")).toBeDefined();
     });
   });
 
-  it("switches to New Client mode and supports deduplication lookup (Scenario 3)", async () => {
+  it("allows toggling legal company and requisites fields manually", async () => {
     render(<TestWrapper />);
 
-    // Switch to New client mode
-    fireEvent.click(screen.getByText("Новый клиент / сделка"));
+    const companyCheckbox = screen.getByRole("checkbox");
+    expect(companyCheckbox).toBeDefined();
 
-    expect(screen.getByPlaceholderText("Иванов Иван Иванович")).toBeDefined();
-    expect(screen.getByPlaceholderText("+7 (999) 000-00-00")).toBeDefined();
-
-    // Type a matching phone
-    const phoneInput = screen.getByPlaceholderText("+7 (999) 000-00-00");
-    fireEvent.change(phoneInput, { target: { value: "+7 (999) 888-11-22" } });
-
-    await waitFor(() => {
-      expect(screen.getByText(/Контакт найден в базе:/i)).toBeDefined();
-      expect(screen.getByText(/Ковалев Дмитрий/i)).toBeDefined();
-      expect(screen.getByText("Подставить данные")).toBeDefined();
-    });
-
-    // Click «Подставить данные»
-    fireEvent.click(screen.getByText("Подставить данные"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("form-customer-name").textContent).toBe("Ковалев Дмитрий");
-      expect(screen.getByTestId("form-company-name").textContent).toBe("Вектор Плюс");
-    });
-  });
-
-  it("selects a client from CRM and displays their active deals (Scenario 1)", async () => {
-    render(<TestWrapper />);
-
-    // Switch to Client mode
-    fireEvent.click(screen.getByText("Клиент"));
-
-    const searchInput = screen.getByPlaceholderText(
-      "Поиск клиента по имени, телефону, email или организации...",
-    );
-    fireEvent.focus(searchInput);
-
-    await waitFor(() => {
-      expect(screen.getByText("Алексей Смирнов")).toBeDefined();
-    });
-
-    // Select the client
-    fireEvent.click(screen.getByText("Алексей Смирнов"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Клиент CRM")).toBeDefined();
-      expect(screen.getByTestId("form-customer-id").textContent).toBe("contact-55");
-      expect(screen.getByTestId("form-customer-name").textContent).toBe("Алексей Смирнов");
-      expect(screen.getByText("Действующие сделки клиента")).toBeDefined();
-      expect(screen.getByText("Ремонт iMac 27")).toBeDefined();
-    });
-
-    // Click to select the active deal
-    fireEvent.click(screen.getByText("Ремонт iMac 27"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Привязано к сделке:/i)).toBeDefined();
-      expect(screen.getByTestId("form-deal-id").textContent).toBe("deal-101");
-    });
-  });
-
-  it("supports inline deal creation for selected client (Scenario 2)", async () => {
-    render(<TestWrapper />);
-
-    // Switch to Client mode
-    fireEvent.click(screen.getByText("Клиент"));
-
-    const searchInput = screen.getByPlaceholderText(
-      "Поиск клиента по имени, телефону, email или организации...",
-    );
-    fireEvent.focus(searchInput);
-
-    await waitFor(() => {
-      expect(screen.getByText("Екатерина Павлова")).toBeDefined();
-    });
-
-    // Select the client with 0 deals
-    fireEvent.click(screen.getByText("Екатерина Павлова"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Создать сделку для клиента")).toBeDefined();
-    });
-
-    // Click create deal button
-    fireEvent.click(screen.getByText("Создать сделку для клиента"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Новая сделка для клиента")).toBeDefined();
-      expect(screen.getByText("Создать и привязать")).toBeDefined();
-    });
-
-    // Click submit inline deal
-    fireEvent.click(screen.getByText("Создать и привязать"));
-
-    await waitFor(() => {
-      expect(mockMutateAsync).toHaveBeenCalled();
-      expect(screen.getByTestId("form-deal-id").textContent).toBe("deal-new-202");
-    });
-  });
-
-  it("handles company requisites and auto-fills INN and legal address (Scenario 4)", async () => {
-    render(<TestWrapper />);
-
-    // Toggle company checkbox
-    const companyCheckbox = screen.getByLabelText(/Организация \/ Юридическое лицо/i);
+    // Toggle on
     fireEvent.click(companyCheckbox);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("ООО Ромашка или Частное лицо")).toBeDefined();
-      expect(screen.getByText(/Реквизиты \(ИНН, БИК, р\/с\)/i)).toBeDefined();
+      expect(screen.getByPlaceholderText("ООО «Вектор», ИП Иванов")).toBeDefined();
+      expect(
+        screen.getByText("Указать реквизиты (ИНН, ОГРН, БИК, Р/с, Адрес)"),
+      ).toBeDefined();
     });
 
-    // Focus company input
-    const companyInput = screen.getByPlaceholderText("ООО Ромашка или Частное лицо");
-    fireEvent.change(companyInput, { target: { value: "СпецСервис" } });
+    // Expand requisites
+    fireEvent.click(screen.getByText("Указать реквизиты (ИНН, ОГРН, БИК, Р/с, Адрес)"));
 
     await waitFor(() => {
-      expect(screen.getByText("ООО СпецСервис")).toBeDefined();
+      expect(screen.getByPlaceholderText("7701234567")).toBeDefined();
+      expect(screen.getByPlaceholderText("1027700132195")).toBeDefined();
+      expect(screen.getByPlaceholderText("044525225")).toBeDefined();
+      expect(screen.getByPlaceholderText("40702810000000000000")).toBeDefined();
     });
 
-    // Select company
-    fireEvent.click(screen.getByText("ООО СпецСервис"));
+    // Fill INN
+    const innInput = screen.getByPlaceholderText("7701234567");
+    fireEvent.change(innInput, { target: { value: "7701234567" } });
 
     await waitFor(() => {
-      expect(screen.getByTestId("form-company-name").textContent).toBe("ООО СпецСервис");
-      expect(screen.getByTestId("form-company-id").textContent).toBe("comp-10");
-      expect(screen.getByTestId("form-company-inn").textContent).toBe("7701987654");
+      expect(screen.getByTestId("form-company-inn").textContent).toBe("7701234567");
+    });
+  });
+
+  it("allows adding and removing multiple additional contacts", async () => {
+    render(<TestWrapper />);
+
+    expect(screen.getByText("Добавить контакт для связи")).toBeDefined();
+
+    // Click add contact
+    fireEvent.click(screen.getByText("Добавить контакт для связи"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Имя контакта / ФИО *")).toBeDefined();
+      expect(screen.getByPlaceholderText("Роль (прораб, мастер...)")).toBeDefined();
+    });
+
+    const nameInput = screen.getByPlaceholderText("Имя контакта / ФИО *");
+    const roleInput = screen.getByPlaceholderText("Роль (прораб, мастер...)");
+
+    fireEvent.change(nameInput, { target: { value: "Сергей Прораб" } });
+    fireEvent.change(roleInput, { target: { value: "Прораб" } });
+
+    expect(screen.getByDisplayValue("Сергей Прораб")).toBeDefined();
+    expect(screen.getByDisplayValue("Прораб")).toBeDefined();
+
+    // Remove contact
+    const deleteBtn = screen.getByTitle("Удалить контакт");
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText("Имя контакта / ФИО *")).toBeNull();
     });
   });
 });

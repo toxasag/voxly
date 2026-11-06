@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 /** Hosts that belong to the platform rather than to a tenant. */
-const PLATFORM_HOSTS: ReadonlySet<string> = new Set(["app", "www", "api", "admin"]);
+const PLATFORM_HOSTS: ReadonlySet<string> = new Set(["app", "www", "api", "admin", "voxly"]);
 
 function isBrowser(): boolean {
   return typeof window !== "undefined";
