@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { ChannelsService } from "./channels.service.js";
 import { WebchatService } from "./webchat.service.js";
+import { WidgetAnalyticsService, type WidgetEventType } from "./widget-analytics.service.js";
 import { channelStatusSchema, updateChannelAccountSchema } from "./channels.types.js";
 
 const widgetParams = z.object({
@@ -58,6 +59,63 @@ export const widgetsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         status: "disabled",
       });
     }
+  });
+
+  // Публичный приём событий телеметрии и конверсионной воронки виджета (VISIT, WIDGET_OPEN и т.д.)
+  app.route({
+    method: ["POST", "OPTIONS"],
+    url: "/:id/events",
+    handler: async (request, reply) => {
+      reply.header("Access-Control-Allow-Origin", "*");
+      reply.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+      reply.header("Access-Control-Allow-Headers", "*");
+
+      if (request.method === "OPTIONS") {
+        return reply.status(204).send();
+      }
+
+      const params = request.params as { id: string };
+      const rawKey = params.id?.trim();
+      if (!rawKey) {
+        return reply.status(400).send({ error: "widget key is required" });
+      }
+
+      const body = (request.body as Record<string, unknown> | undefined) || {};
+      const eventRaw = (body.event || body.eventType || "VISIT") as string;
+      const validEvents: ReadonlySet<string> = new Set(["VISIT", "WIDGET_OPEN", "CHAT_START", "LEAD_CAPTURED"]);
+      if (!validEvents.has(eventRaw)) {
+        return reply.status(400).send({ error: "Invalid event type" });
+      }
+
+      const sessionId =
+        (typeof body.sessionId === "string" && body.sessionId.trim()) ||
+        (typeof body.visitorId === "string" && body.visitorId.trim()) ||
+        `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+      const visitorId =
+        (typeof body.visitorId === "string" && body.visitorId.trim()) ||
+        sessionId;
+
+      const metadata =
+        typeof body.metadata === "object" && body.metadata !== null
+          ? (body.metadata as Record<string, unknown>)
+          : {};
+
+      const analyticsService = new WidgetAnalyticsService(app.log);
+      const result = await analyticsService.trackPublicEvent({
+        widgetId: rawKey,
+        sessionId,
+        visitorId,
+        eventType: eventRaw as WidgetEventType,
+        metadata,
+      });
+
+      if (!result.success) {
+        return reply.status(404).send({ error: "Widget not found or inactive" });
+      }
+
+      return reply.status(200).send({ success: true, id: result.id });
+    },
   });
 
   // Авторизованные маршруты управления виджетом в CRM
