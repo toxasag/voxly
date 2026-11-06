@@ -81,6 +81,14 @@ export const createAgentSchema = z.object({
   consultantRole: z.string().trim().optional().nullable(),
   fallback_models: z.array(z.string()).default([]),
   fallbackModels: z.array(z.string()).optional(),
+  target_page_url: z.string().optional().nullable(),
+  targetPageUrl: z.string().optional().nullable(),
+  generated_system_prompt: z.string().optional().nullable(),
+  generatedSystemPrompt: z.string().optional().nullable(),
+  knowledge_base_md: z.string().optional().default(""),
+  knowledgeBaseMd: z.string().optional(),
+  feedback_learning_enabled: z.boolean().optional().default(true),
+  feedbackLearningEnabled: z.boolean().optional(),
   wizard_config: wizardConfigSchema,
   website_url: z.string().optional().or(z.literal("")),
   websiteUrl: z.string().optional().or(z.literal("")),
@@ -133,6 +141,10 @@ export interface AiAgentDTO {
   consultantName?: string | null;
   consultantRole?: string | null;
   fallbackModels?: string[];
+  targetPageUrl?: string | null;
+  generatedSystemPrompt?: string | null;
+  knowledgeBaseMd: string;
+  feedbackLearningEnabled: boolean;
   wizardConfig?: WizardConfig | null;
   /** Агрегаты из ai_usage_log: список агентов показывает расход по каждому. */
   tokensUsed: number;
@@ -155,3 +167,85 @@ export interface AiBalanceDTO {
   estimatedTokensLeft: number;
   lastTopupAt: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Генеративный синтез системного промпта из контекста и URL страницы
+// ---------------------------------------------------------------------------
+
+export const generatePromptSchema = z.object({
+  target_page_url: z.string().trim().optional().nullable(),
+  targetPageUrl: z.string().trim().optional().nullable(),
+  business_niche: z.string().trim().optional().nullable(),
+  businessNiche: z.string().trim().optional().nullable(),
+  company_name: z.string().trim().optional().nullable(),
+  companyName: z.string().trim().optional().nullable(),
+  client_profile: z.string().trim().optional().nullable(),
+  clientProfile: z.string().trim().optional().nullable(),
+  target_action: z.string().trim().optional().nullable(),
+  targetAction: z.string().trim().optional().nullable(),
+  constraints: z.string().trim().optional().nullable(),
+  handoff_specialist: z.string().trim().optional().nullable(),
+  handoffSpecialist: z.string().trim().optional().nullable(),
+  consultant_name: z.string().trim().optional().nullable(),
+  consultantName: z.string().trim().optional().nullable(),
+  consultant_role: z.string().trim().optional().nullable(),
+  consultantRole: z.string().trim().optional().nullable(),
+});
+
+export type GeneratePromptPayload = z.infer<typeof generatePromptSchema>;
+
+export interface GeneratedPromptResult {
+  systemPrompt: string;
+  businessNiche: string;
+  clientProfile: string;
+  targetAction: string;
+  constraints: string;
+  consultantName: string;
+  consultantRole: string;
+  handoffSpecialist: string;
+  knowledgeBaseDraftMd: string;
+}
+
+// ---------------------------------------------------------------------------
+// Синхронизация Markdown базы знаний агента
+// ---------------------------------------------------------------------------
+
+export const syncKnowledgeMdSchema = z.object({
+  knowledge_base_md: z.string().optional(),
+  knowledgeBaseMd: z.string().optional(),
+});
+
+export type SyncKnowledgeMdPayload = z.infer<typeof syncKnowledgeMdSchema>;
+
+// ---------------------------------------------------------------------------
+// Петля обучения через обратную связь диалогов (Dialogue Feedback Loop)
+// ---------------------------------------------------------------------------
+
+export const createDialogueFeedbackSchema = z.object({
+  deal_id: z.string().uuid().optional().nullable(),
+  dealId: z.string().uuid().optional().nullable(),
+  conversation_id: z.string().optional().nullable(),
+  conversationId: z.string().optional().nullable(),
+  rating: z.number().int().min(1).max(5),
+  user_comment: z.string().trim().min(1, "Комментарий обязателен"),
+  userComment: z.string().trim().optional(),
+  clarification_answer: z.string().trim().optional().nullable(),
+  clarificationAnswer: z.string().trim().optional().nullable(),
+});
+
+export type CreateDialogueFeedbackPayload = z.infer<typeof createDialogueFeedbackSchema>;
+
+export interface AgentDialogueFeedbackDTO {
+  id: string;
+  agentId: string;
+  dealId?: string | null;
+  conversationId?: string | null;
+  rating: number;
+  userComment: string;
+  clarificationQa: Array<{ question: string; answer?: string | null }>;
+  compiledRule?: string | null;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+}
+

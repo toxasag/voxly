@@ -109,6 +109,10 @@ export interface AiBot {
   consultant_name?: string;
   consultant_role?: string;
   fallback_models?: string[];
+  target_page_url?: string | null;
+  generated_system_prompt?: string | null;
+  knowledge_base_md?: string;
+  feedback_learning_enabled?: boolean;
   wizard_config?: WizardConfig | null;
   website_url?: string;
   crawl_status?: "idle" | "pending" | "in_progress" | "ready" | "failed";
@@ -412,3 +416,29 @@ export const CONTEXT_ENTITIES: BotContextEntity[] = [
   "repairs",
   "invoices",
 ];
+
+export interface GeneratedPromptResult {
+  systemPrompt: string;
+  businessNiche: string;
+  clientProfile: string;
+  targetAction: string;
+  constraints: string;
+  consultantName: string;
+  consultantRole: string;
+  handoffSpecialist: string;
+  knowledgeBaseDraftMd: string;
+}
+
+export interface AgentDialogueFeedbackDTO {
+  id: string;
+  agentId: string;
+  dealId?: string | null;
+  conversationId?: string | null;
+  rating: number;
+  userComment: string;
+  clarificationQa: Array<{ question: string; answer?: string | null }>;
+  compiledRule?: string | null;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+}

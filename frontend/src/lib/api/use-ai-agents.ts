@@ -61,6 +61,10 @@ interface AiAgentDTO {
   requestsCount: number;
   avgLatencyMs: number;
   spentKopecks: number;
+  targetPageUrl?: string | null;
+  generatedSystemPrompt?: string | null;
+  knowledgeBaseMd?: string;
+  feedbackLearningEnabled?: boolean;
   lastUsedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -89,6 +93,10 @@ function toAiBot(dto: AiAgentDTO): AiBot {
     max_tokens: dto.maxTokens,
     system_prompt: dto.systemPrompt,
     context_entities: dto.contextEntities as BotContextEntity[],
+    target_page_url: dto.targetPageUrl,
+    generated_system_prompt: dto.generatedSystemPrompt,
+    knowledge_base_md: dto.knowledgeBaseMd ?? "",
+    feedback_learning_enabled: dto.feedbackLearningEnabled ?? true,
     wizard_config: wizardConfig,
     website_url: wizardConfig?.website_url,
     crawl_status: wizardConfig?.crawl_status,
@@ -124,6 +132,10 @@ function toPayload(payload: CreateBotPayload | UpdateBotPayload): Record<string,
   if (payload.map_reviews_url !== undefined) body.map_reviews_url = payload.map_reviews_url;
   if (payload.sync_crm !== undefined) body.sync_crm = payload.sync_crm;
   if (payload.whatsapp_chat_text !== undefined) body.whatsapp_chat_text = payload.whatsapp_chat_text;
+  if (payload.target_page_url !== undefined) body.target_page_url = payload.target_page_url;
+  if (payload.generated_system_prompt !== undefined) body.generated_system_prompt = payload.generated_system_prompt;
+  if (payload.knowledge_base_md !== undefined) body.knowledge_base_md = payload.knowledge_base_md;
+  if (payload.feedback_learning_enabled !== undefined) body.feedback_learning_enabled = payload.feedback_learning_enabled;
 
   return body;
 }
