@@ -775,5 +775,57 @@ export function useRejectFeedback(agentId: string): UseMutationResult<
   });
 }
 
+export interface RebuildAgentPromptResult {
+  agentId: string;
+  systemPrompt: string;
+  knowledgeBaseMd: string;
+  summaryOfChanges: string;
+  feedbacksCount: number;
+}
+
+export function useRebuildAgentPrompt(agentId: string): UseMutationResult<
+  RebuildAgentPromptResult,
+  ApiClientError,
+  void
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<RebuildAgentPromptResult>(
+        `${BASE_PATH}/agents/${agentId}/rebuild-prompt`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+export function useDeleteFeedback(agentId: string): UseMutationResult<
+  { success: boolean; id: string },
+  ApiClientError,
+  { feedbackId: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ feedbackId }) => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(
+        `${BASE_PATH}/agents/${agentId}/feedback/${feedbackId}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+
 
 

@@ -249,3 +249,11 @@ export interface AgentDialogueFeedbackDTO {
   updatedAt: string;
 }
 
+export interface RebuildAgentPromptResult {
+  agentId: string;
+  systemPrompt: string;
+  knowledgeBaseMd: string;
+  summaryOfChanges: string;
+  feedbacksCount: number;
+}
+

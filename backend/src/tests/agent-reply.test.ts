@@ -107,8 +107,8 @@ describe("agent-reply - parseAgentReply", () => {
     expect(parsed?.session_pause).toBe(false);
   });
 
-  it("обрезает сообщения длиннее 900 символов по границе слова", () => {
-    const longText = "Слово ".repeat(200); // > 1000 символов
+  it("обрезает сообщения длиннее 280 символов по границе слова", () => {
+    const longText = "Слово ".repeat(60); // 360 символов > 280
     const raw = JSON.stringify({
       message1: longText,
       message2: "",
@@ -116,7 +116,7 @@ describe("agent-reply - parseAgentReply", () => {
 
     const parsed = parseAgentReply(raw);
     expect(parsed).not.toBeNull();
-    expect(parsed?.messages[0]?.length).toBeLessThanOrEqual(901);
+    expect(parsed?.messages[0]?.length).toBeLessThanOrEqual(281);
     expect(parsed?.messages[0]?.endsWith("…")).toBe(true);
   });
 });
