@@ -9,6 +9,7 @@ import { KnowledgeBaseService } from "./knowledge.service.js";
 import { SalesLearnService } from "./sales-learn.service.js";
 import type { WizardConfig } from "./ai.types.js";
 import { isPlaceholderName } from "../crm/identity-resolution.js";
+import { aiTraceLogger } from "./ai-trace-logger.js";
 
 // ---------------------------------------------------------------------------
 // Пайплайн ответа агента на входящее сообщение клиента.
@@ -158,12 +159,26 @@ export class AgentPipelineService {
     // немедленно прерываем обработку без обращения к LLM и без списания токенов.
     const agent = await this.resolveAgent(input);
     if (agent === null) {
+      aiTraceLogger.traceEvent("ai:prepare_reply:blocked", {
+        gate: "channel_gate",
+        tenantId: input.tenantId,
+        chatId: input.chatId,
+        channelAccountId: input.channelAccountId,
+        text: input.text,
+      });
       return { kind: "no_agent" };
     }
 
     // Отвечает только `autoreply`. `suggester` готовит черновики оператору, и
     // отправлять их клиенту напрямую означало бы игнорировать выбор настройки.
     if (agent.status !== "active" || agent.mode !== "autoreply") {
+      aiTraceLogger.traceEvent("ai:prepare_reply:blocked", {
+        gate: "mode_gate",
+        agentId: agent.id,
+        tenantId: input.tenantId,
+        status: agent.status,
+        mode: agent.mode,
+      });
       return { kind: "agent_paused" };
     }
 
@@ -176,6 +191,12 @@ export class AgentPipelineService {
         [input.tenantId, input.dealId],
       );
       if (dealRow !== null) {
+        aiTraceLogger.traceEvent("ai:prepare_reply:blocked", {
+          gate: "pause_gate",
+          agentId: agent.id,
+          tenantId: input.tenantId,
+          dealId: input.dealId,
+        });
         return { kind: "agent_paused" };
       }
     }
@@ -198,17 +219,38 @@ export class AgentPipelineService {
         [input.tenantId, cleanDigits],
       );
       if (contactCheck !== null && (contactCheck.is_personal || contactCheck.paused_deals > 0)) {
+        aiTraceLogger.traceEvent("ai:prepare_reply:blocked", {
+          gate: "contact_paused",
+          agentId: agent.id,
+          tenantId: input.tenantId,
+          contactId: contactCheck.id,
+          isPersonal: contactCheck.is_personal,
+          pausedDeals: contactCheck.paused_deals,
+        });
         return { kind: "agent_paused" };
       }
     }
 
-    if (!this.chat.isConfigured) return { kind: "llm_unavailable" };
+    if (!this.chat.isConfigured) {
+      aiTraceLogger.traceEvent("ai:prepare_reply:blocked", {
+        gate: "llm_unavailable",
+        agentId: agent.id,
+        tenantId: input.tenantId,
+      });
+      return { kind: "llm_unavailable" };
+    }
 
     const balance = await this.readBalance(input.tenantId);
 
     // Проверка ДО вызова: списание возможно только после ответа, поэтому без
     // предварительной проверки арендатор уходил бы в минус.
     if (balance.balanceKopecks < MIN_BALANCE_KOPECKS) {
+      aiTraceLogger.traceEvent("ai:prepare_reply:blocked", {
+        gate: "insufficient_balance",
+        agentId: agent.id,
+        tenantId: input.tenantId,
+        balanceKopecks: balance.balanceKopecks,
+      });
       return { kind: "insufficient_balance", balanceKopecks: balance.balanceKopecks };
     }
 
@@ -217,6 +259,7 @@ export class AgentPipelineService {
     let contactProfileContext = "";
     let knownContactName: string | undefined;
     let hasKnownPhone = false;
+    let contactId: string | null = null;
     if (input.dealId) {
       try {
         interface HistoryMessageRow {
@@ -226,7 +269,7 @@ export class AgentPipelineService {
         }
 
         // 1. Находим contact_id сделки для сквозной памяти по всем каналам (Webchat -> Telegram -> WhatsApp)
-        let contactId: string | null = null;
+        contactId = null;
         if (input.dealId) {
           const dealInfo = await queryOne<{ contact_id: string | null }>(
             `SELECT contact_id FROM deals WHERE id = $1 AND tenant_id = $2`,
@@ -487,6 +530,29 @@ export class AgentPipelineService {
         ...(wc?.fallback_models ?? wc?.fallbackModels ?? []),
       ].filter((m): m is string => typeof m === "string" && m.trim().length > 0);
 
+      aiTraceLogger.traceEvent("ai:prepare_reply:start", {
+        agentId: agent.id,
+        agentName: agent.name,
+        tenantId: input.tenantId,
+        dealId: input.dealId ?? null,
+        contactId: contactId ?? null,
+        chatId: input.chatId,
+        channelType: input.channelType ?? "unknown",
+        incomingMessage: input.text,
+        model,
+        ragChunksCount: contextChunks.length,
+        ragChunks: contextChunks.map((c) => ({
+          filename: c.filename,
+          distance: c.distance,
+          similarity: Math.max(0, 1 - c.distance),
+          preview: c.content.slice(0, 150),
+        })),
+        fewShotCount: salesExamples.length,
+        historyDepth: conversationHistory.length,
+        systemPromptLength: systemPrompt.length,
+        systemPromptPreview: systemPrompt.slice(0, 500),
+      });
+
       const completion = await this.chat.complete({
         model: GATEWAY_MODEL[model] ?? model,
         messages: [
@@ -522,6 +588,22 @@ export class AgentPipelineService {
         }
       }
 
+      aiTraceLogger.traceEvent("ai:prepare_reply:finish", {
+        agentId: agent.id,
+        tenantId: input.tenantId,
+        dealId: input.dealId ?? null,
+        contactId: contactId ?? null,
+        model: completion.model ?? model,
+        tokensIn: completion.tokensIn,
+        tokensOut: completion.tokensOut,
+        latencyMs: completion.latencyMs,
+        rawCompletion: completion.content,
+        parsedMessages: reply ? reply.messages : [],
+        handoffRequired: reply ? reply.handoff_required : false,
+        sessionPause: reply ? reply.session_pause : false,
+        status: reply === null ? "unparsable" : "replied",
+      });
+
       // Расход списывается и при непригодном ответе: токены провайдер уже
       // потратил, и не записать их означало бы, что платформа платит за них сама.
       const charge = await this.chargeUsage({
@@ -551,6 +633,13 @@ export class AgentPipelineService {
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+
+      aiTraceLogger.traceEvent("ai:prepare_reply:error", {
+        agentId: agent.id,
+        tenantId: input.tenantId,
+        dealId: input.dealId ?? null,
+        error: reason,
+      });
 
       // Отказ вызова тоже попадает в журнал, но без списания: токенов не было.
       await this.chargeUsage({

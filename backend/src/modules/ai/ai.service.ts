@@ -2,6 +2,7 @@ import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { GatewayChatProvider } from "../../services/chat.service.js";
 import { validateUrl, htmlToText } from "./site-crawler.js";
+import { aiTraceLogger } from "./ai-trace-logger.js";
 import {
   estimateRemainingTokens,
   isAiModelId,
@@ -230,7 +231,18 @@ export class AiService {
     // Чтение ВНЕ транзакции: `getAgent` берёт из пула другое соединение, и внутри
     // `withTenant` он не видел бы ещё не зафиксированную строку — запрос на
     // создание отвечал 404 на только что созданного агента (проверено на сервере).
-    return this.getAgent(tenantId, created.id);
+    const agent = await this.getAgent(tenantId, created.id);
+    aiTraceLogger.traceEvent("ai:agent_created", {
+      agentId: agent.id,
+      tenantId,
+      name: agent.name,
+      model: agent.model,
+      mode: agent.mode,
+      status: agent.status,
+      systemPromptLength: agent.systemPrompt.length,
+      knowledgeBaseLength: (agent.knowledgeBaseMd || "").length,
+    });
+    return agent;
   }
 
   async updateAgent(
@@ -349,7 +361,18 @@ export class AiService {
 
     if (row === null) throw new NotFoundError("AI-агент не найден");
 
-    return this.getAgent(tenantId, id);
+    const updated = await this.getAgent(tenantId, id);
+    aiTraceLogger.traceEvent("ai:agent_updated", {
+      agentId: updated.id,
+      tenantId,
+      name: updated.name,
+      model: updated.model,
+      mode: updated.mode,
+      status: updated.status,
+      systemPromptLength: updated.systemPrompt.length,
+      knowledgeBaseLength: (updated.knowledgeBaseMd || "").length,
+    });
+    return updated;
   }
 
   /** Мягкое удаление: журнал вызовов ссылается на агента и должен остаться читаемым. */
@@ -486,6 +509,7 @@ export class AiService {
     payload: GeneratePromptPayload,
     tenantId?: string,
   ): Promise<GeneratedPromptResult> {
+    const startTime = Date.now();
     const rawUrl = (payload.target_page_url || payload.targetPageUrl)?.trim();
     let scrapedTitle = "";
     let scrapedText = "";
@@ -573,7 +597,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
 
       const parsedJson = JSON.parse(completion.content) as Partial<GeneratedPromptResult>;
       if (parsedJson.systemPrompt && parsedJson.businessNiche) {
-        return {
+        const result: GeneratedPromptResult = {
           systemPrompt: parsedJson.systemPrompt,
           businessNiche: parsedJson.businessNiche,
           clientProfile: parsedJson.clientProfile || "Клиенты, заинтересованные в услугах компании",
@@ -584,6 +608,24 @@ URL целевой страницы: ${rawUrl || "Не указан"}
           handoffSpecialist: parsedJson.handoffSpecialist || handoffSpecialist || "руководитель профильного направления",
           knowledgeBaseDraftMd: parsedJson.knowledgeBaseDraftMd || `# База знаний: ${companyName || scrapedTitle || "Компания"}\n\n## Основные направления\n- Качественное предоставление профильных услуг.\n\n## Прайс-лист и условия\n- Цены на странице не указаны (требуется уточнение у клиента / индивидуальный расчет).\n\n## Регламент консультации\n- Уточнять детали запроса перед расчетом.`,
         };
+
+        aiTraceLogger.traceEvent("ai:generate_prompt", {
+          tenantId: tenantId ?? "unknown",
+          inputUrl: rawUrl || null,
+          businessNiche: result.businessNiche,
+          companyName,
+          scrapedTitle: scrapedTitle || null,
+          scrapedTextLength: scrapedText.length,
+          scrapedTextPreview: scrapedText.slice(0, 300),
+          systemPromptLength: result.systemPrompt.length,
+          knowledgeBaseDraftMdLength: result.knowledgeBaseDraftMd.length,
+          systemPrompt: result.systemPrompt,
+          knowledgeBaseDraftMd: result.knowledgeBaseDraftMd,
+          latencyMs: Date.now() - startTime,
+          status: "success",
+        });
+
+        return result;
       }
     } catch {
       // При сбое LLM генерируем детерминированный fallback
@@ -681,6 +723,24 @@ URL целевой страницы: ${rawUrl || "Не указан"}
 
 </director_system_prompt>`.trim();
 
+    const fallbackKb = `# База знаний компании {{tenant.name}}\n\n## Общие сведения\n- Сфера: ${resolvedNiche}\n- Экспертная поддержка клиентов.\n\n## Прайс-лист и условия\n- Цены на странице не указаны (требуется уточнение у клиента / индивидуальный расчет).\n\n## Регламент работы\n- Оперативная квалификация и перевод на профильных специалистов.`;
+
+    aiTraceLogger.traceEvent("ai:generate_prompt", {
+      tenantId: tenantId ?? "unknown",
+      inputUrl: rawUrl || null,
+      businessNiche: resolvedNiche,
+      companyName,
+      scrapedTitle: scrapedTitle || null,
+      scrapedTextLength: scrapedText.length,
+      scrapedTextPreview: scrapedText.slice(0, 300),
+      systemPromptLength: systemPromptFallback.length,
+      knowledgeBaseDraftMdLength: fallbackKb.length,
+      systemPrompt: systemPromptFallback,
+      knowledgeBaseDraftMd: fallbackKb,
+      latencyMs: Date.now() - startTime,
+      status: "fallback",
+    });
+
     return {
       systemPrompt: systemPromptFallback,
       businessNiche: resolvedNiche,
@@ -690,7 +750,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       consultantName: resolvedName,
       consultantRole: resolvedRole,
       handoffSpecialist: resolvedHandoff,
-      knowledgeBaseDraftMd: `# База знаний компании {{tenant.name}}\n\n## Общие сведения\n- Сфера: ${resolvedNiche}\n- Экспертная поддержка клиентов.\n\n## Прайс-лист и условия\n- Цены на странице не указаны (требуется уточнение у клиента / индивидуальный расчет).\n\n## Регламент работы\n- Оперативная квалификация и перевод на профильных специалистов.`,
+      knowledgeBaseDraftMd: fallbackKb,
     };
   }
 
@@ -714,6 +774,13 @@ URL целевой страницы: ${rawUrl || "Не указан"}
     if (row === null) {
       throw new NotFoundError("AI-агент не найден");
     }
+
+    aiTraceLogger.traceEvent("ai:kb_synced", {
+      agentId,
+      tenantId,
+      knowledgeBaseLength: (knowledgeBaseMd ?? "").length,
+      knowledgeBasePreview: (knowledgeBaseMd ?? "").slice(0, 300),
+    });
 
     return this.getAgent(tenantId, agentId);
   }
@@ -781,6 +848,17 @@ URL целевой страницы: ${rawUrl || "Не указан"}
     if (row === null) {
       throw new AppError(500, "FEEDBACK_CREATE_FAILED", "Не удалось сохранить обратную связь");
     }
+
+    aiTraceLogger.traceEvent("ai:feedback_created", {
+      feedbackId: row.id,
+      agentId: row.agent_id,
+      tenantId,
+      dealId: row.deal_id,
+      rating: row.rating,
+      userComment: row.user_comment,
+      compiledRule: row.compiled_rule,
+      status: row.status,
+    });
 
     return {
       id: row.id,
@@ -904,7 +982,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       [tenantId, agentId, feedbackId, rule],
     );
 
-    return {
+    const result = {
       feedback: {
         id: updatedFb!.id,
         agentId: updatedFb!.agent_id,
@@ -920,6 +998,16 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       },
       knowledgeBaseMd: updatedMd,
     };
+
+    aiTraceLogger.traceEvent("ai:feedback_approved", {
+      feedbackId,
+      agentId,
+      tenantId,
+      compiledRule: rule,
+      newKnowledgeBaseLength: updatedMd.length,
+    });
+
+    return result;
   }
 
   async rejectFeedback(
@@ -1075,21 +1163,45 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       }
     }
 
+    // Очистка дублирующихся правил из knowledge_base_md:
+    // После переноса правил в system_prompt срезаем секцию '## Обучение на диалогах (Утвержденные правила)'
+    // и оставляем компактную отметку о синхронизации.
+    const nowStr = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const syncNote = `<!-- Правила синхронизированы в system_prompt ${nowStr} -->`;
+    const sectionRegex = /## Обучение на диалогах \(Утвержденные правила\)[\s\S]*?(?=\n#{1,2}\s|$)/;
+    let cleanedKbMd = agent.knowledge_base_md || "";
+    if (sectionRegex.test(cleanedKbMd)) {
+      cleanedKbMd = cleanedKbMd.replace(sectionRegex, syncNote).trim();
+    }
+
     await query(
       `UPDATE ai_agents
        SET system_prompt = $3,
            generated_system_prompt = $3,
+           knowledge_base_md = $4,
            updated_at = now()
        WHERE tenant_id = $1 AND id = $2`,
-      [tenantId, agentId, updatedSystemPrompt],
+      [tenantId, agentId, updatedSystemPrompt, cleanedKbMd],
     );
 
-    const summaryOfChanges = `Успешно пересобран системный промпт с учетом ${feedbacks.length} утвержденных правил обучения.`;
+    const summaryOfChanges = `Успешно пересобран системный промпт с учетом ${feedbacks.length} утвержденных правил обучения. База знаний синхронизирована.`;
+
+    aiTraceLogger.traceEvent("ai:prompt_rebuilt", {
+      agentId,
+      tenantId,
+      feedbacksCount: feedbacks.length,
+      rulesList,
+      promptLengthBefore: agent.system_prompt.length,
+      promptLengthAfter: updatedSystemPrompt.length,
+      kbLengthBefore: (agent.knowledge_base_md || "").length,
+      kbLengthAfter: cleanedKbMd.length,
+      summaryOfChanges,
+    });
 
     return {
       agentId,
       systemPrompt: updatedSystemPrompt,
-      knowledgeBaseMd: agent.knowledge_base_md,
+      knowledgeBaseMd: cleanedKbMd,
       summaryOfChanges,
       feedbacksCount: feedbacks.length,
     };
