@@ -567,71 +567,52 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     );
     const tenantName = tenantRow?.name || "Компания";
 
-    const docs = await query<{
-      id: string;
-      filename: string;
-      category: string | null;
-      content_text: string | null;
-    }>(
-      `SELECT id, filename, category, content_text
+    const readyCountRow = await queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
        FROM knowledge_base_documents
-       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'ready' AND content_text IS NOT NULL
-       ORDER BY created_at DESC
-       LIMIT 20`,
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'ready'`,
       [request.tenant_id, id],
     );
 
-    const reviewDocs: string[] = [];
-    const websiteDocs: string[] = [];
-    const kbDocs: string[] = [];
-
-    for (const doc of docs) {
-      const fn = (doc.filename || "").toLowerCase();
-      const text = (doc.content_text || "").trim();
-      if (!text) continue;
-
-      if (fn.includes("отзыв") || doc.category === "reviews") {
-        if (reviewDocs.length < 2) {
-          reviewDocs.push(`[${reviewDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1000)}`);
-        }
-      } else if (fn.includes("сайт") || doc.category === "website") {
-        if (websiteDocs.length < 2) {
-          websiteDocs.push(`[${websiteDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
-        }
-      } else {
-        if (kbDocs.length < 3) {
-          kbDocs.push(`[${kbDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
-        }
-      }
-    }
-
-    const kbContext = kbDocs.length > 0
-      ? kbDocs.join("\n\n")
-      : "В базе знаний пока нет добавленных документов. Вы можете загрузить регламенты или прайс на вкладке «База знаний».";
-
-    const websiteContext = websiteDocs.length > 0
-      ? websiteDocs.join("\n\n")
-      : "Материалы сайта пока не загружены.";
-
-    const reviewsContext = reviewDocs.length > 0
-      ? reviewDocs.join("\n\n")
-      : "Отзывы клиентов пока не подключены.";
-
-    const crmExamples = await query<{ customer_query: string; agent_reply: string }>(
-      `SELECT customer_query, agent_reply
-       FROM ai_sales_examples
-       WHERE tenant_id = $1
-       ORDER BY created_at DESC
-       LIMIT 3`,
-      [request.tenant_id],
+    const activeChunksRow = await queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM knowledge_base_chunks ch
+       JOIN knowledge_base_documents d ON d.id = ch.document_id
+       WHERE ch.tenant_id = $1 AND (ch.agent_id = $2 OR ch.agent_id IS NULL) AND d.status = 'ready'`,
+      [request.tenant_id, id],
     );
 
-    let crmContext = "Успешные диалоги формируются автоматически на основе закрытых сделок CRM.";
-    if (crmExamples.length > 0) {
-      crmContext = crmExamples
-        .map((p, i) => `Пример ${i + 1}:\nКлиент: «${p.customer_query}»\nУспешный ответ: «${p.agent_reply}»`)
-        .join("\n\n");
-    }
+    const draftCountRow = await queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'draft'`,
+      [request.tenant_id, id],
+    );
+
+    const draftDocs = await query<{
+      id: string;
+      filename: string;
+      file_size: number;
+      category: string | null;
+      source_url: string | null;
+      created_at: Date | string;
+    }>(
+      `SELECT id, filename, file_size, category, source_url, created_at
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'draft'
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [request.tenant_id, id],
+    );
+
+    const kbContext =
+      "Динамические выдержки из базы знаний и прайса подставляются в блок <retrieved_facts> при каждом запросе клиента на основе векторного поиска.";
+    const websiteContext =
+      "Материалы сайта подгружаются динамически через RAG (<retrieved_facts>).";
+    const reviewsContext =
+      "Отзывы клиентов подгружаются динамически через RAG (<retrieved_facts>).";
+    const crmContext =
+      "Паттерны успешных диалогов из закрытых сделок передаются в блоке <retrieved_facts>.";
 
     const channelAccounts = await query<{ channel: string; label: string | null }>(
       `SELECT c.channel, c.label
@@ -728,6 +709,19 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       data: {
         resolvedPrompt: resolved,
         variables,
+        ragTelemetry: {
+          readyDocumentsCount: readyCountRow?.count ?? 0,
+          activeChunksCount: activeChunksRow?.count ?? 0,
+          draftDocumentsCount: draftCountRow?.count ?? 0,
+          draftDocuments: draftDocs.map((d) => ({
+            id: d.id,
+            filename: d.filename,
+            fileSize: d.file_size,
+            category: d.category ?? "general",
+            sourceUrl: d.source_url ?? null,
+            createdAt: d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
+          })),
+        },
       },
     });
   };
