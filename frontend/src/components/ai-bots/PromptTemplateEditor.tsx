@@ -21,7 +21,7 @@ interface PromptTemplateEditorProps {
   label?: string;
 }
 
-const MAX_LENGTH = 8000;
+const MAX_LENGTH = 50000;
 
 export function PromptTemplateEditor({
   value,

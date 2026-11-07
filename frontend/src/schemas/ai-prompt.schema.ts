@@ -14,7 +14,7 @@ export const promptTemplateSchema = z.object({
   body: z
     .string()
     .min(10, "Template body must be at least 10 characters")
-    .max(8000, "Template body is limited to 8000 characters"),
+    .max(50000, "Template body is limited to 50000 characters"),
 });
 
 export type PromptTemplatePayload = z.infer<typeof promptTemplateSchema>;
