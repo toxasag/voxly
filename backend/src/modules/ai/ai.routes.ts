@@ -511,6 +511,12 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ data: feedbacks });
   });
 
+  app.get("/agents/:id/training-dialogs", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const feedbacks = await service.listFeedbacks(request.tenant_id, id);
+    return reply.send({ data: feedbacks });
+  });
+
   app.post("/agents/:id/feedback/:feedbackId/approve", { onRequest: writeAgents }, async (request, reply) => {
     const { id, feedbackId } = feedbackParams.parse(request.params);
     const result = await service.approveFeedback(request.tenant_id, id, feedbackId);

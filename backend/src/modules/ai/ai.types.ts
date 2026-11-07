@@ -222,6 +222,8 @@ export type SyncKnowledgeMdPayload = z.infer<typeof syncKnowledgeMdSchema>;
 // ---------------------------------------------------------------------------
 
 export const createDialogueFeedbackSchema = z.object({
+  agent_id: z.string().uuid().optional().nullable(),
+  agentId: z.string().uuid().optional().nullable(),
   deal_id: z.string().uuid().optional().nullable(),
   dealId: z.string().uuid().optional().nullable(),
   conversation_id: z.string().optional().nullable(),
@@ -239,7 +241,10 @@ export interface AgentDialogueFeedbackDTO {
   id: string;
   agentId: string;
   dealId?: string | null;
+  dealTitle?: string | null;
+  contactName?: string | null;
   conversationId?: string | null;
+  lastMessagePreview?: string | null;
   rating: number;
   userComment: string;
   clarificationQa: Array<{ question: string; answer?: string | null }>;

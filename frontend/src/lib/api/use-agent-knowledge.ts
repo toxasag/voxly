@@ -753,7 +753,10 @@ export interface AgentDialogueFeedback {
   id: string;
   agentId: string;
   dealId?: string | null;
+  dealTitle?: string | null;
+  contactName?: string | null;
   conversationId?: string | null;
+  lastMessagePreview?: string | null;
   rating: number;
   userComment: string;
   clarificationQa: Array<{ question: string; answer?: string | null }>;
@@ -779,7 +782,7 @@ export function useAgentFeedbacks(
   });
 }
 
-export function useCreateDialogueFeedback(agentId: string): UseMutationResult<
+export function useCreateDialogueFeedback(agentId?: string): UseMutationResult<
   AgentDialogueFeedback,
   ApiClientError,
   {
@@ -793,6 +796,7 @@ export function useCreateDialogueFeedback(agentId: string): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload) => {
+      if (!agentId) throw new Error("No agentId provided");
       const res = await apiClient.post<AgentDialogueFeedback>(
         `${BASE_PATH}/agents/${agentId}/feedback`,
         payload,
@@ -800,7 +804,40 @@ export function useCreateDialogueFeedback(agentId: string): UseMutationResult<
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      if (agentId) {
+        void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+export function useCreateDealFeedback(dealId: string): UseMutationResult<
+  AgentDialogueFeedback,
+  ApiClientError,
+  {
+    rating: number;
+    user_comment: string;
+    agent_id?: string;
+    conversation_id?: string;
+    clarification_answer?: string;
+  }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<AgentDialogueFeedback>(
+        `/api/v1/crm/deals/${dealId}/feedback`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+      if (data?.agentId) {
+        void queryClient.invalidateQueries({ queryKey: ["ai", "agents", data.agentId, "feedbacks"] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId] });
     },
   });
 }
