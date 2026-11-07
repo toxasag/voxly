@@ -897,6 +897,29 @@ export class AgentPipelineService {
       ...(wc?.fallback_models ?? wc?.fallbackModels ?? []),
     ].filter((m): m is string => typeof m === "string" && m.trim().length > 0);
 
+    aiTraceLogger.traceEvent("ai:prepare_reply:start", {
+      agentId: agent.id,
+      agentName: agent.name,
+      tenantId: input.tenantId,
+      dealId: null,
+      contactId: null,
+      chatId: "test-chat",
+      channelType: input.channelType ?? "test_chat",
+      incomingMessage: input.message,
+      model,
+      ragChunksCount: contextChunks.length,
+      ragChunks: contextChunks.map((c) => ({
+        filename: c.filename,
+        distance: c.distance,
+        similarity: Math.max(0, 1 - c.distance),
+        preview: c.content.slice(0, 150),
+      })),
+      salesExamplesCount: salesExamples.length,
+      systemPromptLength: systemPrompt.length,
+      systemPromptPreview: systemPrompt.slice(0, 300),
+      isTestChat: true,
+    });
+
     const completion = await this.chat.complete({
       model: GATEWAY_MODEL[model] ?? model,
       messages: chatMessages,
@@ -950,6 +973,23 @@ export class AgentPipelineService {
 
       messages = refinedMessages;
     }
+
+    aiTraceLogger.traceEvent("ai:prepare_reply:finish", {
+      agentId: agent.id,
+      tenantId: input.tenantId,
+      dealId: null,
+      contactId: null,
+      model: completion.model ?? model,
+      tokensIn: completion.tokensIn,
+      tokensOut: completion.tokensOut,
+      latencyMs: completion.latencyMs,
+      rawCompletion: completion.content,
+      parsedMessages: messages,
+      handoffRequired: parsed ? parsed.handoff_required : false,
+      sessionPause: parsed ? parsed.session_pause : false,
+      status: parsed === null ? "unparsable_fallback" : "replied",
+      isTestChat: true,
+    });
 
     const replyText = messages.join("\n\n");
 
