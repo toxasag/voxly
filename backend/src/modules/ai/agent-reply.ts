@@ -103,7 +103,11 @@ export const SAFE_DEFAULTS: Record<string, string> = {
  * 450 символов — предел короткого человеческого сообщения в мессенджере
  * (1-2 коротких предложения, до 15-25 слов каждое). Исключает роботизированные простыни текста.
  */
-export const MAX_MESSAGE_CHARS = 450;
+/**
+ * @deprecated Механическая обрезка по фиксированной длине удалена в пользу MessageRefinerService.
+ * Константа сохранена для обратной совместимости.
+ */
+export const MAX_MESSAGE_CHARS = 4096;
 
 /** Максимум сообщений в одном ответе (2–4 коротких реплики message1..message4). */
 const MAX_MESSAGES = 4;
@@ -112,7 +116,7 @@ const MAX_MESSAGES = 4;
  * Находит последнюю завершенную границу предложения или смысловой блок в строке:
  * знаки '.', '!', '?' или закрывающую круглую скобку ')' markdown-ссылки [текст](url).
  */
-function findSentenceBoundary(text: string): number {
+export function findSentenceBoundary(text: string): number {
   let maxIdx = -1;
 
   // 1. Закрывающие скобки markdown-ссылок: [текст](url)
@@ -172,24 +176,9 @@ function normaliseMessage(value: unknown): string | null {
   const text = value.trim();
   if (text.length === 0) return null;
 
-  if (text.length <= MAX_MESSAGE_CHARS) return text;
-
-  // Умная обрезка: ищем в пределах первых MAX_MESSAGE_CHARS символов последнюю завершенную
-  // границу предложения или закрывающую скобку ссылки, без добавления многоточия '...'.
-  const cut = text.slice(0, MAX_MESSAGE_CHARS);
-  const boundaryIdx = findSentenceBoundary(cut);
-
-  if (boundaryIdx !== -1 && boundaryIdx > 0) {
-    return cut.slice(0, boundaryIdx + 1).trim();
-  }
-
-  // Fallback: обрезка по последнему пробелу (без многоточия)
-  const lastSpace = cut.lastIndexOf(" ");
-  if (lastSpace !== -1 && lastSpace > 0) {
-    return cut.slice(0, lastSpace).trim();
-  }
-
-  return cut.trim();
+  // Механическая обрезка удалена: сохраняем полный смысл сообщения.
+  // Интеллектуальное сжатие под лимиты каналов выполняется в MessageRefinerService.
+  return text;
 }
 
 /**
