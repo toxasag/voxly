@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  BookOpen,
   Bot,
   Check,
   ChevronDown,
@@ -358,6 +359,12 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
         if (result.consultantRole) {
           form.setValue("consultant_role", result.consultantRole, { shouldDirty: true });
         }
+        if (result.knowledgeBaseDraftMd) {
+          form.setValue("knowledge_base_md", result.knowledgeBaseDraftMd, {
+            shouldValidate: true,
+            shouldDirty: true,
+          });
+        }
         form.setValue(
           "wizard_config",
           {
@@ -679,6 +686,35 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                     placeholder="Системный промпт роли агента..."
                     className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
                   />
+                </div>
+
+                {/* Интерактивное отображение и инлайн-редактор черновика базы знаний */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                      <BookOpen className="h-3 w-3 text-[#4a38f5]" />
+                      Черновик базы знаний (на проверку)
+                    </label>
+                    <span className="text-[10px] text-slate-500">
+                      {(form.watch("knowledge_base_md") || "").length} символов
+                    </span>
+                  </div>
+
+                  <textarea
+                    rows={5}
+                    value={form.watch("knowledge_base_md")}
+                    onChange={(e) =>
+                      form.setValue("knowledge_base_md", e.target.value, {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder="Структурированные факты, прайс-лист, услуги и регламент в Markdown (извлекаются из сайта при генерации)..."
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    Факты, прайсы и регламенты из сайта или контекста. При создании бота этот текст автоматически индексируется в базу знаний агента для RAG-поиска.
+                  </p>
                 </div>
               </div>
 
