@@ -61,15 +61,8 @@ export class SmartModelRouter {
     try {
       const env = getEnv();
       const envUrl = env.LLM_API_BASE_URL || process.env.LLM_API_BASE_URL;
-      if (envUrl) {
-        const isMatch =
-          (provider === "gemini" && envUrl.includes("googleapis.com")) ||
-          (provider === "openai" && envUrl.includes("openai.com")) ||
-          (provider === "deepseek" && envUrl.includes("deepseek.com")) ||
-          (provider === "openrouter" && envUrl.includes("openrouter.ai"));
-        if (isMatch) {
-          return envUrl.replace(/\/+$/, "");
-        }
+      if (envUrl && envUrl.trim().length > 0) {
+        return envUrl.replace(/\/+$/, "");
       }
     } catch {}
 

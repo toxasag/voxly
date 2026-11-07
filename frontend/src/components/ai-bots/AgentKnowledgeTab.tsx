@@ -295,6 +295,9 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
           setUrlValue("");
           setUrlTitle("");
           setUrlOpen(false);
+          if (doc?.id) {
+            setEditingDocId(doc.id);
+          }
         })
         .catch((err: unknown) => {
           toast.error(err instanceof Error ? err.message : "Не удалось импортировать страницу");

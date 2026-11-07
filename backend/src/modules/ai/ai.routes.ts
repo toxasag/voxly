@@ -31,6 +31,7 @@ import {
 } from "./knowledge-text.js";
 import { queueManager } from "../../infrastructure/queue.js";
 import { AgentPipelineService } from "./agent-pipeline.service.js";
+import { webExtractorService } from "./web-extractor.service.js";
 
 // ---------------------------------------------------------------------------
 // AI-агенты и баланс ИИ, смонтировано в app.ts под /api/v1/ai.
@@ -539,10 +540,14 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     const agent = await queryOne<{
       id: string;
       name: string;
+      description?: string | null;
       system_prompt: string;
+      company_name_override?: string | null;
+      consultant_name?: string | null;
+      consultant_role?: string | null;
       wizard_config: Record<string, unknown> | null;
     }>(
-      `SELECT id, name, system_prompt, wizard_config
+      `SELECT id, name, description, system_prompt, company_name_override, consultant_name, consultant_role, wizard_config
        FROM ai_agents
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [request.tenant_id, id],
@@ -640,16 +645,56 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     }) + " МСК";
 
     const wc = (agent.wizard_config || {}) as Record<string, string | undefined>;
+    const effectiveCompanyName =
+      (agent.company_name_override && agent.company_name_override.trim().length > 0 ? agent.company_name_override.trim() : null) ||
+      (wc.company_name_override && wc.company_name_override.trim().length > 0 ? wc.company_name_override.trim() : null) ||
+      (wc.companyName && wc.companyName.trim().length > 0 ? wc.companyName.trim() : null) ||
+      tenantName ||
+      "Компания";
+
+    const effectiveConsultantName =
+      (agent.consultant_name && agent.consultant_name.trim().length > 0 ? agent.consultant_name.trim() : null) ||
+      (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) ||
+      agent.name ||
+      "Консультант";
+
+    const effectiveConsultantRole =
+      (agent.consultant_role && agent.consultant_role.trim().length > 0 ? agent.consultant_role.trim() : null) ||
+      (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) ||
+      "онлайн-помощник";
+
+    const effectiveBusinessNiche =
+      (wc.businessNiche && wc.businessNiche.trim().length > 0 ? wc.businessNiche.trim() : null) ||
+      (agent.description && agent.description.trim().length > 5 ? agent.description.trim() : null) ||
+      "оказание профильных услуг и консультация клиентов";
+
+    const effectiveClientProfile =
+      (wc.clientProfile && wc.clientProfile.trim().length > 0 ? wc.clientProfile.trim() : null) ||
+      (wc.client_profile && String(wc.client_profile).trim().length > 0 ? String(wc.client_profile).trim() : null) ||
+      "клиенты, которым требуется экспертная консультация и решение их задачи";
+
+    const effectiveTargetAction =
+      (wc.targetAction && wc.targetAction.trim().length > 0 ? wc.targetAction.trim() : null) ||
+      "согласование деталей заказа и обмен контактами";
+
+    const effectiveConstraints =
+      (wc.constraints && wc.constraints.trim().length > 0 ? wc.constraints.trim() : null) ||
+      "Не давать ложных обещаний, строго следовать закону и регламенту компании.";
+
+    const effectiveHandoffSpecialist =
+      (wc.handoffSpecialist && wc.handoffSpecialist.trim().length > 0 ? wc.handoffSpecialist.trim() : null) ||
+      "старший специалист профильного отдела";
+
     const variables: Record<string, string> = {
-      "tenant.name": tenantName,
-      "company.name": tenantName,
-      "consultant.name": wc.consultantName || agent.name || "Консультант",
-      "consultant.role": wc.consultantRole || "ведущий специалист",
-      "business.niche": wc.businessNiche || "оказание профильных услуг",
-      "client.profile": wc.clientProfile || (wc as Record<string, string | undefined>).client_profile || "клиенты, которым требуется экспертная консультация и решение их задачи",
-      "target.action": wc.targetAction || "согласование деталей заказа",
-      "constraints": wc.constraints || "Не давать ложных обещаний, строго следовать прайсу и регламенту.",
-      "handoff.specialist": wc.handoffSpecialist || "старший специалист",
+      "tenant.name": effectiveCompanyName,
+      "company.name": effectiveCompanyName,
+      "consultant.name": effectiveConsultantName,
+      "consultant.role": effectiveConsultantRole,
+      "business.niche": effectiveBusinessNiche,
+      "client.profile": effectiveClientProfile,
+      "target.action": effectiveTargetAction,
+      "constraints": effectiveConstraints,
+      "handoff.specialist": effectiveHandoffSpecialist,
       "current_time": currentTime,
       "channel_type": channelType,
       "knowledge_base_context": kbContext,
@@ -846,47 +891,87 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       throw new AppError(502, "FETCH_FAILED", `Ошибка при загрузке URL: ${msg}`);
     }
 
-    const cleanText = html
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
-      .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/\s+/g, " ")
-      .trim();
+    // AI-структурирование и выделение ключевых фактов/разделов страницы
+    const extraction = await webExtractorService.extractAndStructure({
+      url,
+      htmlOrText: html,
+      title,
+      tenantId: request.tenant_id,
+    });
 
-    if (cleanText.length < 50) {
-      throw new AppError(400, "EMPTY_CONTENT", "На странице не найдено достаточного текстового содержимого");
-    }
-
-    const docTitle = title?.trim() || `${parsedUrl.hostname}${parsedUrl.pathname !== "/" ? parsedUrl.pathname : ""}`;
+    const docTitle = title?.trim() || extraction.title || `${parsedUrl.hostname}${parsedUrl.pathname !== "/" ? parsedUrl.pathname : ""}`;
 
     if (isDraft) {
       const draftDoc = await knowledge.createDraftDocument({
         tenantId: request.tenant_id,
         agentId: id,
         filename: `Сайт: ${docTitle}`,
-        mimeType: "text/html",
-        text: cleanText.slice(0, 100_000),
+        mimeType: "text/markdown",
+        text: extraction.structuredMarkdown,
         sourceUrl: url,
         category: "website",
       });
-      return reply.status(201).send({ data: draftDoc });
+      return reply.status(201).send({
+        data: draftDoc,
+        meta: { sectionsCount: extraction.sectionsCount, totalChars: extraction.totalChars },
+      });
     }
 
     const document = await knowledge.addDocument({
       tenantId: request.tenant_id,
       agentId: id,
       filename: `Сайт: ${docTitle}`,
-      mimeType: "text/html",
-      text: cleanText.slice(0, 100_000),
+      mimeType: "text/markdown",
+      text: extraction.structuredMarkdown,
+      category: "website",
     });
 
-    return reply.status(201).send({ data: document });
+    return reply.status(201).send({
+      data: document,
+      meta: { sectionsCount: extraction.sectionsCount, totalChars: extraction.totalChars },
+    });
+  });
+
+  // AI-реструктуризация существующего документа в четкие семантические секции
+  app.post("/agents/:id/knowledge/:docId/restructure", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, docId } = z.object({ id: z.string().uuid(), docId: z.string().uuid() }).parse(request.params);
+
+    const doc = await queryOne<{
+      id: string;
+      filename: string;
+      content_text: string | null;
+      source_url: string | null;
+      status: string;
+    }>(
+      `SELECT id, filename, content_text, source_url, status
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND id = $2 AND agent_id = $3`,
+      [request.tenant_id, docId, id],
+    );
+
+    if (!doc || !doc.content_text) {
+      throw new NotFoundError("Документ не найден или пуст");
+    }
+
+    const extraction = await webExtractorService.extractAndStructure({
+      url: doc.source_url || undefined,
+      htmlOrText: doc.content_text,
+      title: doc.filename.replace(/^Сайт:\s*/, ""),
+      tenantId: request.tenant_id,
+    });
+
+    const updated = await knowledge.updateDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      documentId: docId,
+      filename: doc.filename,
+      text: extraction.structuredMarkdown,
+    });
+
+    return reply.send({
+      data: updated,
+      meta: { sectionsCount: extraction.sectionsCount, totalChars: extraction.totalChars },
+    });
   });
 
   // Сканирование всех страниц сайта (Краулер / Паук по внутренним ссылкам и sitemap.xml)

@@ -463,6 +463,29 @@ export function useApproveKnowledgeDocument(
   });
 }
 
+export function useRestructureKnowledgeDocument(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { docId: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ docId }) => {
+      const res = await apiClient.post<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/restructure`,
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
 export function useCreateKnowledgeDraft(
   agentId: string,
 ): UseMutationResult<

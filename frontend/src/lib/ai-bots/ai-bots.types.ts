@@ -152,9 +152,12 @@ export interface PromptVariable {
 
 export const PROMPT_VARIABLES: PromptVariable[] = [
   { token: "tenant.name", label: "Название компании", example: "Название вашей компании" },
+  { token: "company.name", label: "Название компании / Бренд", example: "Название компании" },
   { token: "consultant.name", label: "Имя консультанта", example: "Имя сотрудника" },
   { token: "consultant.role", label: "Должность / роль консультанта", example: "ведущий специалист" },
   { token: "business.niche", label: "Ниша / профиль компании", example: "профиль вашей компании" },
+  { token: "client.profile", label: "Портрет целевого клиента", example: "клиенты, которым требуется консультация" },
+  { token: "constraints", label: "Ограничения и стоп-факторы", example: "запреты и рамки безопасности" },
   { token: "target.action", label: "Целевое действие", example: "согласование деталей заказа" },
   { token: "handoff.specialist", label: "Специалист для эскалации", example: "старший специалист" },
   { token: "channel_type", label: "Канал связи", example: "чат на сайте" },
@@ -166,7 +169,6 @@ export const PROMPT_VARIABLES: PromptVariable[] = [
   { token: "user.name", label: "Текущий пользователь", example: "Имя менеджера" },
   { token: "contact.name", label: "Имя контакта", example: "Имя клиента" },
   { token: "contact.phone", label: "Телефон контакта", example: "+7 999 000 00 00" },
-  { token: "company.name", label: "Название организации", example: "Организация клиента" },
   { token: "deal.title", label: "Название сделки", example: "Тема сделки" },
   { token: "deal.budget", label: "Бюджет сделки", example: "Сумма сделки" },
   { token: "repair.ticket_number", label: "Номер заказ-наряда", example: "Номер заказа" },
@@ -207,7 +209,17 @@ export interface PromptPreviewRealContext {
  */
 export function renderPromptPreview(
   body: string,
-  bot?: { name?: string; wizard_config?: WizardConfig },
+  bot?: {
+    name?: string;
+    description?: string;
+    companyNameOverride?: string;
+    company_name_override?: string;
+    consultantName?: string;
+    consultant_name?: string;
+    consultantRole?: string;
+    consultant_role?: string;
+    wizard_config?: WizardConfig;
+  },
   contextOrTenantName?: string | PromptPreviewRealContext,
 ): string {
   const context: PromptPreviewRealContext =
@@ -215,17 +227,58 @@ export function renderPromptPreview(
       ? { tenantName: contextOrTenantName }
       : (contextOrTenantName ?? {});
 
-  const wc = bot?.wizard_config;
+  const wc = (bot?.wizard_config ?? {}) as Record<string, unknown>;
   const tenant = context.tenantName || "Компания";
 
+  const getString = (val: unknown): string | null =>
+    typeof val === "string" && val.trim().length > 0 ? val.trim() : null;
+
+  const companyOverride =
+    (bot?.companyNameOverride && bot.companyNameOverride.trim().length > 0 ? bot.companyNameOverride.trim() : null) ||
+    (bot?.company_name_override && bot.company_name_override.trim().length > 0 ? bot.company_name_override.trim() : null) ||
+    getString(wc.company_name_override) ||
+    getString(wc.companyName);
+
+  const effectiveCompany = companyOverride || tenant;
+
+  const consultantName =
+    (bot?.consultantName && bot.consultantName.trim().length > 0 ? bot.consultantName.trim() : null) ||
+    (bot?.consultant_name && bot.consultant_name.trim().length > 0 ? bot.consultant_name.trim() : null) ||
+    getString(wc.consultantName) ||
+    bot?.name ||
+    "Консультант";
+
+  const consultantRole =
+    (bot?.consultantRole && bot.consultantRole.trim().length > 0 ? bot.consultantRole.trim() : null) ||
+    (bot?.consultant_role && bot.consultant_role.trim().length > 0 ? bot.consultant_role.trim() : null) ||
+    getString(wc.consultantRole) ||
+    "ведущий специалист";
+
+  const businessNiche =
+    getString(wc.businessNiche) ||
+    (bot?.description && bot.description.trim().length > 5 ? bot.description.trim() : null) ||
+    "оказание профильных услуг и консультация клиентов";
+
+  const clientProfile =
+    getString(wc.clientProfile) ||
+    getString(wc.client_profile) ||
+    "клиенты, которым требуется экспертная консультация и решение их задачи";
+
+  const constraints =
+    getString(wc.constraints) ||
+    "Не выдумывать условия, которых нет в базе знаний. При любых сложных юридических или финансовых вопросах мягко переводить на старшего специалиста.";
+    "Не выдумывать условия, которых нет в базе знаний. При любых сложных юридических или финансовых вопросах мягко переводить на старшего специалиста.";
+
   const resolvedValues = new Map<string, string>();
-  resolvedValues.set("tenant.name", tenant);
-  resolvedValues.set("company.name", tenant);
-  resolvedValues.set("consultant.name", wc?.consultantName || bot?.name || "Консультант");
-  resolvedValues.set("consultant.role", wc?.consultantRole || "ведущий специалист");
-  resolvedValues.set("business.niche", wc?.businessNiche || "оказание профильных услуг");
-  resolvedValues.set("target.action", wc?.targetAction || "согласование деталей заказа");
-  resolvedValues.set("handoff.specialist", wc?.handoffSpecialist || "старший специалист");
+  resolvedValues.set("tenant.name", effectiveCompany);
+  resolvedValues.set("company.name", effectiveCompany);
+  resolvedValues.set("consultant.name", consultantName);
+  resolvedValues.set("consultant.role", consultantRole);
+  resolvedValues.set("business.niche", businessNiche);
+  resolvedValues.set("client.profile", clientProfile);
+  resolvedValues.set("constraints", constraints);
+  resolvedValues.set("target.action", getString(wc.targetAction) || "согласование деталей заказа и обмен контактами");
+  resolvedValues.set("handoff.specialist", getString(wc.handoffSpecialist) || "старший специалист");
   resolvedValues.set(
     "current_time",
     context.currentTime ||

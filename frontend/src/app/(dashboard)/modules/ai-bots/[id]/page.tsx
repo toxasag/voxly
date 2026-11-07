@@ -303,16 +303,48 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
             </div>
 
             {/* Resolved preview */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
-              <h3 className="mb-3 text-[13px] font-semibold text-[#111111]">
-                Подстановка во время выполнения
-                <span className="ml-1.5 text-xs font-normal text-[#888888]">
-                  актуальные данные
-                </span>
-              </h3>
-              <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-sm leading-relaxed text-[#111111]">
-                {previewText}
-              </p>
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[13px] font-semibold text-[#111111]">
+                  Подстановка во время выполнения
+                  <span className="ml-1.5 text-xs font-normal text-[#888888]">
+                    актуальные данные и переменные среды
+                  </span>
+                </h3>
+              </div>
+
+              {previewData?.variables && Object.keys(previewData.variables).length > 0 && (
+                <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs">
+                  <div className="mb-2 font-medium text-[#111111]">Подставленные переменные:</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {Object.entries(previewData.variables)
+                      .filter(([k]) => !k.includes("context") && !k.includes("patterns") && !k.includes("reviews"))
+                      .map(([key, val]) => (
+                        <div
+                          key={key}
+                          className="flex items-baseline justify-between gap-2 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 font-mono text-[11px]"
+                        >
+                          <span className="text-[#666666] font-medium">{`{{${key}}}`}</span>
+                          <span
+                            className="text-[#111111] font-sans truncate max-w-[200px]"
+                            title={val}
+                          >
+                            {val}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[#666666]">
+                  Итоговый системный промпт (с подставленными значениями и контекстом RAG):
+                </label>
+                <p className="max-h-[500px] overflow-y-auto whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-xs leading-relaxed text-[#111111] font-mono">
+                  {previewText}
+                </p>
+              </div>
             </div>
           </div>
 

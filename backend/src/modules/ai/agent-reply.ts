@@ -211,7 +211,33 @@ export function parseAgentReply(raw: string): AgentReply | null {
     }
   }
 
-  // Graceful fallback: если JSON.parse не сработал, но модель вернула связный текст
+  // 1. Попытка извлечь message1..4 регулярным выражением (если JSON был оборван или поврежден)
+  const regexMessages: string[] = [];
+  const msgRegex = /"message([1-4])"\s*:\s*"((?:[^"\\]|\\.)*?)(?:"|,\s*"|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = msgRegex.exec(raw)) !== null) {
+    const val = match[2];
+    if (val && val.trim().length > 0) {
+      const unescaped = val
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\")
+        .trim();
+      if (unescaped.length > 0) {
+        regexMessages.push(unescaped);
+      }
+    }
+  }
+
+  if (regexMessages.length > 0) {
+    return {
+      messages: regexMessages.slice(0, MAX_MESSAGES),
+      handoff_required: /"handoff_required"\s*:\s*true/i.test(raw),
+      session_pause: /"session_pause"\s*:\s*true/i.test(raw),
+    };
+  }
+
+  // 2. Graceful fallback: если JSON.parse не сработал, но модель вернула связный текст
   const trimmed = raw.trim();
   const cleanedText = trimmed
     .replace(/^```[a-z]*\s*/i, "")
@@ -224,6 +250,23 @@ export function parseAgentReply(raw: string): AgentReply | null {
     if (fallbackMessage !== null) {
       return {
         messages: [fallbackMessage],
+        handoff_required: false,
+        session_pause: false,
+      };
+    }
+  }
+
+  // 3. Страховка от вывода сырого куска JSON клиенту (если начинается с {):
+  if (cleanedText.startsWith("{") || cleanedText.includes('"message1"')) {
+    const cleanFallback = cleanedText
+      .replace(/^[{\s]*"message[1-4]"\s*:\s*"?/i, "")
+      .replace(/["\s}]*$/i, "")
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .trim();
+    if (cleanFallback.length > 0 && !cleanFallback.startsWith("{")) {
+      return {
+        messages: [cleanFallback],
         handoff_required: false,
         session_pause: false,
       };

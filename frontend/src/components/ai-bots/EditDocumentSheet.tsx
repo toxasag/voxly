@@ -23,6 +23,7 @@ import {
 import {
   useApproveKnowledgeDocument,
   useKnowledgeDocumentDetail,
+  useRestructureKnowledgeDocument,
   useUpdateKnowledgeDocument,
 } from "@/lib/api/use-agent-knowledge";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,7 @@ export function EditDocumentSheet({
   const { data: document, isLoading, error } = useKnowledgeDocumentDetail(agentId, documentId);
   const updateMutation = useUpdateKnowledgeDocument(agentId);
   const approveMutation = useApproveKnowledgeDocument(agentId);
+  const restructureMutation = useRestructureKnowledgeDocument(agentId);
 
   const [filename, setFilename] = useState("");
   const [text, setText] = useState("");
@@ -129,6 +131,21 @@ export function EditDocumentSheet({
       onClose();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Не удалось утвердить документ");
+    }
+  };
+
+  const handleRestructure = async () => {
+    if (!documentId) return;
+    try {
+      const updated = await restructureMutation.mutateAsync({ docId: documentId });
+      toast.success("Документ успешно структурирован через AI на смысловые секции!");
+      if (updated?.contentText) {
+        setText(updated.contentText);
+        setBlocks(parseMarkdownToBlocks(updated.contentText));
+        setViewMode("blocks");
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось структурировать документ через AI");
     }
   };
 
@@ -275,34 +292,51 @@ export function EditDocumentSheet({
                   </span>
                 </div>
 
-                {/* Переключатель: Блоки / Сырой Markdown */}
-                <div className="flex items-center rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] p-0.5">
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => handleSwitchMode("blocks")}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-[6px] px-3 py-1 text-xs font-medium transition-colors",
-                      viewMode === "blocks"
-                        ? "bg-white text-[#4a38f5] shadow-xs font-semibold"
-                        : "text-[#666666] hover:text-[#111111]"
-                    )}
+                    onClick={handleRestructure}
+                    disabled={restructureMutation.isPending || !canEdit}
+                    className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#4a38f5] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors disabled:opacity-50"
+                    title="Очистить страницу от HTML-мусора и структурировать через AI на смысловые секции"
                   >
-                    <Layers className="h-3.5 w-3.5" />
-                    Блоки ({blocks.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSwitchMode("raw")}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-[6px] px-3 py-1 text-xs font-medium transition-colors",
-                      viewMode === "raw"
-                        ? "bg-white text-[#4a38f5] shadow-xs font-semibold"
-                        : "text-[#666666] hover:text-[#111111]"
+                    {restructureMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
                     )}
-                  >
-                    <Code className="h-3.5 w-3.5" />
-                    Сырой текст
+                    {restructureMutation.isPending ? "Структурирование..." : "Структурировать через AI"}
                   </button>
+
+                  {/* Переключатель: Блоки / Сырой Markdown */}
+                  <div className="flex items-center rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchMode("blocks")}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-[6px] px-3 py-1 text-xs font-medium transition-colors",
+                        viewMode === "blocks"
+                          ? "bg-white text-[#4a38f5] shadow-xs font-semibold"
+                          : "text-[#666666] hover:text-[#111111]"
+                      )}
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      Блоки ({blocks.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchMode("raw")}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-[6px] px-3 py-1 text-xs font-medium transition-colors",
+                        viewMode === "raw"
+                          ? "bg-white text-[#4a38f5] shadow-xs font-semibold"
+                          : "text-[#666666] hover:text-[#111111]"
+                      )}
+                    >
+                      <Code className="h-3.5 w-3.5" />
+                      Сырой текст
+                    </button>
+                  </div>
                 </div>
               </div>
 
