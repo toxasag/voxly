@@ -10,6 +10,11 @@ import { SalesLearnService } from "./sales-learn.service.js";
 import type { WizardConfig } from "./ai.types.js";
 import { isPlaceholderName } from "../crm/identity-resolution.js";
 import { aiTraceLogger } from "./ai-trace-logger.js";
+import {
+  MessageRefinerService,
+  normalizeChannelType,
+  getChannelLimit,
+} from "./message-refiner.service.js";
 
 // ---------------------------------------------------------------------------
 // Пайплайн ответа агента на входящее сообщение клиента.
@@ -98,6 +103,7 @@ export class AgentPipelineService {
     private readonly knowledge: KnowledgeBaseService = new KnowledgeBaseService(),
     private readonly chat: ChatProvider = new GatewayChatProvider(),
     private readonly salesLearn: SalesLearnService = new SalesLearnService(),
+    private readonly messageRefiner: MessageRefinerService = new MessageRefinerService(chat),
   ) {}
 
   /**
@@ -588,6 +594,28 @@ export class AgentPipelineService {
         }
       }
 
+      // Интеллектуальный Critic / Refiner слой:
+      // Сжимает и доводит сообщение под реальный лимит канала (Telegram: 4096, WhatsApp: 4096, Webchat: 2048)
+      // без механической обрезки, с сохранением ключевого смысла, фактов и CTA.
+      if (reply !== null && reply.messages.length > 0) {
+        const channelType = normalizeChannelType(input.channelType);
+        const channelLimit = getChannelLimit(channelType);
+        const refinedMessages: string[] = [];
+
+        for (const msg of reply.messages) {
+          const refinedResult = await this.messageRefiner.refineMessage({
+            originalMessage: msg,
+            channelLimit,
+            channelType,
+            contextBrief: input.text,
+            tenantId: input.tenantId,
+          });
+          refinedMessages.push(refinedResult.refinedMessage);
+        }
+
+        reply.messages = refinedMessages;
+      }
+
       aiTraceLogger.traceEvent("ai:prepare_reply:finish", {
         agentId: agent.id,
         tenantId: input.tenantId,
@@ -753,6 +781,7 @@ export class AgentPipelineService {
     agentId: string;
     message: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
+    channelType?: string;
   }): Promise<{ reply: string; messages: string[]; tokens: number; latencyMs: number }> {
     const agent = await queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
@@ -877,7 +906,27 @@ export class AgentPipelineService {
     });
 
     const parsed = parseAgentReply(completion.content);
-    const messages = parsed ? parsed.messages : [completion.content];
+    let messages = parsed ? parsed.messages : [completion.content];
+
+    if (messages.length > 0) {
+      const channelType = normalizeChannelType(input.channelType);
+      const channelLimit = getChannelLimit(channelType);
+      const refinedMessages: string[] = [];
+
+      for (const msg of messages) {
+        const refinedResult = await this.messageRefiner.refineMessage({
+          originalMessage: msg,
+          channelLimit,
+          channelType,
+          contextBrief: input.message,
+          tenantId: input.tenantId,
+        });
+        refinedMessages.push(refinedResult.refinedMessage);
+      }
+
+      messages = refinedMessages;
+    }
+
     const replyText = messages.join("\n\n");
 
     // Фиксируем использование в журнале
