@@ -911,11 +911,19 @@ URL целевой страницы: ${rawUrl || "Не указан"}
     const conversationId = payload.conversation_id ?? payload.conversationId ?? null;
     const rating = payload.rating;
     const clarificationAnswer = (payload.clarification_answer ?? payload.clarificationAnswer)?.trim() || null;
+    const selectedQuotes = payload.selected_quotes ?? payload.selectedQuotes ?? [];
 
     let clarificationQa: Array<{ question: string; answer?: string | null }> = [];
     let compiledRule: string | null = null;
 
-    if (comment.length < 15 && !clarificationAnswer) {
+    let quotesSnippet = "";
+    if (selectedQuotes.length > 0) {
+      quotesSnippet = selectedQuotes
+        .map((q) => `[${q.author || q.role || "Цитата"}]: "${q.text.trim()}"`)
+        .join(" | ");
+    }
+
+    if (comment.length < 15 && !clarificationAnswer && selectedQuotes.length === 0) {
       clarificationQa = [
         {
           question:
@@ -924,7 +932,10 @@ URL целевой страницы: ${rawUrl || "Не указан"}
         },
       ];
     } else {
-      const ruleText = clarificationAnswer ? `${comment}. Пояснение: ${clarificationAnswer}` : comment;
+      let ruleText = clarificationAnswer ? `${comment}. Пояснение: ${clarificationAnswer}` : comment;
+      if (quotesSnippet) {
+        ruleText = `${ruleText} (Контекст цитат: ${quotesSnippet})`;
+      }
       compiledRule = `- **[Правило диалога]**: ${ruleText.replace(/^[\s\-*]+/, "")}`;
     }
 
@@ -937,14 +948,15 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       user_comment: string;
       clarification_qa: Array<{ question: string; answer?: string | null }>;
       compiled_rule: string | null;
+      selected_quotes: Array<{ text: string; role?: string; author?: string; time?: string }>;
       status: "pending" | "approved" | "rejected";
       created_at: Date | string;
       updated_at: Date | string;
     }>(
       `INSERT INTO agent_dialogue_feedbacks
-         (tenant_id, agent_id, deal_id, conversation_id, rating, user_comment, clarification_qa, compiled_rule, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 'pending')
-       RETURNING id, agent_id, deal_id, conversation_id, rating, user_comment, clarification_qa, compiled_rule, status, created_at, updated_at`,
+         (tenant_id, agent_id, deal_id, conversation_id, rating, user_comment, clarification_qa, compiled_rule, selected_quotes, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, 'pending')
+       RETURNING id, agent_id, deal_id, conversation_id, rating, user_comment, clarification_qa, compiled_rule, selected_quotes, status, created_at, updated_at`,
       [
         tenantId,
         agentId,
@@ -954,6 +966,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
         comment,
         JSON.stringify(clarificationQa),
         compiledRule,
+        JSON.stringify(selectedQuotes),
       ],
     );
 
@@ -969,6 +982,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       rating: row.rating,
       userComment: row.user_comment,
       compiledRule: row.compiled_rule,
+      selectedQuotesCount: selectedQuotes.length,
       status: row.status,
     });
 
@@ -1016,6 +1030,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       userComment: row.user_comment,
       clarificationQa: row.clarification_qa || [],
       compiledRule: row.compiled_rule,
+      selectedQuotes: row.selected_quotes || [],
       status: row.status,
       createdAt: toIso(row.created_at) ?? "",
       updatedAt: toIso(row.updated_at) ?? "",
@@ -1035,6 +1050,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       user_comment: string;
       clarification_qa: Array<{ question: string; answer?: string | null }>;
       compiled_rule: string | null;
+      selected_quotes: Array<{ text: string; role?: string; author?: string; time?: string }>;
       status: "pending" | "approved" | "rejected";
       created_at: Date | string;
       updated_at: Date | string;
@@ -1057,6 +1073,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
          f.user_comment, 
          f.clarification_qa, 
          f.compiled_rule, 
+         COALESCE(f.selected_quotes, '[]'::jsonb) AS selected_quotes,
          f.status, 
          f.created_at, 
          f.updated_at
@@ -1081,6 +1098,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       userComment: r.user_comment,
       clarificationQa: r.clarification_qa || [],
       compiledRule: r.compiled_rule,
+      selectedQuotes: r.selected_quotes || [],
       status: r.status,
       createdAt: toIso(r.created_at) ?? "",
       updatedAt: toIso(r.updated_at) ?? "",

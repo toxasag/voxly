@@ -221,6 +221,15 @@ export type SyncKnowledgeMdPayload = z.infer<typeof syncKnowledgeMdSchema>;
 // Петля обучения через обратную связь диалогов (Dialogue Feedback Loop)
 // ---------------------------------------------------------------------------
 
+export const dialogueQuoteItemSchema = z.object({
+  text: z.string(),
+  role: z.string().optional(),
+  author: z.string().optional(),
+  time: z.string().optional(),
+});
+
+export type DialogueQuoteItem = z.infer<typeof dialogueQuoteItemSchema>;
+
 export const createDialogueFeedbackSchema = z.object({
   agent_id: z.string().uuid().optional().nullable(),
   agentId: z.string().uuid().optional().nullable(),
@@ -233,6 +242,8 @@ export const createDialogueFeedbackSchema = z.object({
   userComment: z.string().trim().optional(),
   clarification_answer: z.string().trim().optional().nullable(),
   clarificationAnswer: z.string().trim().optional().nullable(),
+  selected_quotes: z.array(dialogueQuoteItemSchema).optional(),
+  selectedQuotes: z.array(dialogueQuoteItemSchema).optional(),
 });
 
 export type CreateDialogueFeedbackPayload = z.infer<typeof createDialogueFeedbackSchema>;
@@ -249,6 +260,7 @@ export interface AgentDialogueFeedbackDTO {
   userComment: string;
   clarificationQa: Array<{ question: string; answer?: string | null }>;
   compiledRule?: string | null;
+  selectedQuotes?: DialogueQuoteItem[];
   status: "pending" | "approved" | "rejected";
   createdAt: string;
   updatedAt: string;
