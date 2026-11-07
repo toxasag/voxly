@@ -68,7 +68,7 @@ export const createAgentSchema = z.object({
     .string()
     .trim()
     .min(20, "Системный промпт минимум 20 символов")
-    .max(8000, "Системный промпт до 8000 символов")
+    .max(50000, "Системный промпт до 50000 символов")
     .default("Ты — вежливый AI-ассистент компании. Отвечай кратко, дружелюбно и по существу."),
   context_entities: z.array(z.enum(agentContextEntityValues)).default([]),
   company_name_override: z.string().trim().optional().nullable(),

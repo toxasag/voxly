@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
@@ -204,6 +204,24 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
     },
     [onClose, onSubmit],
   );
+
+  const onInvalid = useCallback((fieldErrors: FieldErrors<CreateBotPayload>) => {
+    const errorMessages = Object.entries(fieldErrors)
+      .map(([key, err]) => err?.message || key)
+      .filter(Boolean);
+    if (errorMessages.length > 0) {
+      toast.error(`Проверьте поля формы: ${errorMessages.slice(0, 2).join("; ")}`);
+    }
+    if (
+      fieldErrors.system_prompt ||
+      fieldErrors.model ||
+      fieldErrors.temperature ||
+      fieldErrors.max_tokens ||
+      fieldErrors.fallback_models
+    ) {
+      setShowTechnicalParams(true);
+    }
+  }, []);
 
   const selectedModel: BotModel = form.watch("model");
   const selectedMode: BotMode = form.watch("mode");
@@ -413,7 +431,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
       </SheetHeader>
 
       <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
-        <form onSubmit={form.handleSubmit(submit)} className="flex flex-col flex-1 min-h-0">
+        <form onSubmit={form.handleSubmit(submit, onInvalid)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-5">
             {/* Название + Акцент */}
             <div className="grid grid-cols-[1fr_auto] gap-4">
@@ -944,8 +962,16 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                     })
                   }
                   placeholder="Системный промпт роли агента..."
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
+                  className={cn(
+                    "w-full rounded-[8px] border bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:outline-none focus:ring-1 resize-y",
+                    errors.system_prompt
+                      ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-[#e5e5e5] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20",
+                  )}
                 />
+                {errors.system_prompt && (
+                  <p className="text-xs text-rose-500 mt-1">{errors.system_prompt.message}</p>
+                )}
               </div>
 
               {/* Интерактивное отображение и инлайн-редактор черновика базы знаний */}
@@ -970,8 +996,16 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                     })
                   }
                   placeholder="Структурированные факты, прайс-лист, услуги и регламент в Markdown (извлекаются из сайта при генерации)..."
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
+                  className={cn(
+                    "w-full rounded-[8px] border bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:outline-none focus:ring-1 resize-y",
+                    errors.knowledge_base_md
+                      ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-[#e5e5e5] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20",
+                  )}
                 />
+                {errors.knowledge_base_md && (
+                  <p className="text-xs text-rose-500 mt-1">{errors.knowledge_base_md.message}</p>
+                )}
                 <p className="text-[11px] text-[#888888]">
                   Факты, прайсы и регламенты из сайта или контекста. При создании бота этот текст автоматически индексируется в базу знаний агента для RAG-поиска.
                 </p>
@@ -1402,7 +1436,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
               </button>
               <button
                 type="submit"
-                disabled={!isValid || isSubmitting}
+                disabled={isSubmitting}
                 className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
               >
                 {isSubmitting ? (
