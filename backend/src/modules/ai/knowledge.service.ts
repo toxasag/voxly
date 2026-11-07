@@ -213,6 +213,37 @@ export class KnowledgeBaseService {
   }
 
   /**
+   * Возвращает список всех сырых векторных чанков документа для инспекции RAG.
+   */
+  async listDocumentChunks(tenantId: string, agentId: string, documentId: string): Promise<Array<{
+    id: string;
+    chunkIndex: number;
+    content: string;
+    charsCount: number;
+  }>> {
+    await this.assertAgentExists(tenantId, agentId);
+
+    const rows = await query<{
+      id: string;
+      chunk_index: number;
+      content: string;
+    }>(
+      `SELECT id, chunk_index, content
+       FROM knowledge_base_chunks
+       WHERE tenant_id = $1 AND document_id = $2 AND (agent_id = $3 OR agent_id IS NULL)
+       ORDER BY chunk_index ASC`,
+      [tenantId, documentId, agentId],
+    );
+
+    return rows.map((r) => ({
+      id: r.id,
+      chunkIndex: r.chunk_index,
+      content: r.content,
+      charsCount: r.content.length,
+    }));
+  }
+
+  /**
    * Обновление текста документа и его перевекторизация.
    * Позволяет на лету менять цены, услуги и регламенты.
    */
