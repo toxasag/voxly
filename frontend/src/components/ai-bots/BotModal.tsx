@@ -560,6 +560,27 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
               )}
             </div>
 
+            {/* Статус активации */}
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-slate-50 px-3.5 py-3">
+              <input
+                type="checkbox"
+                checked={!isPaused}
+                onChange={(event) =>
+                  form.setValue("status", event.target.checked ? "active" : "paused", {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                  })
+                }
+                className="h-4 w-4 rounded border-slate-300 accent-[#4a38f5]"
+              />
+              <span className="text-xs text-[#111111]">
+                Активировать сразу
+                <span className="ml-1.5 text-slate-500">
+                  (боты на паузе сохраняют настройки, но не отвечают в каналах связи)
+                </span>
+              </span>
+            </label>
+
             {/* ОСНОВНАЯ АНКЕТА: ПРОДУКТ, ЦЕЛИ И РОЛЬ КОНСУЛЬТАНТА */}
             <div className="space-y-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa]/50 p-4">
               <div className="flex items-start justify-between gap-2 border-b border-[#e5e5e5] pb-2.5">
@@ -989,27 +1010,6 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                 </div>
               </div>
             </div>
-
-            {/* Статус активации */}
-            <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-slate-50 px-3.5 py-3">
-              <input
-                type="checkbox"
-                checked={!isPaused}
-                onChange={(event) =>
-                  form.setValue("status", event.target.checked ? "active" : "paused", {
-                    shouldValidate: true,
-                    shouldDirty: true,
-                  })
-                }
-                className="h-4 w-4 rounded border-slate-300 accent-[#4a38f5]"
-              />
-              <span className="text-xs text-[#111111]">
-                Активировать сразу
-                <span className="ml-1.5 text-slate-500">
-                  (боты на паузе сохраняют настройки, но не отвечают в каналах связи)
-                </span>
-              </span>
-            </label>
 
             {/* ДОПОЛНИТЕЛЬНЫЕ ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ (LLM, ТЕМПЕРАТУРА, ПРОМПТ) — АККОРДЕОН */}
             <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/50 overflow-hidden">
