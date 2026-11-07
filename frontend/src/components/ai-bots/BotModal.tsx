@@ -560,27 +560,6 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
               )}
             </div>
 
-            {/* Статус активации */}
-            <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-slate-50 px-3.5 py-3">
-              <input
-                type="checkbox"
-                checked={!isPaused}
-                onChange={(event) =>
-                  form.setValue("status", event.target.checked ? "active" : "paused", {
-                    shouldValidate: true,
-                    shouldDirty: true,
-                  })
-                }
-                className="h-4 w-4 rounded border-slate-300 accent-[#4a38f5]"
-              />
-              <span className="text-xs text-[#111111]">
-                Активировать сразу
-                <span className="ml-1.5 text-slate-500">
-                  (боты на паузе сохраняют настройки, но не отвечают в каналах связи)
-                </span>
-              </span>
-            </label>
-
             {/* ОСНОВНАЯ АНКЕТА: ПРОДУКТ, ЦЕЛИ И РОЛЬ КОНСУЛЬТАНТА */}
             <div className="space-y-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa]/50 p-4">
               <div className="flex items-start justify-between gap-2 border-b border-[#e5e5e5] pb-2.5">
@@ -594,183 +573,6 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                   </p>
                 </div>
               </div>
-
-              {/* ГЕНЕРАТИВНЫЙ СИНТЕЗ РОЛИ И СИСТЕМНОГО ПРОМПТА */}
-              <div className="space-y-3 rounded-lg border border-[#4a38f5]/25 bg-[#4a38f5]/[0.02] p-3.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="h-4 w-4 text-[#4a38f5]" />
-                    <span className="text-xs font-semibold text-[#111111]">
-                      Генеративный синтез роли и промпта
-                    </span>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#4a38f5]/10 text-[#4a38f5] font-medium">
-                    6 навыков продаж (B2B/CRM)
-                  </span>
-                </div>
-
-                <p className="text-[11px] text-[#666666] leading-relaxed">
-                  Укажите адрес целевой веб-страницы (сайт / лендинг) или контекст бизнеса. ИИ автоматически спарсит страницу, выявит ценность и сгенерирует подробный системный промпт.
-                </p>
-
-                {/* Поле ввода URL целевой страницы */}
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-slate-700">
-                    URL целевой страницы внедрения (сайт / лендинг)
-                  </label>
-                  <div className="relative">
-                    <Globe className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                    <input
-                      type="url"
-                      value={form.watch("target_page_url") ?? ""}
-                      onChange={(e) =>
-                        form.setValue("target_page_url", e.target.value, { shouldDirty: true })
-                      }
-                      placeholder="https://example.com/services/b2b-consulting"
-                      className="h-8.5 w-full rounded-[8px] border border-[#e5e5e5] bg-white pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                    />
-                  </div>
-                </div>
-
-                {/* Кнопка генерации + быстрое меню пресетов */}
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <button
-                    type="button"
-                    disabled={generatePromptMutation.isPending}
-                    onClick={handleGeneratePrompt}
-                    className="h-8 rounded-[8px] bg-[#4a38f5] px-3.5 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
-                  >
-                    {generatePromptMutation.isPending ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        <span>Синтез промпта и роли...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-3.5 w-3.5" />
-                        <span>Сгенерировать роль и системный промпт</span>
-                      </>
-                    )}
-                  </button>
-
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
-                      className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-1"
-                    >
-                      <span>Быстрые пресеты</span>
-                      <ChevronDown className="h-3 w-3 text-slate-500" />
-                    </button>
-                    {showPresetsDropdown && (
-                      <div className="absolute right-0 top-9 z-20 w-64 rounded-lg border border-[#e5e5e5] bg-white p-1.5 shadow-lg space-y-1">
-                        {INDUSTRY_PRESETS.map((p) => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => {
-                              applyPreset(p);
-                              setShowPresetsDropdown(false);
-                            }}
-                            className="w-full text-left px-2.5 py-1.5 rounded text-xs hover:bg-slate-100 flex flex-col cursor-pointer"
-                          >
-                            <span className="font-medium text-[#111111]">{p.name}</span>
-                            <span className="text-[10px] text-[#888888] line-clamp-1">{p.description}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Интерактивное отображение и инлайн-редактор сгенерированного промпта */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
-                      <FileCode className="h-3 w-3 text-[#4a38f5]" />
-                      Сгенерированный системный промпт (активный)
-                    </label>
-                    <span className="text-[10px] text-slate-500">
-                      {(form.watch("system_prompt") || "").length} символов
-                    </span>
-                  </div>
-
-                  <textarea
-                    rows={6}
-                    value={form.watch("system_prompt")}
-                    onChange={(e) =>
-                      form.setValue("system_prompt", e.target.value, {
-                        shouldValidate: true,
-                        shouldDirty: true,
-                      })
-                    }
-                    placeholder="Системный промпт роли агента..."
-                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
-                  />
-                </div>
-
-                {/* Интерактивное отображение и инлайн-редактор черновика базы знаний */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
-                      <BookOpen className="h-3 w-3 text-[#4a38f5]" />
-                      Черновик базы знаний (на проверку)
-                    </label>
-                    <span className="text-[10px] text-slate-500">
-                      {(form.watch("knowledge_base_md") || "").length} символов
-                    </span>
-                  </div>
-
-                  <textarea
-                    rows={5}
-                    value={form.watch("knowledge_base_md")}
-                    onChange={(e) =>
-                      form.setValue("knowledge_base_md", e.target.value, {
-                        shouldValidate: true,
-                        shouldDirty: true,
-                      })
-                    }
-                    placeholder="Структурированные факты, прайс-лист, услуги и регламент в Markdown (извлекаются из сайта при генерации)..."
-                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
-                  />
-                  <p className="text-[11px] text-[#888888]">
-                    Факты, прайсы и регламенты из сайта или контекста. При создании бота этот текст автоматически индексируется в базу знаний агента для RAG-поиска.
-                  </p>
-                </div>
-              </div>
-
-              {/* Предупреждение о перезаписи промпта */}
-              {pendingPreset && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs space-y-2">
-                  <div className="flex items-start gap-2 text-[#854d0e]">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
-                    <div>
-                      <p className="font-semibold">
-                        Применение шаблона «{pendingPreset.name}»
-                      </p>
-                      <p className="mt-0.5 text-slate-700">
-                        В системный промпт вносились ручные правки. Применение нового шаблона обновит анкету и сбросит ручные правки к чистому эталону.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setPendingPreset(null)}
-                      className="px-2.5 py-1 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer"
-                    >
-                      Отмена
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applyPreset(pendingPreset)}
-                      className="px-2.5 py-1 text-xs rounded bg-[#4a38f5] text-white hover:bg-[#3d2ee0] font-medium cursor-pointer"
-                    >
-                      Применить и сбросить
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Поля анкеты */}
               <div className="space-y-3 pt-1">
@@ -1009,6 +811,204 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                   </p>
                 </div>
               </div>
+            </div>
+
+            {/* Статус активации */}
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-slate-50 px-3.5 py-3">
+              <input
+                type="checkbox"
+                checked={!isPaused}
+                onChange={(event) =>
+                  form.setValue("status", event.target.checked ? "active" : "paused", {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                  })
+                }
+                className="h-4 w-4 rounded border-slate-300 accent-[#4a38f5]"
+              />
+              <span className="text-xs text-[#111111]">
+                Активировать сразу
+                <span className="ml-1.5 text-slate-500">
+                  (боты на паузе сохраняют настройки, но не отвечают в каналах связи)
+                </span>
+              </span>
+            </label>
+
+            {/* ГЕНЕРАТИВНЫЙ СИНТЕЗ РОЛИ И СИСТЕМНОГО ПРОМПТА */}
+            <div className="space-y-3 rounded-lg border border-[#4a38f5]/25 bg-[#4a38f5]/[0.02] p-3.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 text-[#4a38f5]" />
+                  <span className="text-xs font-semibold text-[#111111]">
+                    Генеративный синтез роли и промпта
+                  </span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#4a38f5]/10 text-[#4a38f5] font-medium">
+                  6 навыков продаж (B2B/CRM)
+                </span>
+              </div>
+
+              <p className="text-[11px] text-[#666666] leading-relaxed">
+                Укажите адрес целевой веб-страницы (сайт / лендинг) или контекст бизнеса. ИИ автоматически спарсит страницу, выявит ценность и сгенерирует подробный системный промпт.
+              </p>
+
+              {/* Поле ввода URL целевой страницы */}
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-slate-700">
+                  URL целевой страницы внедрения (сайт / лендинг)
+                </label>
+                <div className="relative">
+                  <Globe className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="url"
+                    value={form.watch("target_page_url") ?? ""}
+                    onChange={(e) =>
+                      form.setValue("target_page_url", e.target.value, { shouldDirty: true })
+                    }
+                    placeholder="https://example.com/services/b2b-consulting"
+                    className="h-8.5 w-full rounded-[8px] border border-[#e5e5e5] bg-white pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+              </div>
+
+              {/* Кнопка генерации + быстрое меню пресетов */}
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={generatePromptMutation.isPending}
+                  onClick={handleGeneratePrompt}
+                  className="h-8 rounded-[8px] bg-[#4a38f5] px-3.5 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                >
+                  {generatePromptMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Синтез промпта и роли...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>Сгенерировать роль и системный промпт</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
+                    className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Быстрые пресеты</span>
+                    <ChevronDown className="h-3 w-3 text-slate-500" />
+                  </button>
+                  {showPresetsDropdown && (
+                    <div className="absolute right-0 top-9 z-20 w-64 rounded-lg border border-[#e5e5e5] bg-white p-1.5 shadow-lg space-y-1">
+                      {INDUSTRY_PRESETS.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            applyPreset(p);
+                            setShowPresetsDropdown(false);
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded text-xs hover:bg-slate-100 flex flex-col cursor-pointer"
+                        >
+                          <span className="font-medium text-[#111111]">{p.name}</span>
+                          <span className="text-[10px] text-[#888888] line-clamp-1">{p.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Интерактивное отображение и инлайн-редактор сгенерированного промпта */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                    <FileCode className="h-3 w-3 text-[#4a38f5]" />
+                    Сгенерированный системный промпт (активный)
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    {(form.watch("system_prompt") || "").length} символов
+                  </span>
+                </div>
+
+                <textarea
+                  rows={6}
+                  value={form.watch("system_prompt")}
+                  onChange={(e) =>
+                    form.setValue("system_prompt", e.target.value, {
+                      shouldValidate: true,
+                      shouldDirty: true,
+                    })
+                  }
+                  placeholder="Системный промпт роли агента..."
+                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
+                />
+              </div>
+
+              {/* Интерактивное отображение и инлайн-редактор черновика базы знаний */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                    <BookOpen className="h-3 w-3 text-[#4a38f5]" />
+                    Черновик базы знаний (на проверку)
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    {(form.watch("knowledge_base_md") || "").length} символов
+                  </span>
+                </div>
+
+                <textarea
+                  rows={5}
+                  value={form.watch("knowledge_base_md")}
+                  onChange={(e) =>
+                    form.setValue("knowledge_base_md", e.target.value, {
+                      shouldValidate: true,
+                      shouldDirty: true,
+                    })
+                  }
+                  placeholder="Структурированные факты, прайс-лист, услуги и регламент в Markdown (извлекаются из сайта при генерации)..."
+                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
+                />
+                <p className="text-[11px] text-[#888888]">
+                  Факты, прайсы и регламенты из сайта или контекста. При создании бота этот текст автоматически индексируется в базу знаний агента для RAG-поиска.
+                </p>
+              </div>
+
+              {/* Предупреждение о перезаписи промпта */}
+              {pendingPreset && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs space-y-2">
+                  <div className="flex items-start gap-2 text-[#854d0e]">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      <p className="font-semibold">
+                        Применение шаблона «{pendingPreset.name}»
+                      </p>
+                      <p className="mt-0.5 text-slate-700">
+                        В системный промпт вносились ручные правки. Применение нового шаблона обновит анкету и сбросит ручные правки к чистому эталону.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPendingPreset(null)}
+                      className="px-2.5 py-1 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset(pendingPreset)}
+                      className="px-2.5 py-1 text-xs rounded bg-[#4a38f5] text-white hover:bg-[#3d2ee0] font-medium cursor-pointer"
+                    >
+                      Применить и сбросить
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* ДОПОЛНИТЕЛЬНЫЕ ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ (LLM, ТЕМПЕРАТУРА, ПРОМПТ) — АККОРДЕОН */}
