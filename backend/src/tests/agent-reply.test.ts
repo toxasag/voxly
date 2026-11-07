@@ -107,8 +107,9 @@ describe("agent-reply - parseAgentReply", () => {
     expect(parsed?.session_pause).toBe(false);
   });
 
-  it("обрезает сообщения длиннее 280 символов по границе слова", () => {
-    const longText = "Слово ".repeat(60); // 360 символов > 280
+  it("обрезает сообщения длиннее 450 символов по границе предложения без многоточия", () => {
+    const sentence = "Это первое предложение. Это второе предложение. ";
+    const longText = sentence.repeat(15); // > 450 символов
     const raw = JSON.stringify({
       message1: longText,
       message2: "",
@@ -116,8 +117,25 @@ describe("agent-reply - parseAgentReply", () => {
 
     const parsed = parseAgentReply(raw);
     expect(parsed).not.toBeNull();
-    expect(parsed?.messages[0]?.length).toBeLessThanOrEqual(281);
-    expect(parsed?.messages[0]?.endsWith("…")).toBe(true);
+    expect(parsed?.messages[0]?.length).toBeLessThanOrEqual(450);
+    expect(parsed?.messages[0]?.endsWith("предложение.")).toBe(true);
+    expect(parsed?.messages[0]?.endsWith("…")).toBe(false);
+    expect(parsed?.messages[0]?.endsWith("...")).toBe(false);
+  });
+
+  it("при отсутствии знаков препинания обрезает по последнему пробелу без многоточия", () => {
+    const longText = "Слово ".repeat(100); // 600 символов без точек
+    const raw = JSON.stringify({
+      message1: longText,
+      message2: "",
+    });
+
+    const parsed = parseAgentReply(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.messages[0]?.length).toBeLessThanOrEqual(450);
+    expect(parsed?.messages[0]?.endsWith("Слово")).toBe(true);
+    expect(parsed?.messages[0]?.endsWith("…")).toBe(false);
+    expect(parsed?.messages[0]?.endsWith("...")).toBe(false);
   });
 });
 

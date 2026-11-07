@@ -100,13 +100,49 @@ export const SAFE_DEFAULTS: Record<string, string> = {
 /**
  * Предел длины одного сообщения.
  *
- * 280 символов — строгий предел короткого человеческого сообщения в мессенджере
- * (1-2 коротких предложения). Исключает роботизированные простыни текста.
+ * 450 символов — предел короткого человеческого сообщения в мессенджере
+ * (1-2 коротких предложения, до 15-25 слов каждое). Исключает роботизированные простыни текста.
  */
-const MAX_MESSAGE_CHARS = 280;
+export const MAX_MESSAGE_CHARS = 450;
 
 /** Максимум сообщений в одном ответе (2–4 коротких реплики message1..message4). */
 const MAX_MESSAGES = 4;
+
+/**
+ * Находит последнюю завершенную границу предложения или смысловой блок в строке:
+ * знаки '.', '!', '?' или закрывающую круглую скобку ')' markdown-ссылки [текст](url).
+ */
+function findSentenceBoundary(text: string): number {
+  let maxIdx = -1;
+
+  // 1. Закрывающие скобки markdown-ссылок: [текст](url)
+  const mdLinkRegex = /\[[^\]]+\]\([^)]+\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = mdLinkRegex.exec(text)) !== null) {
+    const endParenIdx = match.index + match[0].length - 1;
+    if (endParenIdx > maxIdx) {
+      maxIdx = endParenIdx;
+    }
+  }
+
+  // 2. Знаки завершения предложения: '.', '!', '?'
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === "!" || char === "?") {
+      if (i > maxIdx) maxIdx = i;
+    } else if (char === ".") {
+      // Исключаем разделители в дробных числах (например, 2.5 или 10.0)
+      const prev = text[i - 1];
+      const next = text[i + 1];
+      const isDecimal = Boolean(prev && next && /\d/.test(prev) && /\d/.test(next));
+      if (!isDecimal && i > maxIdx) {
+        maxIdx = i;
+      }
+    }
+  }
+
+  return maxIdx;
+}
 
 /**
  * Достаёт JSON из ответа модели.
@@ -138,11 +174,22 @@ function normaliseMessage(value: unknown): string | null {
 
   if (text.length <= MAX_MESSAGE_CHARS) return text;
 
-  // Обрезка по последнему пробелу: разрыв посреди слова выглядит как сбой.
+  // Умная обрезка: ищем в пределах первых MAX_MESSAGE_CHARS символов последнюю завершенную
+  // границу предложения или закрывающую скобку ссылки, без добавления многоточия '...'.
   const cut = text.slice(0, MAX_MESSAGE_CHARS);
-  const lastSpace = cut.lastIndexOf(" ");
+  const boundaryIdx = findSentenceBoundary(cut);
 
-  return `${(lastSpace > MAX_MESSAGE_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+  if (boundaryIdx !== -1 && boundaryIdx > 0) {
+    return cut.slice(0, boundaryIdx + 1).trim();
+  }
+
+  // Fallback: обрезка по последнему пробелу (без многоточия)
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace !== -1 && lastSpace > 0) {
+    return cut.slice(0, lastSpace).trim();
+  }
+
+  return cut.trim();
 }
 
 /**
