@@ -93,10 +93,10 @@ export const SAFE_DEFAULTS: Record<string, string> = {
   "handoff.specialist": "старший специалист профильного отдела",
   "channel_type": "чат на сайте",
   "current_time": "рабочее время",
-  "knowledge_base_context": "Данные прайса и условий уточняются индивидуально под запрос.",
-  "website_context": "Ориентируйся на факты и отзывы, приведённые в блоке актуальной базы знаний выше.",
-  "reviews_and_reputation": "Ориентируйся на факты и отзывы, приведённые в блоке актуальной базы знаний выше.",
-  "successful_crm_patterns": "Опирайся на базовые правила экспертных продаж и честного диалога.",
+  "knowledge_base_context": "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",
+  "website_context": "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",
+  "reviews_and_reputation": "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",
+  "successful_crm_patterns": "Опирайся на примеры успешных ответов из блока <retrieved_facts>.",
 };
 
 /**
@@ -311,9 +311,44 @@ export function interpolatePromptVariables(
   });
 }
 
+/**
+ * Формирует изолированный хвостовой блок <retrieved_facts> для прикрепления
+ * непосредственно к сообщению пользователя (role: "user").
+ *
+ * Содержит найденные релевантные чанки базы знаний (только статус 'ready')
+ * и примеры успешных ответов из CRM (few-shots).
+ * Не загрязняет системный промпт и сохраняет префиксный кеш модели.
+ */
+export function buildRetrievedFactsContext(input: {
+  contextChunks?: readonly { content: string; filename: string }[];
+  crmPatterns?: readonly { customerQuery: string; agentReply: string }[];
+}): string {
+  const parts: string[] = [];
+
+  if (input.contextChunks && input.contextChunks.length > 0) {
+    const chunksText = input.contextChunks
+      .map((chunk, index) => `[Факт ${index + 1} | Источник: «${chunk.filename}»]:\n${chunk.content}`)
+      .join("\n\n");
+    parts.push(`ВЫДЕРЖКИ ИЗ АКТУАЛЬНЫХ ДОКУМЕНТОВ И ПРАЙСА:\n${chunksText}`);
+  }
+
+  if (input.crmPatterns && input.crmPatterns.length > 0) {
+    const patternsText = input.crmPatterns
+      .map((p, i) => `[Пример CRM ${i + 1}]:\nВопрос: «${p.customerQuery}»\nОтвет: «${p.agentReply}»`)
+      .join("\n\n");
+    parts.push(`ПРИМЕРЫ УСПЕШНЫХ ОТВЕТОВ ИЗ CRM:\n${patternsText}`);
+  }
+
+  if (parts.length === 0) {
+    return "";
+  }
+
+  return `<retrieved_facts>\n${parts.join("\n\n")}\n</retrieved_facts>`;
+}
+
 export interface BuildSystemPromptInput {
   agentPrompt: string;
-  contextChunks: readonly { content: string; filename: string }[];
+  contextChunks?: readonly { content: string; filename: string }[];
   knowledgeBaseMd?: string;
   variables?: Record<string, string | undefined | null>;
   crmPatterns?: readonly { customerQuery: string; agentReply: string }[];
@@ -321,30 +356,16 @@ export interface BuildSystemPromptInput {
 }
 
 /**
- * Собирает системный промпт: промпт агента (с интерполяцией) + найденный контекст
- * базы знаний + паттерны закрытых сделок CRM + формат ответа.
+ * Собирает чистый статичный системный промпт агента:
+ * канонический промпт (с подстановкой runtime-переменных) +
+ * краткая шпаргалка/регламент (knowledgeBaseMd) +
+ * сквозной профиль клиента + формат ответа JSON.
+ *
+ * Чанки базы знаний и CRM few-shots намеренно НЕ добавляются сюда,
+ * а передаются в хвостовом блоке <retrieved_facts> вместе с запросом клиента.
  */
 export function buildSystemPrompt(input: BuildSystemPromptInput): string {
-  // 1. Формируем контекст базы знаний
-  let kbContext = "";
-  if (input.contextChunks.length > 0) {
-    kbContext = input.contextChunks
-      .map((chunk, index) => `[${index + 1}] Из «${chunk.filename}»:\n${chunk.content}`)
-      .join("\n\n");
-  } else {
-    kbContext =
-      "В базе знаний нет материалов по этому вопросу. Не называй конкретные цены, сроки и условия — предложи уточнить у коллег.";
-  }
-
-  // 2. Формируем паттерны CRM сделок
-  let crmContext = "";
-  if (input.crmPatterns && input.crmPatterns.length > 0) {
-    crmContext = input.crmPatterns
-      .map((p, i) => `Пример ${i + 1}:\nКлиент: «${p.customerQuery}»\nУспешный ответ: «${p.agentReply}»`)
-      .join("\n\n");
-  }
-
-  // 3. Собираем словарь переменных для интерполяции
+  // 1. Собираем словарь переменных для интерполяции
   const effectiveVariables: Record<string, string> = {
     ...SAFE_DEFAULTS,
   };
@@ -357,47 +378,17 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
     }
   }
 
-  effectiveVariables.knowledge_base_context = kbContext;
-  if (crmContext) {
-    effectiveVariables.successful_crm_patterns = crmContext;
-  }
-
-  // 4. Интерполируем переменные в агентском промпте
+  // 2. Интерполируем переменные в агентском промпте
   const interpolated = interpolatePromptVariables(input.agentPrompt, effectiveVariables);
 
   const parts = [interpolated.trim()];
 
-  // Если у агента есть живая Markdown база знаний — внедряем её с наивысшим приоритетом
+  // Если у агента есть живая Markdown шпаргалка / база знаний — внедряем её
   if (input.knowledgeBaseMd && input.knowledgeBaseMd.trim().length > 0) {
     parts.push(
       [
-        "ЖИВАЯ БАЗА ЗНАНИЙ И УТВЕРЖДЕННЫЕ ПРАВИЛА АГЕНТА (Markdown, наивысший приоритет):",
+        "ШПАРГАЛКА И УТВЕРЖДЕННЫЕ ПРАВИЛА АГЕНТА (Markdown, наивысший приоритет):",
         input.knowledgeBaseMd.trim(),
-      ].join("\n\n"),
-    );
-  }
-
-  // Если в промпте НЕ было плейсхолдера {{knowledge_base_context}}, добавляем блок в конец (обратная совместимость)
-  if (!input.agentPrompt.includes("{{knowledge_base_context}}")) {
-    if (input.contextChunks.length > 0) {
-      parts.push(
-        [
-          "ВЫДЕРЖКИ ИЗ ДОКУМЕНТОВ КОМПАНИИ (используй их как главный источник фактов; документы с прайсом имеют высший приоритет над историческими диалогами):",
-          kbContext,
-          "Если ответа нет в выдержках, скажи, что уточнишь у коллег, и не придумывай факты, цены и сроки.",
-        ].join("\n\n"),
-      );
-    } else {
-      parts.push(kbContext);
-    }
-  }
-
-  // Если в промпте НЕ было плейсхолдера {{successful_crm_patterns}} и есть паттерны — добавляем
-  if (crmContext && !input.agentPrompt.includes("{{successful_crm_patterns}}")) {
-    parts.push(
-      [
-        "ПРАКТИЧЕСКИЙ ОПЫТ УСПЕШНЫХ СДЕЛОК CRM (используй формулировки как референс):",
-        crmContext,
       ].join("\n\n"),
     );
   }

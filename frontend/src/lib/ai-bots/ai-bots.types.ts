@@ -288,20 +288,20 @@ export function renderPromptPreview(
   resolvedValues.set(
     "knowledge_base_context",
     context.knowledgeBaseContext ||
-      "В базе знаний пока нет добавленных документов. Вы можете загрузить регламенты или прайс на вкладке «База знаний».",
+      "Динамические выдержки из базы знаний и прайса подставляются в блок <retrieved_facts> при каждом запросе клиента на основе векторного поиска.",
   );
   resolvedValues.set(
     "website_context",
-    context.websiteContext || "Материалы сайта пока не загружены.",
+    context.websiteContext || "Материалы сайта подгружаются динамически через RAG (<retrieved_facts>).",
   );
   resolvedValues.set(
     "reviews_and_reputation",
-    context.reviewsContext || "Отзывы клиентов пока не подключены.",
+    context.reviewsContext || "Отзывы клиентов подгружаются динамически через RAG (<retrieved_facts>).",
   );
   resolvedValues.set(
     "successful_crm_patterns",
     context.crmPatternsContext ||
-      "Успешные диалоги формируются автоматически на основе закрытых сделок CRM.",
+      "Паттерны успешных диалогов из закрытых сделок передаются в блоке <retrieved_facts>.",
   );
 
   // Fallback for CRM entity tokens

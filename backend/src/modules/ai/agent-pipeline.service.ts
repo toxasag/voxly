@@ -4,7 +4,12 @@ import {
   type ChatProvider,
 } from "../../services/chat.service.js";
 import { calculateAiCharge, isAiModelId, type AiModelId } from "./ai-pricing.js";
-import { buildSystemPrompt, parseAgentReply, type AgentReply } from "./agent-reply.js";
+import {
+  buildSystemPrompt,
+  buildRetrievedFactsContext,
+  parseAgentReply,
+  type AgentReply,
+} from "./agent-reply.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
 import { SalesLearnService } from "./sales-learn.service.js";
 import type { WizardConfig } from "./ai.types.js";
@@ -560,12 +565,27 @@ export class AgentPipelineService {
         systemPromptPreview: systemPrompt.slice(0, 500),
       });
 
+      const retrievedFacts = buildRetrievedFactsContext({
+        contextChunks: contextChunks.map((hit) => ({
+          content: hit.content,
+          filename: hit.filename,
+        })),
+        crmPatterns: salesExamples.map((ex) => ({
+          customerQuery: ex.customerQuery,
+          agentReply: ex.agentReply,
+        })),
+      });
+
+      const userContent = retrievedFacts
+        ? `${retrievedFacts}\n\n${input.text}`
+        : input.text;
+
       const completion = await this.chat.complete({
         model: GATEWAY_MODEL[model] ?? model,
         messages: [
           { role: "system", content: systemPrompt },
           ...conversationHistory,
-          { role: "user", content: input.text },
+          { role: "user", content: userContent },
         ],
         temperature: Number(agent.temperature),
         maxTokens: agent.max_tokens,
@@ -890,7 +910,22 @@ export class AgentPipelineService {
       }
     }
 
-    chatMessages.push({ role: "user", content: input.message });
+    const retrievedFacts = buildRetrievedFactsContext({
+      contextChunks: contextChunks.map((hit) => ({
+        content: hit.content,
+        filename: hit.filename,
+      })),
+      crmPatterns: salesExamples.map((ex) => ({
+        customerQuery: ex.customerQuery,
+        agentReply: ex.agentReply,
+      })),
+    });
+
+    const userMessageContent = retrievedFacts
+      ? `${retrievedFacts}\n\n${input.message}`
+      : input.message;
+
+    chatMessages.push({ role: "user", content: userMessageContent });
 
     const fallbackList = [
       ...(agent.fallback_models ?? []),

@@ -187,8 +187,10 @@ export class KnowledgeBaseService {
   /**
    * Получение полной информации о документе вместе с текстом (для просмотра и редактирования).
    */
-  async getDocument(tenantId: string, agentId: string, documentId: string): Promise<KnowledgeDocumentDetailDTO> {
-    await this.assertAgentExists(tenantId, agentId);
+  async getDocument(tenantId: string, agentId: string | null | undefined, documentId: string): Promise<KnowledgeDocumentDetailDTO> {
+    if (agentId) {
+      await this.assertAgentExists(tenantId, agentId);
+    }
 
     const row = await queryOne<DocumentRow & { content_text: string | null }>(
       `SELECT d.id, d.agent_id, d.filename, d.mime_type, d.file_size, d.content_text, d.status,
@@ -200,8 +202,8 @@ export class KnowledgeBaseService {
          FROM knowledge_base_chunks ch
          WHERE ch.document_id = d.id
        ) c ON true
-       WHERE d.tenant_id = $1 AND d.id = $2 AND (d.agent_id = $3 OR d.agent_id IS NULL)`,
-      [tenantId, documentId, agentId],
+       WHERE d.tenant_id = $1 AND d.id = $2 AND ($3::uuid IS NULL OR d.agent_id = $3 OR d.agent_id IS NULL)`,
+      [tenantId, documentId, agentId ?? null],
     );
 
     if (row === null) throw new NotFoundError("Документ не найден");
@@ -351,14 +353,16 @@ export class KnowledgeBaseService {
    */
   async createDraftDocument(input: {
     tenantId: string;
-    agentId: string;
+    agentId?: string | null;
     filename: string;
     mimeType: string;
     text: string;
     category?: string;
     sourceUrl?: string;
   }): Promise<KnowledgeDocumentDetailDTO> {
-    await this.assertAgentExists(input.tenantId, input.agentId);
+    if (input.agentId) {
+      await this.assertAgentExists(input.tenantId, input.agentId);
+    }
 
     const category = input.category?.trim() || "general";
     const text = input.text.trim();
@@ -373,7 +377,7 @@ export class KnowledgeBaseService {
        RETURNING id`,
       [
         input.tenantId,
-        input.agentId,
+        input.agentId ?? null,
         input.filename,
         input.mimeType,
         Buffer.byteLength(text, "utf8"),
@@ -783,7 +787,7 @@ export class KnowledgeBaseService {
        JOIN knowledge_base_documents d ON d.id = ch.document_id
        WHERE ch.tenant_id = $1
          AND (ch.agent_id = $2 OR ch.agent_id IS NULL)
-         AND d.status IN ('ready', 'approved')
+         AND d.status = 'ready'
          AND (ch.embedding <=> $4::vector) <= $3
        ORDER BY distance ASC
        LIMIT ${effectiveLimit}`,

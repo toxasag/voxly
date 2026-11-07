@@ -211,9 +211,24 @@ export function useDeleteAiAgent(): UseMutationResult<void, ApiClientError, { id
   });
 }
 
+export interface RagTelemetryDTO {
+  readyDocumentsCount: number;
+  activeChunksCount: number;
+  draftDocumentsCount: number;
+  draftDocuments: Array<{
+    id: string;
+    filename: string;
+    fileSize: number;
+    category: string;
+    sourceUrl?: string | null;
+    createdAt: string;
+  }>;
+}
+
 export interface PromptPreviewResponse {
   resolvedPrompt: string;
   variables: Record<string, string>;
+  ragTelemetry?: RagTelemetryDTO;
 }
 
 export function useAgentPromptPreview(

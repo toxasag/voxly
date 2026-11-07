@@ -337,9 +337,73 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                 </div>
               )}
 
+              {/* RAG Telemetry */}
+              {previewData?.ragTelemetry && (
+                <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold text-[#111111]">
+                      Векторная база знаний (RAG)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setTab("knowledge")}
+                      className="text-xs font-medium text-[#4a38f5] hover:underline cursor-pointer"
+                    >
+                      Управление базой знаний →
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    <div className="rounded-[6px] border border-emerald-200 bg-emerald-50/50 p-2.5">
+                      <div className="text-[11px] text-[#666666]">Готово к поиску</div>
+                      <div className="text-[15px] font-semibold text-emerald-700">
+                        {previewData.ragTelemetry.readyDocumentsCount} документов
+                      </div>
+                    </div>
+                    <div className="rounded-[6px] border border-indigo-200 bg-indigo-50/50 p-2.5">
+                      <div className="text-[11px] text-[#666666]">Активных чанков</div>
+                      <div className="text-[15px] font-semibold text-indigo-700">
+                        {previewData.ragTelemetry.activeChunksCount} фрагментов
+                      </div>
+                    </div>
+                    <div className={`rounded-[6px] border p-2.5 ${previewData.ragTelemetry.draftDocumentsCount > 0 ? "border-amber-200 bg-amber-50/50" : "border-[#e5e5e5] bg-[#fafafa]"}`}>
+                      <div className="text-[11px] text-[#666666]">На модерации (draft)</div>
+                      <div className={`text-[15px] font-semibold ${previewData.ragTelemetry.draftDocumentsCount > 0 ? "text-amber-800" : "text-[#888888]"}`}>
+                        {previewData.ragTelemetry.draftDocumentsCount} документов
+                      </div>
+                    </div>
+                  </div>
+                  {previewData.ragTelemetry.draftDocuments && previewData.ragTelemetry.draftDocuments.length > 0 && (
+                    <div className="mt-3 rounded-[6px] border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900">
+                      <div className="font-medium mb-1">
+                        Ожидают проверки и векторизации ({previewData.ragTelemetry.draftDocuments.length}):
+                      </div>
+                      <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-800">
+                        {previewData.ragTelemetry.draftDocuments.map((doc) => (
+                          <li key={doc.id} className="truncate">
+                            {doc.filename} {doc.sourceUrl ? `(${doc.sourceUrl})` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setTab("knowledge")}
+                          className="font-semibold text-amber-950 underline hover:text-black cursor-pointer"
+                        >
+                          Перейти в «Базу знаний» для проверки и запуска векторизации
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <p className="mt-2 text-[11px] text-[#888888]">
+                    Системный промпт изолирован от раздувания: релевантные факты прайса и каталога подтягиваются автоматически в блок &lt;retrieved_facts&gt; при каждом запросе клиента.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-[#666666]">
-                  Итоговый системный промпт (с подставленными значениями и контекстом RAG):
+                  Итоговый системный промпт (статичный канон + метод Станиславского + шпаргалка):
                 </label>
                 <p className="max-h-[500px] overflow-y-auto whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-xs leading-relaxed text-[#111111] font-mono">
                   {previewText}
