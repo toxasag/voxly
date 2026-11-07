@@ -216,6 +216,7 @@ export class AgentPipelineService {
     let conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
     let contactProfileContext = "";
     let knownContactName: string | undefined;
+    let hasKnownPhone = false;
     if (input.dealId) {
       try {
         interface HistoryMessageRow {
@@ -280,6 +281,9 @@ export class AgentPipelineService {
           );
 
           if (contactRow) {
+            if (contactRow.phone && contactRow.phone.trim().length > 0) {
+              hasKnownPhone = true;
+            }
             const profileParts: string[] = [];
             const fullName = `${contactRow.first_name || ""} ${contactRow.last_name || ""}`.trim();
             const hasRealName = fullName.length > 0 && !isPlaceholderName(contactRow.first_name, contactRow.last_name);
@@ -498,6 +502,25 @@ export class AgentPipelineService {
       });
 
       const reply = parseAgentReply(completion.content);
+
+      // Серверный предохранитель от преждевременного отключения бота (Узел 5):
+      // Если модель выставила handoff_required: true, но клиент еще не сообщил телефон
+      // и не требовал оператора/человека (бот просто задал уточняющий вопрос или спросил номер),
+      // предотвращаем ложную эскалацию, чтобы бот не уходил в 24-часовую заморозку.
+      if (reply !== null && reply.handoff_required) {
+        const phoneRegex = /(?:\+7|8)[\s\-()]*\d{3}[\s\-()]*\d{3}[\s\-()]*\d{2}[\s\-()]*\d{2}|\b\d{10,11}\b/;
+        const escalationRegex = /(?:человек|оператор|менеджер|живой|позови|соедини|переведи|специалист|претензи|жалоб|верните деньги|юрист|суд)/i;
+        const hasPhoneInMessage = phoneRegex.test(input.text);
+        const hasEscalationIntent = escalationRegex.test(input.text);
+
+        if (!hasPhoneInMessage && !hasKnownPhone && !hasEscalationIntent) {
+          this.log.warn(
+            { agentId: agent.id, dealId: input.dealId, text: input.text },
+            "[AgentPipeline] Prevented premature handoff_required: client has not provided phone and did not request escalation",
+          );
+          reply.handoff_required = false;
+        }
+      }
 
       // Расход списывается и при непригодном ответе: токены провайдер уже
       // потратил, и не записать их означало бы, что платформа платит за них сама.

@@ -15,6 +15,7 @@ import {
   Info,
   Loader2,
   MessageSquare,
+  MessageSquareQuote,
   RefreshCw,
   Save,
   Sliders,
@@ -32,7 +33,11 @@ import {
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
 import { useAiModels, type AiModelItem } from "@/lib/api/use-ai-agents";
-import { useGeneratePrompt } from "@/lib/api/use-agent-knowledge";
+import {
+  useAgentFeedbacks,
+  useGeneratePrompt,
+  useRebuildAgentPrompt,
+} from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
 import {
@@ -144,12 +149,31 @@ function toFormValues(bot: AiBot): CreateBotPayload {
 export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotModalProps) {
   const isEdit = bot !== null;
   const [showTechnicalParams, setShowTechnicalParams] = useState(false);
-  const [promptTab, setPromptTab] = useState<"wizard" | "editor">("wizard");
+  const [promptTab, setPromptTab] = useState<"wizard" | "editor" | "feedbacks">("wizard");
   const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
   const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
 
   const generatePromptMutation = useGeneratePrompt();
+  const { data: feedbacksData } = useAgentFeedbacks(bot?.id);
+  const rebuildPromptMutation = useRebuildAgentPrompt(bot?.id ?? "");
+
+  const approvedFeedbacks = (feedbacksData ?? []).filter((fb) => fb.status === "approved");
+
+  const handleRebuildPromptFromFeedbacks = async () => {
+    if (!bot?.id) return;
+    try {
+      const res = await rebuildPromptMutation.mutateAsync();
+      form.setValue("system_prompt", res.systemPrompt, { shouldValidate: true, shouldDirty: true });
+      form.setValue("generated_system_prompt", res.systemPrompt, { shouldDirty: true });
+      if (!form.getValues("wizard_config.isCustomEdited")) {
+        form.setValue("wizard_config.isCustomEdited", true, { shouldDirty: true });
+      }
+      toast.success(res.summaryOfChanges || "Системный промпт агента успешно пересобран!");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось пересобрать промпт");
+    }
+  };
 
   const form = useForm<CreateBotPayload>({
     resolver: zodResolver(createBotSchema),
@@ -1194,6 +1218,26 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                             </span>
                           )}
                         </button>
+                        {isEdit && bot && (
+                          <button
+                            type="button"
+                            onClick={() => setPromptTab("feedbacks")}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer",
+                              promptTab === "feedbacks"
+                                ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                                : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                            )}
+                          >
+                            <MessageSquareQuote className="h-3.5 w-3.5" />
+                            Обучение на диалогах
+                            {approvedFeedbacks.length > 0 && (
+                              <span className="ml-1 inline-flex items-center px-1.5 py-0.2 rounded text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                {approvedFeedbacks.length}
+                              </span>
+                            )}
+                          </button>
+                        )}
                       </div>
 
                       <button
@@ -1232,6 +1276,60 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                           contextWindow={modelInfo.context_window}
                           error={errors.system_prompt?.message}
                         />
+                      </div>
+                    )}
+
+                    {promptTab === "feedbacks" && (
+                      <div className="space-y-4 pt-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
+                          <div className="space-y-1">
+                            <h4 className="text-xs font-semibold text-[#111111] flex items-center gap-1.5">
+                              <MessageSquareQuote className="h-4 w-4 text-[#4a38f5]" />
+                              Пересборка системного промпта по правилам обучения
+                            </h4>
+                            <p className="text-xs text-[#666666] leading-relaxed">
+                              Утвержденные правила из диалогов с клиентами интегрируются в валидную структуру &lt;director_system_prompt&gt;.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={rebuildPromptMutation.isPending || approvedFeedbacks.length === 0}
+                            onClick={handleRebuildPromptFromFeedbacks}
+                            className="h-8 shrink-0 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs"
+                          >
+                            {rebuildPromptMutation.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            <span>Пересобрать промпт агента</span>
+                          </button>
+                        </div>
+
+                        {approvedFeedbacks.length === 0 ? (
+                          <div className="rounded-[8px] border border-dashed border-[#e5e5e5] p-6 text-center text-xs text-[#666666]">
+                            У этого агента пока нет утвержденных правил обучения. Оценивайте диалоги в CRM или подтверждайте правила в базе знаний.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-[#111111]">
+                              Утвержденные правила обучения ({approvedFeedbacks.length}):
+                            </p>
+                            <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                              {approvedFeedbacks.map((fb, idx) => (
+                                <div key={fb.id} className="p-3 rounded-[6px] border border-[#e5e5e5] bg-white text-xs space-y-1">
+                                  <div className="flex items-center justify-between text-[11px] text-[#666666]">
+                                    <span className="font-semibold text-[#111111]">Правило #{idx + 1}</span>
+                                    <span>Оценка: {fb.rating}/5</span>
+                                  </div>
+                                  <p className="text-[#333333] font-mono text-[11px]">
+                                    {fb.compiledRule || fb.userComment}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

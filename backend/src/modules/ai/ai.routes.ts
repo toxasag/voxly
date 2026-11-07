@@ -517,6 +517,18 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ data: result });
   });
 
+  app.delete("/agents/:id/feedback/:feedbackId", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, feedbackId } = feedbackParams.parse(request.params);
+    const result = await service.deleteFeedback(request.tenant_id, id, feedbackId);
+    return reply.send({ data: result });
+  });
+
+  app.post("/agents/:id/rebuild-prompt", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const result = await service.rebuildAgentPromptWithFeedbacks(request.tenant_id, id);
+    return reply.send({ data: result });
+  });
+
   const handlePromptPreview = async (
     request: { tenant_id: string; params: unknown; body?: unknown },
     reply: { send: (payload: unknown) => unknown },

@@ -15,6 +15,7 @@ import {
   MessageSquare,
   MessageSquareQuote,
   Plus,
+  RefreshCw,
   Save,
   Sparkles,
   Star,
@@ -30,10 +31,12 @@ import {
   useApproveFeedback,
   useCrawlSite,
   useCrmKnowledgeStats,
+  useDeleteFeedback,
   useDeleteKnowledgeDocument,
   useImportKnowledgeUrl,
   useImportMapReviews,
   useKnowledgeDocuments,
+  useRebuildAgentPrompt,
   useRejectFeedback,
   useSalesExamples,
   useSyncKnowledgeMd,
@@ -176,6 +179,8 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const { data: feedbacksData, isLoading: isLoadingFeedbacks } = useAgentFeedbacks(agentId);
   const approveFeedback = useApproveFeedback(agentId);
   const rejectFeedback = useRejectFeedback(agentId);
+  const deleteFeedback = useDeleteFeedback(agentId);
+  const rebuildPrompt = useRebuildAgentPrompt(agentId);
   const syncKnowledgeMd = useSyncKnowledgeMd(agentId);
 
   const [activeSubTab, setActiveSubTab] = useState<"documents" | "markdown" | "feedback" | "sales">("documents");
@@ -404,6 +409,31 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
     },
     [rejectFeedback],
   );
+
+  const handleDeleteFeedback = useCallback(
+    (feedbackId: string) => {
+      void deleteFeedback
+        .mutateAsync({ feedbackId })
+        .then(() => {
+          toast.success("Запись отзыва удалена");
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Ошибка удаления отзыва");
+        });
+    },
+    [deleteFeedback],
+  );
+
+  const handleRebuildPrompt = useCallback(() => {
+    void rebuildPrompt
+      .mutateAsync()
+      .then((res) => {
+        toast.success(res.summaryOfChanges || "Системный промпт агента успешно пересобран!");
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : "Не удалось пересобрать промпт");
+      });
+  }, [rebuildPrompt]);
 
   const isBusy =
     uploadFile.isPending ||
@@ -1150,26 +1180,50 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                 </p>
               </div>
 
-              {/* Фильтр по статусу */}
-              <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-[#e5e5e5]">
-                {(["all", "pending", "approved", "rejected"] as const).map((status) => (
+              <div className="flex flex-wrap items-center gap-2">
+                {canEdit && (
                   <button
-                    key={status}
                     type="button"
-                    onClick={() => setFeedbackFilter(status)}
-                    className={cn(
-                      "px-2.5 py-1 text-xs rounded font-medium transition-colors cursor-pointer",
-                      feedbackFilter === status
-                        ? "bg-[#4a38f5] text-white"
-                        : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
-                    )}
+                    disabled={rebuildPrompt.isPending}
+                    onClick={handleRebuildPrompt}
+                    className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs"
+                    title="Собрать все утвержденные правила обучения и встроить их в системный промпт агента"
                   >
-                    {status === "all" && "Все"}
-                    {status === "pending" && "На проверке"}
-                    {status === "approved" && "Утверждённые"}
-                    {status === "rejected" && "Отклонённые"}
+                    {rebuildPrompt.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    <span>Пересобрать промпт агента</span>
+                    {(feedbacksData?.filter((fb) => fb.status === "approved").length ?? 0) > 0 && (
+                      <span className="ml-1 inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] bg-white/20 text-white font-mono font-medium">
+                        {feedbacksData?.filter((fb) => fb.status === "approved").length}
+                      </span>
+                    )}
                   </button>
-                ))}
+                )}
+
+                {/* Фильтр по статусу */}
+                <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-[#e5e5e5]">
+                  {(["all", "pending", "approved", "rejected"] as const).map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setFeedbackFilter(status)}
+                      className={cn(
+                        "px-2.5 py-1 text-xs rounded font-medium transition-colors cursor-pointer",
+                        feedbackFilter === status
+                          ? "bg-[#4a38f5] text-white"
+                          : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                      )}
+                    >
+                      {status === "all" && "Все"}
+                      {status === "pending" && "На проверке"}
+                      {status === "approved" && "Утверждённые"}
+                      {status === "rejected" && "Отклонённые"}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1243,6 +1297,17 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                                 {isApproved && "Утверждено в базу знаний"}
                                 {item.status === "rejected" && "Отклонено"}
                               </span>
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  disabled={deleteFeedback.isPending}
+                                  onClick={() => handleDeleteFeedback(item.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors cursor-pointer"
+                                  title="Удалить запись обратной связи"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                             </div>
                           </div>
 

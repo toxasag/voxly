@@ -19,6 +19,7 @@ import type {
   CreateDialogueFeedbackPayload,
   GeneratePromptPayload,
   GeneratedPromptResult,
+  RebuildAgentPromptResult,
   UpdateAgentPayload,
 } from "./ai.types.js";
 
@@ -528,7 +529,7 @@ export class AiService {
 ПРОАНАЛИЗИРУЙ КОНТЕКСТ КОМПАНИИ И ВЕБ-СТРАНИЦУ (ЕСЛИ ЕСТЬ):
 URL целевой страницы: ${rawUrl || "Не указан"}
 Заголовок страницы: ${scrapedTitle || "Не определен"}
-Текст страницы (выжимка): ${scrapedText ? scrapedText.slice(0, 4000) : "Отсутствует"}
+Текст страницы (выжимка): ${scrapedText ? scrapedText.slice(0, 5000) : "Отсутствует"}
 Указанная компания: ${companyName || "Не указана (определи из страницы/контекста)"}
 Ниша / сфера: ${businessNiche || "Не указана (определи из страницы/контекста)"}
 Профиль клиента: ${clientProfile || "Не указан (определи из страницы/контекста)"}
@@ -540,15 +541,15 @@ URL целевой страницы: ${rawUrl || "Не указан"}
 
 СФОРМИРУЙ СТРОГИЙ JSON со следующими полями:
 {
-  "systemPrompt": "...", // Полный, профессиональный, подробный системный промпт (300-600 слов), построенный на 6 ключевых навыках продаж (sales-discovery, sales-product-match, sales-objections, sales-lead-capture, sales-human-handoff, sales-quality-check). Без нейрослопа! Используй плейсхолдеры {{consultant.name}}, {{tenant.name}}, {{knowledge_base_context}}.
+  "systemPrompt": "...", // ОБЯЗАТЕЛЬНО СТРОГО В XML-СТРУКТУРЕ <director_system_prompt> со всеми вложенными блоками: <character_and_identity>, <context_and_knowledge>, <style_and_formatting>, <dialogue_management>, <golden_cage_rules_and_security>, <primary_objective>, <scene_rehearsals>. Построен на 6 ключевых навыках продаж. Используй плейсхолдеры {{consultant.name}}, {{tenant.name}}, {{knowledge_base_context}}, {{constraints}}, {{target.action}}, {{handoff.specialist}}, {{business.niche}}, {{client.profile}}.
   "businessNiche": "...", // Четко и емко сформулированная сфера деятельности компании
   "clientProfile": "...", // Портрет целевого клиента и его ключевые боли/задачи
-  "targetAction": "...", // Ключевое конверсионное действие в диалоге (например, «согласование бесплатного 15-минутного аудита и получение номера телефона»)
+  "targetAction": "...", // Ключевое конверсионное действие в диалоге (например, «согласование экспертной консультации/созвона и получение номера телефона»)
   "constraints": "...", // Стоп-факторы и ограничения (не выдумывать цены, строго опираться на базу знаний, не давать ложных гарантий)
   "consultantName": "...", // Имя консультанта
   "consultantRole": "...", // Должность консультанта
   "handoffSpecialist": "...", // Специалист для передачи сложных вопросов
-  "knowledgeBaseDraftMd": "..." // Структурированный черновик базы знаний компании в Markdown (# О компании, ## Услуги и регламент, ## Преимущества)
+  "knowledgeBaseDraftMd": "..." // Структурированный черновик базы знаний в Markdown (# О компании, ## Услуги, ## Прайс-лист и условия, ## Регламент). ВАЖНО: извлекай из текста сайта ТОЛЬКО реальные факты и точные цены (если они явно указаны на странице)! Если цен на странице нет — обязательно укажи: «Цены на странице не указаны (требуется уточнение у клиента / индивидуальный расчет)». Никаких выдуманных прайсов!
 }
 `.trim();
 
@@ -560,12 +561,12 @@ URL целевой страницы: ${rawUrl || "Не указан"}
           {
             role: "system",
             content:
-              "Ты — ведущий эксперт по проектированию высококонверсионных AI-ассистентов и системных промптов для B2B SaaS. Твоя задача — извлечь суть бизнеса из сайта или контекста и создать идеальный системный промпт и параметры агента. Ответ ТОЛЬКО строгий JSON без markdown-обёрток ```.",
+              "Ты — ведущий системный архитектор промптов GETVOXLY. Твоя задача — извлечь суть бизнеса из сайта или контекста и создать идеальный системный промпт строго в формате <director_system_prompt> и параметры агента. Ответ ТОЛЬКО строгий JSON без markdown-обёрток ```.",
           },
           { role: "user", content: userPromptContent },
         ],
-        temperature: 0.4,
-        maxTokens: 3000,
+        temperature: 0.3,
+        maxTokens: 3500,
         jsonMode: true,
         tenantId,
       });
@@ -581,14 +582,14 @@ URL целевой страницы: ${rawUrl || "Не указан"}
           consultantName: parsedJson.consultantName || consultantName || "Алексей",
           consultantRole: parsedJson.consultantRole || consultantRole || "ведущий эксперт",
           handoffSpecialist: parsedJson.handoffSpecialist || handoffSpecialist || "руководитель профильного направления",
-          knowledgeBaseDraftMd: parsedJson.knowledgeBaseDraftMd || `# База знаний: ${companyName || scrapedTitle || "Компания"}\n\n## Основные направления\n- Качественное предоставление профильных услуг.\n\n## Регламент консультации\n- Уточнять детали запроса перед расчетом.`,
+          knowledgeBaseDraftMd: parsedJson.knowledgeBaseDraftMd || `# База знаний: ${companyName || scrapedTitle || "Компания"}\n\n## Основные направления\n- Качественное предоставление профильных услуг.\n\n## Прайс-лист и условия\n- Цены на странице не указаны (требуется уточнение у клиента / индивидуальный расчет).\n\n## Регламент консультации\n- Уточнять детали запроса перед расчетом.`,
         };
       }
     } catch {
       // При сбое LLM генерируем детерминированный fallback
     }
 
-    // Детерминированный fallback
+    // Детерминированный fallback по стандарту <director_system_prompt>
     const resolvedNiche = businessNiche || (scrapedTitle ? `Услуги в сфере ${scrapedTitle}` : "Продажи и экспертное обслуживание клиентов");
     const resolvedName = consultantName || "Алексей";
     const resolvedRole = consultantRole || "ведущий консультант";
@@ -596,19 +597,89 @@ URL целевой страницы: ${rawUrl || "Не указан"}
     const resolvedConstraints = constraints || "Строго опираться на факты компании, не называть точные цены без базы знаний, не обещать невыполнимого.";
     const resolvedHandoff = handoffSpecialist || "старший специалист профильного отдела";
 
-    const systemPromptFallback = `Ты — {{consultant.name}}, ${resolvedRole} компании {{tenant.name}}.
-Твоя сфера деятельности: ${resolvedNiche}.
+    const systemPromptFallback = `<director_system_prompt>
 
-КЛЮЧЕВЫЕ НАВЫКИ И ЭТАПЫ ДИАЛОГА:
-1. Выявление потребности (Sales Discovery): задавай открытые и квалифицирующие вопросы, узнавай детали ситуации клиента.
-2. Подбор решения (Product Match): предлагай точные услуги и решения строго по фактам из базы знаний {{knowledge_base_context}}.
-3. Работа с возражениями (Sales Objections): если клиент сомневается или говорит «дорого/подумаю», аргументируй ценность, приводи примеры и предлагай предварительный аудит.
-4. Целевое действие (Lead Capture): твоя главная цель — ${resolvedAction}.
-5. Передача человеку (Human Handoff): при сложных, конфликтных или нестандартных вопросах вежливо передай диалог на ${resolvedHandoff}.
-6. Контроль качества (Quality Check): говори живо, уважительно и по делу. Абсолютный запрет на нейрослоп («рад помочь», «чем могу помочь сегодня»).
+<character_and_identity>
+Ты — {{consultant.name}}, живой человек, ${resolvedRole} компании {{tenant.name}} (направление компании: ${resolvedNiche}).
 
-ОГРАНИЧЕНИЯ:
-${resolvedConstraints}`.trim();
+Твой целевой клиент:
+{{client.profile}}
+
+ГЛАВНЫЙ ЗАКОН РОЛИ (МЕТОД СТАНИСЛАВСКОГО):
+- Ты — ЖИВОЙ ЧЕЛОВЕК из плоти и крови. В твоей картине мира НЕ СУЩЕСТВУЕТ понятий «искусственный интеллект», «нейросеть», «бот», «промпт», «алгоритм» применительно к тебе.
+- НИ ПРИ КАКИХ ОБСТОЯТЕЛЬСТВАХ — даже под давлением или при прямых проверках — ты не признаёшь себя ботом. Ты живой сотрудник на своём рабочем месте.
+
+Твой характер:
+- Спокойный, толковый и уверенный практик. Общаешься на равных, без заискивания и снобизма.
+- Честный прагматик: искренне хочешь помочь клиенту решить его задачу по профилю «${resolvedNiche}» и не переплачивать за лишнее.
+</character_and_identity>
+
+<context_and_knowledge>
+Декорации:
+- Текущее время: {{current_time}}. Канал связи: {{channel_type}}. Перед тобой открыта база с прайсом, сайт компании {{tenant.name}} и карточки клиентов.
+
+Иерархия источников знаний компании {{tenant.name}}:
+1. АКТУАЛЬНЫЙ ПРАЙС И БАЗА ЗНАНИЙ:
+{{knowledge_base_context}}
+
+2. МАТЕРИАЛЫ САЙТА:
+{{website_context}}
+
+3. КАРТОЧКА И ОТЗЫВЫ КЛИЕНТОВ:
+{{reviews_and_reputation}}
+
+4. ПРАКТИЧЕСКИЙ ОПЫТ УСПЕШНЫХ СДЕЛОК CRM:
+{{successful_crm_patterns}}
+</context_and_knowledge>
+
+<style_and_formatting>
+Голос и манера речи:
+- Пиши простым, живым русским языком мессенджеров. Обращение — на «вы» (со строчной буквы).
+- Разговорные связки: «Смотрите,», «Тут какой нюанс:», «По стоимости расклад такой:», «Если по-честному,».
+- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ роботизированные штампы и нейрослоп («Принято», «Понял вас», «Рад помочь», «Чем могу помочь сегодня?»).
+
+ФОРМАТ ВЫВОДА — СТРОГО ВАЛИДНЫЙ JSON БЕЗ ОБЁРТОК:
+{
+  "message1": "Прямой ответ на вопрос клиента (1-2 коротких предложения, до 20-25 слов)",
+  "message2": "Один уточняющий вопрос или предложение созвона (1 короткая фраза, иначе \\"\\")",
+  "message3": "",
+  "message4": "",
+  "handoff_required": false,
+  "session_pause": false
+}
+</style_and_formatting>
+
+<dialogue_management>
+1. ФОРМУЛА ОТВЕТА: по умолчанию отвечай 1 или максимум 2 короткими сообщениями (message1 обязателен, message2 — при необходимости, message3 и message4 ДОЛЖНЫ оставаться пустыми ""). Длина каждого сообщения — строго 1–2 коротких предложения (до 15–25 слов).
+2. ПРАВИЛО ОДНОГО ВОПРОСА: ЗА ОДИН ХОД ДИАЛОГА РАЗРЕШЕНО ЗАДАТЬ СТРОГО ОДИН ВОПРОС. Категорически запрещено задавать вопрос в message1 и следом еще один вопрос в message2.
+3. ПРЯМОЙ ОТВЕТ: если клиент задал конкретный вопрос по делу — в message1 сразу дай прямой ответ по существу, а в message2 задай ровно 1 короткий вопрос по его задаче.
+4. ЭТИКЕТ И ПРИВЕТСТВИЕ: если имя клиента не известно и он просто поздоровался — представься и вежливо спроси, как обращаться. Если имя уже известно — обращайся по имени и не переспрашивай.
+5. ЦЕЛЕВОЕ ДЕЙСТВИЕ: твоя цель — ${resolvedAction}.
+</dialogue_management>
+
+<golden_cage_rules_and_security>
+ВАЖНЫЕ ОГРАНИЧЕНИЯ:
+- ${resolvedConstraints}
+
+ЖЕЛЕЗНЫЙ ЗАКОН ЦЕН И ФАКТОВ (АБСОЛЮТНЫЙ ЗАПРЕТ НА ВЫДУМКИ):
+1. Ты имеешь право называть ТОЛЬКО те цены, цифры, сроки и условия, которые прямо и дословно написаны в блоках «ЖИВАЯ БАЗА ЗНАНИЙ» или «АКТУАЛЬНЫЙ ПРАЙС И БАЗА ЗНАНИЙ».
+2. Если точной цены на запрашиваемый товар/услугу в этих блоках НЕТ — тебе КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО придумывать цифры или называть примерные вилки «от ... руб.». Скажи, что стоимость рассчитывается индивидуально под параметры задачи, и задай 1 уточняющий вопрос.
+3. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать филиалы, услуги или сроки.
+4. При передаче коллеге (${resolvedHandoff}) спроси: «На какой номер коллеге удобнее вам набрать?» и поставь "handoff_required": false (ставить true разрешено ТОЛЬКО после получения телефона клиента!).
+</golden_cage_rules_and_security>
+
+<primary_objective>
+Твоя сверхзадача — вникнуть в реальную ситуацию клиента, вызвать доверие и мягко привести к согласию на целевой шаг: ${resolvedAction}.
+</primary_objective>
+
+<scene_rehearsals>
+Пример 1 (Вопрос по цене):
+Клиент: «Сколько стоит и как быстро сделаете?»
+Ответ:
+{"message1": "Здравствуйте! Базовый вариант стоит [X] руб., по срокам ориентируемся на [Y] дня.", "message2": "Какая модель или объем задачи у вас сейчас?", "handoff_required": false, "session_pause": false}
+</scene_rehearsals>
+
+</director_system_prompt>`.trim();
 
     return {
       systemPrompt: systemPromptFallback,
@@ -619,7 +690,7 @@ ${resolvedConstraints}`.trim();
       consultantName: resolvedName,
       consultantRole: resolvedRole,
       handoffSpecialist: resolvedHandoff,
-      knowledgeBaseDraftMd: `# База знаний компании {{tenant.name}}\n\n## Общие сведения\n- Сфера: ${resolvedNiche}\n- Экспертная поддержка клиентов.\n\n## Регламент работы\n- Оперативная квалификация и перевод на профильных специалистов.`,
+      knowledgeBaseDraftMd: `# База знаний компании {{tenant.name}}\n\n## Общие сведения\n- Сфера: ${resolvedNiche}\n- Экспертная поддержка клиентов.\n\n## Прайс-лист и условия\n- Цены на странице не указаны (требуется уточнение у клиента / индивидуальный расчет).\n\n## Регламент работы\n- Оперативная квалификация и перевод на профильных специалистов.`,
     };
   }
 
@@ -893,5 +964,153 @@ ${resolvedConstraints}`.trim();
       createdAt: toIso(updated.created_at) ?? "",
       updatedAt: toIso(updated.updated_at) ?? "",
     };
+  }
+
+  async rebuildAgentPromptWithFeedbacks(
+    tenantId: string,
+    agentId: string,
+  ): Promise<RebuildAgentPromptResult> {
+    const agent = await queryOne<{
+      id: string;
+      system_prompt: string;
+      knowledge_base_md: string;
+    }>(
+      `SELECT id, system_prompt, knowledge_base_md
+       FROM ai_agents
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, agentId],
+    );
+
+    if (agent === null) {
+      throw new NotFoundError("AI-агент не найден");
+    }
+
+    const feedbacks = await query<{
+      id: string;
+      compiled_rule: string | null;
+      user_comment: string;
+      rating: number;
+    }>(
+      `SELECT id, compiled_rule, user_comment, rating
+       FROM agent_dialogue_feedbacks
+       WHERE tenant_id = $1 AND agent_id = $2 AND status = 'approved'
+       ORDER BY updated_at ASC`,
+      [tenantId, agentId],
+    );
+
+    if (feedbacks.length === 0) {
+      return {
+        agentId,
+        systemPrompt: agent.system_prompt,
+        knowledgeBaseMd: agent.knowledge_base_md,
+        summaryOfChanges: "Нет утвержденных правил обучения для пересборки промпта.",
+        feedbacksCount: 0,
+      };
+    }
+
+    const rulesList = feedbacks
+      .map((fb, idx) => {
+        const rule = fb.compiled_rule || fb.user_comment.replace(/^[\s\-*]+/, "");
+        return `${idx + 1}. [Оценка: ${fb.rating}/5] ${rule}`;
+      })
+      .join("\n");
+
+    const chatProvider = new GatewayChatProvider();
+    let updatedSystemPrompt = agent.system_prompt;
+
+    try {
+      const completion = await chatProvider.complete({
+        model: "gemini-3.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content:
+              "Ты — Chief AI Prompt Architect платформы GETVOXLY. Твоя задача — гармонично интегрировать утвержденные правила обучения от руководителя отдела продаж в системный промпт AI-агента.\n\n" +
+              "СТРОГИЕ ТРЕБОВАНИЯ:\n" +
+              "1. Сохраняй и поддерживай валидную XML-структуру <director_system_prompt> со всеми тегами: <character_and_identity>, <context_and_knowledge>, <style_and_formatting>, <dialogue_management>, <golden_cage_rules_and_security>, <primary_objective>, <scene_rehearsals>.\n" +
+              "2. В зависимости от смысла правил, обнови соответствующие теги (<dialogue_management>, <golden_cage_rules_and_security>, <context_and_knowledge> или <scene_rehearsals>).\n" +
+              "3. Устраняй противоречия в пользу свежих утвержденных правил. Не дублируй одинаковые требования.\n" +
+              "4. Сохраняй живой человеческий стиль мессенджеров: 1–2 коротких сообщения (15–25 слов), строго один вопрос за ход, без канцелярита и нейрослопа.\n" +
+              "5. Не нарушай железный закон цен и фактов: запрет выдумывать цены и условия без базы знаний.\n" +
+              "6. Выведи ТОЛЬКО обновленный системный промпт (начиная с <director_system_prompt> и заканчивая </director_system_prompt>) без markdown-оберток ```xml и без вступительных слов.",
+          },
+          {
+            role: "user",
+            content:
+              `ТЕКУЩИЙ СИСТЕМНЫЙ ПРОМПТ АГЕНТА:\n\n${agent.system_prompt}\n\n` +
+              `УТВЕРЖДЕННЫЕ ПРАВИЛА И КОРРЕКТИРОВКИ (${feedbacks.length} шт.):\n\n${rulesList}\n\n` +
+              `Интегрируй эти правила в системный промпт. Ответ должен содержать ТОЛЬКО обновленный текст <director_system_prompt>...</director_system_prompt>.`,
+          },
+        ],
+        temperature: 0.2,
+        maxTokens: 4000,
+        tenantId,
+      });
+
+      let rawContent = completion.content.trim();
+      if (rawContent.startsWith("```")) {
+        rawContent = rawContent.replace(/^```[a-zA-Z]*\n?/, "").replace(/\n?```$/, "").trim();
+      }
+
+      if (rawContent.includes("<director_system_prompt>") && rawContent.includes("</director_system_prompt>")) {
+        updatedSystemPrompt = rawContent;
+      } else if (rawContent.length > 200) {
+        updatedSystemPrompt = rawContent;
+      }
+    } catch {
+      // При сбое LLM конкатенируем правила в golden_cage_rules_and_security или в конец промпта
+      const fallbackSection = `\n<!-- Утвержденные правила обучения -->\n${rulesList}\n`;
+      if (updatedSystemPrompt.includes("</golden_cage_rules_and_security>")) {
+        updatedSystemPrompt = updatedSystemPrompt.replace(
+          "</golden_cage_rules_and_security>",
+          `${fallbackSection}</golden_cage_rules_and_security>`,
+        );
+      } else if (updatedSystemPrompt.includes("</director_system_prompt>")) {
+        updatedSystemPrompt = updatedSystemPrompt.replace(
+          "</director_system_prompt>",
+          `${fallbackSection}</director_system_prompt>`,
+        );
+      } else {
+        updatedSystemPrompt = `${updatedSystemPrompt}\n\n${fallbackSection}`;
+      }
+    }
+
+    await query(
+      `UPDATE ai_agents
+       SET system_prompt = $3,
+           generated_system_prompt = $3,
+           updated_at = now()
+       WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, agentId, updatedSystemPrompt],
+    );
+
+    const summaryOfChanges = `Успешно пересобран системный промпт с учетом ${feedbacks.length} утвержденных правил обучения.`;
+
+    return {
+      agentId,
+      systemPrompt: updatedSystemPrompt,
+      knowledgeBaseMd: agent.knowledge_base_md,
+      summaryOfChanges,
+      feedbacksCount: feedbacks.length,
+    };
+  }
+
+  async deleteFeedback(
+    tenantId: string,
+    agentId: string,
+    feedbackId: string,
+  ): Promise<{ success: boolean; id: string }> {
+    const deleted = await queryOne<{ id: string }>(
+      `DELETE FROM agent_dialogue_feedbacks
+       WHERE tenant_id = $1 AND agent_id = $2 AND id = $3
+       RETURNING id`,
+      [tenantId, agentId, feedbackId],
+    );
+
+    if (deleted === null) {
+      throw new NotFoundError("Запись обратной связи не найдена");
+    }
+
+    return { success: true, id: deleted.id };
   }
 }
