@@ -2038,6 +2038,14 @@
     safeSessionStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
     setPersistentCookie(COOKIE_KEY_VISITOR, visitorId, 365);
 
+    // Сессия посетителя (для связки воронки VISIT -> WIDGET_OPEN -> CHAT_START -> LEAD)
+    var STORAGE_KEY_SESSION = 'getvoxly_session_' + channelAccountId;
+    var sessionId = safeSessionStorage.getItem(STORAGE_KEY_SESSION) || '';
+    if (!sessionId) {
+      sessionId = 'sess_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
+      safeSessionStorage.setItem(STORAGE_KEY_SESSION, sessionId);
+    }
+
     // Счётчик визитов
     var STORAGE_KEY_VISIT_COUNT = 'getvoxly_visit_count';
     var visitCount = parseInt(safeStorage.getItem(STORAGE_KEY_VISIT_COUNT) || '0', 10);
@@ -2078,6 +2086,42 @@
     var sendTimer = null;
     var proactiveTimer = null;
     var BUFFER_WAIT_MS = 3500;
+
+    // Отправка событий воронки виджета (VISIT, WIDGET_OPEN) через sendBeacon / fetch keepalive
+    function sendWidgetAnalyticsEvent(eventType, meta) {
+      try {
+        var payloadObj = {
+          widgetId: channelAccountId,
+          sessionId: sessionId,
+          visitorId: visitorId,
+          eventType: eventType,
+          event: eventType,
+          metadata: meta || {}
+        };
+        var jsonStr = JSON.stringify(payloadObj);
+        var targetUrl = apiUrl + '/api/v1/widgets/' + channelAccountId + '/events';
+
+        var beaconSent = false;
+        if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+          try {
+            var blob = new Blob([jsonStr], { type: 'application/json' });
+            beaconSent = navigator.sendBeacon(targetUrl, blob);
+          } catch (e) {
+            beaconSent = false;
+          }
+        }
+
+        if (!beaconSent && typeof fetch === 'function') {
+          fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: jsonStr,
+            keepalive: true,
+            mode: 'cors'
+          }).catch(function () {});
+        }
+      } catch (err) {}
+    }
 
     function destroyWidget(reason, isPermanent) {
       if (isPermanent === undefined) isPermanent = true;
@@ -3005,6 +3049,16 @@
       closePreChatModal();
       win.style.display = 'flex';
       wrapper.classList.add('is-chat-open');
+
+      // Фиксация события WIDGET_OPEN (первое открытие виджета в текущей сессии)
+      var KEY_OPEN_SENT = 'getvoxly_tracked_open_' + channelAccountId + '_' + sessionId;
+      if (!safeSessionStorage.getItem(KEY_OPEN_SENT)) {
+        safeSessionStorage.setItem(KEY_OPEN_SENT, 'true');
+        sendWidgetAnalyticsEvent('WIDGET_OPEN', {
+          pageUrl: typeof window !== 'undefined' ? window.location.href : '',
+        });
+      }
+
       if (isMobileScreen()) {
         lockMobileScroll();
         updateMobileViewport();
@@ -3340,6 +3394,18 @@
 
           // Аккаунт активен: отображаем виджет на сайте
           wrapper.style.removeProperty('display');
+
+          // Фиксация события VISIT (просмотр страницы с виджетом, 1 раз за сессию)
+          var KEY_VISIT_SENT = 'getvoxly_tracked_visit_' + channelAccountId + '_' + sessionId;
+          if (!safeSessionStorage.getItem(KEY_VISIT_SENT)) {
+            safeSessionStorage.setItem(KEY_VISIT_SENT, 'true');
+            sendWidgetAnalyticsEvent('VISIT', {
+              pageUrl: typeof window !== 'undefined' ? window.location.href : '',
+              referrer: typeof document !== 'undefined' ? (document.referrer || undefined) : undefined,
+              screen: dfp ? dfp.screen : undefined,
+              visitCount: visitCount,
+            });
+          }
 
           if (data.visitorId) {
             visitorId = data.visitorId;
@@ -4022,6 +4088,7 @@
 
         var payload = {
           visitorId: visitorId,
+          sessionId: sessionId,
           text: fullText || '',
           senderPhone: storedPhone,
           senderEmail: storedEmail,
