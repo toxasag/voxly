@@ -972,11 +972,46 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       status: row.status,
     });
 
+    let dealTitle: string | null = null;
+    let contactName: string | null = null;
+    let lastMessagePreview: string | null = null;
+
+    if (row.deal_id) {
+      const dealMeta = await queryOne<{
+        title: string | null;
+        contact_name: string | null;
+        last_message_preview: string | null;
+      }>(
+        `SELECT 
+           d.title,
+           NULLIF(TRIM(CONCAT(c.first_name, ' ', c.last_name)), '') AS contact_name,
+           (
+             SELECT dm.content
+             FROM deal_messages dm
+             WHERE dm.deal_id = d.id AND dm.tenant_id = d.tenant_id
+             ORDER BY dm.created_at DESC
+             LIMIT 1
+           ) AS last_message_preview
+         FROM deals d
+         LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id
+         WHERE d.id = $1 AND d.tenant_id = $2`,
+        [row.deal_id, tenantId],
+      );
+      if (dealMeta) {
+        dealTitle = dealMeta.title;
+        contactName = dealMeta.contact_name;
+        lastMessagePreview = dealMeta.last_message_preview;
+      }
+    }
+
     return {
       id: row.id,
       agentId: row.agent_id,
       dealId: row.deal_id,
+      dealTitle,
+      contactName,
       conversationId: row.conversation_id,
+      lastMessagePreview,
       rating: row.rating,
       userComment: row.user_comment,
       clarificationQa: row.clarification_qa || [],
@@ -992,7 +1027,10 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       id: string;
       agent_id: string;
       deal_id: string | null;
+      deal_title: string | null;
+      contact_name: string | null;
       conversation_id: string | null;
+      last_message_preview: string | null;
       rating: number;
       user_comment: string;
       clarification_qa: Array<{ question: string; answer?: string | null }>;
@@ -1001,10 +1039,32 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       created_at: Date | string;
       updated_at: Date | string;
     }>(
-      `SELECT id, agent_id, deal_id, conversation_id, rating, user_comment, clarification_qa, compiled_rule, status, created_at, updated_at
-       FROM agent_dialogue_feedbacks
-       WHERE tenant_id = $1 AND agent_id = $2
-       ORDER BY created_at DESC
+      `SELECT 
+         f.id, 
+         f.agent_id, 
+         f.deal_id, 
+         d.title AS deal_title,
+         NULLIF(TRIM(CONCAT(c.first_name, ' ', c.last_name)), '') AS contact_name,
+         f.conversation_id, 
+         (
+           SELECT dm.content 
+           FROM deal_messages dm 
+           WHERE dm.deal_id = f.deal_id AND dm.tenant_id = f.tenant_id 
+           ORDER BY dm.created_at DESC 
+           LIMIT 1
+         ) AS last_message_preview,
+         f.rating, 
+         f.user_comment, 
+         f.clarification_qa, 
+         f.compiled_rule, 
+         f.status, 
+         f.created_at, 
+         f.updated_at
+       FROM agent_dialogue_feedbacks f
+       LEFT JOIN deals d ON d.id = f.deal_id AND d.tenant_id = f.tenant_id
+       LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = f.tenant_id
+       WHERE f.tenant_id = $1 AND f.agent_id = $2
+       ORDER BY f.created_at DESC
        LIMIT 100`,
       [tenantId, agentId],
     );
@@ -1013,7 +1073,10 @@ URL целевой страницы: ${rawUrl || "Не указан"}
       id: r.id,
       agentId: r.agent_id,
       dealId: r.deal_id,
+      dealTitle: r.deal_title,
+      contactName: r.contact_name,
       conversationId: r.conversation_id,
+      lastMessagePreview: r.last_message_preview,
       rating: r.rating,
       userComment: r.user_comment,
       clarificationQa: r.clarification_qa || [],

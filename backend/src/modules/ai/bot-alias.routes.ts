@@ -92,6 +92,12 @@ export default async function botAliasRoutes(app: FastifyInstance): Promise<void
     return reply.send({ data: feedbacks });
   });
 
+  app.get("/:id/training-dialogs", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = botParams.parse(request.params);
+    const feedbacks = await service.listFeedbacks(request.tenant_id, id);
+    return reply.send({ data: feedbacks });
+  });
+
   app.post("/:id/feedback/:feedbackId/approve", { onRequest: writeAgents }, async (request, reply) => {
     const { id, feedbackId } = feedbackParams.parse(request.params);
     const result = await service.approveFeedback(request.tenant_id, id, feedbackId);

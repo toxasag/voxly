@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   BookOpen,
   CheckCircle2,
   Database,
   Edit3,
+  ExternalLink,
   Eye,
   FileCode,
   FileText,
@@ -1348,6 +1350,33 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                               )}
                             </div>
                           </div>
+
+                          {/* Источник: Сделка в CRM и последнее сообщение */}
+                          {(item.dealId || item.lastMessagePreview) && (
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] border border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2 text-xs">
+                              {item.dealId ? (
+                                <Link
+                                  href={`/crm/deals?record=${item.dealId}`}
+                                  target="_blank"
+                                  className="inline-flex items-center gap-1.5 font-medium text-[#4a38f5] hover:underline"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5" />
+                                  <span>{item.dealTitle || "Сделка в CRM"}</span>
+                                  {item.contactName && (
+                                    <span className="text-[#666666]">({item.contactName})</span>
+                                  )}
+                                </Link>
+                              ) : (
+                                <span className="text-[#666666]">Диалог в CRM</span>
+                              )}
+
+                              {item.lastMessagePreview && (
+                                <span className="text-[11px] text-[#666666] line-clamp-1 max-w-md">
+                                  <span className="font-medium text-[#111111]">Реплика:</span> {item.lastMessagePreview}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {/* Комментарий */}
                           <div className="text-xs bg-[#fafafa] p-3 rounded-[6px] border border-[#f0f0f0] space-y-1.5">
