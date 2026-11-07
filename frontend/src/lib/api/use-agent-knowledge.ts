@@ -398,6 +398,55 @@ export function useSalesExamples(
 // Просмотр и редактирование документов (актуализация цен и регламентов)
 // ---------------------------------------------------------------------------
 
+export interface KnowledgeChunkItem {
+  id: string;
+  chunkIndex: number;
+  content: string;
+  charsCount: number;
+}
+
+export function useKnowledgeDocumentChunks(
+  agentId: string,
+  docId: string | null,
+): UseQueryResult<KnowledgeChunkItem[], ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "knowledge", docId, "chunks"],
+    queryFn: async () => {
+      if (!docId) throw new Error("No docId");
+      const res = await apiClient.get<KnowledgeChunkItem[]>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/chunks`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId && docId),
+  });
+}
+
+export interface KnowledgeSearchHitItem {
+  content: string;
+  distance: number;
+  documentId: string;
+  filename: string;
+}
+
+export function useTestKnowledgeSearch(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeSearchHitItem[],
+  ApiClientError,
+  { query: string; limit?: number }
+> {
+  return useMutation({
+    mutationFn: async ({ query, limit }) => {
+      const res = await apiClient.post<KnowledgeSearchHitItem[]>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/search`,
+        { query, limit },
+      );
+      return res.data;
+    },
+  });
+}
+
 export function useKnowledgeDocumentDetail(
   agentId: string,
   docId: string | null,

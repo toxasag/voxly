@@ -109,6 +109,11 @@ const mapReviewsSchema = z.object({
   url: z.string().url("Укажите корректный URL на Яндекс Карты, 2ГИС, Google Maps, Zoon или Flamp"),
 });
 
+const knowledgeSearchSchema = z.object({
+  query: z.string().trim().min(1, "Поисковый запрос не может быть пустым").max(1000),
+  limit: z.number().int().min(1).max(20).optional(),
+});
+
 /**
  * Набор привязанных аккаунтов каналов — целиком, а не по одному.
  *
@@ -1144,6 +1149,24 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     const { id, docId } = documentParams.parse(request.params);
     const doc = await knowledge.getDocument(request.tenant_id, id, docId);
     return reply.send({ data: doc });
+  });
+
+  app.get("/agents/:id/knowledge/:docId/chunks", { onRequest: readAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const chunks = await knowledge.listDocumentChunks(request.tenant_id, id, docId);
+    return reply.send({ data: chunks, meta: { total: chunks.length } });
+  });
+
+  app.post("/agents/:id/knowledge/search", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = knowledgeSearchSchema.parse(request.body);
+    const hits = await knowledge.search({
+      tenantId: request.tenant_id,
+      agentId: id,
+      question: body.query,
+      limit: body.limit ?? 8,
+    });
+    return reply.send({ data: hits, meta: { total: hits.length } });
   });
 
   app.put("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {

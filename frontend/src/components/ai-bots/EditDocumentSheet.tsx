@@ -5,6 +5,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Code,
+  Database,
   FileText,
   Layers,
   Loader2,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/ai-bots/block-parser";
 import {
   useApproveKnowledgeDocument,
+  useKnowledgeDocumentChunks,
   useKnowledgeDocumentDetail,
   useRestructureKnowledgeDocument,
   useUpdateKnowledgeDocument,
@@ -51,7 +53,12 @@ export function EditDocumentSheet({
   const [filename, setFilename] = useState("");
   const [text, setText] = useState("");
   const [blocks, setBlocks] = useState<ContentBlock[]>([]);
-  const [viewMode, setViewMode] = useState<"blocks" | "raw">("blocks");
+  const [viewMode, setViewMode] = useState<"blocks" | "raw" | "chunks">("blocks");
+
+  const { data: chunks = [], isLoading: isChunksLoading } = useKnowledgeDocumentChunks(
+    agentId,
+    viewMode === "chunks" ? documentId : null,
+  );
 
   // Синхронизация при загрузке документа
   useEffect(() => {
@@ -71,12 +78,12 @@ export function EditDocumentSheet({
   };
 
   // Переключение режима отображения
-  const handleSwitchMode = (newMode: "blocks" | "raw") => {
+  const handleSwitchMode = (newMode: "blocks" | "raw" | "chunks") => {
     if (newMode === viewMode) return;
     if (newMode === "blocks") {
       // При переходе в блочный режим парсим актуальный текст
       setBlocks(parseMarkdownToBlocks(text));
-    } else {
+    } else if (newMode === "raw" && viewMode === "blocks") {
       // При переходе в сырой режим обновляем текст из блоков
       setText(serializeBlocksToMarkdown(blocks));
     }
@@ -336,11 +343,24 @@ export function EditDocumentSheet({
                       <Code className="h-3.5 w-3.5" />
                       Сырой текст
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchMode("chunks")}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-[6px] px-3 py-1 text-xs font-medium transition-colors",
+                        viewMode === "chunks"
+                          ? "bg-white text-[#4a38f5] shadow-xs font-semibold"
+                          : "text-[#666666] hover:text-[#111111]"
+                      )}
+                    >
+                      <Database className="h-3.5 w-3.5" />
+                      RAG-чанки ({document.chunksCount})
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {/* Содержимое: Блочный редактор или Сырой текст */}
+              {/* Содержимое: Блочный редактор, Сырой текст или RAG-чанки */}
               {viewMode === "blocks" ? (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-[#666666]">
@@ -355,7 +375,7 @@ export function EditDocumentSheet({
                     canEdit={canEdit}
                   />
                 </div>
-              ) : (
+              ) : viewMode === "raw" ? (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-[#666666]">
                     <span className="font-medium">Полный текст (Markdown / Текст)</span>
@@ -375,6 +395,48 @@ export function EditDocumentSheet({
                     placeholder="Введите текст документа, регламента, условий или прайса..."
                     className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 font-mono text-xs leading-relaxed text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 disabled:bg-[#fbfbfb]"
                   />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs text-[#666666]">
+                    <span className="font-medium">Фрагменты векторного индекса (RAG Chunks)</span>
+                    <span className="text-[11px] text-[#888888]">
+                      То, как документ видит поисковый движок PostgreSQL Vector
+                    </span>
+                  </div>
+                  {isChunksLoading ? (
+                    <div className="space-y-2 py-4">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="h-20 rounded-[8px] bg-slate-50 animate-pulse border border-[#e5e5e5]" />
+                      ))}
+                    </div>
+                  ) : chunks.length === 0 ? (
+                    <div className="rounded-[8px] border border-dashed border-[#e5e5e5] p-6 text-center text-xs text-[#666666]">
+                      У этого документа пока нет сохраненных векторных чанков.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {chunks.map((chunk) => (
+                        <div
+                          key={chunk.id}
+                          className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2"
+                        >
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-[#111111] flex items-center gap-1.5">
+                              <Database className="h-3.5 w-3.5 text-[#4a38f5]" />
+                              Чанк #{chunk.chunkIndex + 1}
+                            </span>
+                            <span className="text-[11px] font-mono text-[#888888]">
+                              {chunk.charsCount} символов · ID: {chunk.id.slice(0, 8)}...
+                            </span>
+                          </div>
+                          <div className="rounded-[6px] bg-[#fbfbfb] border border-[#f0f0f0] p-2.5 font-mono text-[11px] text-[#222222] whitespace-pre-wrap leading-relaxed select-text">
+                            {chunk.content}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </>

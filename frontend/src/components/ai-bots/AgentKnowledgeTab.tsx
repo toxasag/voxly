@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Sparkles,
   Star,
   Trash2,
@@ -40,8 +41,10 @@ import {
   useRejectFeedback,
   useSalesExamples,
   useSyncKnowledgeMd,
+  useTestKnowledgeSearch,
   useUploadKnowledgeFile,
   type KnowledgeDocument,
+  type KnowledgeSearchHitItem,
 } from "@/lib/api/use-agent-knowledge";
 import { useAiAgent } from "@/lib/api/use-ai-agents";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -183,10 +186,13 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const rebuildPrompt = useRebuildAgentPrompt(agentId);
   const syncKnowledgeMd = useSyncKnowledgeMd(agentId);
 
-  const [activeSubTab, setActiveSubTab] = useState<"documents" | "markdown" | "feedback" | "sales">("documents");
+  const [activeSubTab, setActiveSubTab] = useState<"documents" | "markdown" | "feedback" | "sales" | "inspector">("documents");
   const [markdownContent, setMarkdownContent] = useState("");
   const [isMarkdownDirty, setIsMarkdownDirty] = useState(false);
   const [feedbackFilter, setFeedbackFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<KnowledgeSearchHitItem[] | null>(null);
+  const testSearch = useTestKnowledgeSearch(agentId);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [textOpen, setTextOpen] = useState(false);
@@ -438,6 +444,22 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
       });
   }, [rebuildPrompt]);
 
+  const handleTestSearch = useCallback(
+    async (e?: React.FormEvent) => {
+      if (e) e.preventDefault();
+      const q = searchQuery.trim();
+      if (!q) return;
+
+      try {
+        const hits = await testSearch.mutateAsync({ query: q, limit: 10 });
+        setSearchResults(hits);
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "Ошибка выполнения поиска по вектору");
+      }
+    },
+    [searchQuery, testSearch],
+  );
+
   const isBusy =
     uploadFile.isPending ||
     addText.isPending ||
@@ -501,6 +523,19 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
         >
           <Sparkles className="h-3.5 w-3.5" />
           Опыт успешных сделок ({salesExamplesData?.length ?? 0})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("inspector")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "inspector"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <Search className="h-3.5 w-3.5" />
+          Инспектор RAG-поиска
         </button>
       </div>
 
@@ -1450,6 +1485,107 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Инспектор RAG-поиска */}
+      {activeSubTab === "inspector" && (
+        <div className="space-y-4">
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-[#111111] flex items-center gap-2">
+                <Search className="h-4 w-4 text-[#4a38f5]" />
+                Инспектор RAG-поиска (Retrieval Inspector)
+              </h3>
+              <p className="text-xs text-[#666666] leading-relaxed">
+                Введите реальный вопрос клиента, чтобы увидеть, какие именно фрагменты базы знаний и с каким коэффициентом сходства модель извлекает из PostgreSQL Vector и подмешивает в системный контекст.
+              </p>
+            </div>
+
+            <form onSubmit={handleTestSearch} className="flex gap-2">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Например: Сколько стоит списание долга? / Какие гарантии? / Где вы находитесь?"
+                className="flex-1 rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 shadow-2xs"
+              />
+              <button
+                type="submit"
+                disabled={testSearch.isPending || !searchQuery.trim()}
+                className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+              >
+                {testSearch.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
+                Проверить RAG-поиск
+              </button>
+            </form>
+
+            {searchResults !== null && (
+              <div className="space-y-3 pt-2 border-t border-[#f0f0f0]">
+                <div className="flex items-center justify-between text-xs text-[#666666]">
+                  <span>
+                    Найдено релевантных фрагментов:{" "}
+                    <strong className="text-[#111111] font-mono">{searchResults.length}</strong>
+                  </span>
+                  <span className="text-[11px] text-[#888888]">
+                    Порог отсечения: дистанция &lt;= 0.45 (сходство &gt;= 55%)
+                  </span>
+                </div>
+
+                {searchResults.length === 0 ? (
+                  <div className="rounded-[8px] border border-dashed border-[#e5e5e5] p-6 text-center text-xs text-[#666666]">
+                    По данному запросу в базе знаний агента нет похожих фрагментов. Модель ответит без специфических фактов или запросит уточнение.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {searchResults.map((hit, idx) => {
+                      const similarity = Math.max(0, Math.round((1 - hit.distance) * 100));
+                      const isHigh = similarity >= 70;
+                      const isMedium = similarity >= 55;
+
+                      return (
+                        <div
+                          key={idx}
+                          className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs space-y-2.5"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#4a38f5]/10 text-[10px] font-bold text-[#4a38f5]">
+                                #{idx + 1}
+                              </span>
+                              <span className="font-semibold text-[#111111]">{hit.filename}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  "inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border",
+                                  isHigh
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : isMedium
+                                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                                      : "bg-slate-50 text-slate-700 border-slate-200"
+                                )}
+                              >
+                                Сходство: {similarity}% (дистанция: {hit.distance.toFixed(3)})
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="rounded-[6px] bg-[#fbfbfb] border border-[#f0f0f0] p-3 font-mono text-[11px] text-[#222222] whitespace-pre-wrap leading-relaxed select-text">
+                            {hit.content}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
