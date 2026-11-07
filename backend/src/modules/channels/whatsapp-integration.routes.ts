@@ -1,12 +1,13 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { WhatsappEvolutionService } from "./whatsapp-evolution.service.js";
-import { queryOne, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
+import { query, queryOne, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
+import { chatEventBus } from "../crm/chat/chat-events.js";
 import { getEnv } from "../../config/env.js";
 import { safeEqual } from "../../services/credentials-cipher.js";
 
@@ -56,6 +57,225 @@ function asString(value: unknown): string {
 
 function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+export interface WhatsappHistorySyncParams {
+  tenantId: string;
+  dealId: string;
+  channelAccountId: string;
+  phone: string;
+  senderName?: string;
+  limit?: number;
+  log?: FastifyBaseLogger;
+}
+
+/**
+ * Синхронизирует историю сообщений WhatsApp (Evolution API / Baileys) в сделку.
+ * Подтягивает предшествующие сообщения из диалога (включая первое исходящее оператора).
+ */
+export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParams): Promise<number> {
+  const evolution = new WhatsappEvolutionService();
+  if (!evolution.isConfigured) return 0;
+
+  const account = await runWithTenantContext(params.tenantId, () =>
+    queryOne<{ id: string; credentials: { instanceName?: string } | null }>(
+      `SELECT id, credentials FROM channel_accounts
+       WHERE tenant_id = $1 AND id = $2 AND channel = 'whatsapp' AND deleted_at IS NULL`,
+      [params.tenantId, params.channelAccountId],
+    ),
+  );
+
+  const instanceName = account?.credentials?.instanceName;
+  if (!instanceName) return 0;
+
+  const cleanPhone = params.phone.replace(/\D/g, "");
+  if (!cleanPhone || cleanPhone.length < 10) return 0;
+
+  const remoteJid = params.phone.includes("@") ? params.phone : `${cleanPhone}@s.whatsapp.net`;
+
+  let records = await evolution.findMessages(instanceName, {
+    remoteJid,
+    offset: params.limit ?? 50,
+  });
+
+  if (!records || records.length === 0) {
+    if (!params.phone.includes("@")) {
+      records = await evolution.findMessages(instanceName, {
+        remoteJid: `${cleanPhone}@lid`,
+        offset: params.limit ?? 50,
+      });
+    }
+  }
+
+  if (!records || records.length === 0) return 0;
+
+  let insertedCount = 0;
+  const list = [...records].sort((a, b) => {
+    const tA = Number(a?.messageTimestamp || 0);
+    const tB = Number(b?.messageTimestamp || 0);
+    return tA - tB;
+  });
+
+  await runWithTenantContext(params.tenantId, async () => {
+    for (const item of list) {
+      const msg = asRecord(item.message);
+      if (!msg) continue;
+      const key = asRecord(item.key);
+      const isOutbound = asBoolean(key?.fromMe);
+      const msgTimestamp = Number(item.messageTimestamp);
+      const msgDate = msgTimestamp ? new Date(msgTimestamp * 1000) : new Date();
+
+      const documentMessage = asRecord(msg.documentMessage);
+      const imageMessage = asRecord(msg.imageMessage);
+      const videoMessage = asRecord(msg.videoMessage);
+      const audioMessage = asRecord(msg.audioMessage);
+      const isDocument = documentMessage !== null || asRecord(msg.documentWithCaptionMessage) !== null;
+      const isImage = imageMessage !== null;
+      const isVideo = videoMessage !== null;
+      const isAudio = audioMessage !== null;
+      const isMedia = isDocument || isImage || isVideo || isAudio;
+
+      let text = extractWaMessageText(msg);
+      let attachmentUrl: string | null = null;
+      let attachmentType: string | null = null;
+
+      if (isMedia) {
+        try {
+          const downloaded = await evolution.downloadMedia(instanceName, item);
+          if (downloaded?.base64) {
+            const buffer = Buffer.from(downloaded.base64, "base64");
+            const mime =
+              downloaded.mimetype ||
+              (isDocument
+                ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                : isImage
+                  ? "image/jpeg"
+                  : isVideo
+                    ? "video/mp4"
+                    : isAudio
+                      ? "audio/ogg"
+                      : "application/octet-stream");
+
+            const documentFileName = asString(documentMessage?.fileName) || asString(documentMessage?.title);
+            const originalName =
+              downloaded.fileName ||
+              documentFileName ||
+              (isDocument ? "Документ.docx" : isImage ? "Изображение.jpg" : isVideo ? "Видео.mp4" : "Аудио.ogg");
+
+            const mediaService = new ChatMediaService();
+            const stored = await mediaService.storeBuffer({
+              buffer,
+              originalName,
+              mimeType: mime,
+              tenantId: params.tenantId,
+            });
+
+            attachmentUrl = stored.url;
+            attachmentType = stored.mimeType;
+
+            const rawCaption = [
+              asString(documentMessage?.caption),
+              asString(imageMessage?.caption),
+              asString(videoMessage?.caption),
+            ].find((caption) => caption.length > 0) ?? "";
+            if (!rawCaption || rawCaption === ".") {
+              text = originalName;
+            } else {
+              text = rawCaption;
+            }
+          }
+        } catch {
+          // ignore media download errors during history sync
+        }
+      }
+
+      if (!text && !attachmentUrl) continue;
+      if (!text && attachmentUrl) {
+        text = isDocument ? "Документ" : isImage ? "Изображение" : "Вложение";
+      }
+
+      const source = isOutbound ? "manager" : "client";
+      const direction = isOutbound ? "outbound" : "inbound";
+
+      const existing = await queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND channel = 'whatsapp'
+           AND (
+             (attachment IS NOT NULL AND attachment = $3)
+             OR (
+               content = $4
+               AND (
+                 created_at BETWEEN $5::timestamptz - interval '60 seconds' AND $5::timestamptz + interval '60 seconds'
+                 OR (direction = $6 AND created_at > now() - interval '2 minutes')
+               )
+             )
+           )
+         LIMIT 1`,
+        [
+          params.tenantId,
+          params.dealId,
+          attachmentUrl ?? null,
+          text,
+          msgDate.toISOString(),
+          direction,
+        ],
+      );
+
+      if (existing) continue;
+
+      const pushName = typeof item.pushName === "string" ? item.pushName.trim() : "";
+      const senderName = isOutbound ? "Менеджер" : (pushName || params.senderName || "Клиент WhatsApp");
+
+      const [inserted] = await query<{ id: string }>(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'whatsapp', $8, $9, $10, $11)
+         RETURNING id`,
+        [
+          params.tenantId,
+          params.dealId,
+          params.channelAccountId,
+          source,
+          direction,
+          senderName,
+          text,
+          isOutbound ? "sent" : "received",
+          attachmentUrl,
+          attachmentType,
+          msgDate.toISOString(),
+        ],
+      );
+
+      if (inserted) {
+        insertedCount++;
+        chatEventBus.emitChatEvent({
+          type: "message_created",
+          tenantId: params.tenantId,
+          dealId: params.dealId,
+          data: {
+            id: inserted.id,
+            tenantId: params.tenantId,
+            dealId: params.dealId,
+            channelAccountId: params.channelAccountId,
+            source,
+            direction,
+            senderName,
+            content: text,
+            channel: "whatsapp",
+            deliveryStatus: isOutbound ? "sent" : "received",
+            attachment: attachmentUrl,
+            attachmentType,
+            createdAt: msgDate.toISOString(),
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+  });
+
+  params.log?.info?.({ dealId: params.dealId, insertedCount }, "WhatsApp dialog history synced to deal");
+  return insertedCount;
 }
 
 async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyReply) {
@@ -241,6 +461,20 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
     if (crmResult.isBot) {
       request.log.info({ phoneE164 }, "Bot WhatsApp message ignored by CRM");
       continue;
+    }
+
+    // Фоновая синхронизация предшествующей истории переписки при создании сделки
+    if (crmResult.dealId && crmResult.isNewDeal) {
+      void syncWhatsappDialogHistory({
+        tenantId: account.tenant_id,
+        dealId: crmResult.dealId,
+        channelAccountId: account.id,
+        phone: phoneE164,
+        senderName,
+        log: request.log,
+      }).catch((err) => {
+        request.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync WhatsApp dialog history for new deal");
+      });
     }
 
     // Проверяем, не отключен ли или приостановлен AI-автопилот
