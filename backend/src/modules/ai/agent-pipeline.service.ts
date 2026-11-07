@@ -495,6 +495,7 @@ export class AgentPipelineService {
 
     const variables: Record<string, string> = {
       "tenant.name": effectiveTenantName,
+      "company.name": effectiveTenantName,
       "consultant.name": effectiveConsultantName,
       "consultant.role": effectiveConsultantRole,
       "channel_type": input.channelType ?? "онлайн-чат",
@@ -844,6 +845,7 @@ export class AgentPipelineService {
 
     const variables: Record<string, string> = {
       "tenant.name": effectiveTenantName,
+      "company.name": effectiveTenantName,
       "consultant.name": effectiveConsultantName,
       "consultant.role": effectiveConsultantRole,
       "channel_type": "тестовый чат",
@@ -906,7 +908,29 @@ export class AgentPipelineService {
     });
 
     const parsed = parseAgentReply(completion.content);
-    let messages = parsed ? parsed.messages : [completion.content];
+    let messages: string[] = [];
+
+    if (parsed && parsed.messages.length > 0) {
+      messages = parsed.messages;
+    } else {
+      let cleaned = completion.content
+        .replace(/^```[a-z]*\s*/i, "")
+        .replace(/\s*```$/, "")
+        .trim();
+
+      if (cleaned.startsWith("{") || cleaned.includes('"message1"')) {
+        const match = cleaned.match(/"message1"\s*:\s*"((?:[^"\\]|\\.)*)/i);
+        if (match && match[1] && match[1].trim().length > 0) {
+          cleaned = match[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+        } else {
+          cleaned = cleaned
+            .replace(/^[{\s]*"message[1-4]"\s*:\s*"?/i, "")
+            .replace(/["\s}]*$/i, "")
+            .trim();
+        }
+      }
+      messages = cleaned.length > 0 ? [cleaned] : ["Здравствуйте! Чем могу вам помочь?"];
+    }
 
     if (messages.length > 0) {
       const channelType = normalizeChannelType(input.channelType);

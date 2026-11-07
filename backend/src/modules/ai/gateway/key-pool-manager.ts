@@ -86,14 +86,15 @@ export class KeyPoolManager {
         rawKeys.push(...process.env.DEEPSEEK_API_KEYS.split(/[\r\n,]+/).map((k) => k.trim()));
       }
       if (env.LLM_API_KEY && !rawKeys.includes(env.LLM_API_KEY.trim())) {
-        // Если провайдер совпадает с основным LLM_API_BASE_URL
+        // Если настроен базовый шлюз LLM_API_BASE_URL (OmniRoute, OpenRouter, LiteLLM)
         const baseUrl = env.LLM_API_BASE_URL || "";
         const isMatch =
           (provider === "gemini" && baseUrl.includes("googleapis.com")) ||
           (provider === "openai" && baseUrl.includes("openai.com")) ||
           (provider === "deepseek" && baseUrl.includes("deepseek.com")) ||
           (provider === "openrouter" && baseUrl.includes("openrouter.ai")) ||
-          provider === "custom";
+          provider === "custom" ||
+          Boolean(baseUrl);
         if (isMatch) {
           rawKeys.push(env.LLM_API_KEY.trim());
         }
