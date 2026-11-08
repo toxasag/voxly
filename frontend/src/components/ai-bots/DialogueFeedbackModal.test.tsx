@@ -45,6 +45,7 @@ const sampleMessages: ChatMessageDTO[] = [
     attachment: null,
     attachmentType: null,
     deliveryStatus: "received",
+    deliveryError: null,
     createdAt: "2026-11-08T01:00:00.000Z",
   },
   {
@@ -59,6 +60,7 @@ const sampleMessages: ChatMessageDTO[] = [
     attachment: null,
     attachmentType: null,
     deliveryStatus: "sent",
+    deliveryError: null,
     createdAt: "2026-11-08T01:01:00.000Z",
   },
 ];
@@ -87,9 +89,9 @@ describe("DialogueFeedbackModal", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("Обучить агента «Ассистент»")).toBeInTheDocument();
-    expect(screen.getByText("Какая стоимость аппарата Шарм?")).toBeInTheDocument();
-    expect(screen.getByText("Стоимость аппарата составляет 10 000 рублей, доставим бесплатно.")).toBeInTheDocument();
+    expect(screen.getByText("Обучить агента «Ассистент»")).toBeDefined();
+    expect(screen.getByText("Какая стоимость аппарата Шарм?")).toBeDefined();
+    expect(screen.getByText("Стоимость аппарата составляет 10 000 рублей, доставим бесплатно.")).toBeDefined();
   });
 
   it("appends quotation to comment textarea without erasing existing text", async () => {
@@ -106,11 +108,11 @@ describe("DialogueFeedbackModal", () => {
       </QueryClientProvider>,
     );
 
-    const textarea = screen.getByPlaceholderText(/Что именно агент сформулировал некорректно/i);
+    const textarea = screen.getByPlaceholderText(/Что именно агент сформулировал некорректно/i) as HTMLTextAreaElement;
 
     // Operator enters some initial notes
     fireEvent.change(textarea, { target: { value: "Нельзя называть заниженную цену." } });
-    expect(textarea).toHaveValue("Нельзя называть заниженную цену.");
+    expect(textarea.value).toBe("Нельзя называть заниженную цену.");
 
     // Click on quote button for the AI message
     const quoteButtons = screen.getAllByRole("button", { name: /Цитировать/i });
@@ -119,8 +121,8 @@ describe("DialogueFeedbackModal", () => {
     fireEvent.click(quoteButtons[1]); // Quote AI message
 
     // Textarea should contain previous text AND the new blockquote
-    expect(textarea).toHaveValue(
-      'Нельзя называть заниженную цену.\n\n> [Ассистент]: "Стоимость аппарата составляет 10 000 рублей, доставим бесплатно."\n\n',
+    expect(textarea.value).toBe(
+      'Нельзя называть заниженную цену.\n\n> [Ассистент, 01:01]: "Стоимость аппарата составляет 10 000 рублей, доставим бесплатно."\n\n',
     );
   });
 
@@ -153,6 +155,55 @@ describe("DialogueFeedbackModal", () => {
         expect.objectContaining({
           rating: 5,
           user_comment: expect.stringContaining("Цены сообщать только ориентировочно после осмотра"),
+        }),
+      );
+      expect(handleClose).toHaveBeenCalled();
+    });
+  });
+
+  it("renders compact rating in footer and removes redundant category and permanent rule blocks", async () => {
+    const handleClose = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DialogueFeedbackModal
+          open={true}
+          dealId="deal-100"
+          dealTitle="Заявка от Наталья"
+          contactName="Наталья"
+          messages={sampleMessages}
+          onClose={handleClose}
+        />
+      </QueryClientProvider>,
+    );
+
+    // Verify redundant blocks are removed
+    expect(screen.queryByText("Категория замечания")).toBeNull();
+    expect(screen.queryByText("Правило базы знаний")).toBeNull();
+    expect(screen.queryByText("Оценка качества ответов")).toBeNull();
+
+    // Verify compact footer rating label is present
+    expect(screen.getByText("Оценка:")).toBeDefined();
+    expect(screen.getByText("(отлично)")).toBeDefined();
+
+    // Click 3rd star (change rating to 3)
+    const star3Btn = screen.getByRole("button", { name: /3 звезд/i });
+    fireEvent.click(star3Btn);
+    expect(screen.getByText("(средне)")).toBeDefined();
+
+    const textarea = screen.getByPlaceholderText(/Что именно агент сформулировал некорректно/i);
+    fireEvent.change(textarea, {
+      target: { value: "Поправка логики ответа на запрос цен" },
+    });
+
+    const submitBtn = screen.getByRole("button", { name: /Отправить в обучение/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/api/v1/crm/deals/deal-100/feedback",
+        expect.objectContaining({
+          rating: 3,
+          user_comment: "Поправка логики ответа на запрос цен",
         }),
       );
       expect(handleClose).toHaveBeenCalled();
