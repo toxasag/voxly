@@ -546,7 +546,12 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     reply: { send: (payload: unknown) => unknown },
   ) => {
     const { id } = agentParams.parse(request.params);
-    const body = (request.body as { system_prompt?: string; systemPrompt?: string } | undefined) ?? {};
+    const body = (request.body as {
+      system_prompt?: string;
+      systemPrompt?: string;
+      company_name_override?: string;
+      companyNameOverride?: string;
+    } | undefined) ?? {};
 
     const agent = await queryOne<{
       id: string;
@@ -637,7 +642,12 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     }) + " МСК";
 
     const wc = (agent.wizard_config || {}) as Record<string, string | undefined>;
+    const bodyCompanyOverride =
+      (typeof body.company_name_override === "string" && body.company_name_override.trim().length > 0 ? body.company_name_override.trim() : null) ||
+      (typeof body.companyNameOverride === "string" && body.companyNameOverride.trim().length > 0 ? body.companyNameOverride.trim() : null);
+
     const effectiveCompanyName =
+      bodyCompanyOverride ||
       (agent.company_name_override && agent.company_name_override.trim().length > 0 ? agent.company_name_override.trim() : null) ||
       (wc.company_name_override && wc.company_name_override.trim().length > 0 ? wc.company_name_override.trim() : null) ||
       (wc.companyName && wc.companyName.trim().length > 0 ? wc.companyName.trim() : null) ||

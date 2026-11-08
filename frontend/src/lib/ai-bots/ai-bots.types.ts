@@ -105,10 +105,15 @@ export interface AiBot {
   system_prompt: string;
   context_entities: BotContextEntity[];
   company_name_override?: string;
+  companyNameOverride?: string;
   consultant_source?: "manual" | "chat_widget";
+  consultantSource?: "manual" | "chat_widget";
   consultant_name?: string;
+  consultantName?: string;
   consultant_role?: string;
+  consultantRole?: string;
   fallback_models?: string[];
+  fallbackModels?: string[];
   target_page_url?: string | null;
   generated_system_prompt?: string | null;
   knowledge_base_md?: string;
