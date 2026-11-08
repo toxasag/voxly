@@ -151,13 +151,16 @@ export const HIERARCHICAL_FALLBACK_MATRIX: Record<string, string[]> = {
   "claude-opus-4": ["gpt-4o", "claude-sonnet-4", "gpt-4o-mini"],
 
   // Fast & Cheap -> Resilient Cross-Provider Fallbacks
-  "gemini-3.8-flash": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
-  "gemini-3.5-flash": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
-  "gemini-2.5-flash": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
-  "gemini-3.5-flash-lite": ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
-  "gemini-flash-lite-latest": ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
-  "gemini-3.1-flash-lite": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash"],
-  "gpt-4o-mini": ["gemini-3.5-flash-lite", "deepseek-v3", "gemini-3.1-flash-lite"],
+  "gemini-3.8-flash": ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gpt-4o-mini"],
+  "gemini-3.5-flash": ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gpt-4o-mini"],
+  "gemini-3.5-flash-lite": ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gpt-4o-mini"],
+  "gemini-2.5-flash": ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
+  "gemini-2.5-flash-lite": ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"],
+  "free/gemini-3.8-flash": ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
+  "free/gemini-3.1-pro": ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-pro"],
+  "gemini-flash-lite-latest": ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"],
+  "gemini-3.1-flash-lite": ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"],
+  "gpt-4o-mini": ["gemini-3.5-flash-lite", "gemini-3.8-flash", "deepseek-v3"],
   "deepseek-v3": ["gpt-4o-mini", "gemini-3.5-flash-lite"],
 };
 

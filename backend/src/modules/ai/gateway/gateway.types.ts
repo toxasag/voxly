@@ -57,6 +57,8 @@ export const ProviderKeySlotSchema = z.object({
   cooldownUntil: z.number().default(0),
   cooldownReason: z.string().optional(),
   loadScore: z.number().default(0),
+  baseUrl: z.string().optional(),
+  providerId: z.string().optional(),
 });
 
 export type ProviderKeySlot = z.infer<typeof ProviderKeySlotSchema>;
@@ -75,6 +77,24 @@ export interface AcquiredSlot {
   tier: ModelTier;
   isFallback: boolean;
   loadScore: number;
+  baseUrl?: string;
+  providerId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Мониторинг доступности и здоровья модели
+// ---------------------------------------------------------------------------
+
+export interface ModelHealthStatus {
+  providerId: string;
+  providerType: string;
+  modelId: string;
+  status: "healthy" | "degraded" | "unavailable";
+  latencyMs?: number;
+  lastCheckedAt: number;
+  failureReason?: string;
+  statusCode?: number;
+  expiresAt: number;
 }
 
 export interface SlotReservationCheck {
