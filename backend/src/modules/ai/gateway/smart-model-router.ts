@@ -1,9 +1,13 @@
 import { getEnv } from "../../../config/env.js";
 import { AppError } from "../../../plugins/errorHandler.js";
-import { platformConfigService } from "../../admin/platform-config.service.js";
+import {
+  platformConfigService,
+  isGoogleCloudPropagationDelay,
+} from "../../admin/platform-config.service.js";
 import { keyPoolManager, KeyPoolManager } from "./key-pool-manager.js";
 import { modelTierRouter, ModelTierRouter } from "./model-tier-router.js";
 import { redisLuaLimiter, RedisLuaLimiter } from "./redis-lua-limiter.js";
+import { modelHealthService } from "./model-health.service.js";
 import {
   type GatewayChatMessage,
   type GatewayExecutionOptions,
@@ -160,6 +164,11 @@ export class SmartModelRouter {
           modelsChecked.push(candidateModel);
         }
 
+        // Проверяем статус доступности модели через ModelHealthService (0ms skip для нерабочих моделей)
+        if (!modelHealthService.isModelAvailable(profile.provider, candidateModel)) {
+          continue;
+        }
+
         const keysToExclude = Array.from(globallyExcludedKeyIds);
         for (const pair of excludedKeyModelPairs) {
           const colonIdx = pair.indexOf(":");
@@ -204,7 +213,7 @@ export class SmartModelRouter {
         );
       }
 
-      const activeBaseUrl = await this.resolveBaseUrl(selectedModelProfile.provider);
+      const activeBaseUrl = selectedSlot.baseUrl || (await this.resolveBaseUrl(selectedModelProfile.provider));
       const attemptTimeoutMs = options.timeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), attemptTimeoutMs);
@@ -244,8 +253,14 @@ export class SmartModelRouter {
             parsed.tokensIn + parsed.tokensOut,
           );
 
-          // Сбрасываем счетчик сбоев Circuit Breaker
+          // Сбрасываем счетчик сбоев Circuit Breaker и фиксируем здоровье модели
           await this.limiter.recordSuccess(selectedModelProfile.provider, selectedSlot.model);
+          modelHealthService.recordModelHealth(
+            selectedSlot.provider,
+            selectedSlot.model,
+            "healthy",
+            { latencyMs: Date.now() - startedAt },
+          );
 
           return {
             content: parsed.content,
@@ -264,10 +279,29 @@ export class SmartModelRouter {
         // 2. Обработка ошибок HTTP
         const responseText = await response.text().catch(() => "");
 
-        // Невалидный ключ (401/403)
+        // 2.1 Проверка на временную задержку активации IAM в Google Cloud (HTTP 403 / 400 propagation delay)
+        if (isGoogleCloudPropagationDelay(response.status, responseText)) {
+          platformConfigService.markKeyPendingActivation(selectedSlot.apiKey, 90_000);
+          await this.poolManager.handleRateLimit(
+            selectedSlot.keyId,
+            selectedModelProfile.provider,
+            selectedSlot.model,
+            response.headers,
+            "GOOGLE_IAM_PROPAGATION_PENDING",
+          );
+          excludedKeyModelPairs.add(`${selectedSlot.keyId}:${selectedSlot.model}`);
+          lastError = new AppError(
+            403,
+            "LLM_PROPAGATION_PENDING",
+            `Ключ ${selectedSlot.maskedKey} ожидает активации в Google Cloud (синхронизация IAM): переход к следующему ключу`,
+          );
+          continue;
+        }
+
+        // 2.2 Невалидный ключ (401 Bad Key / удаленный сервисный аккаунт)
         const isAuthError =
           response.status === 401 ||
-          response.status === 403 ||
+          (response.status === 403 && !isGoogleCloudPropagationDelay(response.status, responseText)) ||
           responseText.includes("API key not valid") ||
           responseText.includes("deleted or disabled");
 
@@ -280,7 +314,37 @@ export class SmartModelRouter {
           continue;
         }
 
-        // Превышение квот (HTTP 429 / Resource Exhausted)
+        // 2.3 Модель недоступна на провайдере (HTTP 402 Daily check-in / Sub required / 404 Retired / No channel)
+        const isModelUnavailable =
+          response.status === 402 ||
+          response.status === 404 ||
+          responseText.includes("Daily check-in required") ||
+          responseText.includes("available only with a subscription") ||
+          responseText.includes("insufficient credits") ||
+          responseText.includes("No available channel for model") ||
+          responseText.includes("no longer available");
+
+        if (isModelUnavailable) {
+          modelHealthService.recordModelHealth(
+            selectedSlot.provider,
+            selectedSlot.model,
+            "unavailable",
+            {
+              statusCode: response.status,
+              failureReason: responseText.slice(0, 150),
+              ttlSeconds: 600,
+            },
+          );
+          excludedModels.add(selectedSlot.model);
+          lastError = new AppError(
+            response.status,
+            "LLM_MODEL_UNAVAILABLE",
+            `Модель ${selectedSlot.model} недоступна (${response.status}): переход к резервной модели`,
+          );
+          continue;
+        }
+
+        // 2.4 Превышение квот (HTTP 429 / Resource Exhausted)
         const isRateLimit =
           response.status === 429 ||
           responseText.includes("RESOURCE_EXHAUSTED") ||
@@ -300,7 +364,7 @@ export class SmartModelRouter {
           continue;
         }
 
-        // Ошибки перегрузки/недоступности конкретной модели (HTTP 503/504 / high demand / overloaded / UNAVAILABLE)
+        // 2.5 Ошибки перегрузки/недоступности конкретной модели (HTTP 503/504 / high demand / overloaded / UNAVAILABLE)
         // -> Исключаем ВСЮ МОДЕЛЬ из дальнейших попыток этого запроса, не перебирая остальные ключи впустую
         const isModelOverloaded =
           response.status === 503 ||
@@ -313,6 +377,12 @@ export class SmartModelRouter {
         if (isModelOverloaded) {
           excludedModels.add(selectedSlot.model);
           await this.limiter.recordFailure(selectedModelProfile.provider, selectedSlot.model);
+          modelHealthService.recordModelHealth(
+            selectedSlot.provider,
+            selectedSlot.model,
+            "degraded",
+            { statusCode: response.status, failureReason: "overloaded", ttlSeconds: 180 },
+          );
           lastError = new AppError(
             503,
             "LLM_MODEL_OVERLOADED",
@@ -321,9 +391,15 @@ export class SmartModelRouter {
           continue;
         }
 
-        // Прочие ошибки сервера провайдера (HTTP 5xx) -> Circuit Breaker
+        // 2.6 Прочие ошибки сервера провайдера (HTTP 5xx) -> Circuit Breaker
         if (response.status >= 500) {
           await this.limiter.recordFailure(selectedModelProfile.provider, selectedSlot.model);
+          modelHealthService.recordModelHealth(
+            selectedSlot.provider,
+            selectedSlot.model,
+            "degraded",
+            { statusCode: response.status, failureReason: `HTTP ${response.status}`, ttlSeconds: 180 },
+          );
           excludedKeyModelPairs.add(`${selectedSlot.keyId}:${selectedSlot.model}`);
           lastError = new AppError(502, "LLM_PROVIDER_ERROR", `Провайдер ${selectedModelProfile.provider} вернул ${response.status}`);
           continue;

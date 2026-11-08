@@ -109,17 +109,39 @@ export class KeyPoolManager {
     const uniqueRaw = Array.from(new Set(rawKeys.map((k) => k.trim()).filter((k) => k.length > 0)));
     const validKeys = uniqueRaw.filter((k) => !platformConfigService.isKeyInvalid(k));
 
+    // Карта провайдеров для привязки правильного baseUrl к слоту
+    const keyMetaMap = new Map<string, { baseUrl?: string; providerId?: string }>();
+    try {
+      const integrations = await platformConfigService.getEffectiveIntegrations();
+      for (const p of integrations.llmProviders) {
+        if (p.apiKeys) {
+          for (const k of p.apiKeys) {
+            const clean = k.trim();
+            if (clean && !keyMetaMap.has(clean)) {
+              keyMetaMap.set(clean, { baseUrl: p.baseUrl, providerId: p.id });
+            }
+          }
+        }
+      }
+    } catch {}
+
     return validKeys.map((key) => {
       const id = hashApiKey(key, provider);
+      const meta = keyMetaMap.get(key);
+      const isPending = platformConfigService.isKeyPendingActivation(key);
+
       return {
         id,
         provider,
         key,
         maskedKey: maskApiKey(key),
-        status: "active",
+        status: isPending ? "cooldown" : "active",
         tenantId,
-        cooldownUntil: 0,
-        loadScore: 0,
+        cooldownUntil: isPending ? Date.now() + 90_000 : 0,
+        cooldownReason: isPending ? "GOOGLE_IAM_PROPAGATION_PENDING" : undefined,
+        loadScore: isPending ? 9999 : 0,
+        baseUrl: meta?.baseUrl,
+        providerId: meta?.providerId,
       };
     });
   }
@@ -186,6 +208,8 @@ export class KeyPoolManager {
       tier: "FAST_CHEAP",
       isFallback: false,
       loadScore: chosen.loadScore,
+      baseUrl: chosen.slot.baseUrl,
+      providerId: chosen.slot.providerId,
     };
   }
 

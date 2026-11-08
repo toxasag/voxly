@@ -496,15 +496,22 @@ export interface LlmModelItem {
 export interface LlmKeyVerifyResult {
   index: number;
   maskedKey: string;
-  status: "valid" | "invalid";
+  status: "valid" | "invalid" | "pending_activation";
   statusCode?: number;
   message: string;
   modelsCount?: number;
+  isTemporary?: boolean;
+  retryAfterSeconds?: number;
 }
 
 export interface VerifyLlmKeysResponse {
   success: boolean;
-  summary: { total: number; valid: number; invalid: number };
+  summary: {
+    total: number;
+    valid: number;
+    invalid: number;
+    pendingActivation?: number;
+  };
   results: LlmKeyVerifyResult[];
   models?: LlmModelItem[];
   message?: string;
@@ -514,6 +521,18 @@ export interface FetchLlmModelsResponse {
   success: boolean;
   models: LlmModelItem[];
   message?: string;
+}
+
+export interface ModelHealthItem {
+  providerId: string;
+  providerType: string;
+  modelId: string;
+  status: "healthy" | "degraded" | "unavailable";
+  latencyMs?: number;
+  lastCheckedAt: number;
+  failureReason?: string;
+  statusCode?: number;
+  expiresAt: number;
 }
 
 export function useTestAdminLlm(): UseMutationResult<
@@ -550,7 +569,14 @@ export function useVerifyLlmKeys(): UseMutationResult<
 }
 
 export function useVerifySingleGeminiKey(): UseMutationResult<
-  { success: boolean; is_active: boolean; message: string; modelsCount?: number },
+  {
+    success: boolean;
+    is_active: boolean;
+    status?: "valid" | "invalid" | "pending_activation";
+    isTemporary?: boolean;
+    message: string;
+    modelsCount?: number;
+  },
   ApiClientError,
   { apiKey: string; baseUrl?: string; save?: boolean }
 > {
@@ -561,6 +587,8 @@ export function useVerifySingleGeminiKey(): UseMutationResult<
         await apiClient.post<{
           success: boolean;
           is_active: boolean;
+          status?: "valid" | "invalid" | "pending_activation";
+          isTemporary?: boolean;
           message: string;
           modelsCount?: number;
         }>("/api/integrations/gemini/verify", payload)
@@ -571,6 +599,30 @@ export function useVerifySingleGeminiKey(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: ["ai-bots"] });
       void queryClient.invalidateQueries({ queryKey: ["tenant", "integrations"] });
       void queryClient.invalidateQueries({ queryKey: ["ai-agent", "providers"] });
+    },
+  });
+}
+
+export function useLlmModelHealth(): UseQueryResult<ModelHealthItem[], ApiClientError> {
+  return useQuery({
+    queryKey: ["admin", "integrations", "llm", "health"],
+    queryFn: async () =>
+      (await apiClient.get<ModelHealthItem[]>("/api/v1/admin/integrations/llm/health")).data,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useCheckLlmModelHealth(): UseMutationResult<
+  ModelHealthItem[],
+  ApiClientError,
+  void
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      (await apiClient.post<ModelHealthItem[]>("/api/v1/admin/integrations/llm/health/check", {})).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "integrations", "llm", "health"] });
     },
   });
 }
