@@ -749,6 +749,13 @@ export function useSyncKnowledgeMd(agentId: string): UseMutationResult<
 // Петля обучения на диалогах (Dialogue Feedback Loop)
 // ---------------------------------------------------------------------------
 
+export interface DialogueQuoteItem {
+  text: string;
+  role?: string;
+  author?: string;
+  time?: string;
+}
+
 export interface AgentDialogueFeedback {
   id: string;
   agentId: string;
@@ -761,6 +768,7 @@ export interface AgentDialogueFeedback {
   userComment: string;
   clarificationQa: Array<{ question: string; answer?: string | null }>;
   compiledRule?: string | null;
+  selectedQuotes?: DialogueQuoteItem[];
   status: "pending" | "approved" | "rejected";
   createdAt: string;
   updatedAt: string;
@@ -791,6 +799,7 @@ export function useCreateDialogueFeedback(agentId?: string): UseMutationResult<
     deal_id?: string;
     conversation_id?: string;
     clarification_answer?: string;
+    selected_quotes?: DialogueQuoteItem[];
   }
 > {
   const queryClient = useQueryClient();
@@ -821,6 +830,7 @@ export function useCreateDealFeedback(dealId: string): UseMutationResult<
     agent_id?: string;
     conversation_id?: string;
     clarification_answer?: string;
+    selected_quotes?: DialogueQuoteItem[];
   }
 > {
   const queryClient = useQueryClient();

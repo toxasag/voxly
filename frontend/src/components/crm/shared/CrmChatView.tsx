@@ -1710,6 +1710,7 @@ export function CrmChatView({
         dealId={isDeal ? entityId : undefined}
         dealTitle={isDeal ? entityName : undefined}
         contactName={!isDeal ? entityName : undefined}
+        messages={messages}
         lastUserMessage={lastUserMessage}
         lastBotResponse={lastBotResponse}
       />

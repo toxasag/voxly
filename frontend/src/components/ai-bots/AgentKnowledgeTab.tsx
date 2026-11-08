@@ -1397,6 +1397,20 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                               </div>
                             )}
 
+                            {/* Цитированный контекст */}
+                            {item.selectedQuotes && item.selectedQuotes.length > 0 && (
+                              <div className="pt-1.5 border-t border-[#f0f0f0] text-[11px] space-y-1">
+                                <span className="font-semibold text-slate-700">Цитированный контекст из диалога:</span>
+                                <div className="space-y-1">
+                                  {item.selectedQuotes.map((q, idx) => (
+                                    <div key={idx} className="rounded bg-white p-1.5 border border-[#e5e5e5] text-[11px] text-[#444444]">
+                                      <span className="font-medium text-[#4a38f5]">[{q.author || q.role || "Цитата"}]:</span> «{q.text}»
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
                             {/* Скомпилированное правило */}
                             {item.compiledRule && (
                               <div className="pt-1 border-t border-[#f0f0f0] text-xs">
