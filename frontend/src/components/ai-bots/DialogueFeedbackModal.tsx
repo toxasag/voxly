@@ -9,14 +9,9 @@ import {
   HelpCircle,
   X,
   ExternalLink,
-  Bot,
   Sparkles,
   Quote,
-  Clock,
   User,
-  SlidersHorizontal,
-  ChevronDown,
-  BookmarkPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -48,14 +43,6 @@ interface FloatingQuoteState {
   top: number;
   left: number;
 }
-
-const CATEGORY_OPTIONS = [
-  { value: "general", label: "Общие стандарты диалога" },
-  { value: "tone", label: "Тон общения (Tone of Voice)" },
-  { value: "pricing", label: "Цены, прайс-лист и условия" },
-  { value: "facts", label: "Фактические данные и регламент" },
-  { value: "escalation", label: "Перевод на живого оператора" },
-];
 
 function formatTime(iso?: string): string {
   if (!iso) return "";
@@ -101,8 +88,6 @@ export function DialogueFeedbackModal({
 
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [rating, setRating] = useState<number>(5);
-  const [category, setCategory] = useState<string>("general");
-  const [isPermanentRule, setIsPermanentRule] = useState(true);
   const [comment, setComment] = useState("");
   const [clarificationAnswer, setClarificationAnswer] = useState("");
   const [selectedQuotes, setSelectedQuotes] = useState<DialogueQuoteItem[]>([]);
@@ -120,7 +105,7 @@ export function DialogueFeedbackModal({
   useEffect(() => {
     if (open && rawMessages.length > 0) {
       setTimeout(() => {
-        timelineEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        timelineEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
       }, 100);
     }
   }, [open, rawMessages.length]);
@@ -245,10 +230,7 @@ export function DialogueFeedbackModal({
 
     setIsSubmitting(true);
     try {
-      const selectedCategoryObj = CATEGORY_OPTIONS.find((c) => c.value === category);
-      const categoryPrefix = selectedCategoryObj ? `[${selectedCategoryObj.label}] ` : "";
-
-      const finalComment = `${categoryPrefix}${comment.trim()}`;
+      const finalComment = comment.trim();
 
       if (dealId) {
         await apiClient.post(`/api/v1/crm/deals/${dealId}/feedback`, {
@@ -544,80 +526,7 @@ export function DialogueFeedbackModal({
         )}
 
         {/* Форма обратной связи */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Рейтинг */}
-          <div className="space-y-1 text-center py-1 bg-[#fafafa] rounded-[8px] border border-[#e5e5e5] p-2.5">
-            <span className="block text-xs font-semibold text-[#111111]">
-              Оценка качества ответов
-            </span>
-            <div className="flex items-center justify-center gap-1.5 py-0.5">
-              {[1, 2, 3, 4, 5].map((star) => {
-                const active = (hoverRating ?? rating) >= star;
-                return (
-                  <button
-                    key={star}
-                    type="button"
-                    onMouseEnter={() => setHoverRating(star)}
-                    onMouseLeave={() => setHoverRating(null)}
-                    onClick={() => setRating(star)}
-                    className="p-1 transition-transform hover:scale-115 cursor-pointer"
-                  >
-                    <Star
-                      className={cn(
-                        "h-6 w-6 transition-colors",
-                        active ? "fill-amber-400 text-amber-400" : "text-[#e5e5e5]",
-                      )}
-                    />
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[11px] text-[#666666]">
-              {rating === 5 && "Отличная работа, ответы точные и по существу"}
-              {rating === 4 && "Хорошо, но есть мелкие замечания"}
-              {rating === 3 && "Удовлетворительно, агент упустил важную деталь"}
-              {rating === 2 && "Плохо, дал неверный или неполный ответ"}
-              {rating === 1 && "Критическая ошибка / дезинформация"}
-            </p>
-          </div>
-
-          {/* Селектор категории и переключатель постоянного правила */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-[#111111]">
-                Категория замечания
-              </label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-              >
-                {CATEGORY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2">
-              <div className="space-y-0.5">
-                <span className="block text-xs font-medium text-[#111111]">
-                  Правило базы знаний
-                </span>
-                <span className="block text-[10px] text-[#666666]">
-                  Синтезировать постоянное правило в System Prompt
-                </span>
-              </div>
-              <input
-                type="checkbox"
-                checked={isPermanentRule}
-                onChange={(e) => setIsPermanentRule(e.target.checked)}
-                className="h-4 w-4 rounded text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
-              />
-            </div>
-          </div>
-
+        <form onSubmit={handleSubmit} className="space-y-3.5">
           {/* Поле замечания оператора */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
@@ -630,14 +539,14 @@ export function DialogueFeedbackModal({
             </div>
             <textarea
               ref={textareaRef}
-              rows={4}
+              rows={3}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               placeholder="Что именно агент сформулировал некорректно? Какое правило диалога следует соблюдать в таких ситуациях?"
-              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-sans"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-sans leading-relaxed"
             />
             <p className="text-[10px] text-[#888888]">
-              На основе вашего замечания и прикрепленных цитат ИИ скомпилирует правило для добавления в базу знаний агента.
+              На основе вашего замечания и прикрепленных цитат ИИ скомпилирует правило для базы знаний агента.
             </p>
           </div>
 
@@ -658,32 +567,71 @@ export function DialogueFeedbackModal({
             </div>
           )}
 
-          {/* Кнопки действий */}
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#e5e5e5]">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
-            >
-              Отмена
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting || isLoadingAgents}
-              className="h-8 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span>Сохранение...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  <span>Отправить в обучение</span>
-                </>
-              )}
-            </button>
+          {/* Футер: компактный рейтинг слева и кнопки действий справа */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#e5e5e5]">
+            {/* Компактный рейтинг диалога */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-[#666666]">Оценка:</span>
+              <div className="flex items-center gap-0.5" role="group" aria-label="Оценка качества ответов">
+                {[1, 2, 3, 4, 5].map((star) => {
+                  const active = (hoverRating ?? rating) >= star;
+                  return (
+                    <button
+                      key={star}
+                      type="button"
+                      onMouseEnter={() => setHoverRating(star)}
+                      onMouseLeave={() => setHoverRating(null)}
+                      onClick={() => setRating(star)}
+                      className="p-0.5 transition-transform hover:scale-115 cursor-pointer text-[#888888]"
+                      title={`Оценка ${star} из 5`}
+                      aria-label={`${star} звезд`}
+                    >
+                      <Star
+                        className={cn(
+                          "h-4 w-4 transition-colors",
+                          active ? "fill-amber-400 text-amber-400" : "text-[#e5e5e5]",
+                        )}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[11px] text-[#888888] hidden sm:inline">
+                {rating === 5 && "(отлично)"}
+                {rating === 4 && "(хорошо)"}
+                {rating === 3 && "(средне)"}
+                {rating === 2 && "(плохо)"}
+                {rating === 1 && "(критично)"}
+              </span>
+            </div>
+
+            {/* Кнопки действий */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting || isLoadingAgents}
+                className="h-8 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Сохранение...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Отправить в обучение</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </div>
