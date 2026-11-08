@@ -13,7 +13,7 @@ import {
   LlmGatewayExhaustedError,
 } from "./gateway.types.js";
 
-const DEFAULT_TIMEOUT_MS = 90_000;
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 12_000;
 
 export interface SmartModelRouterInput {
   model: string;
@@ -135,6 +135,7 @@ export class SmartModelRouter {
     const maxAttempts = options.maxAttempts ?? Math.min(candidateModels.length * 3, 10);
     const globallyExcludedKeyIds = new Set<string>();
     const excludedKeyModelPairs = new Set<string>();
+    const excludedModels = new Set<string>();
     const modelsChecked: string[] = [];
 
     let lastError: Error | null = null;
@@ -150,6 +151,10 @@ export class SmartModelRouter {
       let selectedModelProfile = this.tierRouter.getModelProfile(normalizedRequested);
 
       for (const candidateModel of candidateModels) {
+        if (excludedModels.has(candidateModel)) {
+          continue;
+        }
+
         const profile = this.tierRouter.getModelProfile(candidateModel);
         if (!modelsChecked.includes(candidateModel)) {
           modelsChecked.push(candidateModel);
@@ -200,8 +205,9 @@ export class SmartModelRouter {
       }
 
       const activeBaseUrl = await this.resolveBaseUrl(selectedModelProfile.provider);
+      const attemptTimeoutMs = options.timeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => controller.abort(), attemptTimeoutMs);
 
       if (options.signal) {
         options.signal.addEventListener("abort", () => controller.abort(), { once: true });
@@ -294,7 +300,28 @@ export class SmartModelRouter {
           continue;
         }
 
-        // Ошибки сервера провайдера (HTTP 5xx) -> Circuit Breaker
+        // Ошибки перегрузки/недоступности конкретной модели (HTTP 503/504 / high demand / overloaded / UNAVAILABLE)
+        // -> Исключаем ВСЮ МОДЕЛЬ из дальнейших попыток этого запроса, не перебирая остальные ключи впустую
+        const isModelOverloaded =
+          response.status === 503 ||
+          response.status === 504 ||
+          responseText.includes("high demand") ||
+          responseText.includes("overloaded") ||
+          responseText.includes("UNAVAILABLE") ||
+          responseText.includes("is overloaded");
+
+        if (isModelOverloaded) {
+          excludedModels.add(selectedSlot.model);
+          await this.limiter.recordFailure(selectedModelProfile.provider, selectedSlot.model);
+          lastError = new AppError(
+            503,
+            "LLM_MODEL_OVERLOADED",
+            `Модель ${selectedSlot.model} перегружена (${response.status}): немедленный переход на следующую резервную модель`,
+          );
+          continue;
+        }
+
+        // Прочие ошибки сервера провайдера (HTTP 5xx) -> Circuit Breaker
         if (response.status >= 500) {
           await this.limiter.recordFailure(selectedModelProfile.provider, selectedSlot.model);
           excludedKeyModelPairs.add(`${selectedSlot.keyId}:${selectedSlot.model}`);
@@ -311,6 +338,13 @@ export class SmartModelRouter {
         clearTimeout(timeoutId);
         if (options.signal?.aborted) {
           throw new AppError(499, "CLIENT_CLOSED_REQUEST", "Запрос был отменен");
+        }
+
+        // Если сработал таймаут попытки этой конкретной модели — исключаем модель и сразу идем к резервной
+        if (controller.signal.aborted && !options.signal?.aborted) {
+          excludedModels.add(selectedSlot.model);
+          lastError = new AppError(504, "LLM_TIMEOUT", `Модель ${selectedSlot.model} не ответила вовремя (таймаут ${attemptTimeoutMs}ms)`);
+          continue;
         }
 
         if (attempt < maxAttempts - 1) {

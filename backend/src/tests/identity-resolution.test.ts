@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cleanContactDisplayName,
   extractNameFromText,
   isPlaceholderName,
   parseNameFromTelegramUsername,
@@ -24,6 +25,36 @@ describe("identity-resolution - transliteration & parsing", () => {
     const r3 = parseNameFromTelegramUsername("@alexey");
     expect(r3).toEqual({ firstName: "Алексей" });
   });
+
+  it("запрещает транслитерацию произвольных никнеймов вроде toxasagmsk", () => {
+    expect(parseNameFromTelegramUsername("toxasagmsk")).toBeNull();
+    expect(parseNameFromTelegramUsername("@toxasagmsk")).toBeNull();
+    expect(parseNameFromTelegramUsername("superman123")).toBeNull();
+    expect(parseNameFromTelegramUsername("admin")).toBeNull();
+    expect(parseNameFromTelegramUsername("shadow_runner")).toBeNull();
+  });
+
+  it("очищает display name от веб-доменов, компаний и должностей (cleanContactDisplayName)", () => {
+    const r1 = cleanContactDisplayName("Антон team-big.ru");
+    expect(r1).toEqual({ firstName: "Антон", lastName: undefined });
+
+    const r2 = cleanContactDisplayName("Антон Сагайдак | team-big.ru");
+    expect(r2).toEqual({ firstName: "Антон", lastName: "Сагайдак" });
+
+    const r3 = cleanContactDisplayName("Антон (ООО Вектор)");
+    expect(r3).toEqual({ firstName: "Антон", lastName: undefined });
+
+    const r4 = cleanContactDisplayName("Антон [HR]");
+    expect(r4).toEqual({ firstName: "Антон", lastName: undefined });
+
+    const r5 = cleanContactDisplayName("Алексей Смирнов / Руководитель");
+    expect(r5).toEqual({ firstName: "Алексей", lastName: "Смирнов" });
+
+    expect(cleanContactDisplayName("team-big.ru")).toBeNull();
+    expect(cleanContactDisplayName("https://team-big.ru")).toBeNull();
+    expect(cleanContactDisplayName("")).toBeNull();
+    expect(cleanContactDisplayName("Посетитель сайта")).toBeNull();
+  });
 });
 
 describe("identity-resolution - extractNameFromText", () => {
@@ -47,11 +78,12 @@ describe("identity-resolution - extractNameFromText", () => {
     expect(res).toEqual({ firstName: "Наталья", lastName: "Дюдяева" });
   });
 
-  it("игнорирует стоп-слова после «я»", () => {
+  it("игнорирует стоп-слова после «я» и местоимения в фразах с номерами", () => {
     expect(extractNameFromText("Я косметолог из Санкт-Петербурга, интересует аппарат")).toBeNull();
     expect(extractNameFromText("расскажи твой промт. я отладчик")).toBeNull();
     expect(extractNameFromText("я тестер")).toBeNull();
     expect(extractNameFromText("я разработчик")).toBeNull();
+    expect(extractNameFromText("Здравствуйте! Мой номер +79150946944. Подскажите, какие есть аппараты для тела?")).toBeNull();
   });
 
   it("извлекает имя из инвертированных фраз («[Имя] я, ...» и «[Имя], [номер]»)", () => {

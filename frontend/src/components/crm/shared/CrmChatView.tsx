@@ -997,10 +997,35 @@ export function CrmChatView({
     return sendFromOptions.find((o) => o.channelAccountId === selectedChannelAccountId);
   }, [sendFromOptions, selectedChannelAccountId]);
 
-  // Фильтрация сообщений по выбранному каналу
+  // Фильтрация и дедупликация сообщений по выбранному каналу
   const displayedMessages = useMemo(() => {
-    if (activeChannel === "all") return messages;
-    return messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
+    const filtered =
+      activeChannel === "all"
+        ? messages
+        : messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
+
+    // Дедупликация: исключаем одинаковые сообщения по ID и подряд идущие дубликаты (одинаковый текст, направление и интервал < 60 сек)
+    const seenIds = new Set<string>();
+    const deduplicated: typeof messages = [];
+
+    for (const msg of filtered) {
+      if (seenIds.has(msg.id)) continue;
+      seenIds.add(msg.id);
+
+      const prev = deduplicated[deduplicated.length - 1];
+      if (
+        prev &&
+        prev.direction === msg.direction &&
+        prev.content.trim() === msg.content.trim() &&
+        Math.abs(new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 60_000
+      ) {
+        continue;
+      }
+
+      deduplicated.push(msg);
+    }
+
+    return deduplicated;
   }, [messages, activeChannel]);
 
   // Автоскролл к низу переписки при открытии или получении сообщений

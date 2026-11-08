@@ -101,6 +101,7 @@ export interface GatewayExecutionOptions {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  timeoutMs?: number;
   signal?: AbortSignal;
 }
 
