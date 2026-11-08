@@ -87,10 +87,15 @@ function toDTO(row: AgentRow): AiAgentDTO {
     systemPrompt: row.system_prompt,
     contextEntities: row.context_entities,
     companyNameOverride: row.company_name_override,
+    company_name_override: row.company_name_override,
     consultantSource: row.consultant_source ?? "manual",
+    consultant_source: row.consultant_source ?? "manual",
     consultantName: row.consultant_name,
+    consultant_name: row.consultant_name,
     consultantRole: row.consultant_role,
+    consultant_role: row.consultant_role,
     fallbackModels: row.fallback_models ?? [],
+    fallback_models: row.fallback_models ?? [],
     targetPageUrl: row.target_page_url,
     generatedSystemPrompt: row.generated_system_prompt,
     knowledgeBaseMd: row.knowledge_base_md ?? "",
@@ -293,7 +298,8 @@ export class AiService {
       });
     }
 
-    const companyOverride = payload.company_name_override ?? payload.companyNameOverride ?? null;
+    const rawCompanyOverride = payload.company_name_override ?? payload.companyNameOverride ?? null;
+    const companyOverride = rawCompanyOverride && rawCompanyOverride.trim().length > 0 ? rawCompanyOverride.trim() : null;
     const consultantSource = payload.consultant_source ?? payload.consultantSource ?? "manual";
     const consultantName = payload.consultant_name ?? payload.consultantName ?? null;
     const consultantRole = payload.consultant_role ?? payload.consultantRole ?? null;
@@ -402,11 +408,14 @@ export class AiService {
       });
     }
 
-    const companyOverride = payload.company_name_override !== undefined
+    const rawCompanyOverride = payload.company_name_override !== undefined
       ? payload.company_name_override
       : payload.companyNameOverride !== undefined
         ? payload.companyNameOverride
         : undefined;
+    const companyOverride = rawCompanyOverride !== undefined
+      ? (rawCompanyOverride === null || rawCompanyOverride.trim().length === 0 ? null : rawCompanyOverride.trim())
+      : undefined;
     const consultantSource = payload.consultant_source !== undefined
       ? payload.consultant_source
       : payload.consultantSource !== undefined
@@ -448,6 +457,20 @@ export class AiService {
         ? payload.feedbackLearningEnabled
         : undefined;
 
+    const updatedWizardConfig = payload.wizard_config !== undefined
+      ? (payload.wizard_config
+          ? {
+              ...payload.wizard_config,
+              ...(companyOverride !== undefined
+                ? {
+                    companyName: companyOverride ?? undefined,
+                    company_name_override: companyOverride ?? undefined,
+                  }
+                : {}),
+            }
+          : null)
+      : undefined;
+
     const row = await queryOne<{ id: string }>(
       `UPDATE ai_agents SET
          name = COALESCE($3, name),
@@ -485,7 +508,7 @@ export class AiService {
         payload.max_tokens ?? null,
         payload.system_prompt ?? null,
         payload.context_entities ?? null,
-        payload.wizard_config !== undefined ? (payload.wizard_config ? JSON.stringify(payload.wizard_config) : null) : null,
+        updatedWizardConfig !== undefined ? (updatedWizardConfig ? JSON.stringify(updatedWizardConfig) : null) : null,
         companyOverride !== undefined,
         companyOverride ?? null,
         consultantSource ?? null,

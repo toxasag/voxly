@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useForm, type FieldErrors } from "react-hook-form";
+import { useForm, useWatch, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { useAuth } from "@/lib/auth/use-auth";
 import {
   AlertTriangle,
   BookOpen,
@@ -108,6 +109,32 @@ const DEFAULT_VALUES: CreateBotPayload = {
 function toFormValues(bot: AiBot): CreateBotPayload {
   const wizardConfig = bot.wizard_config as Record<string, unknown> | null | undefined;
   const websiteUrl = bot.website_url ?? (wizardConfig?.website_url as string | undefined) ?? "";
+  const companyOverride =
+    bot.company_name_override ||
+    bot.companyNameOverride ||
+    (wizardConfig?.company_name_override as string | undefined) ||
+    (wizardConfig?.companyName as string | undefined) ||
+    "";
+  const consultantSource =
+    bot.consultant_source ||
+    bot.consultantSource ||
+    (wizardConfig?.consultant_source as "manual" | "chat_widget" | undefined) ||
+    (wizardConfig?.consultantSource as "manual" | "chat_widget" | undefined) ||
+    "manual";
+  const consultantName =
+    bot.consultant_name ||
+    bot.consultantName ||
+    (wizardConfig?.consultantName as string | undefined) ||
+    "";
+  const consultantRole =
+    bot.consultant_role ||
+    bot.consultantRole ||
+    (wizardConfig?.consultantRole as string | undefined) ||
+    "";
+  const fallbackModels =
+    bot.fallback_models ||
+    bot.fallbackModels ||
+    ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"];
 
   return {
     name: bot.name,
@@ -124,31 +151,36 @@ function toFormValues(bot: AiBot): CreateBotPayload {
     map_reviews_url: "",
     sync_crm: false,
     whatsapp_chat_text: "",
-    company_name_override: bot.company_name_override ?? "",
-    consultant_source: bot.consultant_source ?? "manual",
-    consultant_name: bot.consultant_name ?? (wizardConfig?.consultantName as string | undefined) ?? "",
-    consultant_role: bot.consultant_role ?? (wizardConfig?.consultantRole as string | undefined) ?? "",
-    fallback_models: bot.fallback_models ?? ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
+    company_name_override: companyOverride,
+    consultant_source: consultantSource,
+    consultant_name: consultantName,
+    consultant_role: consultantRole,
+    fallback_models: fallbackModels,
     target_page_url: bot.target_page_url ?? "",
     generated_system_prompt: bot.generated_system_prompt ?? "",
     knowledge_base_md: bot.knowledge_base_md ?? "",
     feedback_learning_enabled: bot.feedback_learning_enabled ?? true,
-    wizard_config: bot.wizard_config ?? {
-      presetId: "tpl-universal-closer",
-      consultantName: "Алексей",
-      consultantRole: "ведущий специалист",
-      businessNiche: "оказание профильных услуг и консультация клиентов",
-      clientProfile: "Клиенты, которым необходима экспертная консультация и подбор оптимального решения",
-      targetAction: "согласование деталей заказа и обмен прямыми контактами",
-      constraints: "Не давать ложных обещаний, строго следовать прайсу и регламенту компании",
-      handoffSpecialist: "старший специалист профильного отдела",
-      isCustomEdited: false,
+    wizard_config: {
+      presetId: (wizardConfig?.presetId as string | undefined) ?? "tpl-universal-closer",
+      companyName: companyOverride,
+      company_name_override: companyOverride,
+      consultantName: consultantName || "Алексей",
+      consultantRole: consultantRole || "ведущий специалист",
+      businessNiche: (wizardConfig?.businessNiche as string | undefined) ?? "оказание профильных услуг и консультация клиентов",
+      clientProfile: (wizardConfig?.clientProfile as string | undefined) ?? "Клиенты, которым необходима экспертная консультация и подбор оптимального решения",
+      targetAction: (wizardConfig?.targetAction as string | undefined) ?? "согласование деталей заказа и обмен прямыми контактами",
+      constraints: (wizardConfig?.constraints as string | undefined) ?? "Не давать ложных обещаний, строго следовать прайсу и регламенту компании",
+      handoffSpecialist: (wizardConfig?.handoffSpecialist as string | undefined) ?? "старший специалист профильного отдела",
+      isCustomEdited: (wizardConfig?.isCustomEdited as boolean | undefined) ?? false,
     },
   };
 }
 
 export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotModalProps) {
   const isEdit = bot !== null;
+  const { tenant } = useAuth();
+  const tenantName = tenant?.tenantName ?? "Компания";
+
   const [showTechnicalParams, setShowTechnicalParams] = useState(false);
   const [promptTab, setPromptTab] = useState<"wizard" | "editor" | "feedbacks">("wizard");
   const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
@@ -196,7 +228,17 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
   const submit = useCallback(
     async (values: CreateBotPayload) => {
       try {
-        await onSubmit(values);
+        const trimmedCompany = (values.company_name_override || "").trim();
+        const payload: CreateBotPayload = {
+          ...values,
+          company_name_override: trimmedCompany,
+          wizard_config: {
+            ...(values.wizard_config || {}),
+            companyName: trimmedCompany,
+            company_name_override: trimmedCompany,
+          },
+        };
+        await onSubmit(payload);
         onClose();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось сохранить бота");
@@ -229,12 +271,12 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
   const temperature = form.watch("temperature");
   const systemPrompt = form.watch("system_prompt");
   const isPaused = form.watch("status") === "paused";
-  const wizardConfig = form.watch("wizard_config");
+  const wizardConfig = useWatch({ control: form.control, name: "wizard_config" });
   const fallbackModels = form.watch("fallback_models") ?? [];
-  const consultantSource = form.watch("consultant_source") ?? "manual";
-  const companyNameOverride = form.watch("company_name_override") ?? "";
-  const consultantName = form.watch("consultant_name") ?? "";
-  const consultantRole = form.watch("consultant_role") ?? "";
+  const consultantSource = useWatch({ control: form.control, name: "consultant_source" }) ?? "manual";
+  const companyNameOverride = useWatch({ control: form.control, name: "company_name_override" }) ?? "";
+  const consultantName = useWatch({ control: form.control, name: "consultant_name" }) ?? "";
+  const consultantRole = useWatch({ control: form.control, name: "consultant_role" }) ?? "";
 
   const toggleFallbackModel = useCallback(
     (modelId: string) => {
@@ -595,23 +637,65 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
               {/* Поля анкеты */}
               <div className="space-y-3 pt-1">
                 {/* 1. Название компании */}
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-slate-700">
-                    Название компании (переменная {"{{tenant.name}}"})
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-medium text-slate-700">
+                      Название компании (переменная {"{{tenant.name}}"})
+                    </label>
+                    <span className="text-[11px] text-[#888888] font-mono">
+                      {"{{tenant.name}}"} / {"{{company.name}}"}
+                    </span>
+                  </div>
                   <input
                     type="text"
                     value={companyNameOverride}
-                    onChange={(e) =>
-                      form.setValue("company_name_override", e.target.value, {
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      form.setValue("company_name_override", val, {
                         shouldDirty: true,
-                      })
-                    }
+                        shouldValidate: true,
+                      });
+                      const currentWc = form.getValues("wizard_config") || {};
+                      form.setValue(
+                        "wizard_config",
+                        {
+                          ...currentWc,
+                          companyName: val,
+                          company_name_override: val,
+                        },
+                        { shouldDirty: true },
+                      );
+                    }}
                     placeholder="Например: Банкирро (по умолчанию берётся из названия вашей CRM)"
                     className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                   />
+                  {/* Мгновенная реактивность через useWatch: живой предпросмотр подстановки */}
+                  <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs shadow-2xs">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-mono text-[11px] font-semibold text-[#4a38f5] shrink-0">
+                        {"{{tenant.name}}"}
+                      </span>
+                      <span className="text-[#888888] text-[11px] shrink-0">→</span>
+                      <span
+                        className="font-medium text-[#111111] text-xs truncate max-w-[340px]"
+                        title={companyNameOverride.trim() || tenantName}
+                      >
+                        {companyNameOverride.trim() || tenantName}
+                      </span>
+                    </div>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-[4px] border px-1.5 py-0.5 text-[10px] font-medium",
+                        companyNameOverride.trim()
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-[#e5e5e5] bg-[#fafafa] text-[#666666]",
+                      )}
+                    >
+                      {companyNameOverride.trim() ? "Оверрайд агента" : `Из CRM: ${tenantName}`}
+                    </span>
+                  </div>
                   <p className="text-[11px] text-[#888888]">
-                    Если не заполнено, название автоматически подставляется из профиля вашей компании в CRM.
+                    Если не заполнено, название автоматически подставляется из профиля вашей компании в CRM ({tenantName}).
                   </p>
                 </div>
 
@@ -1345,6 +1429,18 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                           }}
                           contextWindow={modelInfo.context_window}
                           error={errors.system_prompt?.message}
+                          bot={{
+                            ...(bot ?? {}),
+                            name: form.getValues("name") || bot?.name || "Ассистент",
+                            company_name_override: companyNameOverride,
+                            companyNameOverride: companyNameOverride,
+                            consultant_name: consultantName,
+                            consultantName: consultantName,
+                            consultant_role: consultantRole,
+                            consultantRole: consultantRole,
+                            wizard_config: wizardConfig as any,
+                          }}
+                          tenantName={tenantName}
                         />
                       </div>
                     )}

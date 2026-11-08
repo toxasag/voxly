@@ -137,10 +137,15 @@ export interface AiAgentDTO {
   systemPrompt: string;
   contextEntities: string[];
   companyNameOverride?: string | null;
+  company_name_override?: string | null;
   consultantSource?: ConsultantSource;
+  consultant_source?: ConsultantSource;
   consultantName?: string | null;
+  consultant_name?: string | null;
   consultantRole?: string | null;
+  consultant_role?: string | null;
   fallbackModels?: string[];
+  fallback_models?: string[];
   targetPageUrl?: string | null;
   generatedSystemPrompt?: string | null;
   knowledgeBaseMd: string;

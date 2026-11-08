@@ -8,11 +8,15 @@ import {
   BarChart3,
   Bot,
   Braces,
+  Check,
   ChevronLeft,
+  Clock,
+  Copy,
   FileText,
   MessageSquare,
   Plug,
   Settings2,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import type { AiBot } from "@/lib/ai-bots/ai-bots.types";
@@ -76,8 +80,101 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
   const [configOpen, setConfigOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(bot.system_prompt);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const { data: previewData } = useAgentPromptPreview(bot.id, promptDraft);
+
+  const isCompanyOverridden = useMemo(() => {
+    const wc = (bot.wizard_config ?? {}) as Record<string, unknown>;
+    return Boolean(
+      (bot.company_name_override && bot.company_name_override.trim().length > 0) ||
+      (bot.companyNameOverride && bot.companyNameOverride.trim().length > 0) ||
+      (wc.company_name_override && String(wc.company_name_override).trim().length > 0) ||
+      (wc.companyName && String(wc.companyName).trim().length > 0),
+    );
+  }, [bot]);
+
+  const effectiveVariables = useMemo(() => {
+    const fromApi = previewData?.variables ?? {};
+    const wc = (bot.wizard_config ?? {}) as Record<string, string | undefined>;
+
+    const effectiveCompany =
+      (bot.company_name_override && bot.company_name_override.trim().length > 0 ? bot.company_name_override.trim() : null) ||
+      (bot.companyNameOverride && bot.companyNameOverride.trim().length > 0 ? bot.companyNameOverride.trim() : null) ||
+      (wc.company_name_override && wc.company_name_override.trim().length > 0 ? wc.company_name_override.trim() : null) ||
+      (wc.companyName && wc.companyName.trim().length > 0 ? wc.companyName.trim() : null) ||
+      fromApi["tenant.name"] ||
+      tenantName;
+
+    const effectiveConsultant =
+      (bot.consultant_name && bot.consultant_name.trim().length > 0 ? bot.consultant_name.trim() : null) ||
+      (bot.consultantName && bot.consultantName.trim().length > 0 ? bot.consultantName.trim() : null) ||
+      (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) ||
+      fromApi["consultant.name"] ||
+      bot.name ||
+      "Консультант";
+
+    const effectiveRole =
+      (bot.consultant_role && bot.consultant_role.trim().length > 0 ? bot.consultant_role.trim() : null) ||
+      (bot.consultantRole && bot.consultantRole.trim().length > 0 ? bot.consultantRole.trim() : null) ||
+      (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) ||
+      fromApi["consultant.role"] ||
+      "онлайн-помощник";
+
+    const effectiveNiche =
+      (wc.businessNiche && wc.businessNiche.trim().length > 0 ? wc.businessNiche.trim() : null) ||
+      fromApi["business.niche"] ||
+      (bot.description && bot.description.trim().length > 5 ? bot.description.trim() : null) ||
+      "оказание профильных услуг и консультация клиентов";
+
+    const effectiveProfile =
+      (wc.clientProfile && wc.clientProfile.trim().length > 0 ? wc.clientProfile.trim() : null) ||
+      (wc.client_profile && wc.client_profile.trim().length > 0 ? wc.client_profile.trim() : null) ||
+      fromApi["client.profile"] ||
+      "клиенты, которым требуется экспертная консультация и решение их задачи";
+
+    const effectiveTargetAction =
+      (wc.targetAction && wc.targetAction.trim().length > 0 ? wc.targetAction.trim() : null) ||
+      fromApi["target.action"] ||
+      "согласование деталей заказа и обмен контактами";
+
+    const effectiveConstraints =
+      (wc.constraints && wc.constraints.trim().length > 0 ? wc.constraints.trim() : null) ||
+      fromApi["constraints"] ||
+      "Не давать ложных обещаний, строго следовать закону и регламенту компании.";
+
+    const effectiveHandoff =
+      (wc.handoffSpecialist && wc.handoffSpecialist.trim().length > 0 ? wc.handoffSpecialist.trim() : null) ||
+      fromApi["handoff.specialist"] ||
+      "старший специалист профильного отдела";
+
+    const currentTime =
+      fromApi["current_time"] ||
+      new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) + " МСК";
+
+    const channelType = fromApi["channel_type"] || "чат на сайте";
+
+    return {
+      "tenant.name": effectiveCompany,
+      "company.name": effectiveCompany,
+      "consultant.name": effectiveConsultant,
+      "consultant.role": effectiveRole,
+      "business.niche": effectiveNiche,
+      "client.profile": effectiveProfile,
+      "target.action": effectiveTargetAction,
+      "constraints": effectiveConstraints,
+      "handoff.specialist": effectiveHandoff,
+      "current_time": currentTime,
+      "channel_type": channelType,
+    };
+  }, [bot, previewData?.variables, tenantName]);
+
+  const copyVariableValue = useCallback((key: string, value: string) => {
+    void navigator.clipboard.writeText(value);
+    setCopiedKey(key);
+    toast.success(`Переменная {{${key}}} скопирована`);
+    setTimeout(() => setCopiedKey((curr) => (curr === key ? null : curr)), 2000);
+  }, []);
 
   const previewText = useMemo(() => {
     if (previewData?.resolvedPrompt) {
@@ -303,39 +400,345 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
             </div>
 
             {/* Resolved preview */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[13px] font-semibold text-[#111111]">
-                  Подстановка во время выполнения
-                  <span className="ml-1.5 text-xs font-normal text-[#888888]">
-                    актуальные данные и переменные среды
-                  </span>
-                </h3>
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#e5e5e5] pb-4">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-[#111111] flex items-center gap-2">
+                    <Braces className="h-4 w-4 text-[#4a38f5]" />
+                    Подстановка во время выполнения
+                  </h3>
+                  <p className="mt-1 text-xs text-[#666666]">
+                    Актуальные данные и переменные среды, подставляемые в шаблон системного промпта перед каждым запросом к модели.
+                  </p>
+                </div>
+                {canConfigure && (
+                  <button
+                    type="button"
+                    onClick={() => setConfigOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer shrink-0"
+                  >
+                    <Settings2 className="h-3.5 w-3.5 text-[#4a38f5]" />
+                    <span>Настроить переменные</span>
+                  </button>
+                )}
               </div>
 
-              {previewData?.variables && Object.keys(previewData.variables).length > 0 && (
-                <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs">
-                  <div className="mb-2 font-medium text-[#111111]">Подставленные переменные:</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {Object.entries(previewData.variables)
-                      .filter(([k]) => !k.includes("context") && !k.includes("patterns") && !k.includes("reviews"))
-                      .map(([key, val]) => (
-                        <div
-                          key={key}
-                          className="flex items-baseline justify-between gap-2 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 font-mono text-[11px]"
+              {/* Секция 1: Анкета и настройки бота (Редактируемые оверрайды) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+                    <span className="text-xs font-semibold text-[#111111]">
+                      Анкета и настройки бота
+                    </span>
+                    <span className="rounded-[4px] border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                      Редактируемые оверрайды
+                    </span>
+                  </div>
+                  {canConfigure && (
+                    <button
+                      type="button"
+                      onClick={() => setConfigOpen(true)}
+                      className="text-[11px] font-medium text-[#4a38f5] hover:text-[#3d2ee0] hover:underline cursor-pointer"
+                    >
+                      Изменить в анкете →
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {/* Название компании (Главный фокус!) */}
+                  <div className="col-span-1 md:col-span-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{tenant.name}}"}
+                        </code>
+                        <span className="text-[11px] text-[#888888] font-mono">
+                          (алиас: {"{{company.name}}"})
+                        </span>
+                        <span className="text-xs font-medium text-[#111111]">
+                          Название компании
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn(
+                            "rounded-[4px] border px-2 py-0.5 text-[10px] font-medium",
+                            isCompanyOverridden
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-[#e5e5e5] bg-white text-[#666666]",
+                          )}
                         >
-                          <span className="text-[#666666] font-medium">{`{{${key}}}`}</span>
-                          <span
-                            className="text-[#111111] font-sans truncate max-w-[200px]"
-                            title={val}
-                          >
-                            {val}
-                          </span>
-                        </div>
-                      ))}
+                          {isCompanyOverridden ? "Оверрайд агента" : `По умолчанию из CRM (${tenantName})`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyVariableValue("tenant.name", effectiveVariables["tenant.name"])}
+                          className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                          title="Скопировать значение"
+                        >
+                          {copiedKey === "tenant.name" ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-[13px] font-medium text-[#111111] break-words">
+                      {effectiveVariables["tenant.name"]}
+                    </div>
+                    {!isCompanyOverridden && (
+                      <p className="mt-1 text-[11px] text-[#888888]">
+                        Если хотите назвать компанию иначе, укажите своё имя в настройках бота («Название компании»).
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Имя консультанта */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{consultant.name}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Имя консультанта</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyVariableValue("consultant.name", effectiveVariables["consultant.name"])}
+                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                        title="Скопировать"
+                      >
+                        {copiedKey === "consultant.name" ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-[13px] text-[#111111] break-words">
+                      {effectiveVariables["consultant.name"]}
+                    </div>
+                  </div>
+
+                  {/* Роль консультанта */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{consultant.role}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Должность / роль</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyVariableValue("consultant.role", effectiveVariables["consultant.role"])}
+                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                        title="Скопировать"
+                      >
+                        {copiedKey === "consultant.role" ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-[13px] text-[#111111] break-words">
+                      {effectiveVariables["consultant.role"]}
+                    </div>
+                  </div>
+
+                  {/* Продукт / Ниша */}
+                  <div className="col-span-1 md:col-span-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{business.niche}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Продукт / Ниша компании</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyVariableValue("business.niche", effectiveVariables["business.niche"])}
+                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                        title="Скопировать"
+                      >
+                        {copiedKey === "business.niche" ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-[12px] sm:text-[13px] text-[#111111] leading-relaxed break-words font-normal">
+                      {effectiveVariables["business.niche"]}
+                    </div>
+                  </div>
+
+                  {/* Портрет целевого клиента */}
+                  <div className="col-span-1 md:col-span-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{client.profile}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Портрет клиента</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyVariableValue("client.profile", effectiveVariables["client.profile"])}
+                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                        title="Скопировать"
+                      >
+                        {copiedKey === "client.profile" ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-[12px] sm:text-[13px] text-[#111111] leading-relaxed break-words font-normal">
+                      {effectiveVariables["client.profile"]}
+                    </div>
+                  </div>
+
+                  {/* Целевой шаг диалога */}
+                  <div className="col-span-1 md:col-span-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{target.action}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Целевой шаг диалога</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyVariableValue("target.action", effectiveVariables["target.action"])}
+                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                        title="Скопировать"
+                      >
+                        {copiedKey === "target.action" ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-[12px] sm:text-[13px] text-[#111111] leading-relaxed break-words font-normal">
+                      {effectiveVariables["target.action"]}
+                    </div>
+                  </div>
+
+                  {/* Ограничения */}
+                  <div className="col-span-1 md:col-span-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{constraints}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Ограничения</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyVariableValue("constraints", effectiveVariables["constraints"])}
+                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                        title="Скопировать"
+                      >
+                        {copiedKey === "constraints" ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-[12px] sm:text-[13px] text-[#111111] leading-relaxed break-words font-normal">
+                      {effectiveVariables["constraints"]}
+                    </div>
+                  </div>
+
+                  {/* Специалист эскалации */}
+                  <div className="col-span-1 md:col-span-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#4a38f5]">
+                          {"{{handoff.specialist}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Специалист эскалации</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyVariableValue("handoff.specialist", effectiveVariables["handoff.specialist"])}
+                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                        title="Скопировать"
+                      >
+                        {copiedKey === "handoff.specialist" ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-[13px] text-[#111111] break-words">
+                      {effectiveVariables["handoff.specialist"]}
+                    </div>
                   </div>
                 </div>
-              )}
+              </div>
+
+              {/* Секция 2: Системные переменные среды (Только чтение / Вычисляется на лету) */}
+              <div className="space-y-3 pt-3 border-t border-[#e5e5e5]">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5 text-amber-600" />
+                    <span className="text-xs font-semibold text-[#111111]">
+                      Системные переменные среды
+                    </span>
+                    <span className="rounded-[4px] border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                      Только чтение · Вычисляется на лету
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {/* Текущее время */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#666666]">
+                          {"{{current_time}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Время (МСК)</span>
+                      </div>
+                      <span className="rounded-[4px] border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                        Только чтение
+                      </span>
+                    </div>
+                    <div className="text-[13px] font-mono text-[#111111]">
+                      {effectiveVariables["current_time"]}
+                    </div>
+                  </div>
+
+                  {/* Канал связи */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <code className="rounded-[4px] border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#666666]">
+                          {"{{channel_type}}"}
+                        </code>
+                        <span className="text-xs font-medium text-[#111111]">Канал</span>
+                      </div>
+                      <span className="rounded-[4px] border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                        Только чтение
+                      </span>
+                    </div>
+                    <div className="text-[13px] text-[#111111]">
+                      {effectiveVariables["channel_type"]}
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               {/* RAG Telemetry */}
               {previewData?.ragTelemetry && (

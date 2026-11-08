@@ -42,12 +42,26 @@ interface AiAgentDTO {
   maxTokens: number;
   systemPrompt: string;
   contextEntities: string[];
+  companyNameOverride?: string | null;
+  company_name_override?: string | null;
+  consultantSource?: "manual" | "chat_widget";
+  consultant_source?: "manual" | "chat_widget";
+  consultantName?: string | null;
+  consultant_name?: string | null;
+  consultantRole?: string | null;
+  consultant_role?: string | null;
+  fallbackModels?: string[];
+  fallback_models?: string[];
   wizardConfig?: {
     presetId?: string;
+    companyName?: string;
+    company_name_override?: string;
     consultantName?: string;
     consultantRole?: string;
     businessNiche?: string;
+    clientProfile?: string;
     targetAction?: string;
+    constraints?: string;
     handoffSpecialist?: string;
     isCustomEdited?: boolean;
     crawl_status?: "idle" | "pending" | "in_progress" | "ready" | "failed";
@@ -81,6 +95,31 @@ interface AiAgentDTO {
  */
 function toAiBot(dto: AiAgentDTO): AiBot {
   const wizardConfig = dto.wizardConfig;
+  const companyOverride =
+    dto.companyNameOverride ??
+    dto.company_name_override ??
+    (wizardConfig?.company_name_override as string | undefined) ??
+    (wizardConfig?.companyName as string | undefined) ??
+    "";
+  const consultantSource =
+    dto.consultantSource ??
+    dto.consultant_source ??
+    "manual";
+  const consultantName =
+    dto.consultantName ??
+    dto.consultant_name ??
+    (wizardConfig?.consultantName as string | undefined) ??
+    "";
+  const consultantRole =
+    dto.consultantRole ??
+    dto.consultant_role ??
+    (wizardConfig?.consultantRole as string | undefined) ??
+    "";
+  const fallbackModels =
+    dto.fallbackModels ??
+    dto.fallback_models ??
+    [];
+
   return {
     id: dto.id,
     name: dto.name,
@@ -93,6 +132,16 @@ function toAiBot(dto: AiAgentDTO): AiBot {
     max_tokens: dto.maxTokens,
     system_prompt: dto.systemPrompt,
     context_entities: dto.contextEntities as BotContextEntity[],
+    company_name_override: companyOverride,
+    companyNameOverride: companyOverride,
+    consultant_source: consultantSource,
+    consultantSource: consultantSource,
+    consultant_name: consultantName,
+    consultantName: consultantName,
+    consultant_role: consultantRole,
+    consultantRole: consultantRole,
+    fallback_models: fallbackModels,
+    fallbackModels: fallbackModels,
     target_page_url: dto.targetPageUrl,
     generated_system_prompt: dto.generatedSystemPrompt,
     knowledge_base_md: dto.knowledgeBaseMd ?? "",
@@ -136,6 +185,27 @@ function toPayload(payload: CreateBotPayload | UpdateBotPayload): Record<string,
   if (payload.generated_system_prompt !== undefined) body.generated_system_prompt = payload.generated_system_prompt;
   if (payload.knowledge_base_md !== undefined) body.knowledge_base_md = payload.knowledge_base_md;
   if (payload.feedback_learning_enabled !== undefined) body.feedback_learning_enabled = payload.feedback_learning_enabled;
+
+  if (payload.company_name_override !== undefined) {
+    body.company_name_override = payload.company_name_override;
+    body.companyNameOverride = payload.company_name_override;
+  }
+  if (payload.consultant_source !== undefined) {
+    body.consultant_source = payload.consultant_source;
+    body.consultantSource = payload.consultant_source;
+  }
+  if (payload.consultant_name !== undefined) {
+    body.consultant_name = payload.consultant_name;
+    body.consultantName = payload.consultant_name;
+  }
+  if (payload.consultant_role !== undefined) {
+    body.consultant_role = payload.consultant_role;
+    body.consultantRole = payload.consultant_role;
+  }
+  if (payload.fallback_models !== undefined) {
+    body.fallback_models = payload.fallback_models;
+    body.fallbackModels = payload.fallback_models;
+  }
 
   return body;
 }
