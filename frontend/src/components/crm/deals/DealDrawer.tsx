@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckSquare, Clock, FileText, Handshake, Heart, Home, Mail, MoreHorizontal, Paperclip, Pencil, ShieldAlert, Trash2, UserX } from "lucide-react";
+import { CheckSquare, Clock, FileText, Handshake, Heart, Home, Mail, MoreHorizontal, Paperclip, Pencil, ShieldAlert, Trash2, UserX, Wrench } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -47,6 +47,8 @@ function TabIcon({ id }: { id: string }) {
       return <Home className="h-3.5 w-3.5 shrink-0" />;
     case "chat":
       return <Clock className="h-3.5 w-3.5 shrink-0" />;
+    case "repairs":
+      return <Wrench className="h-3.5 w-3.5 shrink-0" />;
     case "tasks":
       return <CheckSquare className="h-3.5 w-3.5 shrink-0" />;
     case "notes":
