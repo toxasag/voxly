@@ -17,6 +17,7 @@ import { registerBullQueue } from "../../../infrastructure/queue-metrics.js";
 import { query, queryOne, runWithTenantContext } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
 import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
+import { bitrix24Service } from "../../integrations/bitrix24/bitrix24.service.js";
 import { getDealConversationSummary } from "./lead-summary.service.js";
 
 export interface LeadNotificationJobData {
@@ -34,6 +35,8 @@ export interface LeadNotificationData {
   budget?: number | string | null;
   currency?: string | null;
   custom_fields?: Record<string, unknown> | null;
+  source_metadata?: Record<string, unknown> | null;
+  source_widget_id?: string | null;
   lead_notified_at?: Date | string | null;
   created_at: Date | string;
   contact_id?: string | null;
@@ -302,7 +305,7 @@ export class LeadNotificationQueueService {
       // Извлечение лида со строгой проверкой tenant_id
       const lead = await queryOne<LeadNotificationData>(
       `SELECT d.id, d.tenant_id, d.stage_id, d.title, d.description, d.budget, d.currency,
-              d.custom_fields, d.lead_notified_at, d.created_at,
+              d.custom_fields, d.source_metadata, d.source_widget_id, d.lead_notified_at, d.created_at,
               s.name AS stage_name,
               c.id AS contact_id, c.first_name AS contact_first_name, c.last_name AS contact_last_name,
               c.phone AS contact_phone, c.email AS contact_email, c.telegram_chat_id AS contact_telegram_chat_id,
@@ -524,6 +527,52 @@ export class LeadNotificationQueueService {
       }
     }
 
+    // --- Канал 4: Битрикс24 (Экспорт лида через входящий вебхук crm.lead.add) ---
+    try {
+      const yaClientId =
+        (customFields?.ym_uid as string) ||
+        (customFields?.ym_client_id as string) ||
+        (customFields?.ya_client_id as string) ||
+        (customFields?.yandex_client_id as string) ||
+        (customFields?.ya_cid as string) ||
+        (lead.contact_id ? await this.resolveYaClientId(tenantId, lead.contact_id, lead.id) : null);
+
+      const tenantRow = await queryOne<{ slug: string }>(
+        `SELECT slug FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+
+      const b24Result = await bitrix24Service.sendLead(tenantId, {
+        leadId: lead.id,
+        title: lead.title,
+        contactName,
+        phone,
+        email,
+        yaClientId,
+        comments: conversationSummary || lead.description || null,
+        budget: lead.budget ? Number(lead.budget) : null,
+        currency: lead.currency || "RUB",
+        utmTags: (customFields?.utm_tags as Record<string, string>) || null,
+        tenantIdentifier: tenantRow?.slug || lead.tenant_name || "getvoxly",
+        sourceMetadata: lead.source_metadata,
+        sourceWidgetId: lead.source_widget_id,
+        contactChannel: lead.contact_channel,
+        customFields,
+      });
+
+      if (b24Result.success && b24Result.leadId) {
+        delivered = true;
+        if (!deliveredChannel) {
+          deliveredChannel = "email"; // fallback маркер канала для статистики доставки
+        }
+        console.log(`[BullMQ] Lead ${lead.id} exported to Bitrix24 (ID: ${b24Result.leadId})`);
+      } else if (b24Result.skipped) {
+        console.log(`[BullMQ] Lead ${lead.id} skipped for Bitrix24 (${b24Result.reason || "skipped"})`);
+      }
+    } catch (b24Err) {
+      console.warn(`[LeadNotification] Bitrix24 lead export non-blocking error:`, b24Err);
+    }
+
     if (!delivered) {
       const errorMessage = "No notification channel delivered the lead";
       await query(
@@ -591,6 +640,24 @@ export class LeadNotificationQueueService {
         return false;
       }
     });
+  }
+
+  private async resolveYaClientId(
+    tenantId: string,
+    contactId: string,
+    dealId: string,
+  ): Promise<string | null> {
+    try {
+      const session = await queryOne<{ ym_client_id: string | null }>(
+        `SELECT ym_client_id FROM analytics_sessions
+         WHERE tenant_id = $1 AND (contact_id = $2 OR deal_id = $3) AND ym_client_id IS NOT NULL AND ym_client_id <> ''
+         ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, contactId, dealId],
+      );
+      return session?.ym_client_id ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async shutdown(): Promise<void> {

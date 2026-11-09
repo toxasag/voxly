@@ -8,7 +8,7 @@ import { RepairsTable } from "@/components/repairs/RepairsTable";
 import { RepairIntakeModal } from "@/components/repairs/RepairIntakeModal";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
 import { Guard } from "@/components/shared/Guard";
-import type { RepairTicket, RepairFilterStatus } from "@/lib/repairs/repairs.types";
+import type { RepairTicket, RepairFilterStatus, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
 import type { RepairOrderDTO, EquipmentIntakeItem, CreateBatchRepairPayload } from "@/lib/api/use-repairs";
 import { useRepairs, useCreateRepair, useCreateBatchRepair } from "@/lib/api/use-repairs";
 import type { CreateRepairPayload } from "@/schemas/repair.schema";
@@ -24,13 +24,16 @@ export default function RepairsPage() {
 
 function RepairsPageContent() {
   const [filterStatus, setFilterStatus] = useState<RepairFilterStatus>("all");
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState<RepairPaymentStatus | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [copyTargetTicket, setCopyTargetTicket] = useState<RepairTicket | null>(null);
   const [receiptTarget, setReceiptTarget] = useState<RepairTicket | null>(null);
   const searchParams = useSearchParams();
 
   const { data, isLoading, isError, error } = useRepairs({
     status: filterStatus === "all" ? undefined : filterStatus,
+    paymentStatus: filterPaymentStatus === "all" ? undefined : filterPaymentStatus,
     search: searchQuery || undefined,
     limit: 25,
     offset: 0,
@@ -53,11 +56,14 @@ function RepairsPageContent() {
       deal_id: item.dealId ?? null,
       deal_title: item.dealTitle ?? null,
       deal_note: item.dealNote ?? null,
+      company_id: item.companyId ?? null,
       company_name: item.companyName ?? null,
       company_inn: item.companyInn ?? null,
       customer_name: item.customerName,
       customer_phone: item.customerPhone,
+      customer_email: item.customerEmail ?? null,
       customer_id: item.customerId,
+      additional_contacts: item.additionalContacts ?? [],
       equipment: {
         type: item.equipment.type,
         brand: item.equipment.brand,
@@ -69,6 +75,7 @@ function RepairsPageContent() {
       defect_description: item.defectDescription,
       defect_photos: item.defectPhotos,
       status: item.status,
+      payment_status: item.paymentStatus || (item.status === "issued" ? "paid" : "unpaid"),
       priority: item.priority,
       master_name: item.masterName,
       master_id: item.masterId,
@@ -156,6 +163,11 @@ function RepairsPageContent() {
     [createBatchMutation, createMutation],
   );
 
+  const handleCopyTicket = useCallback((ticket: RepairTicket) => {
+    setCopyTargetTicket(ticket);
+    setCreateModalOpen(true);
+  }, []);
+
   return (
     <Guard requiredPermission="service_center:read" requiredModule="service_center">
       <div className="space-y-3.5">
@@ -216,9 +228,12 @@ function RepairsPageContent() {
           tickets={tickets}
           filterStatus={filterStatus}
           onFilterStatusChange={setFilterStatus}
+          filterPaymentStatus={filterPaymentStatus}
+          onFilterPaymentStatusChange={setFilterPaymentStatus}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onPrintReceipt={(ticket) => setReceiptTarget(ticket)}
+          onCopyTicket={handleCopyTicket}
           isLoading={isLoading}
           isError={isError}
           error={error}
@@ -227,10 +242,14 @@ function RepairsPageContent() {
         {/* Modals */}
         <RepairIntakeModal
           open={createModalOpen}
-          onClose={() => setCreateModalOpen(false)}
+          onClose={() => {
+            setCreateModalOpen(false);
+            setCopyTargetTicket(null);
+          }}
           onSubmit={handleCreateRepair}
           initialCustomerId={searchParams.get("customer_id") ?? undefined}
           initialDealId={searchParams.get("dealId") ?? undefined}
+          copyFromTicket={copyTargetTicket}
           isSubmitting={createMutation.isPending || createBatchMutation.isPending}
         />
         <RepairReceiptModal

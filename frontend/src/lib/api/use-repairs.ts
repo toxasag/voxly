@@ -17,6 +17,7 @@ export type RepairStatus =
   | "in_progress"
   | "rejected";
 export type RepairPriority = "low" | "normal" | "high" | "urgent";
+export type RepairPaymentStatus = "unpaid" | "invoiced" | "paid";
 
 export interface EquipmentDTO {
   type: string;
@@ -202,6 +203,7 @@ export interface RepairOrderDTO {
   defectPhotos: string[];
   additionalContacts?: AdditionalContact[];
   status: RepairStatus;
+  paymentStatus: RepairPaymentStatus;
   nextStatus: RepairStatus | null;
   allowedTransitions: RepairStatus[];
   priority: RepairPriority;
@@ -236,6 +238,7 @@ export interface RepairsListResult {
 export interface RepairsQueryParams {
   dealId?: string;
   status?: RepairStatus;
+  paymentStatus?: RepairPaymentStatus;
   priority?: RepairPriority;
   masterId?: string;
   customerId?: string;
@@ -273,6 +276,7 @@ export interface CreateBatchRepairPayload {
   company_legal_address?: string;
   deal_id?: string;
   priority?: RepairPriority;
+  payment_status?: RepairPaymentStatus;
   master_id?: string;
   master_name?: string;
   estimated_cost?: number;
@@ -305,6 +309,7 @@ export interface CreateRepairPayload {
   malfunctions?: string[];
   defect_photos?: string[];
   priority?: RepairPriority;
+  payment_status?: RepairPaymentStatus;
   master_id?: string;
   master_name?: string;
   estimated_cost?: number;
@@ -340,6 +345,7 @@ export interface UpdateRepairPayload {
   defect_description?: string;
   malfunctions?: string[];
   priority?: RepairPriority;
+  payment_status?: RepairPaymentStatus;
   master_id?: string;
   master_name?: string;
   estimated_cost?: number;
@@ -434,6 +440,7 @@ export function useRepairs(params: RepairsQueryParams = {}): UseQueryResult<Repa
         query: {
           deal_id: params.dealId,
           status: params.status,
+          payment_status: params.paymentStatus,
           priority: params.priority,
           master_id: params.masterId,
           customer_id: params.customerId,
@@ -652,6 +659,24 @@ export function useAddRepairServiceToCatalog(): UseMutationResult<
   });
 }
 
+export function useDeleteRepairServiceFromCatalog(): UseMutationResult<
+  { success: boolean },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean }, ApiClientError, string>({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete<{ success: boolean }>(`${BASE_PATH}/catalog/services/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.servicesCatalog });
+    },
+  });
+}
+
 export function useSearchEquipmentBySerial(serial: string): UseQueryResult<EquipmentSearchSerialResultDTO, ApiClientError> {
   const trimmed = serial.trim();
   const isEnabled = trimmed.length >= 3;
@@ -830,6 +855,31 @@ export function useChangeRepairStatus(): UseMutationResult<RepairOrderDTO, ApiCl
   });
 }
 
+export function useUpdateRepairPaymentStatus(): UseMutationResult<
+  RepairOrderDTO,
+  ApiClientError,
+  { id: string; paymentStatus: RepairPaymentStatus }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairOrderDTO, ApiClientError, { id: string; paymentStatus: RepairPaymentStatus }>({
+    mutationFn: async ({ id, paymentStatus }) => {
+      const res = await apiClient.patch<RepairOrderDTO>(`${BASE_PATH}/${id}/payment-status`, {
+        payment_status: paymentStatus,
+      });
+      return res.data;
+    },
+    onSuccess: (order) => {
+      queryClient.setQueryData(repairKeys.detail(order.id), (old: RepairOrderDetailDTO | undefined) => {
+        if (!old) return old;
+        return { ...old, ...order };
+      });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+    },
+  });
+}
+
 export function useCreateWork(): UseMutationResult<RepairWorkDTO, ApiClientError, { orderId: string; payload: CreateWorkPayload }> {
   const queryClient = useQueryClient();
 
@@ -979,6 +1029,27 @@ export function useBatchUpdateRepairStatus(): UseMutationResult<
   return useMutation({
     mutationFn: async (payload) => {
       const res = await apiClient.post<BatchUpdateStatusResult>(`${BASE_PATH}/batch-status`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useBatchUpdateRepairPaymentStatus(): UseMutationResult<
+  { updated: number; ids: string[] },
+  ApiClientError,
+  { ids: string[]; paymentStatus: RepairPaymentStatus }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ ids, paymentStatus }) => {
+      const res = await apiClient.post<{ updated: number; ids: string[] }>(`${BASE_PATH}/batch-payment-status`, {
+        ids,
+        payment_status: paymentStatus,
+      });
       return res.data;
     },
     onSuccess: () => {

@@ -228,6 +228,24 @@ function DealsContent() {
         );
       }
 
+      if (deals.length > 1) {
+        deals = [...deals].sort((a, b) => {
+          switch (sortBy) {
+            case "last_message":
+            case "last_event":
+              return b.updatedAt.localeCompare(a.updatedAt);
+            case "created":
+              return b.createdAt.localeCompare(a.createdAt);
+            case "title":
+              return a.title.localeCompare(b.title, "ru");
+            case "budget":
+              return b.budget - a.budget;
+            default:
+              return (a.position ?? 0) - (b.position ?? 0);
+          }
+        });
+      }
+
       return {
         ...column,
         deals,
@@ -235,7 +253,7 @@ function DealsContent() {
         budgetTotal: deals.reduce((total, deal) => total + deal.budget, 0),
       };
     });
-  }, [columns, presetView, search]);
+  }, [columns, presetView, search, sortBy]);
 
   const sortedDeals = useMemo(() => {
     const deals = [...filteredDeals];

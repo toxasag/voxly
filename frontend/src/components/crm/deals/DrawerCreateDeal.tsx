@@ -184,7 +184,12 @@ export function DrawerCreateDeal({
   useEffect(() => {
     if (stagesList.length === 0) return;
     if (!stageId || !stagesList.some((s) => s.stageId === stageId)) {
-      setStageId(stagesList[0].stageId);
+      const defaultStage =
+        stagesList.find((s) => s.stageName.trim().toLowerCase() === "новый лид") ||
+        stagesList.find((s) => s.stageName.toLowerCase().includes("новый лид")) ||
+        stagesList.find((s) => !s.isWon && !s.isLost && s.stageName.trim().toLowerCase() !== "первый контакт") ||
+        stagesList[0];
+      setStageId(defaultStage.stageId);
     }
   }, [stagesList, stageId]);
 

@@ -1,23 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
+  Layers,
   Loader2,
   Mail,
   MessageSquare,
   Plus,
+  RefreshCw,
   Send,
+  Settings,
   ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Skeleton } from "@/components/shared/Skeleton";
+import { Switch } from "@/components/ui/switch";
 import { TagPill } from "@/components/ui/tag";
+import { Bitrix24IntegrationSection } from "@/components/settings/Bitrix24IntegrationSection";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 import {
   useCreateNotificationChannel,
@@ -29,7 +34,16 @@ import {
   type NotificationChannelDTO,
   type NotificationChannelType,
 } from "@/lib/api/use-notification-channels";
+import {
+  useBitrix24Config,
+  useTestBitrix24Connection,
+  useUpdateBitrix24Config,
+  type LeadSource,
+} from "@/lib/api/use-bitrix24";
 import { useTenantInfo } from "@/lib/api/use-team";
+import { SourceMultiSelect, SOURCE_MAP } from "@/components/settings/SourceMultiSelect";
+
+type ExtendedChannelType = NotificationChannelType | "bitrix24";
 
 const CHANNEL_CONFIG: Record<
   NotificationChannelType,
@@ -60,17 +74,52 @@ const CHANNEL_CONFIG: Record<
   },
 };
 
+function getBitrixDomain(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url.slice(0, 30);
+  }
+}
+
 interface AddChannelModalProps {
   open: boolean;
   onClose: () => void;
   tenantId?: string;
+  initialType?: ExtendedChannelType;
 }
 
-function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
-  const [channelType, setChannelType] = useState<NotificationChannelType>("telegram");
+function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: AddChannelModalProps) {
+  const [channelType, setChannelType] = useState<ExtendedChannelType>(initialType);
   const [destination, setDestination] = useState("");
   const createMutation = useCreateNotificationChannel();
   const { data: bindLinkData } = useTelegramBindLink();
+
+  // Битрикс24 стейт
+  const { data: bitrixConfig } = useBitrix24Config();
+  const updateBitrixMutation = useUpdateBitrix24Config();
+  const testBitrixMutation = useTestBitrix24Connection();
+
+  const [bitrixUrl, setBitrixUrl] = useState("");
+  const [bitrixEnabled, setBitrixEnabled] = useState(true);
+  const [bitrixAllowedSources, setBitrixAllowedSources] = useState<LeadSource[]>([]);
+  const [bitrixTestStatus, setBitrixTestStatus] = useState<{
+    success: boolean;
+    leadId?: number | string;
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setChannelType(initialType);
+      if (bitrixConfig) {
+        setBitrixUrl(bitrixConfig.webhook_url || "");
+        setBitrixEnabled(bitrixConfig.webhook_url ? Boolean(bitrixConfig.is_enabled) : true);
+        setBitrixAllowedSources(bitrixConfig.allowed_sources ?? []);
+      }
+      setBitrixTestStatus(null);
+    }
+  }, [open, initialType, bitrixConfig]);
 
   useOverlay(open, { onEscape: onClose });
 
@@ -81,8 +130,51 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
     bindLinkData?.deep_link ||
     (tenantId ? `https://t.me/${botUsername}?start=bind_${tenantId}` : "");
 
+  const handleTestBitrix = async () => {
+    const cleanUrl = bitrixUrl.trim();
+    if (!cleanUrl) {
+      toast.error("Укажите URL входящего вебхука Битрикс24");
+      return;
+    }
+    setBitrixTestStatus(null);
+    try {
+      const res = await testBitrixMutation.mutateAsync({ webhook_url: cleanUrl });
+      setBitrixTestStatus(res);
+      if (res.success) {
+        toast.success(res.message);
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Ошибка проверки вебхука";
+      setBitrixTestStatus({ success: false, message: msg });
+      toast.error(msg);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (channelType === "bitrix24") {
+      const cleanUrl = bitrixUrl.trim();
+      if (!cleanUrl) {
+        toast.error("Укажите URL входящего вебхука Битрикс24");
+        return;
+      }
+      try {
+        await updateBitrixMutation.mutateAsync({
+          webhook_url: cleanUrl,
+          is_enabled: bitrixEnabled,
+          allowed_sources: bitrixAllowedSources,
+        });
+        toast.success("Интеграция с Битрикс24 успешно сохранена и активирована");
+        onClose();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Не удалось сохранить Битрикс24";
+        toast.error(msg);
+      }
+      return;
+    }
 
     const cleanDest = destination.trim();
     if (!cleanDest && channelType !== "telegram") {
@@ -109,6 +201,8 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
     }
   };
 
+  const isSaving = createMutation.isPending || updateBitrixMutation.isPending;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
@@ -120,9 +214,9 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
       >
         <div className="flex items-center justify-between border-b border-[#e5e5e5] px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-[#111111]">Добавить канал уведомлений</h2>
+            <h2 className="text-base font-semibold text-[#111111]">Добавить канал передачи заявок</h2>
             <p className="mt-0.5 text-xs text-[#666666]">
-              Получайте мгновенные оповещения о новых заявках клиентов
+              Получайте мгновенные оповещения о новых заявках в мессенджеры или передавайте лиды в CRM
             </p>
           </div>
           <button
@@ -135,10 +229,10 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-5">
-          {/* Выбор типа канала */}
+          {/* Выбор типа канала — 4 провайдера */}
           <div>
             <label className="text-xs font-semibold text-[#111111] block mb-2">Тип канала</label>
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <button
                 type="button"
                 onClick={() => setChannelType("telegram")}
@@ -179,6 +273,20 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
                 <MessageSquare className="h-5 w-5" />
                 <span className="text-xs font-semibold">WhatsApp</span>
                 <span className="text-[10px] text-emerald-700 font-medium">Шлюз Meta</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setChannelType("bitrix24")}
+                className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
+                  channelType === "bitrix24"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
+                }`}
+              >
+                <Layers className="h-5 w-5 text-[#4a38f5]" />
+                <span className="text-xs font-semibold">Битрикс24</span>
+                <span className="text-[10px] text-sky-700 font-medium bg-sky-50 px-1 rounded">Вебхук CRM</span>
               </button>
             </div>
           </div>
@@ -283,6 +391,97 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
             </div>
           )}
 
+          {channelType === "bitrix24" && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-[#111111] block mb-1">
+                  URL входящего вебхука Битрикс24 (crm.lead.add)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    required
+                    value={bitrixUrl}
+                    onChange={(e) => setBitrixUrl(e.target.value)}
+                    placeholder="https://domain.bitrix24.ru/rest/1/webhook_code/crm.lead.add.json"
+                    className="flex-1 h-9 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleTestBitrix}
+                    disabled={testBitrixMutation.isPending || !bitrixUrl.trim()}
+                    className="h-9 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] disabled:opacity-40 inline-flex items-center gap-1 shrink-0"
+                  >
+                    {testBitrixMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5 text-[#666666]" />
+                    )}
+                    <span>Тест</span>
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-[#666666]">
+                  В Битрикс24: <strong>Разработчикам → Другое → Входящий вебхук</strong> (требуются права CRM).
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-medium text-[#111111] block">
+                    Активировать экспорт лидов
+                  </span>
+                  <span className="text-[11px] text-[#666666] block">
+                    Отправлять заявки сразу при поступлении
+                  </span>
+                </div>
+                <Switch checked={bitrixEnabled} onCheckedChange={setBitrixEnabled} />
+              </div>
+
+              {/* Мультивыбор источников заявок */}
+              <div className="p-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/50">
+                <SourceMultiSelect
+                  value={bitrixAllowedSources}
+                  onChange={setBitrixAllowedSources}
+                  disabled={updateBitrixMutation.isPending}
+                />
+              </div>
+
+              {bitrixTestStatus && (
+                <div
+                  className={`rounded-[8px] p-3 text-xs border flex items-start gap-2.5 ${
+                    bitrixTestStatus.success
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                      : "bg-rose-50 border-rose-200 text-rose-900"
+                  }`}
+                >
+                  {bitrixTestStatus.success ? (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+                  )}
+                  <div>
+                    <p className="font-semibold">{bitrixTestStatus.message}</p>
+                    {bitrixTestStatus.success && bitrixTestStatus.leadId && (
+                      <p className="text-[11px] text-emerald-700 mt-0.5">
+                        Создан тестовый лид ID: {bitrixTestStatus.leadId} с SOURCE_ID = UC_VWN1ZK и UF_CRM_YA_CID.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-1.5 text-[11px] text-[#555555]">
+                <p className="font-semibold text-[#111111] flex items-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  <span>Правила полезной нагрузки лида:</span>
+                </p>
+                <p>• Источник: строго <code className="bg-[#f0f0f0] px-1 rounded font-mono text-[#111111]">SOURCE_ID = UC_VWN1ZK</code></p>
+                <p>• Метрика: передача Client ID Яндекс.Метрики в поле <code className="bg-[#f0f0f0] px-1 rounded font-mono text-[#111111]">UF_CRM_YA_CID</code></p>
+                <p>• Контакты: имя, телефон (WORK), email, суть обращения и UTM-метки</p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#e5e5e5]">
             <button
               type="button"
@@ -293,11 +492,11 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
             </button>
             <button
               type="submit"
-              disabled={createMutation.isPending}
+              disabled={isSaving}
               className="h-8 rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 inline-flex items-center gap-1.5"
             >
-              {createMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              <span>{createMutation.isPending ? "Добавление..." : "Добавить канал"}</span>
+              {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              <span>{isSaving ? "Сохранение..." : channelType === "bitrix24" ? "Сохранить и подключить" : "Добавить канал"}</span>
             </button>
           </div>
         </form>
@@ -309,9 +508,16 @@ function AddChannelModal({ open, onClose, tenantId }: AddChannelModalProps) {
 export function LeadNotificationChannels() {
   const { data: channels, isLoading } = useNotificationChannels();
   const { data: info } = useTenantInfo();
+  const { data: bitrixConfig, isLoading: bitrixLoading } = useBitrix24Config();
+  const updateBitrixMutation = useUpdateBitrix24Config();
+  const testBitrixMutation = useTestBitrix24Connection();
+
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [modalInitialType, setModalInitialType] = useState<ExtendedChannelType>("telegram");
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [isDeletingBitrix, setIsDeletingBitrix] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [testingBitrix, setTestingBitrix] = useState(false);
 
   const deleteMutation = useDeleteNotificationChannel();
   const toggleMutation = useToggleNotificationChannel();
@@ -334,6 +540,27 @@ export function LeadNotificationChannels() {
     }
   };
 
+  const handleTestBitrix = async () => {
+    if (!bitrixConfig?.webhook_url) {
+      toast.error("Битрикс24 не настроен");
+      return;
+    }
+    setTestingBitrix(true);
+    try {
+      const res = await testBitrixMutation.mutateAsync({ webhook_url: bitrixConfig.webhook_url });
+      if (res.success) {
+        toast.success(res.message);
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Ошибка проверки Битрикс24";
+      toast.error(msg);
+    } finally {
+      setTestingBitrix(false);
+    }
+  };
+
   const handleToggle = async (channel: NotificationChannelDTO) => {
     try {
       await toggleMutation.mutateAsync({
@@ -348,7 +575,39 @@ export function LeadNotificationChannels() {
     }
   };
 
+  const handleToggleBitrix = async () => {
+    if (!bitrixConfig?.webhook_url) return;
+    try {
+      await updateBitrixMutation.mutateAsync({
+        webhook_url: bitrixConfig.webhook_url,
+        is_enabled: !bitrixConfig.is_enabled,
+      });
+      toast.success(
+        bitrixConfig.is_enabled
+          ? "Экспорт в Битрикс24 временно приостановлен"
+          : "Экспорт в Битрикс24 активирован",
+      );
+    } catch {
+      toast.error("Не удалось изменить статус Битрикс24");
+    }
+  };
+
   const handleDelete = async () => {
+    if (isDeletingBitrix) {
+      try {
+        await updateBitrixMutation.mutateAsync({
+          webhook_url: "",
+          is_enabled: false,
+        });
+        toast.success("Интеграция с Битрикс24 отключена");
+      } catch {
+        toast.error("Не удалось отключить Битрикс24");
+      } finally {
+        setIsDeletingBitrix(false);
+      }
+      return;
+    }
+
     if (!deleteId) return;
     try {
       await deleteMutation.mutateAsync(deleteId);
@@ -359,21 +618,27 @@ export function LeadNotificationChannels() {
     }
   };
 
+  const hasBitrixConfigured = Boolean(bitrixConfig?.webhook_url && bitrixConfig.webhook_url.trim());
+  const hasAnyChannels = (channels && channels.length > 0) || hasBitrixConfigured;
+
   return (
     <div className="space-y-5">
       {/* Шапка блока */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-[#111111]">
-            Каналы уведомлений о заявках
+            Каналы уведомлений и передачи заявок
           </h2>
           <p className="mt-0.5 text-xs text-[#666666]">
-            Куда отправлять оповещения при поступлении новых лидов и контактов клиентов
+            Куда отправлять оповещения о лидах (Telegram, Email, WhatsApp) и экспорт в Битрикс24
           </p>
         </div>
         <button
           type="button"
-          onClick={() => setAddModalOpen(true)}
+          onClick={() => {
+            setModalInitialType("telegram");
+            setAddModalOpen(true);
+          }}
           className="inline-flex items-center gap-1.5 h-8 rounded-[8px] bg-[#4a38f5] px-3.5 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] self-start sm:self-auto"
         >
           <Plus className="h-4 w-4" />
@@ -386,26 +651,138 @@ export function LeadNotificationChannels() {
         <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-700 mt-0.5" />
         <div className="space-y-1 text-xs">
           <p className="font-semibold text-emerald-950">
-            Антибан-архитектура GETVOXLY активна
+            Официальные шлюзы и прямая интеграция с CRM активны
           </p>
           <p className="text-emerald-900 leading-relaxed">
-            В отличие от серых web-сессий WhatsApp и личных user-ботов Telegram, платформа использует
-            официальный Bot API платформы и верифицированный транзакционный шлюз. Ваши личные номера и
-            аккаунты полностью защищены от блокировок алгоритмами Meta и Telegram.
+            Платформа использует официальный Bot API Telegram, шлюз WhatsApp и защищенный вебхук Битрикс24
+            с гарантированной передачей UTM-меток и Client ID Яндекс.Метрики (<code className="font-mono text-emerald-950">UF_CRM_YA_CID</code>, источник <code className="font-mono text-emerald-950">UC_VWN1ZK</code>).
           </p>
         </div>
       </div>
 
       {/* Таблица / список каналов */}
       <div className="rounded-[8px] border border-[#e5e5e5] bg-white overflow-hidden shadow-2xs">
-        {isLoading ? (
+        {isLoading || bitrixLoading ? (
           <div className="p-5 space-y-3">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>
-        ) : channels && channels.length > 0 ? (
+        ) : hasAnyChannels ? (
           <div className="divide-y divide-[#f0f0f0]">
-            {channels.map((channel) => {
+            {/* Строка интеграции с Битрикс24, если она настроена */}
+            {hasBitrixConfigured && bitrixConfig && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 hover:bg-[#fafafa] transition-colors bg-sky-50/20">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-sky-100/70">
+                    <Layers className="h-4 w-4 text-[#4a38f5]" />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <TagPill color="sky">Битрикс24</TagPill>
+                      <span className="font-semibold text-[13px] text-[#111111]">
+                        {getBitrixDomain(bitrixConfig.webhook_url)}
+                      </span>
+                      <span className="text-[10px] text-sky-800 font-medium bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-[4px]">
+                        Экспорт лидов · SOURCE_ID: UC_VWN1ZK
+                      </span>
+                      {bitrixConfig.last_lead_id && (
+                        <span className="font-mono text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-[4px]">
+                          Лид #{bitrixConfig.last_lead_id}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-1 flex items-center gap-3 text-[11px] text-[#666666]">
+                      <span className="flex items-center gap-1">
+                        {bitrixConfig.is_enabled ? (
+                          <>
+                            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                            <span className="text-emerald-700 font-medium">Экспорт активен</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="h-3 w-3 text-[#888888]" />
+                            <span className="text-[#888888]">Приостановлен</span>
+                          </>
+                        )}
+                      </span>
+                      <span>•</span>
+                      <span>
+                        Источники:{" "}
+                        <strong className="text-[#333333]">
+                          {bitrixConfig.allowed_sources && bitrixConfig.allowed_sources.length > 0
+                            ? bitrixConfig.allowed_sources
+                                .map((s) => SOURCE_MAP.get(s)?.shortLabel || s)
+                                .join(", ")
+                            : "Все каналы"}
+                        </strong>
+                      </span>
+                      {bitrixConfig.last_sync_at && (
+                        <>
+                          <span>•</span>
+                          <span>Посл. отправка: {new Date(bitrixConfig.last_sync_at).toLocaleString("ru-RU")}</span>
+                        </>
+                      )}
+                      {bitrixConfig.last_error && (
+                        <>
+                          <span>•</span>
+                          <span className="text-rose-600 font-medium">Ошибка: {bitrixConfig.last_error}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    disabled={testingBitrix || !bitrixConfig.is_enabled}
+                    onClick={handleTestBitrix}
+                    className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] disabled:opacity-40 inline-flex items-center gap-1"
+                  >
+                    {testingBitrix && <Loader2 className="h-3 w-3 animate-spin text-[#4a38f5]" />}
+                    <span>Тест</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleBitrix}
+                    className={`h-7 rounded-[6px] border px-2.5 text-xs font-medium transition-colors ${
+                      bitrixConfig.is_enabled
+                        ? "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5]"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                    }`}
+                  >
+                    {bitrixConfig.is_enabled ? "Приостановить" : "Включить"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalInitialType("bitrix24");
+                      setAddModalOpen(true);
+                    }}
+                    className="h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#f5f5f5] flex items-center justify-center"
+                    title="Настроить Битрикс24"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsDeletingBitrix(true)}
+                    className="h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100 flex items-center justify-center"
+                    title="Отключить Битрикс24"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Обычные каналы (Telegram, Email, WhatsApp) */}
+            {channels?.map((channel) => {
               const cfg = CHANNEL_CONFIG[channel.channel_type] ?? CHANNEL_CONFIG.email;
               const Icon = cfg.icon;
 
@@ -520,13 +897,16 @@ export function LeadNotificationChannels() {
                 Каналы уведомлений ещё не настроены
               </p>
               <p className="mt-1 text-xs text-[#666666] max-w-md mx-auto">
-                По умолчанию все заявки отправляются на основной email аккаунта. Добавьте Telegram-бота
-                или WhatsApp, чтобы сотрудники получали уведомления о заявках прямо в мессенджеры без задержек.
+                По умолчанию все заявки отправляются на основной email аккаунта. Подключите Telegram-бота,
+                WhatsApp или входящий вебхук Битрикс24 для автоматической выгрузки лидов в CRM.
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setAddModalOpen(true)}
+              onClick={() => {
+                setModalInitialType("telegram");
+                setAddModalOpen(true);
+              }}
               className="inline-flex items-center gap-1.5 h-8 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0]"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -536,12 +916,20 @@ export function LeadNotificationChannels() {
         )}
       </div>
 
+      {/* Постоянная секция расширенной настройки Битрикс24 под списком */}
+      <div className="pt-2">
+        <Bitrix24IntegrationSection />
+      </div>
+
+      {/* Модальное окно добавления канала с поддержкой Битрикс24 */}
       <AddChannelModal
         open={addModalOpen}
         onClose={() => setAddModalOpen(false)}
         tenantId={info?.id}
+        initialType={modalInitialType}
       />
 
+      {/* Диалог подтверждения удаления стандартного канала */}
       <ConfirmDialog
         open={Boolean(deleteId)}
         onClose={() => setDeleteId(null)}
@@ -551,6 +939,18 @@ export function LeadNotificationChannels() {
         confirmLabel="Удалить"
         variant="destructive"
         isPending={deleteMutation.isPending}
+      />
+
+      {/* Диалог подтверждения отключения Битрикс24 */}
+      <ConfirmDialog
+        open={isDeletingBitrix}
+        onClose={() => setIsDeletingBitrix(false)}
+        onConfirm={handleDelete}
+        title="Отключить интеграцию с Битрикс24?"
+        description="URL входящего вебхука будет очищен, и автоматический экспорт лидов в Битрикс24 прекратится."
+        confirmLabel="Отключить"
+        variant="destructive"
+        isPending={updateBitrixMutation.isPending}
       />
     </div>
   );

@@ -583,6 +583,7 @@ CREATE TABLE IF NOT EXISTS repair_orders (
   defect_description TEXT NOT NULL,
   defect_photos TEXT[] NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'intake',
+  payment_status TEXT NOT NULL DEFAULT 'unpaid',
   priority TEXT NOT NULL DEFAULT 'normal',
   master_id UUID NOT NULL,
   master_name TEXT NOT NULL,
@@ -1524,3 +1525,25 @@ CREATE POLICY tenant_isolation ON invoice_items
         AND i.tenant_id = current_tenant_id()
     )
   );
+
+-- Интеграция с Битрикс24 (входящий вебхук crm.lead.add)
+CREATE TABLE IF NOT EXISTS tenant_bitrix24_configs (
+  tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  webhook_url TEXT NOT NULL DEFAULT '',
+  is_enabled BOOLEAN NOT NULL DEFAULT false,
+  allowed_sources TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+  last_lead_id TEXT,
+  last_sync_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE tenant_bitrix24_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_bitrix24_configs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_bitrix24_configs_isolation ON tenant_bitrix24_configs;
+CREATE POLICY tenant_bitrix24_configs_isolation ON tenant_bitrix24_configs
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+

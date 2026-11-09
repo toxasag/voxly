@@ -12,20 +12,20 @@ interface RepairStatusStepperProps {
   disabled?: boolean;
 }
 
-// 4 ключевых статуса согласно требованиям
+// 7 ключевых рабочих статусов жизненного цикла наряда
 const PRIMARY_STATUSES: { status: RepairStatus; label: string }[] = [
   { status: "intake", label: "Принят" },
+  { status: "diagnostics", label: "Диагностика" },
+  { status: "approval", label: "Согласование" },
   { status: "waiting_parts", label: "Заказ запчастей" },
+  { status: "in_progress", label: "В работе" },
   { status: "ready", label: "Готов" },
   { status: "issued", label: "Выдан" },
 ];
 
-// Дополнительные статусы для дропдауна
+// Дополнительный статус в выпадающем меню: исключительно «Отказ»
 const SECONDARY_STATUSES: { status: RepairStatus; label: string }[] = [
-  { status: "diagnostics", label: "Диагностика" },
-  { status: "in_progress", label: "В работе" },
-  { status: "approval", label: "Согласование" },
-  { status: "rejected", label: "Отказ / возврат" },
+  { status: "rejected", label: "Отказ" },
 ];
 
 export const RepairStatusStepper = memo(function RepairStatusStepper({
@@ -37,14 +37,18 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
+    function handleClickOutside(event: MouseEvent | TouchEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false);
       }
     }
     if (dropdownOpen) {
       document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside);
+      return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+        document.removeEventListener("touchstart", handleClickOutside);
+      };
     }
   }, [dropdownOpen]);
 
@@ -108,11 +112,7 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
         {isRejected ? (
           <span className="inline-flex items-center gap-1 rounded-[6px] border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
             <AlertTriangle className="h-3 w-3" />
-            Отказ / возврат
-          </span>
-        ) : isSecondaryActive ? (
-          <span className="inline-flex items-center gap-1 rounded-[6px] border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
-            {getRepairStatusLabel(current)}
+            Отказ
           </span>
         ) : null}
 
