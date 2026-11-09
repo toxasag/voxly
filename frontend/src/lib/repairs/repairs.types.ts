@@ -59,6 +59,7 @@ export interface RepairTicket {
   customer_phone: string;
   customer_email?: string | null;
   customer_id: string;
+  additional_contacts?: { name: string; phone: string; role?: string }[];
   equipment: EquipmentInfo;
   defect_description: string;
   defect_photos: string[];
