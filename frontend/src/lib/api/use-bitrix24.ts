@@ -14,10 +14,22 @@ export const LEAD_SOURCES = [
 
 export type LeadSource = (typeof LEAD_SOURCES)[number];
 
+export interface SimpleWidgetDTO {
+  id: string;
+  name: string;
+  site_domain: string;
+  status: string;
+  created_at?: string;
+}
+
 export interface Bitrix24ConfigDTO {
   webhook_url: string;
   is_enabled: boolean;
   allowed_sources?: LeadSource[];
+  selected_widget_ids?: string[];
+  custom_source_id?: string;
+  send_utm_marks?: boolean;
+  send_geo_data?: boolean;
   last_lead_id: string | null;
   last_sync_at: string | null;
   last_error: string | null;
@@ -27,6 +39,10 @@ export interface UpdateBitrix24Payload {
   webhook_url?: string;
   is_enabled?: boolean;
   allowed_sources?: (LeadSource | string)[];
+  selected_widget_ids?: string[];
+  custom_source_id?: string;
+  send_utm_marks?: boolean;
+  send_geo_data?: boolean;
 }
 
 export interface TestBitrix24Response {
@@ -34,12 +50,27 @@ export interface TestBitrix24Response {
   leadId?: number | string;
   message: string;
   error?: string;
+  details?: string;
 }
 
 export const bitrix24Keys = {
   all: ["settings", "integrations", "bitrix24"] as const,
   config: () => [...bitrix24Keys.all, "config"] as const,
+  widgets: () => [...bitrix24Keys.all, "widgets"] as const,
 };
+
+export function useTenantWidgets() {
+  return useQuery({
+    queryKey: bitrix24Keys.widgets(),
+    queryFn: async () => {
+      const res = await apiClient.get<SimpleWidgetDTO[]>(
+        "/api/v1/settings/integrations/bitrix24/widgets",
+      );
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
 
 export function useBitrix24Config() {
   return useQuery({

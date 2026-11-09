@@ -36,12 +36,14 @@ import {
 } from "@/lib/api/use-notification-channels";
 import {
   useBitrix24Config,
+  useTenantWidgets,
   useTestBitrix24Connection,
   useUpdateBitrix24Config,
   type LeadSource,
 } from "@/lib/api/use-bitrix24";
 import { useTenantInfo } from "@/lib/api/use-team";
 import { SourceMultiSelect, SOURCE_MAP } from "@/components/settings/SourceMultiSelect";
+import { WidgetMultiSelect } from "@/components/settings/WidgetMultiSelect";
 
 type ExtendedChannelType = NotificationChannelType | "bitrix24";
 
@@ -97,16 +99,22 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
 
   // Битрикс24 стейт
   const { data: bitrixConfig } = useBitrix24Config();
+  const { data: widgets = [], isLoading: widgetsLoading } = useTenantWidgets();
   const updateBitrixMutation = useUpdateBitrix24Config();
   const testBitrixMutation = useTestBitrix24Connection();
 
   const [bitrixUrl, setBitrixUrl] = useState("");
   const [bitrixEnabled, setBitrixEnabled] = useState(true);
   const [bitrixAllowedSources, setBitrixAllowedSources] = useState<LeadSource[]>([]);
+  const [bitrixSelectedWidgetIds, setBitrixSelectedWidgetIds] = useState<string[]>([]);
+  const [bitrixCustomSourceId, setBitrixCustomSourceId] = useState("UC_VWN1ZK");
+  const [bitrixSendUtmMarks, setBitrixSendUtmMarks] = useState(true);
+  const [bitrixSendGeoData, setBitrixSendGeoData] = useState(true);
   const [bitrixTestStatus, setBitrixTestStatus] = useState<{
     success: boolean;
     leadId?: number | string;
     message: string;
+    error?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -116,6 +124,10 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
         setBitrixUrl(bitrixConfig.webhook_url || "");
         setBitrixEnabled(bitrixConfig.webhook_url ? Boolean(bitrixConfig.is_enabled) : true);
         setBitrixAllowedSources(bitrixConfig.allowed_sources ?? []);
+        setBitrixSelectedWidgetIds(bitrixConfig.selected_widget_ids ?? []);
+        setBitrixCustomSourceId(bitrixConfig.custom_source_id || "UC_VWN1ZK");
+        setBitrixSendUtmMarks(bitrixConfig.send_utm_marks ?? true);
+        setBitrixSendGeoData(bitrixConfig.send_geo_data ?? true);
       }
       setBitrixTestStatus(null);
     }
@@ -143,11 +155,14 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
       if (res.success) {
         toast.success(res.message);
       } else {
-        toast.error(res.message);
+        const msg = res.message || res.error || "Ошибка проверки вебхука";
+        setBitrixTestStatus({ success: false, message: msg, error: msg });
+        toast.error(msg);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Ошибка проверки вебхука";
-      setBitrixTestStatus({ success: false, message: msg });
+    } catch (err: unknown) {
+      const anyErr = err as { data?: { message?: string; details?: string; error?: string }; message?: string };
+      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.data?.error || anyErr.message || "Ошибка проверки вебхука";
+      setBitrixTestStatus({ success: false, message: msg, error: msg });
       toast.error(msg);
     }
   };
@@ -166,11 +181,16 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
           webhook_url: cleanUrl,
           is_enabled: bitrixEnabled,
           allowed_sources: bitrixAllowedSources,
+          selected_widget_ids: bitrixSelectedWidgetIds,
+          custom_source_id: bitrixCustomSourceId.trim() || "UC_VWN1ZK",
+          send_utm_marks: bitrixSendUtmMarks,
+          send_geo_data: bitrixSendGeoData,
         });
         toast.success("Интеграция с Битрикс24 успешно сохранена и активирована");
         onClose();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Не удалось сохранить Битрикс24";
+      } catch (err: unknown) {
+        const anyErr = err as { data?: { message?: string; details?: string }; message?: string };
+        const msg = anyErr.data?.details || anyErr.data?.message || anyErr.message || "Не удалось сохранить Битрикс24";
         toast.error(msg);
       }
       return;
@@ -438,12 +458,60 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
               </div>
 
               {/* Мультивыбор источников заявок */}
-              <div className="p-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/50">
+              <div className="p-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/50 space-y-3">
                 <SourceMultiSelect
                   value={bitrixAllowedSources}
                   onChange={setBitrixAllowedSources}
                   disabled={updateBitrixMutation.isPending}
                 />
+
+                {(bitrixAllowedSources.length === 0 || bitrixAllowedSources.includes("site_widget")) && (
+                  <div className="pt-2 border-t border-[#e5e5e5]">
+                    <WidgetMultiSelect
+                      widgets={widgets}
+                      selectedIds={bitrixSelectedWidgetIds}
+                      onChange={setBitrixSelectedWidgetIds}
+                      disabled={updateBitrixMutation.isPending}
+                      isLoading={widgetsLoading}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Поле SOURCE_ID */}
+              <div>
+                <label className="text-xs font-medium text-[#111111] block mb-1">
+                  Идентификатор источника (SOURCE_ID)
+                </label>
+                <input
+                  type="text"
+                  value={bitrixCustomSourceId}
+                  onChange={(e) => setBitrixCustomSourceId(e.target.value)}
+                  placeholder="UC_VWN1ZK (или WIDGET, WEB, CALL)"
+                  className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
+                />
+                <p className="mt-1 text-[11px] text-[#666666]">
+                  Код источника из справочника CRM Битрикс24. По умолчанию: <code className="bg-[#f0f0f0] px-1 rounded font-mono text-[#111111]">UC_VWN1ZK</code>.
+                </p>
+              </div>
+
+              {/* Опции обогащения */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div className="flex items-center justify-between p-2.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
+                  <div className="pr-2">
+                    <span className="font-medium text-[#111111] block">UTM-метки</span>
+                    <span className="text-[10px] text-[#666666] block">Нативные поля Битрикс24</span>
+                  </div>
+                  <Switch checked={bitrixSendUtmMarks} onCheckedChange={setBitrixSendUtmMarks} />
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
+                  <div className="pr-2">
+                    <span className="font-medium text-[#111111] block">Гео и метаданные</span>
+                    <span className="text-[10px] text-[#666666] block">Город, IP, устройство в комментарий</span>
+                  </div>
+                  <Switch checked={bitrixSendGeoData} onCheckedChange={setBitrixSendGeoData} />
+                </div>
               </div>
 
               {bitrixTestStatus && (
@@ -463,7 +531,7 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
                     <p className="font-semibold">{bitrixTestStatus.message}</p>
                     {bitrixTestStatus.success && bitrixTestStatus.leadId && (
                       <p className="text-[11px] text-emerald-700 mt-0.5">
-                        Создан тестовый лид ID: {bitrixTestStatus.leadId} с SOURCE_ID = UC_VWN1ZK и UF_CRM_YA_CID.
+                        Создан тестовый лид ID: {bitrixTestStatus.leadId} с SOURCE_ID = {bitrixCustomSourceId.trim() || "UC_VWN1ZK"}.
                       </p>
                     )}
                   </div>
@@ -475,7 +543,7 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
                   <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />
                   <span>Правила полезной нагрузки лида:</span>
                 </p>
-                <p>• Источник: строго <code className="bg-[#f0f0f0] px-1 rounded font-mono text-[#111111]">SOURCE_ID = UC_VWN1ZK</code></p>
+                <p>• Источник: <code className="bg-[#f0f0f0] px-1 rounded font-mono text-[#111111]">SOURCE_ID = {bitrixCustomSourceId.trim() || "UC_VWN1ZK"}</code></p>
                 <p>• Метрика: передача Client ID Яндекс.Метрики в поле <code className="bg-[#f0f0f0] px-1 rounded font-mono text-[#111111]">UF_CRM_YA_CID</code></p>
                 <p>• Контакты: имя, телефон (WORK), email, суть обращения и UTM-метки</p>
               </div>
@@ -551,10 +619,12 @@ export function LeadNotificationChannels() {
       if (res.success) {
         toast.success(res.message);
       } else {
-        toast.error(res.message);
+        const msg = res.message || res.error || "Ошибка проверки Битрикс24";
+        toast.error(msg);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Ошибка проверки Битрикс24";
+    } catch (err: unknown) {
+      const anyErr = err as { data?: { message?: string; details?: string; error?: string }; message?: string };
+      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.data?.error || anyErr.message || "Ошибка проверки Битрикс24";
       toast.error(msg);
     } finally {
       setTestingBitrix(false);
@@ -684,8 +754,27 @@ export function LeadNotificationChannels() {
                         {getBitrixDomain(bitrixConfig.webhook_url)}
                       </span>
                       <span className="text-[10px] text-sky-800 font-medium bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-[4px]">
-                        Экспорт лидов · SOURCE_ID: UC_VWN1ZK
+                        SOURCE_ID: {bitrixConfig.custom_source_id || "UC_VWN1ZK"}
                       </span>
+                      {bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length > 0 ? (
+                        <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px]">
+                          Виджеты: {bitrixConfig.selected_widget_ids.length}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[#666666] font-medium bg-[#f5f5f5] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
+                          Все виджеты
+                        </span>
+                      )}
+                      {bitrixConfig.send_utm_marks && (
+                        <span className="text-[10px] text-[#666666] font-medium bg-[#fafafa] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
+                          UTM
+                        </span>
+                      )}
+                      {bitrixConfig.send_geo_data && (
+                        <span className="text-[10px] text-[#666666] font-medium bg-[#fafafa] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
+                          Geo
+                        </span>
+                      )}
                       {bitrixConfig.last_lead_id && (
                         <span className="font-mono text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-[4px]">
                           Лид #{bitrixConfig.last_lead_id}

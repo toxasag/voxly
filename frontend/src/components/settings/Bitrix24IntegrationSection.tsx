@@ -11,29 +11,39 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
+  Sparkles,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { TagPill } from "@/components/ui/tag";
 import {
   useBitrix24Config,
+  useTenantWidgets,
   useTestBitrix24Connection,
   useUpdateBitrix24Config,
   type LeadSource,
 } from "@/lib/api/use-bitrix24";
 import { SourceMultiSelect } from "@/components/settings/SourceMultiSelect";
+import { WidgetMultiSelect } from "@/components/settings/WidgetMultiSelect";
 
 export function Bitrix24IntegrationSection() {
   const { data: config, isLoading } = useBitrix24Config();
+  const { data: widgets = [], isLoading: widgetsLoading } = useTenantWidgets();
   const updateMutation = useUpdateBitrix24Config();
   const testMutation = useTestBitrix24Connection();
 
   const [webhookUrl, setWebhookUrl] = useState("");
   const [isEnabled, setIsEnabled] = useState(false);
   const [allowedSources, setAllowedSources] = useState<LeadSource[]>([]);
+  const [selectedWidgetIds, setSelectedWidgetIds] = useState<string[]>([]);
+  const [customSourceId, setCustomSourceId] = useState("UC_VWN1ZK");
+  const [sendUtmMarks, setSendUtmMarks] = useState(true);
+  const [sendGeoData, setSendGeoData] = useState(true);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     leadId?: number | string;
     message: string;
+    error?: string;
   } | null>(null);
 
   // Синхронизируем локальный стейт при получении данных с сервера
@@ -42,6 +52,10 @@ export function Bitrix24IntegrationSection() {
       setWebhookUrl(config.webhook_url || "");
       setIsEnabled(Boolean(config.is_enabled));
       setAllowedSources(config.allowed_sources ?? []);
+      setSelectedWidgetIds(config.selected_widget_ids ?? []);
+      setCustomSourceId(config.custom_source_id || "UC_VWN1ZK");
+      setSendUtmMarks(config.send_utm_marks ?? true);
+      setSendGeoData(config.send_geo_data ?? true);
     }
   }, [config]);
 
@@ -59,11 +73,16 @@ export function Bitrix24IntegrationSection() {
         webhook_url: cleanUrl,
         is_enabled: isEnabled,
         allowed_sources: allowedSources,
+        selected_widget_ids: selectedWidgetIds,
+        custom_source_id: customSourceId.trim() || "UC_VWN1ZK",
+        send_utm_marks: sendUtmMarks,
+        send_geo_data: sendGeoData,
       });
       toast.success("Настройки Битрикс24 сохранены");
       setTestResult(null);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Не удалось сохранить настройки";
+    } catch (err: unknown) {
+      const anyErr = err as { data?: { message?: string; details?: string }; message?: string };
+      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.message || "Не удалось сохранить настройки";
       toast.error(msg);
     }
   };
@@ -86,17 +105,21 @@ export function Bitrix24IntegrationSection() {
         });
         toast.success(res.message);
       } else {
+        const msg = res.message || res.error || "Ошибка проверки подключения";
         setTestResult({
           success: false,
-          message: res.message,
+          message: msg,
+          error: msg,
         });
-        toast.error(res.message);
+        toast.error(msg);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Ошибка проверки вебхука";
+    } catch (err: unknown) {
+      const anyErr = err as { data?: { message?: string; details?: string; error?: string }; message?: string };
+      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.data?.error || anyErr.message || "Ошибка проверки вебхука";
       setTestResult({
         success: false,
         message: msg,
+        error: msg,
       });
       toast.error(msg);
     }
@@ -111,6 +134,10 @@ export function Bitrix24IntegrationSection() {
           webhook_url: webhookUrl.trim(),
           is_enabled: checked,
           allowed_sources: allowedSources,
+          selected_widget_ids: selectedWidgetIds,
+          custom_source_id: customSourceId.trim() || "UC_VWN1ZK",
+          send_utm_marks: sendUtmMarks,
+          send_geo_data: sendGeoData,
         })
         .then(() => {
           toast.success(
@@ -123,6 +150,8 @@ export function Bitrix24IntegrationSection() {
         });
     }
   };
+
+  const showWidgetFilter = allowedSources.length === 0 || allowedSources.includes("site_widget");
 
   return (
     <div className="rounded-[8px] border border-[#e5e5e5] bg-white overflow-hidden shadow-2xs">
@@ -215,12 +244,79 @@ export function Bitrix24IntegrationSection() {
         </div>
 
         {/* Блок фильтрации источников заявок */}
-        <div className="pt-1 border-t border-[#f0f0f0]">
+        <div className="pt-2 border-t border-[#f0f0f0] space-y-4">
           <SourceMultiSelect
             value={allowedSources}
             onChange={setAllowedSources}
             disabled={updateMutation.isPending}
           />
+
+          {/* Селектор конкретных виджетов тенанта */}
+          {showWidgetFilter && (
+            <div className="pt-3 border-t border-[#f0f0f0]">
+              <WidgetMultiSelect
+                widgets={widgets}
+                selectedIds={selectedWidgetIds}
+                onChange={setSelectedWidgetIds}
+                disabled={updateMutation.isPending}
+                isLoading={widgetsLoading}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Кастомный идентификатор источника (SOURCE_ID) */}
+        <div className="pt-3 border-t border-[#f0f0f0]">
+          <label className="text-xs font-medium text-[#111111] block mb-1">
+            Идентификатор источника в Битрикс24 (SOURCE_ID)
+          </label>
+          <div className="max-w-md">
+            <input
+              type="text"
+              value={customSourceId}
+              onChange={(e) => setCustomSourceId(e.target.value)}
+              placeholder="UC_VWN1ZK (или WIDGET, WEB, CALL)"
+              className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
+            />
+          </div>
+          <p className="mt-1 text-[11px] text-[#666666]">
+            Код источника из справочника CRM Битрикс24 (<strong>Настройки → Справочники → Источники</strong>). Если не заполнено — используется <code className="bg-[#f0f0f0] px-1 py-0.5 rounded font-mono text-[#111111]">UC_VWN1ZK</code>.
+          </p>
+        </div>
+
+        {/* Опции обогащения данных */}
+        <div className="pt-3 border-t border-[#f0f0f0] grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="flex items-start justify-between gap-3 p-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
+            <div className="space-y-0.5">
+              <span className="text-xs font-medium text-[#111111] block">
+                Передавать UTM-метки
+              </span>
+              <span className="text-[11px] text-[#666666] block leading-snug">
+                utm_source, utm_medium, utm_campaign, utm_content, utm_term в нативные поля Битрикс24
+              </span>
+            </div>
+            <Switch
+              checked={sendUtmMarks}
+              onCheckedChange={setSendUtmMarks}
+              disabled={updateMutation.isPending}
+            />
+          </div>
+
+          <div className="flex items-start justify-between gap-3 p-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
+            <div className="space-y-0.5">
+              <span className="text-xs font-medium text-[#111111] block">
+                Геолокация и данные визита
+              </span>
+              <span className="text-[11px] text-[#666666] block leading-snug">
+                Город, страна, IP, устройство, визиты и Client ID Яндекс.Метрики в комментарий
+              </span>
+            </div>
+            <Switch
+              checked={sendGeoData}
+              onCheckedChange={setSendGeoData}
+              disabled={updateMutation.isPending}
+            />
+          </div>
         </div>
 
         {/* Результат проверки подключения */}
@@ -237,11 +333,15 @@ export function Bitrix24IntegrationSection() {
             ) : (
               <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
             )}
-            <div className="space-y-0.5">
+            <div className="space-y-0.5 flex-1 min-w-0">
               <p className="font-semibold">{testResult.message}</p>
-              {testResult.success && testResult.leadId && (
+              {testResult.success ? (
                 <p className="text-[11px] text-emerald-700">
-                  В Битрикс24 создан тестовый лид с переданным SOURCE_ID и UF_CRM_YA_CID.
+                  Вебхук проверен методом crm.lead.fields. Права на создание лидов подтверждены.
+                </p>
+              ) : (
+                <p className="text-[11px] text-rose-700">
+                  Проверьте адрес портала, ключ вебхука и права доступа (требуется раздел CRM).
                 </p>
               )}
             </div>
@@ -272,23 +372,29 @@ export function Bitrix24IntegrationSection() {
             <div className="flex items-start gap-1.5">
               <span className="font-mono text-[#4a38f5] font-semibold shrink-0">SOURCE_ID:</span>
               <span>
-                Строго передаётся <code className="bg-[#f0f0f0] px-1 py-0.5 rounded font-mono text-[#111111]">UC_VWN1ZK</code>
+                Передаётся <code className="bg-[#f0f0f0] px-1 py-0.5 rounded font-mono text-[#111111]">{customSourceId.trim() || "UC_VWN1ZK"}</code>
               </span>
             </div>
 
             <div className="flex items-start gap-1.5">
               <span className="font-mono text-[#4a38f5] font-semibold shrink-0">UF_CRM_YA_CID:</span>
-              <span>Client ID Яндекс.Метрики (<code className="bg-[#f0f0f0] px-1 py-0.5 rounded font-mono text-[#111111]">_ym_uid</code>) из заявки</span>
+              <span>Client ID Яндекс.Метрики (<code className="bg-[#f0f0f0] px-1 py-0.5 rounded font-mono text-[#111111]">_ym_uid</code>)</span>
             </div>
 
             <div className="flex items-start gap-1.5">
-              <span className="font-mono text-[#4a38f5] font-semibold shrink-0">Стандартные поля:</span>
-              <span>TITLE, NAME, PHONE (WORK), EMAIL, COMMENTS, STATUS_ID = NEW</span>
+              <span className="font-mono text-[#4a38f5] font-semibold shrink-0">Виджеты:</span>
+              <span>
+                {selectedWidgetIds.length > 0
+                  ? `Ограничено ${selectedWidgetIds.length} виджетами`
+                  : "Все виджеты на сайтах"}
+              </span>
             </div>
 
             <div className="flex items-start gap-1.5">
-              <span className="font-mono text-[#4a38f5] font-semibold shrink-0">Сквозная аналитика:</span>
-              <span>Автоматическая передача UTM-меток (source, medium, campaign, content, term)</span>
+              <span className="font-mono text-[#4a38f5] font-semibold shrink-0">Обогащение:</span>
+              <span>
+                UTM: {sendUtmMarks ? "активно" : "выкл"} · Гео/Визит: {sendGeoData ? "активно" : "выкл"}
+              </span>
             </div>
           </div>
         </div>
