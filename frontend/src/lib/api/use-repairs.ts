@@ -200,6 +200,7 @@ export interface RepairOrderDTO {
   equipment: EquipmentDTO;
   defectDescription: string;
   defectPhotos: string[];
+  additionalContacts?: AdditionalContact[];
   status: RepairStatus;
   nextStatus: RepairStatus | null;
   allowedTransitions: RepairStatus[];
@@ -643,6 +644,24 @@ export function useAddRepairServiceToCatalog(): UseMutationResult<
   return useMutation<RepairServiceCatalogItemDTO, ApiClientError, { name: string; default_price?: number }>({
     mutationFn: async (payload) => {
       const res = await apiClient.post<RepairServiceCatalogItemDTO>(`${BASE_PATH}/catalog/services`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.servicesCatalog });
+    },
+  });
+}
+
+export function useDeleteRepairServiceFromCatalog(): UseMutationResult<
+  { success: boolean },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean }, ApiClientError, string>({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete<{ success: boolean }>(`${BASE_PATH}/catalog/services/${id}`);
       return res.data;
     },
     onSuccess: () => {

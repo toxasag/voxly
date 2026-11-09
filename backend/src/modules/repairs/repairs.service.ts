@@ -114,7 +114,7 @@ export class RepairsService {
       [tenantId, year],
     );
 
-    return `ЗН-${year}-${String(row.last_number).padStart(4, "0")}`;
+    return `№${String(row.last_number).padStart(4, "0")}`;
   }
 
   /**
@@ -634,12 +634,30 @@ export class RepairsService {
           );
         }
 
-        const stageRow = await tx.queryOneOrThrow<{ id: string }>(
+        let stageRow = await tx.queryOne<{ id: string }>(
           `SELECT id FROM stages
            WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+             AND (lower(name) = 'новый лид' OR name ILIKE '%новый лид%')
            ORDER BY sort_order ASC LIMIT 1`,
           [pipelineRow.id],
         );
+        if (!stageRow) {
+          stageRow = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM stages
+             WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+               AND lower(name) <> 'первый контакт'
+             ORDER BY sort_order ASC LIMIT 1`,
+            [pipelineRow.id],
+          );
+        }
+        if (!stageRow) {
+          stageRow = await tx.queryOneOrThrow<{ id: string }>(
+            `SELECT id FROM stages
+             WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+             ORDER BY sort_order ASC LIMIT 1`,
+            [pipelineRow.id],
+          );
+        }
 
         const defectDesc =
           (payload.defect_description && payload.defect_description.trim()) ||
@@ -912,12 +930,30 @@ export class RepairsService {
           );
         }
 
-        const stageRow = await tx.queryOneOrThrow<{ id: string }>(
+        let stageRow = await tx.queryOne<{ id: string }>(
           `SELECT id FROM stages
            WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+             AND (lower(name) = 'новый лид' OR name ILIKE '%новый лид%')
            ORDER BY sort_order ASC LIMIT 1`,
           [pipelineRow.id],
         );
+        if (!stageRow) {
+          stageRow = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM stages
+             WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+               AND lower(name) <> 'первый контакт'
+             ORDER BY sort_order ASC LIMIT 1`,
+            [pipelineRow.id],
+          );
+        }
+        if (!stageRow) {
+          stageRow = await tx.queryOneOrThrow<{ id: string }>(
+            `SELECT id FROM stages
+             WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+             ORDER BY sort_order ASC LIMIT 1`,
+            [pipelineRow.id],
+          );
+        }
 
         const totalCost = payload.equipments.reduce((sum, e) => sum + (e.estimated_cost || 0), 0) || (payload.estimated_cost ?? 0);
         const firstEq = payload.equipments[0];
@@ -1056,7 +1092,22 @@ export class RepairsService {
     }
     if (payload.customer_id !== undefined) {
       const custId = nullIfBlank(payload.customer_id);
-      if (custId !== null) push("customer_id", custId);
+      if (custId !== null) {
+        push("customer_id", custId);
+        const contact = await queryOne<{ first_name: string; last_name: string; phone: string }>(
+          `SELECT first_name, last_name, phone FROM contacts WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, custId],
+        );
+        if (contact) {
+          const fullName = `${contact.first_name || ""} ${contact.last_name || ""}`.trim();
+          if (fullName && payload.customer_name === undefined) {
+            push("customer_name", fullName);
+          }
+          if (contact.phone && payload.customer_phone === undefined) {
+            push("customer_phone", contact.phone);
+          }
+        }
+      }
     }
     if (payload.equipment_type !== undefined) push("equipment_type", payload.equipment_type);
     if (payload.equipment_brand !== undefined) push("equipment_brand", payload.equipment_brand);
@@ -1078,9 +1129,19 @@ export class RepairsService {
     if (payload.priority !== undefined) push("priority", payload.priority);
     if (payload.master_id !== undefined) {
       const masterId = nullIfBlank(payload.master_id);
-      if (masterId !== null) push("master_id", masterId);
-    }
-    if (payload.master_name !== undefined && payload.master_name !== "") {
+      if (masterId !== null) {
+        push("master_id", masterId);
+        if (payload.master_name !== undefined && payload.master_name !== "") {
+          push("master_name", payload.master_name);
+        } else {
+          const u = await queryOne<{ name: string }>(
+            `SELECT name FROM users WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, masterId],
+          );
+          if (u?.name) push("master_name", u.name);
+        }
+      }
+    } else if (payload.master_name !== undefined && payload.master_name !== "") {
       push("master_name", payload.master_name);
     }
     if (payload.estimated_cost !== undefined) push("estimated_cost", payload.estimated_cost);
@@ -1126,7 +1187,42 @@ export class RepairsService {
     }
 
     // Синхронизация данных компании
-    if (payload.company_name !== undefined || payload.company_inn !== undefined) {
+    if (payload.company_id !== undefined) {
+      const compId = nullIfBlank(payload.company_id);
+      if (compId !== null) {
+        const comp = await queryOne<{ id: string; name: string; inn: string }>(
+          `SELECT id, name, inn FROM companies WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, compId],
+        );
+        if (comp) {
+          if (current.customerId) {
+            await query(
+              `UPDATE contacts SET company_id = $1, company_name = $2, updated_at = now() WHERE tenant_id = $3 AND id = $4`,
+              [comp.id, comp.name, tenantId, current.customerId],
+            );
+          }
+          if (current.dealId) {
+            await query(
+              `UPDATE deals SET company_id = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3`,
+              [comp.id, tenantId, current.dealId],
+            );
+          }
+        }
+      } else {
+        if (current.customerId) {
+          await query(
+            `UPDATE contacts SET company_id = NULL, company_name = '', updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, current.customerId],
+          );
+        }
+        if (current.dealId) {
+          await query(
+            `UPDATE deals SET company_id = NULL, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, current.dealId],
+          );
+        }
+      }
+    } else if (payload.company_name !== undefined || payload.company_inn !== undefined) {
       if (current.companyId) {
         const compAssignments: string[] = [];
         const compParams: SqlParam[] = [tenantId, current.companyId];

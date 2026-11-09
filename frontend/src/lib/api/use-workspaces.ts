@@ -65,8 +65,11 @@ export async function switchWorkspace(
       accessToken: existingBackup.accessToken,
       refreshToken: existingBackup.refreshToken || existingBackup.accessToken,
     });
-    clearImpersonationBackup();
-    window.location.href = tenantPortalUrl(normTarget, "/crm/contacts");
+    const targetUrl = tenantPortalUrl(normTarget, "/crm/contacts");
+    const redirectUrl = targetUrl.includes("://")
+      ? `${targetUrl}#restore_token=${encodeURIComponent(existingBackup.accessToken)}`
+      : targetUrl;
+    window.location.href = redirectUrl;
     return;
   }
 
@@ -93,6 +96,11 @@ export async function switchWorkspace(
     if (access_token && refresh_token) {
       writeTokens({ accessToken: access_token, refreshToken: refresh_token });
     }
-    window.location.href = tenantPortalUrl(normTarget, "/crm/contacts");
+    const targetUrl = tenantPortalUrl(normTarget, "/crm/contacts");
+    const redirectUrl =
+      targetUrl.includes("://") && access_token
+        ? `${targetUrl}#tenant_token=${encodeURIComponent(access_token)}`
+        : targetUrl;
+    window.location.href = redirectUrl;
   }
 }

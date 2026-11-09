@@ -73,10 +73,11 @@ export function setAuthCookies(
   ];
 
   if (domainAttr) {
+    const epochExpires = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
     cookies.push(
-      `${REFRESH_COOKIE_NAME}=${encodeURIComponent(tokens.refresh_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; HttpOnly; SameSite=Lax${secureAttr}`,
-      `${AUTH_COOKIE_NAME}=${encodeURIComponent(tokens.access_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; SameSite=Lax${secureAttr}`,
-      `${SESSION_COOKIE_NAME}=active; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; SameSite=Lax${secureAttr}`,
+      `${REFRESH_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; HttpOnly; SameSite=Lax${secureAttr}`,
+      `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; SameSite=Lax${secureAttr}`,
+      `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; SameSite=Lax${secureAttr}`,
     );
   }
 

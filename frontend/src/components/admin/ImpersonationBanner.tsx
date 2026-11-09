@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/auth/use-auth";
 import {
   readImpersonationBackup,
   clearImpersonationBackup,
-  restoreAdminSession,
+  restoreAdminSessionDetailed,
   getPlatformAdminUrl,
   type ImpersonationBackup,
 } from "@/lib/auth/impersonation";
@@ -61,22 +61,16 @@ export function ImpersonationBanner() {
   }
 
   const handleReturnToAdmin = async () => {
-    if (!backup || isExiting) return;
+    if (isExiting) return;
     setIsExiting(true);
 
     try {
-      const restored = await restoreAdminSession();
-      if (restored) {
-        window.location.href = getPlatformAdminUrl();
-      } else {
-        // Fallback: локальное восстановление
-        writeTokens({
-          accessToken: backup.accessToken,
-          refreshToken: backup.refreshToken || backup.accessToken,
-        });
-        clearImpersonationBackup();
-        window.location.href = getPlatformAdminUrl();
+      const res = await restoreAdminSessionDetailed();
+      if (res.success && res.targetUrl) {
+        window.location.href = res.targetUrl;
+        return;
       }
+      window.location.href = getPlatformAdminUrl();
     } catch (err) {
       console.error("Ошибка возврата в сессию администратора", err);
       window.location.href = getPlatformAdminUrl();
