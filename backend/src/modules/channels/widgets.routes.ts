@@ -139,6 +139,18 @@ export const widgetsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
   // Авторизованные маршруты управления виджетом в CRM
   const authGuards = [app.requirePermission("tenant:admin")];
 
+  app.get("/list-simple", { onRequest: authGuards }, async (request, reply) => {
+    const list = await channelsService.list(request.tenant_id, "webchat");
+    const widgets = list.map((w) => ({
+      id: w.id,
+      name: w.label || "Онлайн-чат",
+      domain: w.externalId || "",
+      site_domain: w.externalId || "",
+      status: w.status,
+    }));
+    return reply.send({ data: widgets });
+  });
+
   app.get("/:id", { onRequest: authGuards }, async (request, reply) => {
     const { id } = widgetParams.parse(request.params);
     const account = await channelsService.get(request.tenant_id, "webchat", id);

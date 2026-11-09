@@ -4195,7 +4195,7 @@
               ) {
                 continue;
               }
-              var typingDelay = Math.min(Math.max(replyText.length * 35, 1200), 4500);
+              var typingDelay = Math.min(Math.max(replyText.length * 6, 200), 700);
 
               showTypingIndicator(true, 'печатает...');
               await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
@@ -4203,7 +4203,7 @@
 
               saveAndRenderMessage(replyText, false);
               if (i < result.replies.length - 1) {
-                await new Promise(function (resolve) { setTimeout(resolve, 900); });
+                await new Promise(function (resolve) { setTimeout(resolve, 300); });
               }
             }
           } else if (result && result.status === 'operator_needed') {
