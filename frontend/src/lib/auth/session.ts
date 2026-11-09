@@ -107,11 +107,36 @@ function writeCookie(name: string, value: string): void {
     `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; Expires=${expires}; SameSite=Lax` +
     `${domain}${secure}`;
 
+  // If a domain attribute is used, ensure no host-only cookie shadows it on the current origin
   if (domain) {
-    document.cookie =
-      `${name}=${encodeURIComponent(value)}` +
-      `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; Expires=${expires}; SameSite=Lax${secure}`;
+    const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
   }
+}
+
+/** Clears any host-only cookie for `name` on the current origin without touching the domain cookie. */
+function clearHostOnlyCookie(name: string): void {
+  if (!isBrowser()) return;
+  const domain = cookieDomainAttribute();
+  if (!domain) return;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
+}
+
+/** Extracts a handoff access token from the URL hash fragment (#restore_token=... or #tenant_token=...) */
+function consumeHashToken(): string | null {
+  if (!isBrowser()) return null;
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const match = hash.match(/(?:^#|[&#])(?:restore_token|tenant_token|admin_token)=([^&]+)/);
+  if (!match || !match[1]) return null;
+  const token = decodeURIComponent(match[1]);
+  // Clean hash from browser address bar without reload
+  const cleanHash = hash.replace(/[&#]?(?:restore_token|tenant_token|admin_token)=[^&]+/, "").replace(/^#$/, "");
+  const newUrl = window.location.pathname + window.location.search + (cleanHash ? `#${cleanHash}` : "");
+  window.history.replaceState(null, "", newUrl);
+  return token;
 }
 
 function clearCookie(name: string): void {
@@ -151,7 +176,19 @@ function readCookie(name: string): string | null {
 
 export function readAccessToken(): string | null {
   if (!isBrowser()) return null;
-  // Cookie is domain-scoped (.getvoxly.ru) and travels across subdomains,
+
+  // 1. Check if a token was handed off via URL hash fragment (cross-subdomain redirect)
+  const handedOffToken = consumeHashToken();
+  if (handedOffToken) {
+    writeTokens({ accessToken: handedOffToken, refreshToken: "" });
+    return handedOffToken;
+  }
+
+  // 2. Clear any stale host-only cookies that might shadow the domain cookie
+  clearHostOnlyCookie(AUTH_COOKIE_NAME);
+  clearHostOnlyCookie("getvoxly_session");
+
+  // 3. Cookie is domain-scoped (.getvoxly.ru) and travels across subdomains,
   // making it the authoritative cross-subdomain source of truth.
   const cookieToken = readCookie(AUTH_COOKIE_NAME);
   if (cookieToken) {

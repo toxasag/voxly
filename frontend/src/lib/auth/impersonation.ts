@@ -69,10 +69,15 @@ export function writeImpersonationBackup(backup: ImpersonationBackup): void {
   }
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  const domain = cookieDomainAttribute();
   // 1-day validity for admin impersonation session across all subdomains
-  document.cookie = `${BACKUP_COOKIE_NAME}=${encodeURIComponent(raw)}; Path=/; Max-Age=86400; SameSite=Lax${cookieDomainAttribute()}${secure}`;
-  // Also write host-level fallback
-  document.cookie = `${BACKUP_COOKIE_NAME}=${encodeURIComponent(raw)}; Path=/; Max-Age=86400; SameSite=Lax${secure}`;
+  document.cookie = `${BACKUP_COOKIE_NAME}=${encodeURIComponent(raw)}; Path=/; Max-Age=86400; SameSite=Lax${domain}${secure}`;
+
+  // If scoped to parent domain, expire any conflicting host-only cookie
+  if (domain) {
+    const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = `${BACKUP_COOKIE_NAME}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
+  }
 }
 
 /**
@@ -141,20 +146,30 @@ export function clearImpersonationBackup(): void {
  * If currently on a tenant subdomain (e.g. remtoua.getvoxly.ru), navigates
  * to https://app.getvoxly.ru/admin/tenants.
  */
-export function getPlatformAdminUrl(): string {
+export function getPlatformAdminUrl(token?: string): string {
   if (!isBrowser()) return "/admin/tenants";
 
   const { hostname, protocol, port } = window.location;
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return "/admin/tenants";
 
   const labels = hostname.split(".");
-  if (labels.length < 3) return "/admin/tenants";
+  if (labels.length < 2) return "/admin/tenants";
 
-  const parent = labels.slice(1).join(".");
+  const parent = labels.length >= 3 ? labels.slice(1).join(".") : labels.join(".");
   const suffix = port ? `:${port}` : "";
   const backup = readImpersonationBackup();
   const platformPrefix = backup?.adminOriginHost?.split(".")[0]?.split(":")[0] || "voxly";
-  return `${protocol}//${platformPrefix}.${parent}${suffix}/admin/tenants`;
+  const base = `${protocol}//${platformPrefix}.${parent}${suffix}/admin/tenants`;
+  if (token) {
+    return `${base}#restore_token=${encodeURIComponent(token)}`;
+  }
+  return base;
+}
+
+export interface RestoreSessionResult {
+  success: boolean;
+  accessToken?: string;
+  targetUrl: string;
 }
 
 /**
@@ -162,15 +177,19 @@ export function getPlatformAdminUrl(): string {
  * 1. Отправляет запрос на бэкенд (/auth/exit-impersonation), чтобы сервер обновил
  *    долгоживущие HttpOnly cookies (getvoxly_refresh) на общем домене .getvoxly.ru.
  * 2. Записывает свежие токены в localStorage и cookie getvoxly_auth_token.
- * 3. Очищает сохранённый бэкап имперсонации.
- * 4. Имеет устойчивый локальный фоллбэк на случай сетевых сбоев.
+ * 3. Сохраняет свежие токены в бэкап (не уничтожает его раньше времени, чтобы при навигации
+ *    на voxly.getvoxly.ru гейты гарантированно имели доступ к платформенным правам).
+ * 4. Формирует целевой URL с handoff токена в hash fragment (#restore_token=...) для
+ *    немедленного применения в origin storage домена voxly.getvoxly.ru.
  */
-export async function restoreAdminSession(): Promise<boolean> {
-  if (!isBrowser()) return false;
+export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResult> {
+  if (!isBrowser()) return { success: false, targetUrl: "/admin/tenants" };
 
   const backup = readImpersonationBackup();
+  const defaultUrl = getPlatformAdminUrl();
+
   if (!backup?.accessToken && !backup?.refreshToken) {
-    return false;
+    return { success: false, targetUrl: defaultUrl };
   }
 
   // 1. Полноценная серверная ротация с выставлением HttpOnly cookie
@@ -193,8 +212,16 @@ export async function restoreAdminSession(): Promise<boolean> {
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
       });
-      clearImpersonationBackup();
-      return true;
+
+      // Обновляем бэкап свежими токенами администратора (очистится уже на voxly.getvoxly.ru)
+      writeImpersonationBackup({
+        ...backup,
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+      });
+
+      const targetUrl = getPlatformAdminUrl(newAccessToken);
+      return { success: true, accessToken: newAccessToken, targetUrl };
     }
   } catch (err) {
     console.warn("Серверный выход из имперсонации не удался, пробуем локальный бэкап:", err);
@@ -207,12 +234,17 @@ export async function restoreAdminSession(): Promise<boolean> {
         accessToken: backup.accessToken,
         refreshToken: backup.refreshToken || backup.accessToken,
       });
-      clearImpersonationBackup();
-      return true;
+      const targetUrl = getPlatformAdminUrl(backup.accessToken);
+      return { success: true, accessToken: backup.accessToken, targetUrl };
     } catch (err) {
       console.error("Ошибка локального восстановления сессии администратора:", err);
     }
   }
 
-  return false;
+  return { success: false, targetUrl: defaultUrl };
+}
+
+export async function restoreAdminSession(): Promise<boolean> {
+  const result = await restoreAdminSessionDetailed();
+  return result.success;
 }

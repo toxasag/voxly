@@ -32,6 +32,11 @@ import { CreateTenantDialog } from "@/components/partner/CreateTenantDialog";
 import { Logo } from "@/components/brand";
 import { useWorkspaces, switchWorkspace } from "@/lib/api/use-workspaces";
 import {
+  readImpersonationBackup,
+  restoreAdminSessionDetailed,
+  getPlatformAdminUrl,
+} from "@/lib/auth/impersonation";
+import {
   MARKETPLACE_NAV,
   PLATFORM_NAV,
   TENANT_MENU,
@@ -173,14 +178,32 @@ export function Sidebar({
     user?.platform_role === "platform_owner" ||
     Boolean(user?.permissions?.has("tenant:admin"));
 
+  const backup = typeof window !== "undefined" ? readImpersonationBackup() : null;
+  const isImpersonatingClient = Boolean(
+    backup && (!isPlatformOwner || (tenant?.slug !== "voxly" && Boolean(tenant?.slug))),
+  );
+
   const toggleCollapsed = onToggle;
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
+
+    if (isImpersonatingClient) {
+      try {
+        const res = await restoreAdminSessionDetailed();
+        window.location.href = res.targetUrl || getPlatformAdminUrl();
+        return;
+      } catch (err) {
+        console.error("Ошибка выхода из аккаунта клиента:", err);
+        window.location.href = getPlatformAdminUrl();
+        return;
+      }
+    }
+
     await logout().finally(() => {
       window.location.href = "/login";
     });
-  }, [logout]);
+  }, [isImpersonatingClient, logout]);
 
   const visibleNav = visibleMainNav(installedSlugs, permissions);
   const visibleChannels = visibleChannelNav(installedSlugs, permissions);
@@ -567,8 +590,14 @@ export function Sidebar({
             <button
               type="button"
               onClick={() => setLogoutOpen(true)}
-              aria-label="Выйти"
-              className="shrink-0 rounded-md p-1.5 text-[#888888] transition-colors hover:bg-black/[0.04] hover:text-rose-600"
+              aria-label={isImpersonatingClient ? "Вернуться в панель администратора" : "Выйти"}
+              title={isImpersonatingClient ? "Выйти из аккаунта клиента" : "Выйти"}
+              className={cn(
+                "shrink-0 rounded-md p-1.5 transition-colors",
+                isImpersonatingClient
+                  ? "text-[#854d0e] hover:bg-[#fefce8] hover:text-[#713f12]"
+                  : "text-[#888888] hover:bg-black/[0.04] hover:text-rose-600",
+              )}
             >
               <LogOut className="h-4 w-4" />
             </button>
@@ -579,8 +608,14 @@ export function Sidebar({
           <button
             type="button"
             onClick={() => setLogoutOpen(true)}
-            aria-label="Выйти"
-            className="mt-1 flex w-full items-center justify-center rounded-md p-1.5 text-[#888888] transition-colors hover:bg-black/[0.04] hover:text-rose-600"
+            aria-label={isImpersonatingClient ? "Вернуться в панель администратора" : "Выйти"}
+            title={isImpersonatingClient ? "Выйти из аккаунта клиента" : "Выйти"}
+            className={cn(
+              "mt-1 flex w-full items-center justify-center rounded-md p-1.5 transition-colors",
+              isImpersonatingClient
+                ? "text-[#854d0e] hover:bg-[#fefce8] hover:text-[#713f12]"
+                : "text-[#888888] hover:bg-black/[0.04] hover:text-rose-600",
+            )}
           >
             <LogOut className="h-4 w-4" />
           </button>
@@ -591,10 +626,14 @@ export function Sidebar({
         open={logoutOpen}
         onClose={() => setLogoutOpen(false)}
         onConfirm={handleLogout}
-        title="Выйти из системы?"
-        description="Текущая сессия будет завершена. Для входа снова потребуется пароль и код подтверждения."
-        confirmLabel="Выйти"
-        variant="destructive"
+        title={isImpersonatingClient ? "Выйти из аккаунта клиента?" : "Выйти из системы?"}
+        description={
+          isImpersonatingClient
+            ? `Вы завершите просмотр организации «${displayTenant.tenantName || displayTenant.slug}» и вернётесь в панель администратора GETVOXLY.`
+            : "Текущая сессия будет завершена. Для входа снова потребуется пароль и код подтверждения."
+        }
+        confirmLabel={isImpersonatingClient ? "Вернуться в админку" : "Выйти"}
+        variant={isImpersonatingClient ? "default" : "destructive"}
         isPending={isLoggingOut}
       />
 
