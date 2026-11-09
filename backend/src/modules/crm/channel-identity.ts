@@ -230,57 +230,251 @@ export function displayNameFrom(identity: SenderIdentity): string {
   return last_name === "" ? first_name : `${first_name} ${last_name}`;
 }
 
-/**
- * Извлекает валидный номер телефона из произвольного текста (в формате E.164: +7XXXXXXXXXX или +XXXXXXXXXXX).
- * Корректно распознаёт:
- * - 11 цифр: 79150946944, +79150946944, 89150946944
- * - 10 цифр (мобильные РФ): 9150946944, (915) 094-69-44, 915-094-69-44
- * - форматы с разделителями: +7 (915) 094-69-44, 8-915-094-69-44, 7 915 094 69 44
- * - международные номера: +375XXXXXXXXX, +77XXXXXXXXX и др.
- */
-export function extractPhoneNumber(text?: string | null): string | null {
-  if (!text || typeof text !== "string") return null;
-  const cleaned = text.trim();
-  if (cleaned.length === 0) return null;
+export interface PhoneValidationResult {
+  isValid: boolean;
+  normalized: string | null;
+  issue?: "too_short" | "too_long" | "invalid_format";
+  digits: string;
+}
 
-  // 1. Ищем номера с явными разделителями или префиксами
-  const patterns = [
-    // 11 цифр с префиксом +7, 7 или 8 (включая слитные: 79150946944, +79150946944, 89150946944)
-    /(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/,
-    // 10 цифр начиная с 9 (9150946944, (915) 094-69-44, 915-094-69-44)
-    /(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/,
-    // Международные (+375..., +77..., etc. от 10 до 15 цифр)
-    /(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/,
+export interface PhoneAnalysis {
+  hasAttempt: boolean;
+  isValid: boolean;
+  phone: string | null;
+  issue?: "too_short" | "too_long" | "invalid_format";
+  rawCandidate?: string;
+  digitsCount?: number;
+}
+
+/**
+ * Валидирует конкретную строку-кандидат на соответствие форматам номеров телефонов.
+ * Строгие правила:
+ * - РФ: строго 11 цифр при префиксах +7, 7, 8 (например, +79111111111, 89150946944).
+ * - РФ мобильные: 10 цифр начиная с 9 (например, 9150946944).
+ * - РФ гео-коды: 10 цифр начиная с 3, 4, 8 (например, 4951234567).
+ * - Неполные номера (10 цифр с 7 или 8, например 7911111111) бракуются как `too_short`!
+ * - Номера с избыточными цифрами (+7999123456789) бракуются как `too_long`!
+ * - Международные (+...): 10-15 цифр по стандарту E.164, при этом +7 строго 11 цифр.
+ */
+export function validatePhoneCandidate(candidate: string): PhoneValidationResult {
+  const trimmed = candidate.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  const startsWithPlus = trimmed.startsWith("+");
+
+  if (digits.length < 7) {
+    return { isValid: false, normalized: null, issue: "too_short", digits };
+  }
+
+  // 1. Международный формат с явным знаком плюса (+)
+  if (startsWithPlus) {
+    // Для РФ и Казахстана (+7) длина номера строго 11 цифр (+7XXXXXXXXXX)
+    if (digits.startsWith("7")) {
+      if (digits.length === 11) {
+        return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
+      }
+      if (digits.length < 11) {
+        return { isValid: false, normalized: null, issue: "too_short", digits };
+      }
+      return { isValid: false, normalized: null, issue: "too_long", digits };
+    }
+
+    // Для остальных стран (E.164: от 10 до 15 цифр)
+    if (digits.length >= 10 && digits.length <= 15) {
+      return { isValid: true, normalized: `+${digits}`, digits };
+    }
+    if (digits.length < 10) {
+      return { isValid: false, normalized: null, issue: "too_short", digits };
+    }
+    return { isValid: false, normalized: null, issue: "too_long", digits };
+  }
+
+  // 2. Российские номера без знака плюса, начинающиеся с 7 или 8
+  if (digits.startsWith("7") || digits.startsWith("8")) {
+    if (digits.length === 11) {
+      return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
+    }
+    if (digits.length < 11) {
+      return { isValid: false, normalized: null, issue: "too_short", digits };
+    }
+    return { isValid: false, normalized: null, issue: "too_long", digits };
+  }
+
+  // 3. Российские мобильные без префикса (10 цифр, начинаются строго с 9)
+  if (digits.startsWith("9")) {
+    if (digits.length === 10) {
+      return { isValid: true, normalized: `+7${digits}`, digits };
+    }
+    if (digits.length < 10) {
+      return { isValid: false, normalized: null, issue: "too_short", digits };
+    }
+    return { isValid: false, normalized: null, issue: "too_long", digits };
+  }
+
+  // 4. Российские городские без префикса (10 цифр, начинаются с 3, 4, 8)
+  if (digits.length === 10 && /^[348]/.test(digits)) {
+    return { isValid: true, normalized: `+7${digits}`, digits };
+  }
+
+  if (digits.length < 10) {
+    return { isValid: false, normalized: null, issue: "too_short", digits };
+  }
+
+  return { isValid: false, normalized: null, issue: "too_long", digits };
+}
+
+/**
+ * Проверяет, не является ли найденная числовая последовательность суммой денег,
+ * статьёй закона или датой (например, «300 000 руб», «100 тыс», «127 фз»).
+ */
+function isCurrencyOrNonPhoneMatch(
+  text: string,
+  matchIndex: number,
+  matchLength: number,
+  digits: string,
+): boolean {
+  // Номера на +7, 79, 89 с валидной длиной 11 цифр никогда не валюта
+  if ((digits.startsWith("79") || digits.startsWith("89")) && digits.length === 11) {
+    return false;
+  }
+
+  const trailingText = text.slice(matchIndex + matchLength, matchIndex + matchLength + 15).trim().toLowerCase();
+  const leadingText = text.slice(Math.max(0, matchIndex - 15), matchIndex).trim().toLowerCase();
+
+  const currencyKeywords = /^(?:руб|р\b|тыс|тыщ|к\b|к$|т\.р|usd|eur|€|\$)/i;
+  const contextKeywords = /(?:долг|кредит|задолжен|сумм|стать|127-?фз|фз|год|руб)/i;
+
+  if (currencyKeywords.test(trailingText)) {
+    return true;
+  }
+
+  if (contextKeywords.test(leadingText) && !digits.startsWith("79") && !digits.startsWith("89") && !text.startsWith("+")) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Анализирует входящий текст на наличие валидного номера или попытки ввода номера.
+ */
+export function analyzePhoneInText(text?: string | null): PhoneAnalysis {
+  if (!text || typeof text !== "string") {
+    return { hasAttempt: false, isValid: false, phone: null };
+  }
+  const cleaned = text.trim();
+  if (cleaned.length === 0) {
+    return { hasAttempt: false, isValid: false, phone: null };
+  }
+
+  const onlyDigits = cleaned.replace(/\D/g, "");
+
+  // 1. Если весь текст состоит преимущественно из цифр (до 20 символов) — проверяем целиком
+  if (
+    onlyDigits.length >= 7 &&
+    onlyDigits.length <= 16 &&
+    (cleaned.startsWith("+") || /^[789]/.test(onlyDigits)) &&
+    !isCurrencyOrNonPhoneMatch(cleaned, 0, cleaned.length, onlyDigits)
+  ) {
+    const directResult = validatePhoneCandidate(cleaned);
+    if (directResult.isValid) {
+      return {
+        hasAttempt: true,
+        isValid: true,
+        phone: directResult.normalized,
+        rawCandidate: cleaned,
+        digitsCount: directResult.digits.length,
+      };
+    }
+    return {
+      hasAttempt: true,
+      isValid: false,
+      phone: null,
+      issue: directResult.issue,
+      rawCandidate: cleaned,
+      digitsCount: directResult.digits.length,
+    };
+  }
+
+  // 2. Ищем кандидатов внутри текста
+  const candidateRegexes = [
+    // Международные (+7..., +375...)
+    /(?:^|[^\d+])(\+[1-9][\d\s\-()]{6,}\d)(?!\d)/g,
+    // Российские с разделителями (+7, 7, 8, 9)
+    /(?:^|[^\d+])((?:\+?7|8|9)[\s(-]*\d{2,4}[\s)-]*\d{2,4}[\s-]*\d{2,4}(?:[\s-]*\d{2,4})?)(?!\d)/g,
+    // Слитные 7-15 цифр, начинающиеся с 7, 8, 9 или +
+    /(?:^|[^\d+])(\+?[789]\d{6,14})(?!\d)/g,
+    // Запасной: любые слитные 10-15 цифр
+    /(?:^|[^\d+])(\d{10,15})(?!\d)/g,
   ];
 
-  for (const p of patterns) {
-    const m = cleaned.match(p);
-    if (m) {
-      const raw = m[0].trim();
-      const digits = raw.replace(/\D/g, "");
-      if (raw.startsWith("+") && digits.length >= 10 && digits.length <= 15) {
-        if (digits.startsWith("7") && digits.length === 11) return `+7${digits.slice(1)}`;
-        return `+${digits}`;
+  let firstInvalidAttempt: {
+    issue?: "too_short" | "too_long" | "invalid_format";
+    candidate: string;
+    digits: string;
+  } | null = null;
+
+  for (const regex of candidateRegexes) {
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(cleaned)) !== null) {
+      const candidateStr = match[1] ?? match[0];
+      const matchIdx = match.index;
+      const digits = candidateStr.replace(/\D/g, "");
+
+      if (digits.length < 7) continue;
+
+      if (isCurrencyOrNonPhoneMatch(cleaned, matchIdx, candidateStr.length, digits)) {
+        continue;
       }
-      if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
-        return `+7${digits.slice(1)}`;
+
+      const valResult = validatePhoneCandidate(candidateStr);
+      if (valResult.isValid && valResult.normalized) {
+        return {
+          hasAttempt: true,
+          isValid: true,
+          phone: valResult.normalized,
+          rawCandidate: candidateStr,
+          digitsCount: valResult.digits.length,
+        };
       }
-      if (digits.length === 10 && digits.startsWith("9")) {
-        return `+7${digits}`;
+
+      // Если это невалидный номер, но похож на попытку ввода (начинается с +, 7, 8 или 9)
+      const looksLikePhoneAttempt =
+        candidateStr.trim().startsWith("+") ||
+        digits.startsWith("7") ||
+        digits.startsWith("8") ||
+        digits.startsWith("9");
+
+      if (looksLikePhoneAttempt && !firstInvalidAttempt) {
+        firstInvalidAttempt = {
+          issue: valResult.issue,
+          candidate: candidateStr,
+          digits: valResult.digits,
+        };
       }
     }
   }
 
-  // Запасной: весь текст состоит из 10 или 11 цифр (возможно с дефисами/пробелами)
-  const onlyDigits = cleaned.replace(/\D/g, "");
-  if (onlyDigits.length === 11 && (onlyDigits.startsWith("7") || onlyDigits.startsWith("8"))) {
-    return `+7${onlyDigits.slice(1)}`;
-  }
-  if (onlyDigits.length === 10 && onlyDigits.startsWith("9")) {
-    return `+7${onlyDigits}`;
+  if (firstInvalidAttempt) {
+    return {
+      hasAttempt: true,
+      isValid: false,
+      phone: null,
+      issue: firstInvalidAttempt.issue,
+      rawCandidate: firstInvalidAttempt.candidate,
+      digitsCount: firstInvalidAttempt.digits.length,
+    };
   }
 
-  return null;
+  return { hasAttempt: false, isValid: false, phone: null };
+}
+
+/**
+ * Извлекает валидный номер телефона из произвольного текста (в формате E.164: +7XXXXXXXXXX или +XXXXXXXXXXX).
+ * Возвращает `null`, если номер некорректен, неполон или содержит опечатки.
+ */
+export function extractPhoneNumber(text?: string | null): string | null {
+  const analysis = analyzePhoneInText(text);
+  return analysis.isValid ? analysis.phone : null;
 }
 
 /**

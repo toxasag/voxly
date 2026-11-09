@@ -14,6 +14,7 @@ import { KnowledgeBaseService } from "./knowledge.service.js";
 import { SalesLearnService } from "./sales-learn.service.js";
 import type { WizardConfig } from "./ai.types.js";
 import { isPlaceholderName } from "../crm/identity-resolution.js";
+import { analyzePhoneInText } from "../crm/channel-identity.js";
 import { aiTraceLogger } from "./ai-trace-logger.js";
 import {
   MessageRefinerService,
@@ -598,22 +599,58 @@ export class AgentPipelineService {
 
       const reply = parseAgentReply(completion.content);
 
-      // Серверный предохранитель от преждевременного отключения бота (Узел 5):
-      // Если модель выставила handoff_required: true, но клиент еще не сообщил телефон
-      // и не требовал оператора/человека (бот просто задал уточняющий вопрос или спросил номер),
-      // предотвращаем ложную эскалацию, чтобы бот не уходил в 24-часовую заморозку.
-      if (reply !== null && reply.handoff_required) {
-        const phoneRegex = /(?:\+7|8)[\s\-()]*\d{3}[\s\-()]*\d{3}[\s\-()]*\d{2}[\s\-()]*\d{2}|\b\d{10,11}\b/;
-        const escalationRegex = /(?:человек|оператор|менеджер|живой|позови|соедини|переведи|специалист|претензи|жалоб|верните деньги|юрист|суд)/i;
-        const hasPhoneInMessage = phoneRegex.test(input.text);
+      // Серверный предохранитель от преждевременного отключения бота и ложной фиксации контактов (Узел 5):
+      // 1. Если модель выставила handoff_required: true, но клиент еще не сообщил валидный номер телефона
+      // и не требовал оператора/человека — предотвращаем ложную эскалацию.
+      // 2. Если модель галлюцинирует («номер зафиксировал / передал специалисту»), но клиент ввел
+      // неполный или ошибочный номер (например 7911111111) — перехватываем и заменяем на вежливую просьбу исправить номер.
+      if (reply !== null) {
+        const phoneAnalysis = analyzePhoneInText(input.text);
+        const hasValidPhoneInMessage = phoneAnalysis.isValid && phoneAnalysis.phone !== null;
+        const escalationRegex = /(?:человек|оператор|менеджер|живой|позови|соедини|переведи|претензи|жалоб|верните деньги|юрист|суд)/i;
         const hasEscalationIntent = escalationRegex.test(input.text);
 
-        if (!hasPhoneInMessage && !hasKnownPhone && !hasEscalationIntent) {
-          this.log.warn(
-            { agentId: agent.id, dealId: input.dealId, text: input.text },
-            "[AgentPipeline] Prevented premature handoff_required: client has not provided phone and did not request escalation",
-          );
-          reply.handoff_required = false;
+        // Проверяем, не утверждает ли ответ бота, что номер записан / заявка передана
+        const phoneConfirmationRegex = /(?:номер\s+(?:зафиксировал|записал|принял|сохранен)|(?:зафиксировал|записал|принял)\s+номер|передал(?:\s+в\s+работу)?\s+(?:старшему|специалист|коллег)|коллега\s+свяжется|специалист\s+свяжется|набер[её]т(?:\s+вам)?)/i;
+        const replyClaimsPhoneRecorded = reply.messages.some((msg) => phoneConfirmationRegex.test(msg));
+
+        if (!hasValidPhoneInMessage && !hasKnownPhone && !hasEscalationIntent) {
+          if (reply.handoff_required) {
+            this.log.warn(
+              { agentId: agent.id, dealId: input.dealId, text: input.text, issue: phoneAnalysis.issue },
+              "[AgentPipeline] Prevented premature handoff_required: client has not provided valid phone and did not request escalation",
+            );
+            reply.handoff_required = false;
+          }
+
+          if (replyClaimsPhoneRecorded) {
+            let correctionMessage: string;
+            if (phoneAnalysis.hasAttempt) {
+              if (phoneAnalysis.issue === "too_short") {
+                correctionMessage = "Похоже, в номере опечатка — не хватает цифр (для связи со специалистом нужен полный 11-значный номер). Пожалуйста, проверьте и напишите верный номер телефона.";
+              } else if (phoneAnalysis.issue === "too_long") {
+                correctionMessage = "Похоже, в номере опечатка — указаны лишние цифры. Пожалуйста, проверьте и напишите верный номер телефона.";
+              } else {
+                correctionMessage = "Похоже, в номере опечатка. Пожалуйста, проверьте и напишите правильный номер телефона для связи.";
+              }
+            } else {
+              correctionMessage = "Подскажите, на какой номер коллеге удобнее вам набрать для консультации?";
+            }
+
+            this.log.warn(
+              {
+                agentId: agent.id,
+                dealId: input.dealId,
+                inputText: input.text,
+                originalReply: reply.messages,
+                correctionMessage,
+              },
+              "[AgentPipeline] Intercepted false phone recording claim on invalid phone input; replaced with phone correction prompt",
+            );
+
+            reply.messages = [correctionMessage];
+            reply.handoff_required = false;
+          }
         }
       }
 
