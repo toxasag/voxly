@@ -272,7 +272,7 @@ export interface CreateBatchRepairPayload {
   company_legal_address?: string;
   deal_id?: string;
   priority?: RepairPriority;
-  master_id: string;
+  master_id?: string;
   master_name?: string;
   estimated_cost?: number;
   notes?: string;
@@ -304,7 +304,7 @@ export interface CreateRepairPayload {
   malfunctions?: string[];
   defect_photos?: string[];
   priority?: RepairPriority;
-  master_id: string;
+  master_id?: string;
   master_name?: string;
   estimated_cost?: number;
   notes?: string;

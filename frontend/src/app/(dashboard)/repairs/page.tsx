@@ -126,7 +126,7 @@ function RepairsPageContent() {
             company_legal_address: payload.company_legal_address,
             deal_id: payload.deal_id,
             priority: payload.priority,
-            master_id: payload.master_id,
+            master_id: payload.master_id ?? "",
             master_name: payload.master_name,
             estimated_cost: payload.estimated_cost,
             notes: payload.notes,
