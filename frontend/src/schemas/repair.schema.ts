@@ -38,8 +38,8 @@ export const createRepairSchema = z.object({
   malfunctions: z.array(z.string()).optional().default([]),
   defect_photos: z.array(z.string()).max(20).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
-  master_id: z.string().min(1, "Master is required"),
-  master_name: z.string().min(1, "Master name is required").max(200),
+  master_id: z.string().optional().or(z.literal("")),
+  master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z
     .number({ invalid_type_error: "Cost must be a number" })
     .min(0, "Cost must be positive"),

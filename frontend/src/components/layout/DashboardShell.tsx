@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { MobileNavigationBar } from "@/components/layout/MobileNavigationBar";
+import { PushNotificationPromptBanner } from "@/components/layout/PushNotificationPromptBanner";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +82,9 @@ export function DashboardShell({
 
       {/* Нижний бар: только на мобильном, где нет сайдбара. */}
       <MobileNavigationBar />
+
+      {/* Проактивный баннер подключения Web Push для мобильных устройств и PWA */}
+      <PushNotificationPromptBanner />
     </div>
   );
 }
