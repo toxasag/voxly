@@ -23,6 +23,10 @@ const listQuerySchema = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
+const callerIdQuerySchema = z.object({
+  phone: z.string().min(3, "Номер телефона слишком короткий").max(40),
+});
+
 const idParamsSchema = z.object({ id: z.string().uuid("id must be a UUID") });
 
 const customFieldsSchema = z.object({ custom_fields: z.record(z.unknown()) });
@@ -47,6 +51,13 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.send({ data: items, meta: { limit, offset, total } });
+  });
+
+  // Высокоскоростной Caller ID поиск для телефонии и мобильных Android Companion сервисов
+  app.get("/caller-id-lookup", { onRequest: canRead }, async (request, reply) => {
+    const { phone } = callerIdQuerySchema.parse(request.query);
+    const result = await service.lookupByPhone(request.tenant_id, phone);
+    return reply.send({ data: result });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {
