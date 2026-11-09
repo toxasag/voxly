@@ -135,6 +135,23 @@ export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
     window.location.href = tenantPortalUrl(tenantSlug, window.location.pathname);
   }, [mismatched, tenantSlug]);
 
+  // Если обычный пользователь арендатора (не суперадмин и не в режиме имперсонации) оказался на /admin
+  // на клиентском поддомене, перенаправляем его в CRM своего пространства, исключая тупиковый экран блокировки
+  useEffect(() => {
+    if (isLoading || !isAuthenticated) return;
+    if (isPlatformAdminRoute && hostSlug && hostSlug !== "voxly" && !isPlatformOwner && !isImpersonating) {
+      window.location.href = tenantPortalUrl(tenantSlug || hostSlug, "/crm/deals");
+    }
+  }, [
+    isLoading,
+    isAuthenticated,
+    isPlatformAdminRoute,
+    hostSlug,
+    isPlatformOwner,
+    isImpersonating,
+    tenantSlug,
+  ]);
+
   if (switchError) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#fbfbfb] px-4">

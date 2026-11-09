@@ -18,6 +18,7 @@ import {
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { TagPill } from "@/components/ui/tag";
+import { Bitrix24IntegrationSection } from "@/components/settings/Bitrix24IntegrationSection";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 import {
   useCreateNotificationChannel,
@@ -534,6 +535,11 @@ export function LeadNotificationChannels() {
             </button>
           </div>
         )}
+      </div>
+
+      {/* Секция интеграции с Битрикс24 (экспорт лидов) */}
+      <div className="pt-2">
+        <Bitrix24IntegrationSection />
       </div>
 
       <AddChannelModal
