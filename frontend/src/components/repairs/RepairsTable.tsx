@@ -44,16 +44,17 @@ const STATUS_TABS: { value: RepairFilterStatus; label: string }[] = [
 
 /**
  * Компактное форматирование номера акта: заменяет громоздкий префикс
- * №ЗН-2026-0001 на компактный вид № 0001 с сохранением исходного номера.
+ * №ЗН-2026-0001 на компактный вид №0001 с сохранением исходного номера.
  */
 export function formatOrderNumber(rawNumber: string): string {
   if (!rawNumber) return "";
-  const match = rawNumber.match(/(?:.*-)?(\d+)$/);
+  const clean = rawNumber.trim();
+  const match = clean.match(/(?:.*-)?(\d+)$/);
   if (match && match[1]) {
-    return `№ ${match[1]}`;
+    return `№${match[1]}`;
   }
-  if (rawNumber.startsWith("№")) return rawNumber;
-  return `№ ${rawNumber}`;
+  if (clean.startsWith("№")) return clean;
+  return `№${clean}`;
 }
 
 function formatDateTime(iso: string): string {

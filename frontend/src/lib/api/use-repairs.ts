@@ -200,6 +200,7 @@ export interface RepairOrderDTO {
   equipment: EquipmentDTO;
   defectDescription: string;
   defectPhotos: string[];
+  additionalContacts?: AdditionalContact[];
   status: RepairStatus;
   nextStatus: RepairStatus | null;
   allowedTransitions: RepairStatus[];
