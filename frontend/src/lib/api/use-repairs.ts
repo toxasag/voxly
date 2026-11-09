@@ -200,6 +200,7 @@ export interface RepairOrderDTO {
   equipment: EquipmentDTO;
   defectDescription: string;
   defectPhotos: string[];
+  additionalContacts?: AdditionalContact[];
   status: RepairStatus;
   nextStatus: RepairStatus | null;
   allowedTransitions: RepairStatus[];
@@ -272,7 +273,7 @@ export interface CreateBatchRepairPayload {
   company_legal_address?: string;
   deal_id?: string;
   priority?: RepairPriority;
-  master_id: string;
+  master_id?: string;
   master_name?: string;
   estimated_cost?: number;
   notes?: string;
@@ -304,7 +305,7 @@ export interface CreateRepairPayload {
   malfunctions?: string[];
   defect_photos?: string[];
   priority?: RepairPriority;
-  master_id: string;
+  master_id?: string;
   master_name?: string;
   estimated_cost?: number;
   notes?: string;
@@ -682,6 +683,9 @@ export function useCreateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+      void queryClient.invalidateQueries({ queryKey: ["companies"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
     },
   });
 }
@@ -696,6 +700,9 @@ export function useCreateBatchRepair(): UseMutationResult<RepairOrderDTO[], ApiC
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+      void queryClient.invalidateQueries({ queryKey: ["companies"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
     },
   });
 }
@@ -951,6 +958,54 @@ export function useCreatePhoto(): UseMutationResult<RepairPhotoDTO, ApiClientErr
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Batch Operations
+// ---------------------------------------------------------------------------
+
+export interface BatchUpdateStatusResult {
+  updated: number;
+  ids: string[];
+  errors: { id: string; error: string }[];
+}
+
+export function useBatchUpdateRepairStatus(): UseMutationResult<
+  BatchUpdateStatusResult,
+  ApiClientError,
+  { ids: string[]; status: RepairStatus; comment?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<BatchUpdateStatusResult>(`${BASE_PATH}/batch-status`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useBatchDeleteRepairs(): UseMutationResult<
+  { count: number; ids: string[] },
+  ApiClientError,
+  { ids: string[] }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number; ids: string[] }>(`${BASE_PATH}/batch-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export { useCompanyInnLookup, type CompanyInnLookupResult } from "./use-companies";
 
 // ---------------------------------------------------------------------------
 // Helpers

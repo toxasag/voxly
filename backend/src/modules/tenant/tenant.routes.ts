@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ALL_PERMISSIONS } from "../../config/permissions.js";
 import type { Permission } from "../../types/index.js";
-import { query, queryOne } from "../../db/client.js";
+import { query, queryOne, type SqlParam } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
 import { TeamService } from "./team.service.js";
@@ -36,6 +36,11 @@ const changeRoleBody = z.object({
   permissions: z.array(permissionSchema).optional(),
 });
 const userParams = z.object({ id: z.string().uuid() });
+
+const updateInfoBody = z.object({
+  name: z.string().trim().min(1, "Название компании не может быть пустым").max(100).optional(),
+  business_niche: z.string().trim().max(255).optional().nullable(),
+});
 
 export default async function tenantRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
@@ -135,6 +140,47 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         isPartner,
       },
     });
+  });
+
+  /**
+   * PATCH /tenant/info — обновление названия компании и бизнес-ниши арендатора.
+   * Доступно администраторам арендатора (tenant:admin).
+   */
+  app.patch("/info", { onRequest: app.requirePermission("tenant:admin") }, async (request, reply) => {
+    const body = updateInfoBody.parse(request.body);
+    const updates: string[] = [];
+    const values: SqlParam[] = [];
+    let idx = 1;
+
+    if (body.name !== undefined) {
+      updates.push(`name = $${idx++}`);
+      values.push(body.name);
+    }
+    if (body.business_niche !== undefined) {
+      updates.push(`business_niche = $${idx++}`);
+      values.push(body.business_niche);
+    }
+
+    if (updates.length === 0) {
+      return reply.send({ message: "Нет данных для обновления" });
+    }
+
+    updates.push(`updated_at = now()`);
+    values.push(request.tenant_id);
+
+    const updated = await queryOne<{
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      business_niche: string | null;
+    }>(
+      `UPDATE tenants SET ${updates.join(", ")} WHERE id = $${idx} RETURNING id, name, slug, plan, status, business_niche`,
+      values,
+    );
+
+    return reply.send({ data: updated });
   });
 
   /**

@@ -220,14 +220,15 @@ export class WebchatService {
   private static readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly crm = new CrmPipelineService();
   private readonly agentPipeline: AgentPipelineService;
+  private readonly log: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void };
 
   constructor(logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void }) {
-    const log = logger ?? {
+    this.log = logger ?? {
       info: () => undefined,
       warn: () => undefined,
       error: () => undefined,
     };
-    this.agentPipeline = new AgentPipelineService(log);
+    this.agentPipeline = new AgentPipelineService(this.log);
   }
 
   /**
@@ -235,6 +236,11 @@ export class WebchatService {
    * Выполняется в platform_scope, поскольку запрос приходит от неавторизованного посетителя сайта.
    */
   async resolveAccount(channelAccountId: string): Promise<WebchatAccountInfo> {
+    const trimmedId = (channelAccountId || "").trim();
+    if (!trimmedId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmedId)) {
+      throw new NotFoundError("Аккаунт веб-чата не найден");
+    }
+
     const account = await runWithPlatformScope(() =>
       queryOne<ChannelAccountRow>(
         `SELECT id, tenant_id, label, status, external_id, credentials
@@ -242,7 +248,7 @@ export class WebchatService {
          WHERE id = $1
            AND channel = 'webchat'
            AND deleted_at IS NULL`,
-        [channelAccountId],
+        [trimmedId],
       ),
     );
 
@@ -252,6 +258,10 @@ export class WebchatService {
 
     if (account.status === "disabled") {
       throw new AppError(403, "CHAT_DISABLED", "Чат временно отключен администратором");
+    }
+
+    if (account.status !== "connected") {
+      throw new AppError(403, "CHAT_UNAVAILABLE", "Чат временно недоступен");
     }
 
     const tenant = await runWithPlatformScope(() =>
@@ -887,6 +897,10 @@ export class WebchatService {
 
     // Если канал не привязан к агенту (no_agent) — передаем операторам без заглушки
     if (outcome.kind === "no_agent") {
+      this.log.info(
+        { channelAccountId: account.id, visitorId: input.visitorId },
+        "[WebchatService] No AI agent assigned to channel, routing to operator",
+      );
       return {
         dealId: crmResult.dealId,
         contactId: crmResult.contactId,
@@ -916,9 +930,19 @@ export class WebchatService {
       };
     }
 
-    // 4. Если AI-агент не ответил (нет агента, агент на паузе, ошибка модели) —
+    // 4. Если AI-агент не ответил (нет агента, агент на паузе, ошибка модели, недостаточный баланс) —
     // отправляем автоответ виджета и ОБЯЗАТЕЛЬНО фиксируем его в CRM в deal_messages.
     if (crmResult.dealId) {
+      this.log.warn(
+        {
+          outcomeKind: outcome.kind,
+          tenantId: account.tenantId,
+          dealId: crmResult.dealId,
+          channelAccountId: account.id,
+          visitorId: input.visitorId,
+        },
+        `[WebchatService] AI agent did not reply (outcome: ${outcome.kind}), sending fallback auto-reply`,
+      );
       const hasRecentOutbound = await runWithTenantContext(account.tenantId, async () => {
         const row = await queryOne<{ id: string }>(
           `SELECT id FROM deal_messages

@@ -21,6 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { createRepairSchema, type CreateRepairPayload } from "@/schemas/repair.schema";
+import { useCurrentUser } from "@/lib/auth/use-auth";
 import { useTeamMembers } from "@/lib/api/use-team";
 import { useDeal } from "@/lib/api/use-deals";
 import {
@@ -342,6 +343,7 @@ export function RepairIntakeModal({
   const [equipments, setEquipments] = useState<EquipmentCardItem[]>([createEmptyEquipment()]);
   const [equipmentErrors, setEquipmentErrors] = useState<Record<string, Record<string, string>>>({});
 
+  const currentUser = useCurrentUser();
   const teamQuery = useTeamMembers();
   const teamMembers = teamQuery.data?.members ?? [];
 
@@ -400,6 +402,25 @@ export function RepairIntakeModal({
     }
   }, [selectedMasterId, teamMembers, form]);
 
+  // Автовыбор мастера при загрузке участников команды или открытии
+  useEffect(() => {
+    if (!open) return;
+    const currentId = form.getValues("master_id");
+    if (!currentId && (teamMembers.length > 0 || currentUser)) {
+      const self = teamMembers.find(
+        (m) => m.isSelf || (currentUser && m.id === currentUser.id),
+      );
+      const defaultMaster = self || teamMembers[0];
+      if (defaultMaster) {
+        form.setValue("master_id", defaultMaster.id, { shouldValidate: true });
+        form.setValue("master_name", defaultMaster.fullName, { shouldValidate: true });
+      } else if (currentUser?.id) {
+        form.setValue("master_id", currentUser.id, { shouldValidate: true });
+        form.setValue("master_name", currentUser.name || "Сотрудник", { shouldValidate: true });
+      }
+    }
+  }, [open, teamMembers, currentUser, form]);
+
   // Сброс при открытии
   useEffect(() => {
     if (open) {
@@ -410,6 +431,20 @@ export function RepairIntakeModal({
       setPhotoPreviews([]);
       setIsHistorySheetOpen(false);
       setHistorySerial("");
+
+      // Предвыбор мастера
+      const self = teamMembers.find(
+        (m) => m.isSelf || (currentUser && m.id === currentUser.id),
+      );
+      const defaultMaster = self || teamMembers[0];
+      if (defaultMaster) {
+        form.setValue("master_id", defaultMaster.id, { shouldValidate: true });
+        form.setValue("master_name", defaultMaster.fullName, { shouldValidate: true });
+      } else if (currentUser?.id) {
+        form.setValue("master_id", currentUser.id, { shouldValidate: true });
+        form.setValue("master_name", currentUser.name || "Сотрудник", { shouldValidate: true });
+      }
+
       if (initialCustomerId) {
         form.setValue("customer_id", initialCustomerId, { shouldValidate: true });
       }
@@ -437,7 +472,7 @@ export function RepairIntakeModal({
         form.setValue("deal_id", initialDealId, { shouldValidate: true });
       }
     }
-  }, [open, form, initialCustomerId, initialDeal, initialDealId]);
+  }, [open, form, initialCustomerId, initialDeal, initialDealId, teamMembers, currentUser]);
 
   // Копирование карточки оборудования
   const handleCopyEquipment = useCallback((idx: number) => {
@@ -515,23 +550,65 @@ export function RepairIntakeModal({
         e.stopPropagation();
       }
 
-      // Валидация полей карточек оборудования
+      // 1. Обеспечиваем гарантированный выбор мастера перед валидацией
+      let currentMasterId = form.getValues("master_id");
+      let currentMasterName = form.getValues("master_name");
+      if (!currentMasterId) {
+        const self = teamMembers.find(
+          (m) => m.isSelf || (currentUser && m.id === currentUser.id),
+        );
+        const defaultMaster = self || teamMembers[0];
+        if (defaultMaster) {
+          currentMasterId = defaultMaster.id;
+          currentMasterName = defaultMaster.fullName;
+          form.setValue("master_id", currentMasterId, { shouldValidate: true });
+          form.setValue("master_name", currentMasterName, { shouldValidate: true });
+        } else if (currentUser?.id) {
+          currentMasterId = currentUser.id;
+          currentMasterName = currentUser.name || "Сотрудник";
+          form.setValue("master_id", currentMasterId, { shouldValidate: true });
+          form.setValue("master_name", currentMasterName, { shouldValidate: true });
+        }
+      }
+
+      // 2. Синхронизируем первую карточку оборудования в форму
+      const firstEq = equipments[0] ?? createEmptyEquipment();
+      form.setValue("equipment_type", firstEq.equipment_type);
+      form.setValue("equipment_brand", firstEq.equipment_brand);
+      form.setValue("equipment_model", firstEq.equipment_model);
+      form.setValue("equipment_serial", firstEq.equipment_serial);
+      form.setValue("package_contents", firstEq.package_contents);
+      form.setValue("package_contents_items", firstEq.package_contents_items);
+      form.setValue("malfunctions", firstEq.malfunctions);
+      form.setValue("defect_description", firstEq.defect_description);
+      form.setValue("appearance", firstEq.appearance);
+      form.setValue("estimated_cost", firstEq.estimated_cost);
+
+      // 3. Валидация карточек оборудования
       const newErrors: Record<string, Record<string, string>> = {};
-      let hasError = false;
+      const missingFields: string[] = [];
 
       equipments.forEach((eq, idx) => {
         const itemErr: Record<string, string> = {};
+        const prefix = equipments.length > 1 ? `[№${idx + 1}] ` : "";
         if (!eq.equipment_type.trim()) {
           itemErr.equipment_type = "Укажите тип оборудования";
-          hasError = true;
+          missingFields.push(`${prefix}Тип оборудования`);
         }
         if (!eq.equipment_brand.trim()) {
           itemErr.equipment_brand = "Укажите бренд";
-          hasError = true;
+          missingFields.push(`${prefix}Бренд`);
         }
         if (!eq.equipment_model.trim()) {
           itemErr.equipment_model = "Укажите модель";
-          hasError = true;
+          missingFields.push(`${prefix}Модель`);
+        }
+        const hasMalfunction =
+          (eq.malfunctions && eq.malfunctions.length > 0) ||
+          (eq.defect_description && eq.defect_description.trim().length >= 3);
+        if (!hasMalfunction) {
+          itemErr.malfunctions = "Укажите неисправность";
+          missingFields.push(`${prefix}Заявленная неисправность`);
         }
         if (Object.keys(itemErr).length > 0) {
           newErrors[eq.id] = itemErr;
@@ -540,14 +617,47 @@ export function RepairIntakeModal({
 
       setEquipmentErrors(newErrors);
 
-      // Валидация полей клиента и мастера через react-hook-form
-      const formValid = await form.trigger(["customer_name", "customer_phone", "master_id"]);
-      if (!formValid || hasError) {
+      // 4. Валидация полей клиента и мастера через react-hook-form
+      const formValid = await form.trigger(["customer_name", "customer_phone", "customer_email", "master_id"]);
+      const formErrors = form.formState.errors;
+
+      if (formErrors.customer_name) {
+        missingFields.push("ФИО клиента");
+      }
+      if (formErrors.customer_phone) {
+        missingFields.push("Телефон клиента");
+      }
+      if (formErrors.customer_email) {
+        missingFields.push("Корректный Email");
+      }
+      if (formErrors.master_id) {
+        missingFields.push("Ответственный мастер");
+      }
+
+      if (!formValid || Object.keys(newErrors).length > 0 || missingFields.length > 0) {
+        const uniqueErrors = Array.from(new Set(missingFields));
+        const errorText =
+          uniqueErrors.length > 0
+            ? `Заполните обязательные поля: ${uniqueErrors.slice(0, 4).join(", ")}${uniqueErrors.length > 4 ? ` и ещё ${uniqueErrors.length - 4}` : ""}`
+            : "Пожалуйста, проверьте заполнение формы";
+
+        toast.error(errorText);
+
+        setTimeout(() => {
+          const firstErrorEl = document.querySelector(
+            ".border-rose-500, [aria-invalid='true'], input:invalid",
+          );
+          if (firstErrorEl) {
+            firstErrorEl.scrollIntoView({ behavior: "smooth", block: "center" });
+            if (firstErrorEl instanceof HTMLElement && typeof firstErrorEl.focus === "function") {
+              firstErrorEl.focus();
+            }
+          }
+        }, 100);
         return;
       }
 
       const formValues = form.getValues();
-      const firstEq = equipments[0] ?? createEmptyEquipment();
 
       const batchEquipments: EquipmentIntakeItem[] = equipments.map((eq) => ({
         equipment_type: eq.equipment_type,
@@ -565,6 +675,8 @@ export function RepairIntakeModal({
 
       const finalPayload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] } = {
         ...formValues,
+        master_id: currentMasterId || formValues.master_id,
+        master_name: currentMasterName || formValues.master_name,
         equipment_type: firstEq.equipment_type,
         equipment_brand: firstEq.equipment_brand,
         equipment_model: firstEq.equipment_model,
@@ -586,7 +698,7 @@ export function RepairIntakeModal({
         toast.error(msg);
       }
     },
-    [equipments, form, photoPreviews, onSubmit, photos, onClose],
+    [equipments, form, photoPreviews, onSubmit, photos, onClose, teamMembers, currentUser],
   );
 
   if (!open) return null;
@@ -604,8 +716,8 @@ export function RepairIntakeModal({
               <h2 className="text-sm font-semibold text-[#111111]">Приёмка оборудования</h2>
               <p className="text-xs text-[#666666]">
                 {equipments.length > 1
-                  ? `Оформить пакетный ремонт (${equipments.length} шт.) и напечатать квитанции`
-                  : "Оформить ремонт и напечатать квитанцию"}
+                  ? `Оформление пакетного ремонта (${equipments.length} шт.)`
+                  : "Оформление наряд-заказа на ремонт"}
               </p>
             </div>
           </div>
@@ -713,6 +825,8 @@ export function RepairIntakeModal({
                       const m = teamMembers.find((item) => item.id === id);
                       if (m) {
                         form.setValue("master_name", m.fullName, { shouldValidate: true });
+                      } else if (currentUser && currentUser.id === id) {
+                        form.setValue("master_name", currentUser.name || "Сотрудник", { shouldValidate: true });
                       }
                     }}
                     className={cn(
@@ -729,6 +843,9 @@ export function RepairIntakeModal({
                       </option>
                     ))}
                   </select>
+                  {errors.master_id && (
+                    <p className="text-xs text-rose-500 mt-1">{errors.master_id.message || "Выберите мастера"}</p>
+                  )}
                 </div>
               </div>
 
@@ -765,12 +882,12 @@ export function RepairIntakeModal({
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Создаём...
+                    <Loader2 className="h-4 w-4 animate-spin" /> Сохраняем...
                   </>
                 ) : equipments.length > 1 ? (
-                  `Оформить пакет (${equipments.length} шт.) и напечатать`
+                  `Сохранить пакет (${equipments.length} шт.)`
                 ) : (
-                  "Оформить и напечатать квитанцию"
+                  "Сохранить"
                 )}
               </button>
             </div>

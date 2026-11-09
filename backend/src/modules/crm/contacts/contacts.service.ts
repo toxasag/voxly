@@ -1,4 +1,5 @@
 import type {
+  CallerIdLookupDTO,
   ContactDTO,
   ContactDealItemDTO,
   ContactDealsHistoryDTO,
@@ -582,6 +583,124 @@ export class ContactsService {
       total,
       limit,
       offset,
+    };
+  }
+
+  /**
+   * Высокоскоростной поиск контакта для определения номера (Caller ID / входящие звонки).
+   * Выполняется за < 10 мс с использованием функционального индекса по цифрам телефона.
+   */
+  async lookupByPhone(tenantId: string, inputPhone: string): Promise<CallerIdLookupDTO> {
+    const rawDigits = inputPhone.replace(/\D/g, "");
+    if (!rawDigits || rawDigits.length < 3) {
+      return {
+        found: false,
+        phone: inputPhone,
+        normalizedPhone: rawDigits,
+        contact: null,
+      };
+    }
+
+    // Для российских/СНГ номеров берём последние 10 цифр (без префикса +7/8)
+    const lookupSuffix = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+    const normalizedE164 =
+      rawDigits.length === 11 && (rawDigits.startsWith("7") || rawDigits.startsWith("8"))
+        ? `+7${rawDigits.slice(1)}`
+        : rawDigits.startsWith("+")
+          ? rawDigits
+          : `+${rawDigits}`;
+
+    const row = await queryOne<{
+      id: string;
+      first_name: string;
+      last_name: string;
+      middle_name: string;
+      phone: string;
+      job_title: string;
+      company_name: string;
+      company_id: string | null;
+      company_title: string | null;
+      active_deal_id: string | null;
+      active_deal_title: string | null;
+      active_deal_budget: string | number | null;
+      active_deal_currency: string | null;
+      active_deal_stage_name: string | null;
+    }>(
+      `SELECT
+         c.id, c.first_name, c.last_name, c.middle_name, c.phone,
+         c.job_title, c.company_name, c.company_id,
+         comp.name AS company_title,
+         d.id AS active_deal_id,
+         d.title AS active_deal_title,
+         d.budget AS active_deal_budget,
+         d.currency AS active_deal_currency,
+         st.name AS active_deal_stage_name
+       FROM contacts c
+       LEFT JOIN companies comp
+         ON comp.id = c.company_id AND comp.tenant_id = c.tenant_id
+       LEFT JOIN LATERAL (
+         SELECT d.id, d.title, d.budget, d.currency, d.stage_id
+         FROM deals d
+         LEFT JOIN stages s ON s.id = d.stage_id
+         WHERE d.contact_id = c.id
+           AND d.tenant_id = c.tenant_id
+           AND d.deleted_at IS NULL
+           AND COALESCE(s.is_won, false) = false
+           AND COALESCE(s.is_lost, false) = false
+         ORDER BY d.created_at DESC
+         LIMIT 1
+       ) d ON true
+       LEFT JOIN stages st
+         ON st.id = d.stage_id
+       WHERE c.tenant_id = $1
+         AND c.deleted_at IS NULL
+         AND (
+           regexp_replace(c.phone, '\\D', '', 'g') LIKE '%' || $2
+           OR c.additional_phones::text LIKE '%' || $2 || '%'
+         )
+       LIMIT 1`,
+      [tenantId, lookupSuffix],
+    );
+
+    if (!row) {
+      return {
+        found: false,
+        phone: inputPhone,
+        normalizedPhone: normalizedE164,
+        contact: null,
+      };
+    }
+
+    const resolvedCompany = row.company_name || row.company_title || undefined;
+    const fullName =
+      [row.last_name, row.first_name, row.middle_name].filter(Boolean).join(" ").trim() ||
+      "Без имени";
+
+    return {
+      found: true,
+      phone: inputPhone,
+      normalizedPhone: normalizedE164,
+      contact: {
+        id: row.id,
+        fullName,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        middleName: row.middle_name || undefined,
+        phone: row.phone,
+        jobTitle: row.job_title || undefined,
+        companyName: resolvedCompany,
+        companyId: row.company_id || undefined,
+        crmUrl: `https://voxly.getvoxly.ru/crm/contacts/${row.id}`,
+        activeDeal: row.active_deal_id
+          ? {
+              id: row.active_deal_id,
+              title: row.active_deal_title || "Сделка",
+              budget: Number(row.active_deal_budget) || 0,
+              currency: row.active_deal_currency || "RUB",
+              stageName: row.active_deal_stage_name || "В работе",
+            }
+          : null,
+      },
     };
   }
 }

@@ -385,6 +385,40 @@ export class WhatsappEvolutionService {
   }
 
   /**
+   * Получение истории сообщений из Baileys-хранилища Evolution API
+   */
+  async findMessages(
+    instanceName: string,
+    query: {
+      remoteJid?: string;
+      page?: number;
+      offset?: number;
+    },
+  ): Promise<Array<Record<string, unknown>>> {
+    const payload: Record<string, unknown> = {
+      page: query.page ?? 1,
+      offset: query.offset ?? 50,
+    };
+    if (query.remoteJid) {
+      payload.where = {
+        key: {
+          remoteJid: query.remoteJid,
+        },
+      };
+    }
+    const res = await this.evoFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok || !res.json) return [];
+    const messages = res.json?.messages;
+    if (Array.isArray(messages)) return messages as Array<Record<string, unknown>>;
+    if (Array.isArray(messages?.records)) return messages.records as Array<Record<string, unknown>>;
+    if (Array.isArray(res.json?.records)) return res.json.records as Array<Record<string, unknown>>;
+    return [];
+  }
+
+  /**
    * Скачивает медиа-вложение сообщения через Evolution API в base64
    */
   async downloadMedia(

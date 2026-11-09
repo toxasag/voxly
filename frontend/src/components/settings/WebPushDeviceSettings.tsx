@@ -85,12 +85,19 @@ export function WebPushDeviceSettings() {
       )}
 
       {isSupported && permission === "denied" && (
-        <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
-          <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
-          <span>
-            Уведомления заблокированы в настройках браузера. Нажмите на иконку замка в адресной строке и
-            разрешите «Уведомления» для этого сайта.
-          </span>
+        <div className="mt-4 flex flex-col sm:flex-row sm:items-start gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3.5 text-xs text-rose-900">
+          <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-semibold text-rose-950">
+              Уведомления заблокированы на этом устройстве
+            </p>
+            <p className="leading-relaxed">
+              <strong>В Android / Samsung One UI:</strong> Откройте <em>Настройки → Приложения → GETVOXLY (или Chrome) → Уведомления</em> и включите «Разрешить». Для фоновой доставки убедитесь, что приложение не находится в списке «Глубокий сон» (Батарея → Не ограничено).
+            </p>
+            <p className="leading-relaxed text-rose-800">
+              <strong>В браузере Chrome:</strong> Нажмите на значок параметров сайта рядом с адресной строкой и включите «Уведомления».
+            </p>
+          </div>
         </div>
       )}
 

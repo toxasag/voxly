@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="voxly_primary">#4A38F5</color>
+    <color name="voxly_primary_dark">#3D2EE0</color>
+    <color name="voxly_accent">#03B2CB</color>
+    <color name="voxly_bg">#FFFFFF</color>
+    <color name="voxly_card_bg">#FFFFFF</color>
+    <color name="voxly_border">#E5E5E5</color>
+    <color name="voxly_text_primary">#111111</color>
+    <color name="voxly_text_secondary">#666666</color>
+    <color name="voxly_deal_chip">#FEFCE8</color>
+    <color name="voxly_deal_text">#854D0E</color>
+</resources>

@@ -126,7 +126,7 @@ function RepairsPageContent() {
             company_legal_address: payload.company_legal_address,
             deal_id: payload.deal_id,
             priority: payload.priority,
-            master_id: payload.master_id,
+            master_id: payload.master_id ?? "",
             master_name: payload.master_name,
             estimated_cost: payload.estimated_cost,
             notes: payload.notes,
@@ -145,51 +145,6 @@ function RepairsPageContent() {
               ? `Оформлен пакет ремонтов (${createdOrders.length} шт.)`
               : `Наряд-заказ ${created.ticketNumber} успешно создан`,
           );
-          setReceiptTarget({
-            id: created.id,
-            ticket_number: created.ticketNumber,
-            deal_id: created.dealId ?? null,
-            deal_title: created.dealTitle ?? null,
-            deal_note: created.dealNote ?? null,
-            company_name: created.companyName ?? null,
-            company_inn: created.companyInn ?? null,
-            customer_name: created.customerName,
-            customer_phone: created.customerPhone,
-            customer_id: created.customerId,
-            equipment: {
-              type: created.equipment.type,
-              brand: created.equipment.brand,
-              model: created.equipment.model,
-              serial_number: created.equipment.serialNumber,
-              package_contents: created.equipment.packageContents,
-              appearance: created.equipment.appearance,
-            },
-            defect_description: created.defectDescription,
-            defect_photos: created.defectPhotos,
-            status: created.status,
-            priority: created.priority,
-            master_name: created.masterName,
-            master_id: created.masterId,
-            estimated_cost: created.estimatedCost,
-            final_cost: created.finalCost,
-            received_at: created.receivedAt,
-            completed_at: created.completedAt,
-            delivered_at: created.deliveredAt,
-            notes: created.notes,
-            diagnostics: created.diagnostics
-              ? {
-                  performed_at: created.diagnostics.performed_at,
-                  performed_by: created.diagnostics.performed_by,
-                  findings: created.diagnostics.findings,
-                  recommended_action: created.diagnostics.recommended_action,
-                  condition_notes: created.diagnostics.condition_notes,
-                }
-              : null,
-            work_items: [],
-            parts_used: [],
-            nextStatus: created.nextStatus,
-            allowedTransitions: created.allowedTransitions,
-          });
         }
       } catch (err: unknown) {
         console.error("Ошибка при создании наряда:", err);
@@ -203,12 +158,12 @@ function RepairsPageContent() {
 
   return (
     <Guard requiredPermission="service_center:read" requiredModule="service_center">
-      <div className="space-y-6">
+      <div className="space-y-3.5">
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-[15px] font-semibold text-[#111111]">Сервисный центр</h1>
-            <p className="mt-1 text-xs text-[#666666]">
+            <p className="mt-0.5 text-xs text-[#666666]">
               Приёмка оборудования в ремонт, диагностика и контроль
             </p>
           </div>
@@ -216,7 +171,7 @@ function RepairsPageContent() {
             type="button"
             onClick={() => setCreateModalOpen(true)}
             className={cn(
-              "flex items-center gap-2 rounded-[8px] px-3.5 py-2 text-[13px] font-medium transition-colors shadow-2xs",
+              "flex items-center gap-2 rounded-[8px] px-3.5 py-1.5 text-[13px] font-medium transition-colors shadow-2xs",
               "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
             )}
           >
@@ -225,34 +180,34 @@ function RepairsPageContent() {
           </button>
         </div>
 
-        {/* Stats Bar */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
+        {/* Компактный Stats Bar */}
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs">
             <div className="flex items-center gap-2">
-              <div className="rounded-[6px] border border-sky-200 bg-sky-50 p-1.5">
-                <Wrench className="h-4 w-4 text-sky-700" />
+              <div className="rounded-[4px] border border-sky-200 bg-sky-50 p-1">
+                <Wrench className="h-3.5 w-3.5 text-sky-700" />
               </div>
-              <span className="text-xs font-medium text-[#666666]">Всего наряд-заказов</span>
+              <span className="text-[12px] font-medium text-[#666666]">Всего наряд-заказов</span>
             </div>
-            <p className="mt-2 text-xl font-semibold font-mono tabular-nums text-[#111111]">{statsTotal}</p>
+            <span className="font-mono text-[14px] font-semibold tabular-nums text-[#111111]">{statsTotal}</span>
           </div>
-          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs">
             <div className="flex items-center gap-2">
-              <div className="rounded-[6px] border border-amber-200 bg-amber-50 p-1.5">
-                <Clock className="h-4 w-4 text-amber-700" />
+              <div className="rounded-[4px] border border-amber-200 bg-amber-50 p-1">
+                <Clock className="h-3.5 w-3.5 text-amber-700" />
               </div>
-              <span className="text-xs font-medium text-[#666666]">В работе</span>
+              <span className="text-[12px] font-medium text-[#666666]">В работе</span>
             </div>
-            <p className="mt-2 text-xl font-semibold font-mono tabular-nums text-[#111111]">{statsInProgress}</p>
+            <span className="font-mono text-[14px] font-semibold tabular-nums text-[#111111]">{statsInProgress}</span>
           </div>
-          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs">
             <div className="flex items-center gap-2">
-              <div className="rounded-[6px] border border-emerald-200 bg-emerald-50 p-1.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+              <div className="rounded-[4px] border border-emerald-200 bg-emerald-50 p-1">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" />
               </div>
-              <span className="text-xs font-medium text-[#666666]">Готовы к выдаче</span>
+              <span className="text-[12px] font-medium text-[#666666]">Готовы к выдаче</span>
             </div>
-            <p className="mt-2 text-xl font-semibold font-mono tabular-nums text-[#111111]">{statsReady}</p>
+            <span className="font-mono text-[14px] font-semibold tabular-nums text-[#111111]">{statsReady}</span>
           </div>
         </div>
 

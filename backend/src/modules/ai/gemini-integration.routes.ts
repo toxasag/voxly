@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
-import { platformConfigService } from "../admin/platform-config.service.js";
+import {
+  platformConfigService,
+  isGoogleCloudPropagationDelay,
+} from "../admin/platform-config.service.js";
 import { geminiKeyPoolService } from "./gemini-key-pool.service.js";
 
 const verifyKeySchema = z.object({
@@ -123,6 +126,32 @@ export default async function geminiIntegrationRoutes(app: FastifyInstance): Pro
           } catch {}
         }
       } catch {}
+    }
+
+    // Проверка на временную задержку репликации IAM в Google Cloud (активация нового API/проекта)
+    if (isGoogleCloudPropagationDelay(statusCode, lastErrorDetails)) {
+      if (save) {
+        await platformConfigService.saveSingleWorkingKey("gemini", apiKey, effectiveBaseUrl);
+      }
+      platformConfigService.markKeyPendingActivation(apiKey, 120_000);
+
+      return reply.status(200).send({
+        success: true,
+        is_active: false,
+        status: "pending_activation",
+        isTemporary: true,
+        provider: "gemini",
+        tenant_id: request.tenant_id,
+        modelsCount: 0,
+        message: "Ключ Google Gemini принят. Идёт синхронизация API в Google Cloud (активация занимает 2–5 мин).",
+        data: {
+          isValid: true,
+          isPendingActivation: true,
+          status: "pending_activation",
+          modelsCount: 0,
+          message: "Синхронизация Google Cloud (активация 2–5 мин)...",
+        },
+      });
     }
 
     // Формируем чистый текст ошибки с обязательным кодом PROVIDER_KEY_INVALID

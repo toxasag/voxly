@@ -40,6 +40,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { TagPill } from "@/components/ui/tag";
+import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
@@ -2512,7 +2513,7 @@ function DealRepairsTab({ deal }: { deal: DealDTO }) {
                         <tr key={order.id} className="hover:bg-[#fafafa] transition-colors">
                           <td className="py-2.5 px-3 font-mono font-medium text-[#4a38f5]">
                             <Link href={`/repairs/${order.id}`} className="hover:underline">
-                              №{order.ticketNumber}
+                              {formatOrderNumber(order.ticketNumber)}
                             </Link>
                           </td>
                           <td className="py-2.5 px-3">

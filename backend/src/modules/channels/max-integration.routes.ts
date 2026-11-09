@@ -9,6 +9,7 @@ import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
 import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
+import { chatEventBus } from "../crm/chat/chat-events.js";
 
 /**
  * INC-113: никогда не записывать номер подключенного аккаунта оператора
@@ -87,6 +88,9 @@ const internalInboundSchema = z.object({
   is_bot: z.boolean().optional(),
   type: z.string().optional(),
   senderType: z.string().optional(),
+  out: z.boolean().optional(),
+  fromMe: z.boolean().optional(),
+  direction: z.string().optional(),
   // Устаревшие поля для обратной совместимости
   tenantId: z.string().uuid().optional(),
   chatId: z.string().optional(),
@@ -225,14 +229,20 @@ export async function syncMaxDialogHistory(opts: {
         }
       }
 
+      const source = msg.out ? "manager" : "client";
+      const direction = msg.out ? "outbound" : "inbound";
+      const senderName = msg.out ? "Менеджер" : (target.firstName || opts.senderName || "Клиент MAX");
+
       const existing = await queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND content = $3
-           AND created_at >= $4::timestamptz - interval '10 seconds'
-           AND created_at <= $4::timestamptz + interval '10 seconds'
+           AND (
+             (created_at >= $4::timestamptz - interval '60 seconds' AND created_at <= $4::timestamptz + interval '60 seconds')
+             OR (direction = $5 AND created_at > now() - interval '2 minutes')
+           )
          LIMIT 1`,
-        [opts.tenantId, opts.dealId, text, msgDate.toISOString()],
+        [opts.tenantId, opts.dealId, text, msgDate.toISOString(), direction],
       );
 
       if (existing) {
@@ -248,10 +258,6 @@ export async function syncMaxDialogHistory(opts: {
         }
         continue;
       }
-
-      const source = msg.out ? "manager" : "client";
-      const direction = msg.out ? "outbound" : "inbound";
-      const senderName = msg.out ? "Менеджер" : (target.firstName || opts.senderName || "Клиент MAX");
 
       const [inserted] = await query<{ id: string }>(
         `INSERT INTO deal_messages
@@ -275,6 +281,29 @@ export async function syncMaxDialogHistory(opts: {
       if (inserted && attachmentUrl) {
         void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, inserted.id).catch(() => {});
       }
+      if (inserted) {
+        chatEventBus.emitChatEvent({
+          type: "message_created",
+          tenantId: opts.tenantId,
+          dealId: opts.dealId,
+          data: {
+            id: inserted.id,
+            tenantId: opts.tenantId,
+            dealId: opts.dealId,
+            channelAccountId: opts.channelAccountId,
+            source,
+            direction,
+            senderName,
+            content: text,
+            channel: "max",
+            deliveryStatus: msg.out ? "sent" : "neutral",
+            attachment: attachmentUrl,
+            attachmentType,
+            createdAt: msgDate.toISOString(),
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
       insertedCount++;
     }
   });
@@ -285,6 +314,13 @@ export async function syncMaxDialogHistory(opts: {
 
 async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   const body = internalInboundSchema.parse(request.body);
+
+  // Если сообщение пришло с флагом исходящего (например, из нативного приложения оператора),
+  // перенаправляем в обработчик нативных исходящих
+  if (body.out === true || body.fromMe === true || body.direction === "outbound") {
+    return processMaxOutbound(request, reply);
+  }
+
   const peerId = (body.peerId || body.chatId || "").trim();
   if (!peerId) {
     return reply.code(400).send({ ok: false, error: "peerId or chatId required" });

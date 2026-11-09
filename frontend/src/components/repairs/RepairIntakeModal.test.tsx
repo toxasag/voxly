@@ -3,6 +3,16 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 import { RepairIntakeModal } from "./RepairIntakeModal";
 
+vi.mock("@/lib/auth/use-auth", () => ({
+  useCurrentUser: () => ({
+    id: "master-1",
+    name: "Мастер Иван",
+    email: "ivan@example.com",
+    role: "technician",
+    permissions: new Set(["service_center:write"]),
+  }),
+}));
+
 vi.mock("@/lib/api/use-team", () => ({
   useTeamMembers: () => ({
     data: {

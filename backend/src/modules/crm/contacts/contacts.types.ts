@@ -425,3 +425,31 @@ export interface ContactDealsHistoryDTO {
   limit: number;
   offset: number;
 }
+
+export interface CallerIdContactDTO {
+  id: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  middleName?: string;
+  phone: string;
+  jobTitle?: string;
+  companyName?: string;
+  companyId?: string;
+  crmUrl: string;
+  activeDeal?: {
+    id: string;
+    title: string;
+    budget: number;
+    currency: string;
+    stageName: string;
+  } | null;
+}
+
+export interface CallerIdLookupDTO {
+  found: boolean;
+  phone: string;
+  normalizedPhone: string;
+  contact: CallerIdContactDTO | null;
+}
+

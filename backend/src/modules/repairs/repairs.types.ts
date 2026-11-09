@@ -111,8 +111,8 @@ export const createRepairSchema = z.object({
   malfunctions: z.array(z.string()).optional(),
   defect_photos: z.array(z.string().url("Each photo must be a URL")).max(20).optional(),
   priority: repairPrioritySchema.default("normal"),
-  master_id: z.string().uuid("master_id must be a UUID"),
-  master_name: z.string().min(1, "Master name is required").max(200),
+  master_id: optionalUuid,
+  master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative("Estimated cost cannot be negative").default(0),
   notes: z.string().max(4000).optional().or(z.literal("")),
 });
@@ -153,8 +153,8 @@ export const createBatchRepairSchema = z.object({
   equipments: z.array(equipmentIntakeItemSchema).min(1, "Добавьте хотя бы одно оборудование"),
   defect_photos: z.array(z.string()).optional(),
   priority: repairPrioritySchema.default("normal"),
-  master_id: z.string().uuid("master_id must be a UUID"),
-  master_name: z.string().min(1, "Master name is required").max(200),
+  master_id: optionalUuid,
+  master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative().default(0),
   notes: z.string().max(4000).optional().or(z.literal("")),
 });

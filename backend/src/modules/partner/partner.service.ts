@@ -3,6 +3,7 @@ import { query, queryOne, transaction } from "../../db/client.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { OWNER_PERMISSIONS } from "../../config/permissions.js";
 import { ensureTenantDefaults } from "../tenant/tenant-defaults.js";
+import { tenantProvisioningQueue } from "../tenant/tenant-provisioning.queue.js";
 import type {
   CreatePartnerTenantInput,
   AuthSettings,
@@ -122,9 +123,9 @@ export class PartnerService {
         }>(
           `INSERT INTO tenants (
              name, slug, plan, status, parent_tenant_id,
-             custom_pricing, custom_price_rubles, auth_settings, trial_ends_at
+             custom_pricing, custom_price_rubles, auth_settings, trial_ends_at, ai_balance_kopecks
            )
-           VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, now() + INTERVAL '365 days')
+           VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, now() + INTERVAL '365 days', 500000)
            RETURNING id, name, slug, plan, status, parent_tenant_id, auth_settings, custom_pricing, custom_price_rubles, created_at, updated_at`,
           [
             input.name.trim(),
@@ -140,6 +141,13 @@ export class PartnerService {
         // Переключаем контекст транзакции на только что созданный дочерний тенант,
         // чтобы RLS-политики (например, subscriptions) разрешали вставку дочерних записей.
         await tx.query("SELECT set_config('app.tenant_id', $1, true)", [tenant.id]);
+
+        // Начисляем стартовый баланс на AI-агентов
+        await tx.query(
+          `INSERT INTO ai_balance_topups (tenant_id, amount_kopecks, source, comment)
+           VALUES ($1, 500000, 'bonus', 'Стартовый баланс для AI-ботов')`,
+          [tenant.id],
+        );
 
         // Создаем первого суперадмина дочернего портала
         const user = await tx.queryOneOrThrow<{
@@ -185,6 +193,20 @@ export class PartnerService {
         // Логируем, но не блокируем создание
         console.error("Failed to seed tenant defaults:", err);
       }
+
+      // Отправка приветственного письма с учетными данными администратора через BullMQ очередь
+      void tenantProvisioningQueue
+        .enqueueWelcomeCredentials({
+          to: adminEmail,
+          subdomain: slug,
+          companyName: input.name.trim(),
+          adminName: (input.admin_name || "Администратор").trim(),
+          loginEmail: adminEmail,
+          password: input.admin_password,
+        })
+        .catch((err) => {
+          console.error("Failed to enqueue welcome credentials email:", err);
+        });
 
       return {
         tenant: {
