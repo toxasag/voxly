@@ -3,12 +3,17 @@ import { z } from "zod";
 import { CompaniesService } from "./companies.service.js";
 import { createCompanySchema, updateCompanySchema } from "./companies.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
+import { innLookupService } from "../../integrations/inn-lookup.service.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
   manager_id: z.string().uuid().optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+const innQuerySchema = z.object({
+  inn: z.string().min(10).max(12),
 });
 
 const idParamsSchema = z.object({ id: z.string().uuid("id must be a UUID") });
@@ -31,6 +36,16 @@ export async function companiesRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.send({ data: items, meta: { limit, offset, total } });
+  });
+
+  // GET /lookup-inn — поиск реквизитов организации по ИНН (DaData / ФНС ЕГРЮЛ)
+  app.get("/lookup-inn", { onRequest: canRead }, async (request, reply) => {
+    const { inn } = innQuerySchema.parse(request.query);
+    const result = await innLookupService.lookup(inn);
+    if (!result) {
+      return reply.status(404).send({ error: "Организация по данному ИНН не найдена" });
+    }
+    return reply.send({ data: result });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {
