@@ -412,8 +412,12 @@ export default function AdminTenantsPage() {
         });
 
         toast.success(`Вход выполнен под организацией «${tenant.name}» ${userEmail ? `(${userEmail})` : ""}`);
-        // Переходим напрямую на персональный домен/поддомен арендатора
-        window.location.href = targetSlug ? tenantPortalUrl(targetSlug, "/crm/deals") : "/crm/deals";
+        // Переходим напрямую на персональный домен/поддомен арендатора с handoff токена
+        const targetUrl = targetSlug ? tenantPortalUrl(targetSlug, "/crm/deals") : "/crm/deals";
+        const redirectUrl = targetUrl.includes("://")
+          ? `${targetUrl}#tenant_token=${encodeURIComponent(newAccessToken)}`
+          : targetUrl;
+        window.location.href = redirectUrl;
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось выполнить вход под аккаунтом клиента");
       } finally {
