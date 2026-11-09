@@ -13,6 +13,14 @@ export const additionalContactSchema = z.object({
 });
 export type AdditionalContact = z.infer<typeof additionalContactSchema>;
 
+export const repairPaymentStatusSchema = z.enum(["unpaid", "invoiced", "paid"]);
+export type RepairPaymentStatus = z.infer<typeof repairPaymentStatusSchema>;
+
+export const changePaymentStatusSchema = z.object({
+  payment_status: repairPaymentStatusSchema,
+});
+export type ChangePaymentStatusPayload = z.infer<typeof changePaymentStatusSchema>;
+
 export const createRepairSchema = z.object({
   deal_id: z.string().optional().or(z.literal("")),
   customer_id: z.string().optional().or(z.literal("")),
@@ -38,6 +46,7 @@ export const createRepairSchema = z.object({
   malfunctions: z.array(z.string()).optional().default([]),
   defect_photos: z.array(z.string()).max(20).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
+  payment_status: repairPaymentStatusSchema.optional().default("unpaid"),
   master_id: z.string().optional().or(z.literal("")),
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z
@@ -67,6 +76,7 @@ export const updateRepairSchema = z.object({
   appearance: z.string().max(1000).optional().or(z.literal("")),
   defect_description: z.string().max(2000).optional(),
   malfunctions: z.array(z.string()).optional(),
+  payment_status: repairPaymentStatusSchema.optional(),
   estimated_cost: z.number().min(0).optional(),
   final_cost: z.number().min(0).optional(),
   master_id: z.string().uuid().optional().or(z.literal("")),

@@ -19,6 +19,7 @@ import type {
   RepairPartRow,
   RepairPhotoRow,
   RepairPriority,
+  RepairPaymentStatus,
   RepairServiceCatalogItemDTO,
   RepairServiceCatalogRow,
   RepairStatus,
@@ -55,7 +56,7 @@ const ORDER_COLUMNS = `
   id, tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
   equipment_type, equipment_brand, equipment_model, equipment_serial,
   package_contents, package_contents_items, appearance, defect_description, malfunctions, defect_photos,
-  additional_contacts, status, priority, master_id, master_name, estimated_cost, final_cost,
+  additional_contacts, status, payment_status, priority, master_id, master_name, estimated_cost, final_cost,
   notes, diagnostics, received_at, completed_at, delivered_at, created_at, updated_at
 `;
 
@@ -84,6 +85,7 @@ function nullIfBlank(value: string | null | undefined): string | null {
 export interface ListRepairsOptions {
   dealId?: string;
   status?: RepairStatus;
+  paymentStatus?: RepairPaymentStatus;
   priority?: RepairPriority;
   masterId?: string;
   customerId?: string;
@@ -229,6 +231,11 @@ export class RepairsService {
       conditions.push(`ro.status = $${params.length}`);
     }
 
+    if (options.paymentStatus !== undefined) {
+      params.push(options.paymentStatus);
+      conditions.push(`ro.payment_status = $${params.length}`);
+    }
+
     if (options.priority !== undefined) {
       params.push(options.priority);
       conditions.push(`ro.priority = $${params.length}`);
@@ -271,7 +278,7 @@ export class RepairsService {
          ro.id, ro.tenant_id, ro.ticket_number, ro.deal_id, ro.customer_id, ro.customer_name, ro.customer_phone,
          ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
          ro.package_contents, ro.package_contents_items, ro.appearance, ro.defect_description, ro.malfunctions, ro.defect_photos,
-         ro.additional_contacts, ro.status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
+         ro.additional_contacts, ro.status, ro.payment_status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
          ro.notes, ro.diagnostics, ro.received_at, ro.completed_at, ro.delivered_at, ro.created_at, ro.updated_at,
          d.title AS deal_title,
          d.budget AS deal_budget,
@@ -351,7 +358,7 @@ export class RepairsService {
          ro.id, ro.tenant_id, ro.ticket_number, ro.deal_id, ro.customer_id, ro.customer_name, ro.customer_phone,
          ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
          ro.package_contents, ro.package_contents_items, ro.appearance, ro.defect_description, ro.malfunctions, ro.defect_photos,
-         ro.additional_contacts, ro.status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
+         ro.additional_contacts, ro.status, ro.payment_status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
          ro.notes, ro.diagnostics, ro.received_at, ro.completed_at, ro.delivered_at, ro.created_at, ro.updated_at,
          d.title AS deal_title,
          d.budget AS deal_budget,
@@ -711,9 +718,9 @@ export class RepairsService {
            (tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
             equipment_type, equipment_brand, equipment_model, equipment_serial,
             package_contents, package_contents_items, appearance, defect_description, malfunctions, defect_photos,
-            additional_contacts, status, priority, master_id, master_name, estimated_cost, notes)
+            additional_contacts, status, payment_status, priority, master_id, master_name, estimated_cost, notes)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                 $17, 'intake', $18, $19, $20, $21, $22)
+                 $17, 'intake', $18, $19, $20, $21, $22, $23)
          RETURNING ${ORDER_COLUMNS}`,
         [
           tenantId,
@@ -733,6 +740,7 @@ export class RepairsService {
           malfunctionsItems,
           photos,
           additionalContactsJson,
+          payload.payment_status ?? "unpaid",
           payload.priority,
           masterId,
           masterName,
@@ -1013,13 +1021,13 @@ export class RepairsService {
              tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
              equipment_type, equipment_brand, equipment_model, equipment_serial,
              package_contents, package_contents_items, appearance, defect_description, malfunctions,
-             defect_photos, status, priority, master_id, master_name, estimated_cost, notes, additional_contacts, received_at
+             defect_photos, status, payment_status, priority, master_id, master_name, estimated_cost, notes, additional_contacts, received_at
            )
            VALUES (
              $1, $2, $3, $4, $5, $6,
              $7, $8, $9, $10,
              $11, $12, $13, $14, $15,
-             $16, 'intake', $17, $18, $19, $20, $21, $22, now()
+             $16, 'intake', $17, $18, $19, $20, $21, $22, $23, now()
            )
            RETURNING ${ORDER_COLUMNS}`,
           [
@@ -1039,6 +1047,7 @@ export class RepairsService {
             defectDescription,
             malfunctions,
             defectPhotos,
+            payload.payment_status ?? "unpaid",
             payload.priority ?? "normal",
             itemMasterId,
             itemMasterName,
@@ -1146,6 +1155,7 @@ export class RepairsService {
     }
     if (payload.estimated_cost !== undefined) push("estimated_cost", payload.estimated_cost);
     if (payload.final_cost !== undefined) push("final_cost", payload.final_cost);
+    if (payload.payment_status !== undefined) push("payment_status", payload.payment_status);
     if (payload.notes !== undefined) push("notes", payload.notes);
 
     if (assignments.length > 0) {
@@ -1765,6 +1775,51 @@ export class RepairsService {
     }
 
     return { updated: updatedIds.length, ids: updatedIds, errors };
+  }
+
+  /**
+   * Смена статуса оплаты наряда (unpaid, invoiced, paid).
+   */
+  async updatePaymentStatus(
+    tenantId: string,
+    id: string,
+    paymentStatus: RepairPaymentStatus,
+  ): Promise<RepairOrderDTO> {
+    const current = await this.get(tenantId, id);
+    if (!current) {
+      throw new NotFoundError("Repair order not found");
+    }
+
+    await query(
+      `UPDATE repair_orders
+       SET payment_status = $1, updated_at = now()
+       WHERE tenant_id = $2 AND id = $3 AND deleted_at IS NULL`,
+      [paymentStatus, tenantId, id],
+    );
+
+    const updated = await this.get(tenantId, id);
+    if (!updated) {
+      throw new NotFoundError("Repair order not found after update");
+    }
+    return updated;
+  }
+
+  /**
+   * Пакетная смена статуса оплаты наряд-заказов.
+   */
+  async batchUpdatePaymentStatus(
+    tenantId: string,
+    ids: string[],
+    paymentStatus: RepairPaymentStatus,
+  ): Promise<{ updated: number; ids: string[] }> {
+    await query(
+      `UPDATE repair_orders
+       SET payment_status = $1, updated_at = now()
+       WHERE tenant_id = $2 AND id = ANY($3::uuid[]) AND deleted_at IS NULL`,
+      [paymentStatus, tenantId, ids],
+    );
+
+    return { updated: ids.length, ids };
   }
 
   /**
