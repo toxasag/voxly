@@ -8,12 +8,14 @@ import {
   ExternalLink,
   ChevronLeft,
   RefreshCw,
+  Sparkles,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
+import { DialogueFeedbackModal } from "@/components/ai-bots/DialogueFeedbackModal";
 import { useInboxThreads, type InboxThreadDTO } from "@/lib/api/use-inbox";
 
 function formatThreadTime(iso: string): string {
@@ -81,6 +83,7 @@ export default function InboxPage() {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [showInboxFeedback, setShowInboxFeedback] = useState(false);
 
   const {
     data: threads = [],
@@ -391,6 +394,15 @@ export default function InboxPage() {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowInboxFeedback(true)}
+                    title="Оценить качество ответов ИИ и обучить агента по этому диалогу"
+                    className="inline-flex items-center gap-1.5 rounded-[6px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2.5 py-1 text-xs font-medium text-[#4a38f5] shadow-2xs hover:bg-[#4a38f5]/10 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+                    <span>Обучить бота</span>
+                  </button>
                   <Link
                     href={`/crm/deals?record=${activeThread.dealId}`}
                     className="inline-flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"
@@ -423,6 +435,16 @@ export default function InboxPage() {
           )}
         </section>
       </div>
+
+      {activeThread && (
+        <DialogueFeedbackModal
+          open={showInboxFeedback}
+          onClose={() => setShowInboxFeedback(false)}
+          dealId={activeThread.dealId}
+          dealTitle={activeThread.dealTitle}
+          contactName={activeThread.contactName}
+        />
+      )}
     </div>
   );
 }

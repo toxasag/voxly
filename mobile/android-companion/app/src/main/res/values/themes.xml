@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VoxlyCompanion" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/voxly_primary</item>
+        <item name="colorPrimaryDark">@color/voxly_primary_dark</item>
+        <item name="colorAccent">@color/voxly_accent</item>
+        <item name="android:windowBackground">@color/voxly_bg</item>
+    </style>
+</resources>

@@ -1,27 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useCallback, useEffect, useState } from "react";
+import { useForm, useWatch, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { useAuth } from "@/lib/auth/use-auth";
 import {
   AlertTriangle,
+  BookOpen,
   Bot,
   Check,
+  ChevronDown,
   FileCode,
-  FileSpreadsheet,
   FileText,
-  FileUp,
   Globe,
+  Info,
   Loader2,
   MessageSquare,
+  MessageSquareQuote,
   RefreshCw,
   Save,
   Sliders,
   Sparkles,
-  Star,
   Trash2,
-  UploadCloud,
 } from "lucide-react";
 import type { AiBot, BotContextEntity, BotMode, BotModel, ModelInfo } from "@/lib/ai-bots/ai-bots.types";
 import {
@@ -34,7 +35,11 @@ import {
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
 import { useAiModels, type AiModelItem } from "@/lib/api/use-ai-agents";
-import { useCrmKnowledgeStats, useCrawlStatus } from "@/lib/api/use-agent-knowledge";
+import {
+  useAgentFeedbacks,
+  useGeneratePrompt,
+  useRebuildAgentPrompt,
+} from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
 import {
@@ -51,29 +56,7 @@ interface BotModalProps {
   bot?: AiBot | null;
   onClose: () => void;
   onSubmit: (payload: CreateBotPayload) => Promise<unknown> | unknown;
-}
-
-export type KnowledgeCategory = "price_list" | "commercial_offer" | "manual" | "general";
-
-export const KNOWLEDGE_CATEGORIES: { id: KnowledgeCategory; label: string; badgeColor: string }[] = [
-  { id: "price_list", label: "Прайс-лист / Каталог", badgeColor: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  { id: "commercial_offer", label: "Коммерческое предложение", badgeColor: "bg-blue-50 text-blue-700 border-blue-200" },
-  { id: "manual", label: "Регламент / Инструкция", badgeColor: "bg-purple-50 text-purple-700 border-purple-200" },
-  { id: "general", label: "Общие сведения / FAQ", badgeColor: "bg-slate-50 text-slate-700 border-slate-200" },
-];
-
-function detectCategoryFromFilename(filename: string): KnowledgeCategory {
-  const name = filename.toLowerCase();
-  if (name.includes("прайс") || name.includes("price") || name.includes("тариф") || name.includes("цен")) return "price_list";
-  if (name.includes("кп") || name.includes("offer") || name.includes("предложен") || name.includes("коммерческ")) return "commercial_offer";
-  if (name.includes("регламент") || name.includes("инструкц") || name.includes("стандарт") || name.includes("manual") || name.includes("правил")) return "manual";
-  return "general";
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} Б`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  onDelete?: (bot: AiBot) => void;
 }
 
 const MODES: BotMode[] = ["suggester", "autoreply", "disabled"];
@@ -97,21 +80,27 @@ const DEFAULT_VALUES: CreateBotPayload = {
   max_tokens: 1024,
   system_prompt: DIRECTOR_PROMPT_TEMPLATE,
   context_entities: ["contacts", "deals"],
-  website_url: "https://team-big.ru/",
-  map_reviews_url: "https://yandex.ru/maps/org/team_big/2489543575/",
-  sync_crm: true,
+  website_url: "",
+  map_reviews_url: "",
+  sync_crm: false,
   whatsapp_chat_text: "",
   company_name_override: "",
   consultant_source: "manual",
   consultant_name: "Алексей",
   consultant_role: "ведущий специалист",
   fallback_models: ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
+  target_page_url: "",
+  generated_system_prompt: "",
+  knowledge_base_md: "",
+  feedback_learning_enabled: true,
   wizard_config: {
     presetId: "tpl-universal-closer",
     consultantName: "Алексей",
     consultantRole: "ведущий специалист",
     businessNiche: "оказание профильных услуг и консультация клиентов",
-    targetAction: "Получение контактов и назначение созвона со специалистом",
+    clientProfile: "Клиенты, которым необходима экспертная консультация и подбор оптимального решения",
+    targetAction: "согласование деталей заказа и обмен прямыми контактами",
+    constraints: "Не давать ложных обещаний, строго следовать прайсу и регламенту компании",
     handoffSpecialist: "старший специалист профильного отдела",
     isCustomEdited: false,
   },
@@ -120,58 +109,104 @@ const DEFAULT_VALUES: CreateBotPayload = {
 function toFormValues(bot: AiBot): CreateBotPayload {
   const wizardConfig = bot.wizard_config as Record<string, unknown> | null | undefined;
   const websiteUrl = bot.website_url ?? (wizardConfig?.website_url as string | undefined) ?? "";
+  const companyOverride =
+    bot.company_name_override ||
+    bot.companyNameOverride ||
+    (wizardConfig?.company_name_override as string | undefined) ||
+    (wizardConfig?.companyName as string | undefined) ||
+    "";
+  const consultantSource =
+    bot.consultant_source ||
+    bot.consultantSource ||
+    (wizardConfig?.consultant_source as "manual" | "chat_widget" | undefined) ||
+    (wizardConfig?.consultantSource as "manual" | "chat_widget" | undefined) ||
+    "manual";
+  const consultantName =
+    bot.consultant_name ||
+    bot.consultantName ||
+    (wizardConfig?.consultantName as string | undefined) ||
+    "";
+  const consultantRole =
+    bot.consultant_role ||
+    bot.consultantRole ||
+    (wizardConfig?.consultantRole as string | undefined) ||
+    "";
+  const fallbackModels =
+    bot.fallback_models ||
+    bot.fallbackModels ||
+    ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"];
 
   return {
     name: bot.name,
     description: bot.description,
-    model: bot.model,
+    model: bot.model || "gemini-3.5-flash",
     mode: bot.mode,
     status: bot.status,
     accent: bot.accent,
-    temperature: bot.temperature,
-    max_tokens: bot.max_tokens,
-    system_prompt: bot.system_prompt,
+    temperature: bot.temperature ?? 0.6,
+    max_tokens: bot.max_tokens ?? 1024,
+    system_prompt: bot.system_prompt || DIRECTOR_PROMPT_TEMPLATE,
     context_entities: [...bot.context_entities],
     website_url: websiteUrl,
     map_reviews_url: "",
     sync_crm: false,
     whatsapp_chat_text: "",
-    company_name_override: bot.company_name_override ?? "",
-    consultant_source: bot.consultant_source ?? "manual",
-    consultant_name: bot.consultant_name ?? (wizardConfig?.consultantName as string | undefined) ?? "",
-    consultant_role: bot.consultant_role ?? (wizardConfig?.consultantRole as string | undefined) ?? "",
-    fallback_models: bot.fallback_models ?? ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
-    wizard_config: bot.wizard_config ?? {
-      presetId: "tpl-universal-closer",
-      consultantName: "Алексей",
-      consultantRole: "ведущий специалист",
-      businessNiche: "оказание профильных услуг и консультация клиентов",
-      targetAction: "согласование деталей заказа и обмен прямыми контактами",
-      handoffSpecialist: "старший специалист профильного отдела",
-      isCustomEdited: true,
+    company_name_override: companyOverride,
+    consultant_source: consultantSource,
+    consultant_name: consultantName,
+    consultant_role: consultantRole,
+    fallback_models: fallbackModels,
+    target_page_url: bot.target_page_url ?? "",
+    generated_system_prompt: bot.generated_system_prompt ?? "",
+    knowledge_base_md: bot.knowledge_base_md ?? "",
+    feedback_learning_enabled: bot.feedback_learning_enabled ?? true,
+    wizard_config: {
+      presetId: (wizardConfig?.presetId as string | undefined) ?? "tpl-universal-closer",
+      companyName: companyOverride,
+      company_name_override: companyOverride,
+      consultantName: consultantName || "Алексей",
+      consultantRole: consultantRole || "ведущий специалист",
+      businessNiche: (wizardConfig?.businessNiche as string | undefined) ?? "оказание профильных услуг и консультация клиентов",
+      clientProfile: (wizardConfig?.clientProfile as string | undefined) ?? "Клиенты, которым необходима экспертная консультация и подбор оптимального решения",
+      targetAction: (wizardConfig?.targetAction as string | undefined) ?? "согласование деталей заказа и обмен прямыми контактами",
+      constraints: (wizardConfig?.constraints as string | undefined) ?? "Не давать ложных обещаний, строго следовать прайсу и регламенту компании",
+      handoffSpecialist: (wizardConfig?.handoffSpecialist as string | undefined) ?? "старший специалист профильного отдела",
+      isCustomEdited: (wizardConfig?.isCustomEdited as boolean | undefined) ?? false,
     },
   };
 }
 
-export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps) {
+export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotModalProps) {
   const isEdit = bot !== null;
-  const { data: crawlStatusData } = useCrawlStatus(bot?.id);
-  const [promptTab, setPromptTab] = useState<"wizard" | "editor">("wizard");
-  const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
+  const { tenant } = useAuth();
+  const tenantName = tenant?.tenantName ?? "Компания";
 
-  // Multi-file drag & drop state
-  const [queuedFiles, setQueuedFiles] = useState<
-    Array<{
-      id: string;
-      file: File;
-      category: KnowledgeCategory;
-      sizeFormatted: string;
-    }>
-  >([]);
-  const [isDragOver, setIsDragOver] = useState(false);
+  const [showTechnicalParams, setShowTechnicalParams] = useState(false);
+  const [promptTab, setPromptTab] = useState<"wizard" | "editor" | "feedbacks">("wizard");
+  const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
-  const [isUploadingDocs, setIsUploadingDocs] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
+
+  const generatePromptMutation = useGeneratePrompt();
+  const { data: feedbacksData } = useAgentFeedbacks(bot?.id);
+  const rebuildPromptMutation = useRebuildAgentPrompt(bot?.id ?? "");
+
+  const approvedFeedbacks = (feedbacksData ?? []).filter((fb) => fb.status === "approved");
+
+  const handleRebuildPromptFromFeedbacks = async () => {
+    if (!bot?.id) return;
+    try {
+      const res = await rebuildPromptMutation.mutateAsync();
+      form.setValue("system_prompt", res.systemPrompt, { shouldValidate: true, shouldDirty: true });
+      form.setValue("generated_system_prompt", res.systemPrompt, { shouldDirty: true });
+      if (!form.getValues("wizard_config.isCustomEdited")) {
+        form.setValue("wizard_config.isCustomEdited", true, { shouldDirty: true });
+      }
+      toast.success(res.summaryOfChanges || "Системный промпт агента успешно пересобран!");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось пересобрать промпт");
+    }
+  };
 
   const form = useForm<CreateBotPayload>({
     resolver: zodResolver(createBotSchema),
@@ -185,126 +220,50 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   useEffect(() => {
     if (!open) return;
     form.reset(bot !== null ? toFormValues(bot) : DEFAULT_VALUES);
-    setPromptTab(bot?.wizard_config ? "wizard" : "wizard");
+    setShowTechnicalParams(false);
+    setPromptTab(bot?.wizard_config?.isCustomEdited ? "editor" : "wizard");
     setPendingPreset(null);
-    setQueuedFiles([]);
   }, [open, bot, form]);
-
-  const handleAddFiles = useCallback((files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const validExtensions = ["pdf", "docx", "xlsx", "csv", "txt", "md"];
-    const maxSizeBytes = 10 * 1024 * 1024; // 10 MB
-
-    const nextFiles: Array<{
-      id: string;
-      file: File;
-      category: KnowledgeCategory;
-      sizeFormatted: string;
-    }> = [];
-
-    for (const f of fileArray) {
-      const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
-      if (!validExtensions.includes(ext)) {
-        toast.error(`Файл «${f.name}» не поддерживается. Разрешены: PDF, DOCX, XLSX, CSV, TXT, MD`);
-        continue;
-      }
-      if (f.size > maxSizeBytes) {
-        toast.error(`Файл «${f.name}» превышает лимит 10 МБ`);
-        continue;
-      }
-
-      nextFiles.push({
-        id: `kb-file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        file: f,
-        category: detectCategoryFromFilename(f.name),
-        sizeFormatted: formatFileSize(f.size),
-      });
-    }
-
-    if (nextFiles.length > 0) {
-      setQueuedFiles((prev) => [...prev, ...nextFiles]);
-      toast.success(`Добавлено файлов для базы знаний: ${nextFiles.length}`);
-    }
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleAddFiles(e.dataTransfer.files);
-    }
-  }, [handleAddFiles]);
-
-  const handleRemoveQueuedFile = useCallback((id: string) => {
-    setQueuedFiles((prev) => prev.filter((f) => f.id !== id));
-  }, []);
-
-  const handleUpdateFileCategory = useCallback((id: string, category: KnowledgeCategory) => {
-    setQueuedFiles((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, category } : f)),
-    );
-  }, []);
 
   const submit = useCallback(
     async (values: CreateBotPayload) => {
       try {
-        const result = await onSubmit(values);
-        const targetId =
-          (result && typeof result === "object" && "id" in result
-            ? (result as { id: string }).id
-            : bot?.id) ?? null;
-
-        if (targetId && queuedFiles.length > 0) {
-          setIsUploadingDocs(true);
-          const { API_BASE_URL } = await import("@/lib/api/apiClient");
-          const { readAccessToken } = await import("@/lib/auth/session");
-          const token = readAccessToken();
-
-          let uploadedCount = 0;
-          for (const item of queuedFiles) {
-            try {
-              const fd = new FormData();
-              fd.append("file", item.file);
-              fd.append("category", item.category);
-
-              const res = await fetch(`${API_BASE_URL}/api/v1/ai/agents/${targetId}/knowledge`, {
-                method: "POST",
-                body: fd,
-                credentials: "include",
-                ...(token !== null && { headers: { Authorization: `Bearer ${token}` } }),
-              });
-              if (res.ok) uploadedCount++;
-            } catch {
-              // ignore individual failure
-            }
-          }
-
-          if (uploadedCount > 0) {
-            toast.success(`Загружено ${uploadedCount} документов в базу знаний. Векторизация запущена!`);
-          }
-        }
+        const trimmedCompany = (values.company_name_override || "").trim();
+        const payload: CreateBotPayload = {
+          ...values,
+          company_name_override: trimmedCompany,
+          wizard_config: {
+            ...(values.wizard_config || {}),
+            companyName: trimmedCompany,
+            company_name_override: trimmedCompany,
+          },
+        };
+        await onSubmit(payload);
         onClose();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось сохранить бота");
-      } finally {
-        setIsUploadingDocs(false);
       }
     },
-    [bot?.id, onClose, onSubmit, queuedFiles],
+    [onClose, onSubmit],
   );
+
+  const onInvalid = useCallback((fieldErrors: FieldErrors<CreateBotPayload>) => {
+    const errorMessages = Object.entries(fieldErrors)
+      .map(([key, err]) => err?.message || key)
+      .filter(Boolean);
+    if (errorMessages.length > 0) {
+      toast.error(`Проверьте поля формы: ${errorMessages.slice(0, 2).join("; ")}`);
+    }
+    if (
+      fieldErrors.system_prompt ||
+      fieldErrors.model ||
+      fieldErrors.temperature ||
+      fieldErrors.max_tokens ||
+      fieldErrors.fallback_models
+    ) {
+      setShowTechnicalParams(true);
+    }
+  }, []);
 
   const selectedModel: BotModel = form.watch("model");
   const selectedMode: BotMode = form.watch("mode");
@@ -312,12 +271,12 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const temperature = form.watch("temperature");
   const systemPrompt = form.watch("system_prompt");
   const isPaused = form.watch("status") === "paused";
-  const wizardConfig = form.watch("wizard_config");
+  const wizardConfig = useWatch({ control: form.control, name: "wizard_config" });
   const fallbackModels = form.watch("fallback_models") ?? [];
-  const consultantSource = form.watch("consultant_source") ?? "manual";
-  const companyNameOverride = form.watch("company_name_override") ?? "";
-  const consultantName = form.watch("consultant_name") ?? "";
-  const consultantRole = form.watch("consultant_role") ?? "";
+  const consultantSource = useWatch({ control: form.control, name: "consultant_source" }) ?? "manual";
+  const companyNameOverride = useWatch({ control: form.control, name: "company_name_override" }) ?? "";
+  const consultantName = useWatch({ control: form.control, name: "consultant_name" }) ?? "";
+  const consultantRole = useWatch({ control: form.control, name: "consultant_role" }) ?? "";
 
   const toggleFallbackModel = useCallback(
     (modelId: string) => {
@@ -330,8 +289,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
     [form],
   );
 
-  const { data: modelsData, isLoading: modelsLoading, refetch: refetchModels } = useAiModels();
-  const { data: crmStats } = useCrmKnowledgeStats();
+  const { data: modelsData, isLoading: modelsLoading } = useAiModels();
 
   const activeProvider =
     modelsData?.activeProvider ??
@@ -398,12 +356,16 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
           consultantName: preset.defaultConfig.consultantName,
           consultantRole: preset.defaultConfig.consultantRole,
           businessNiche: preset.defaultConfig.businessNiche,
+          clientProfile: preset.defaultConfig.clientProfile ?? "",
           targetAction: preset.defaultConfig.targetAction,
+          constraints: preset.defaultConfig.constraints ?? "",
           handoffSpecialist: preset.defaultConfig.handoffSpecialist,
           isCustomEdited: false,
         },
         { shouldValidate: true, shouldDirty: true },
       );
+      form.setValue("consultant_name", preset.defaultConfig.consultantName, { shouldDirty: true });
+      form.setValue("consultant_role", preset.defaultConfig.consultantRole, { shouldDirty: true });
       form.setValue("system_prompt", DIRECTOR_PROMPT_TEMPLATE, {
         shouldValidate: true,
         shouldDirty: true,
@@ -425,6 +387,69 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
     [applyPreset, form],
   );
 
+  const handleGeneratePrompt = useCallback(async () => {
+    try {
+      const targetPageUrl = form.getValues("target_page_url");
+      const currentWc = form.getValues("wizard_config");
+      const companyName = form.getValues("company_name_override");
+
+      const result = await generatePromptMutation.mutateAsync({
+        target_page_url: targetPageUrl,
+        company_name: companyName,
+        business_niche: currentWc?.businessNiche,
+        client_profile: currentWc?.clientProfile,
+        target_action: currentWc?.targetAction,
+        constraints: currentWc?.constraints,
+        consultant_name: form.getValues("consultant_name"),
+        consultant_role: form.getValues("consultant_role"),
+        handoff_specialist: currentWc?.handoffSpecialist,
+      });
+
+      if (result) {
+        form.setValue("system_prompt", result.systemPrompt, {
+          shouldValidate: true,
+          shouldDirty: true,
+        });
+        form.setValue("generated_system_prompt", result.systemPrompt, {
+          shouldDirty: true,
+        });
+        if (result.consultantName) {
+          form.setValue("consultant_name", result.consultantName, { shouldDirty: true });
+        }
+        if (result.consultantRole) {
+          form.setValue("consultant_role", result.consultantRole, { shouldDirty: true });
+        }
+        if (result.knowledgeBaseDraftMd) {
+          form.setValue("knowledge_base_md", result.knowledgeBaseDraftMd, {
+            shouldValidate: true,
+            shouldDirty: true,
+          });
+        }
+        form.setValue(
+          "wizard_config",
+          {
+            ...currentWc,
+            businessNiche: result.businessNiche || currentWc?.businessNiche,
+            clientProfile: result.clientProfile || currentWc?.clientProfile,
+            targetAction: result.targetAction || currentWc?.targetAction,
+            constraints: result.constraints || currentWc?.constraints,
+            consultantName: result.consultantName || currentWc?.consultantName,
+            consultantRole: result.consultantRole || currentWc?.consultantRole,
+            handoffSpecialist: result.handoffSpecialist || currentWc?.handoffSpecialist,
+            isCustomEdited: true,
+          },
+          { shouldValidate: true, shouldDirty: true },
+        );
+
+        toast.success("Роль и системный промпт успешно сгенерированы!");
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Не удалось сгенерировать системный промпт",
+      );
+    }
+  }, [form, generatePromptMutation]);
+
   if (!open) return null;
 
   const modelInfo = getModelInfo(selectedModel);
@@ -441,26 +466,26 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               {isEdit ? "Настройка бота" : "Новый AI-бот"}
             </h2>
             <p className="text-xs text-[#666666]">
-              {isEdit ? bot.name : "Модель, отраслевая роль и поведение"}
+              {isEdit ? bot.name : "Анкета продукта, целей и роль консультанта"}
             </p>
           </div>
         </div>
       </SheetHeader>
 
       <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
-        <form onSubmit={form.handleSubmit(submit)} className="flex flex-col flex-1 min-h-0">
+        <form onSubmit={form.handleSubmit(submit, onInvalid)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-5">
-            {/* Name + accent */}
+            {/* Название + Акцент */}
             <div className="grid grid-cols-[1fr_auto] gap-4">
               <div className="space-y-1.5">
                 <label htmlFor="bot-name" className="block text-xs font-medium text-slate-700">
-                  Название
+                  Название бота
                 </label>
                 <input
                   id="bot-name"
                   type="text"
                   {...form.register("name")}
-                  placeholder="Ассистент по продажам"
+                  placeholder="Консультант по продажам"
                   className={cn(
                     "w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-slate-400 focus:outline-none focus:border-[#4a38f5] focus:ring-2 focus:ring-[#4a38f5]/20",
                     errors.name && "border-rose-500",
@@ -493,7 +518,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               </div>
             </div>
 
-            {/* Description */}
+            {/* Описание */}
             <div className="space-y-1.5">
               <label htmlFor="bot-description" className="block text-xs font-medium text-slate-700">
                 Описание
@@ -513,152 +538,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               )}
             </div>
 
-            {/* Model */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="block text-xs font-medium text-slate-700">Модель</span>
-                {activeProvider && activeProvider.isConfigured ? (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Провайдер платформы: {activeProvider.name} {activeProvider.chatModel ? `(${activeProvider.chatModel})` : ""}
-                  </span>
-                ) : modelsList.length > 0 ? (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Подключено моделей: {modelsList.length}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-medium">
-                    Провайдер не настроен
-                  </span>
-                )}
-              </div>
-
-              {modelsLoading ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-14 rounded-lg border border-[#e5e5e5] bg-slate-50 animate-pulse" />
-                  ))}
-                </div>
-              ) : modelsList.length === 0 ? (
-                <div className="rounded-[8px] border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 flex items-start gap-2.5">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-semibold text-amber-900">Провайдер ИИ не настроен</p>
-                    <p className="mt-0.5 text-amber-700 leading-relaxed text-[11px]">
-                      В панели администратора платформы не подключены валидные API-ключи. Перейдите в раздел «Настройки платформы → Провайдеры ИИ», чтобы подключить Google Gemini, OpenAI или Anthropic.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(showAllModels ? modelsList : modelsList.slice(0, 6)).map((model) => {
-                      const isSelected = selectedModel === model.id;
-                      const isDefault = model.id === activeProvider?.chatModel;
-                      return (
-                        <button
-                          key={model.id}
-                          type="button"
-                          onClick={() =>
-                            form.setValue("model", model.id as BotModel, {
-                              shouldValidate: true,
-                              shouldDirty: true,
-                            })
-                          }
-                          className={cn(
-                            "rounded-lg border px-3 py-2 text-left transition-all cursor-pointer flex flex-col justify-between",
-                            isSelected
-                              ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]/30 shadow-2xs"
-                              : "border-[#e5e5e5] bg-white hover:border-[#cccccc] hover:bg-slate-50",
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-1">
-                            <span
-                              className={cn(
-                                "block text-xs font-semibold leading-tight truncate",
-                                isSelected ? "text-[#4a38f5]" : "text-[#111111]",
-                              )}
-                              title={model.label}
-                            >
-                              {model.label}
-                            </span>
-                            {isDefault ? (
-                              <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
-                                Основная
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-                                Подключена
-                              </span>
-                            )}
-                          </div>
-                          <span className="block text-[11px] text-[#666666] mt-1 truncate">
-                            {getProviderLabel(model.provider)}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {modelsList.length > 6 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllModels((prev) => !prev)}
-                      className="text-[11px] font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors inline-flex items-center gap-1 mt-1 cursor-pointer"
-                    >
-                      {showAllModels
-                        ? "Свернуть список моделей"
-                        : `Показать все доступные модели (${modelsList.length})`}
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Fallback Chains */}
-            <div className="space-y-1.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/60 p-3">
-              <div className="flex items-center justify-between">
-                <span className="block text-xs font-medium text-slate-700">
-                  Цепочка отказоустойчивости (Fallback Chain)
-                </span>
-                <span className="text-[11px] text-[#666666]">
-                  Каскад при 429 / 5xx / Timeout
-                </span>
-              </div>
-              <p className="text-[11px] text-[#666666] leading-relaxed">
-                Если основная модель перегружена или не отвечает, запрос автоматически переключается на резервные модели по порядку:
-              </p>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {modelsList
-                  .filter((m) => m.id !== selectedModel)
-                  .map((m) => {
-                    const isSelected = fallbackModels.includes(m.id);
-                    const priorityIndex = fallbackModels.indexOf(m.id);
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => toggleFallbackModel(m.id)}
-                        className={cn(
-                          "rounded-[6px] border px-2.5 py-1 text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5",
-                          isSelected
-                            ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                            : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
-                        )}
-                      >
-                        {isSelected && (
-                          <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#4a38f5] text-[9px] text-white font-mono">
-                            {priorityIndex + 1}
-                          </span>
-                        )}
-                        <span>{m.label}</span>
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-
-            {/* Mode */}
+            {/* Режим работы */}
             <div className="space-y-1.5">
               <span className="block text-xs font-medium text-slate-700">Режим работы</span>
               <div className="grid grid-cols-3 gap-2">
@@ -692,11 +572,28 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               </div>
             </div>
 
-            {/* Context entities */}
-            <div className="space-y-1.5">
-              <span className="block text-xs font-medium text-slate-700">
-                Контекст CRM (сущности)
-              </span>
+            {/* Контекст CRM (сущности) */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="block text-xs font-medium text-slate-700">
+                  Контекст CRM (какие данные видит агент)
+                </span>
+                <span className="text-[11px] text-[#666666]">
+                  Персонализация диалогов
+                </span>
+              </div>
+
+              {/* Callout пояснение CRM контекста */}
+              <div className="rounded-[8px] border border-blue-100 bg-blue-50/60 p-3 text-xs text-[#333333] flex items-start gap-2.5">
+                <Info className="h-4 w-4 text-[#4a38f5] shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-[#111111]">Как агент использует данные CRM:</p>
+                  <p className="text-[11px] text-[#555555] leading-relaxed">
+                    Бот автоматически видит карточку клиента, его имя, телефон, историю сделок и прошлые заметки менеджеров. Это позволяет сразу обращаться по имени, не переспрашивать то, что клиент уже сообщал ранее, и делать персонализированные предложения.
+                  </p>
+                </div>
+              </div>
+
               <div className="grid grid-cols-3 gap-2">
                 {CONTEXT_ENTITIES.map((entity) => {
                   const selected = form.watch("context_entities").includes(entity);
@@ -706,13 +603,14 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                       type="button"
                       onClick={() => toggleEntity(entity)}
                       className={cn(
-                        "rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors cursor-pointer",
+                        "rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors cursor-pointer flex items-center justify-between",
                         selected
                           ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                           : "border-[#e5e5e5] bg-white text-slate-600 hover:bg-slate-50",
                       )}
                     >
-                      {getContextEntityLabel(entity)}
+                      <span>{getContextEntityLabel(entity)}</span>
+                      {selected && <Check className="h-3 w-3 text-[#4a38f5]" />}
                     </button>
                   );
                 })}
@@ -722,672 +620,302 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               )}
             </div>
 
-            {/* Temperature + max tokens */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label htmlFor="bot-temperature" className="block text-xs font-medium text-slate-700">
-                  Температура
-                  <span className="ml-1.5 font-mono text-[#111111]">{temperature.toFixed(1)}</span>
-                </label>
-                <input
-                  id="bot-temperature"
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  value={temperature}
-                  onChange={(event) =>
-                    form.setValue("temperature", Number(event.target.value), {
-                      shouldValidate: true,
-                      shouldDirty: true,
-                    })
-                  }
-                  className="w-full accent-[#4a38f5]"
-                />
-                <p className="text-xs text-slate-500">Меньше — предсказуемее, больше — свободнее.</p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label htmlFor="bot-max-tokens" className="block text-xs font-medium text-slate-700">
-                  Макс. токенов в ответе
-                </label>
-                <input
-                  id="bot-max-tokens"
-                  type="number"
-                  min={128}
-                  max={8192}
-                  step={128}
-                  {...form.register("max_tokens", { valueAsNumber: true })}
-                  className={cn(
-                    "w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] [-moz-appearance:textfield] focus:outline-none focus:border-[#4a38f5] focus:ring-2 focus:ring-[#4a38f5]/20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
-                    errors.max_tokens && "border-rose-500",
-                  )}
-                />
-                {errors.max_tokens && (
-                  <p className="text-xs text-rose-500">{errors.max_tokens.message}</p>
-                )}
-              </div>
-            </div>
-
-            {/* База знаний и ссылки (обучение при создании) */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Globe className="h-4 w-4 text-[#4a38f5]" />
-                  <span className="text-xs font-semibold text-[#111111]">
-                    База знаний и ссылки компании
-                  </span>
-                </div>
-                <span className="text-[11px] text-[#666666]">
-                  {isEdit ? "Для детального управления файлами используйте вкладку агента" : "Автоматическое обучение"}
-                </span>
-              </div>
-              <p className="text-xs text-[#666666]">
-                Укажите адрес сайта и ссылку на карты — система автоматически просканирует страницы и отзывы клиентов, чтобы обучить агента сразу при создании.
-              </p>
-
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <label htmlFor="bot-website-url" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                    <Globe className="h-3.5 w-3.5 text-[#4a38f5]" />
-                    Ссылка на сайт компании (сканирование всех страниц)
-                  </label>
-                  <input
-                    id="bot-website-url"
-                    type="url"
-                    {...form.register("website_url")}
-                    placeholder="https://mysite.ru"
-                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                  />
-                  <p className="text-[11px] text-[#888888]">
-                    Краулер обойдёт sitemap.xml и внутренние ссылки (услуги, прайсы, контакты) и проиндексирует базу знаний.
-                  </p>
-
-                  {(() => {
-                    const status = crawlStatusData?.status ?? bot?.crawl_status;
-                    const indexed = crawlStatusData?.pagesIndexed ?? bot?.crawl_pages_indexed ?? 0;
-                    const scanned = crawlStatusData?.pagesScanned ?? bot?.crawl_pages_scanned ?? 0;
-                    const error = crawlStatusData?.error ?? bot?.crawl_error;
-
-                    if (!status || status === "idle") return null;
-
-                    if (status === "pending" || status === "in_progress") {
-                      return (
-                        <div className="flex items-center gap-2 rounded-[6px] border border-blue-200 bg-blue-50/70 px-2.5 py-1.5 text-[11px] text-blue-700">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
-                          <span>
-                            {status === "pending"
-                              ? "Сканирование сайта поставлено в очередь..."
-                              : "Идёт фоновое сканирование страниц сайта в базу знаний..."}
-                          </span>
-                        </div>
-                      );
-                    }
-
-                    if (status === "ready") {
-                      return (
-                        <div className="flex items-center gap-2 rounded-[6px] border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] text-emerald-700">
-                          <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                          <span>
-                            Сайт успешно проиндексирован: {indexed} {indexed === 1 ? "страница добавлена" : "страниц добавлено"} в базу знаний (обработано {scanned}).
-                          </span>
-                        </div>
-                      );
-                    }
-
-                    if (status === "failed") {
-                      return (
-                        <div className="flex items-center gap-2 rounded-[6px] border border-rose-200 bg-rose-50/70 px-2.5 py-1.5 text-[11px] text-rose-700">
-                          <AlertTriangle className="h-3.5 w-3.5 text-rose-600 shrink-0" />
-                          <span>
-                            {error ? `Ошибка индексации: ${error}` : "Не удалось просканировать сайт. Проверьте адрес."}
-                          </span>
-                        </div>
-                      );
-                    }
-
-                    return null;
-                  })()}
-                </div>
-
-                <div className="space-y-1">
-                  <label htmlFor="bot-map-reviews-url" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                    <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
-                    Отзывы и рейтинг (Яндекс Карты, 2ГИС, Google Maps, Zoon)
-                  </label>
-                  <input
-                    id="bot-map-reviews-url"
-                    type="url"
-                    {...form.register("map_reviews_url")}
-                    placeholder="https://yandex.ru/maps/org/... или https://2gis.ru/..."
-                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                  />
-                  <p className="text-[11px] text-[#888888]">
-                    Парсер выгрузит оценку компании и реальные отзывы клиентов для использования в аргументации при продажах.
+            {/* ОСНОВНАЯ АНКЕТА: ПРОДУКТ, ЦЕЛИ И РОЛЬ КОНСУЛЬТАНТА */}
+            <div className="space-y-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa]/50 p-4">
+              <div className="flex items-start justify-between gap-2 border-b border-[#e5e5e5] pb-2.5">
+                <div>
+                  <h3 className="text-xs font-semibold text-[#111111] flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4 text-[#4a38f5]" />
+                    Анкета продукта и целей
+                  </h3>
+                  <p className="text-[11px] text-[#666666] mt-0.5">
+                    Задайте профиль вашего продукта, целевое действие и ограничения. Агент общается строго от лица живого специалиста (Метод Станиславского).
                   </p>
                 </div>
+              </div>
 
-                {/* Опыт из CRM */}
-                {!isEdit && (
-                  <div className="flex items-start gap-2.5 rounded-[8px] border border-[#e5e5e5] bg-white p-3">
-                    <input
-                      id="bot-sync-crm"
-                      type="checkbox"
-                      {...form.register("sync_crm")}
-                      className="mt-0.5 h-4 w-4 rounded border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
-                    />
-                    <label htmlFor="bot-sync-crm" className="text-xs cursor-pointer select-none">
-                      <span className="font-semibold text-[#111111] flex items-center gap-1.5">
-                        <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
-                        Синтезировать опыт из CRM (сделки и чаты)
-                      </span>
-                      <span className="block text-[#666666] mt-0.5">
-                        {crmStats?.wonDeals
-                          ? `В CRM найдено ${crmStats.wonDeals} успешных сделок и ${crmStats.totalMessages} сообщений. AI выделит прайс и частые вопросы.`
-                          : "AI проанализирует сделки и переписки в вашей CRM и создаст структурированную базу знаний."}
-                      </span>
-                    </label>
-                  </div>
-                )}
-
-                {/* Выгрузка переписки WhatsApp */}
-                {!isEdit && (
-                  <div className="space-y-1">
-                    <label htmlFor="bot-whatsapp-file" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                      <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
-                      Выгрузка переписки из WhatsApp (_chat.txt)
-                    </label>
-                    <input
-                      id="bot-whatsapp-file"
-                      type="file"
-                      accept=".txt"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = (ev) => {
-                          const content = ev.target?.result;
-                          if (typeof content === "string") {
-                            form.setValue("whatsapp_chat_text", content);
-                          }
-                        };
-                        reader.readAsText(file);
-                      }}
-                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] file:mr-2 file:rounded-[4px] file:border-0 file:bg-emerald-50 file:px-2.5 file:py-1 file:text-xs file:font-medium file:text-emerald-700 hover:file:bg-emerald-100"
-                    />
-                    <p className="text-[11px] text-[#888888]">
-                      Прикрепите текстовый файл экспорта чата WhatsApp (Экспорт чата → Без медиафайлов) для обучения агента на живом стиле компании.
-                    </p>
-                  </div>
-                )}
-
-                {/* Мульти-загрузка документов базы знаний (.pdf, .docx, .xlsx, .csv, .txt) */}
-                <div className="space-y-2 pt-2 border-t border-[#e5e5e5]">
+              {/* Поля анкеты */}
+              <div className="space-y-3 pt-1">
+                {/* 1. Название компании */}
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-1.5 text-xs font-semibold text-[#111111]">
-                      <UploadCloud className="h-4 w-4 text-[#4a38f5]" />
-                      Документы базы знаний (прайс-листы, КП, регламенты)
-                    </label>
-                    <span className="text-[11px] text-[#666666]">
-                      {queuedFiles.length > 0 ? `Файлов к загрузке: ${queuedFiles.length}` : "PDF, DOCX, XLSX, CSV, TXT (до 10 МБ)"}
-                    </span>
-                  </div>
-
-                  {/* Dropzone */}
-                  <div
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
-                    className={cn(
-                      "group relative flex flex-col items-center justify-center rounded-[8px] border-2 border-dashed p-4 text-center transition-all cursor-pointer",
-                      isDragOver
-                        ? "border-[#4a38f5] bg-[#4a38f5]/5"
-                        : "border-[#e5e5e5] bg-white hover:border-[#4a38f5]/50 hover:bg-slate-50/50",
-                    )}
-                  >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
-                      className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files.length > 0) {
-                          handleAddFiles(e.target.files);
-                          e.target.value = "";
-                        }
-                      }}
-                    />
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#4a38f5]/10 text-[#4a38f5] transition-transform group-hover:scale-105">
-                      <FileUp className="h-4 w-4" />
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-[#111111]">
-                      Перетащите файлы сюда или <span className="text-[#4a38f5] underline underline-offset-2">выберите на диске</span>
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-[#666666]">
-                      Поддерживаются прайс-листы Excel (.xlsx, .csv), договоры и КП (.docx, .pdf), регламенты (.txt)
-                    </p>
-                  </div>
-
-                  {/* List of Queued Files */}
-                  {queuedFiles.length > 0 && (
-                    <div className="space-y-2 pt-1">
-                      {queuedFiles.map((item) => {
-                        const ext = item.file.name.split(".").pop()?.toLowerCase() ?? "";
-                        const isSpreadsheet = ext === "xlsx" || ext === "csv";
-                        const isPdf = ext === "pdf";
-                        const isDocx = ext === "docx";
-
-                        return (
-                          <div
-                            key={item.id}
-                            className="flex flex-col gap-2 rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 shadow-2xs hover:border-[#cccccc] transition-colors"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <div
-                                  className={cn(
-                                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]",
-                                    isSpreadsheet
-                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                      : isPdf
-                                        ? "bg-rose-50 text-rose-700 border border-rose-200"
-                                        : isDocx
-                                          ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                          : "bg-slate-50 text-slate-700 border border-slate-200",
-                                  )}
-                                >
-                                  {isSpreadsheet ? (
-                                    <FileSpreadsheet className="h-3.5 w-3.5" />
-                                  ) : (
-                                    <FileText className="h-3.5 w-3.5" />
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="truncate text-xs font-medium text-[#111111]" title={item.file.name}>
-                                    {item.file.name}
-                                  </p>
-                                  <p className="font-mono text-[10px] text-[#666666]">{item.sizeFormatted}</p>
-                                </div>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveQueuedFile(item.id)}
-                                className="rounded p-1 text-[#888888] hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
-                                title="Удалить файл"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-
-                            {/* Category Selector */}
-                            <div className="flex items-center gap-1.5 pt-1 border-t border-[#f0f0f0]">
-                              <span className="text-[11px] text-[#666666] shrink-0">Категория:</span>
-                              <div className="flex flex-wrap gap-1">
-                                {KNOWLEDGE_CATEGORIES.map((cat) => {
-                                  const isCatSelected = item.category === cat.id;
-                                  return (
-                                    <button
-                                      key={cat.id}
-                                      type="button"
-                                      onClick={() => handleUpdateFileCategory(item.id, cat.id)}
-                                      className={cn(
-                                        "rounded-[4px] px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer border",
-                                        isCatSelected
-                                          ? "bg-[#4a38f5] text-white border-[#4a38f5]"
-                                          : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100",
-                                      )}
-                                    >
-                                      {cat.label}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* PROMPT SECTION: TABS (WIZARD vs DIRECT EDITOR) */}
-            <div className="space-y-3 pt-2">
-              <div className="flex items-center justify-between border-b border-[#e5e5e5] pb-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPromptTab("wizard")}
-                    className={cn(
-                      "flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer",
-                      promptTab === "wizard"
-                        ? "bg-[#4a38f5]/10 text-[#4a38f5]"
-                        : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
-                    )}
-                  >
-                    <Sliders className="h-3.5 w-3.5" />
-                    Конструктор роли (Без кода)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPromptTab("editor")}
-                    className={cn(
-                      "flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer",
-                      promptTab === "editor"
-                        ? "bg-[#4a38f5]/10 text-[#4a38f5]"
-                        : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
-                    )}
-                  >
-                    <FileCode className="h-3.5 w-3.5" />
-                    Прямой редактор системного промпта
-                    {wizardConfig?.isCustomEdited && (
-                      <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-[#854d0e] border border-[#fef08a]">
-                        кастом
-                      </span>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* OVERWRITE WARNING DIALOG */}
-              {pendingPreset && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3.5 text-xs space-y-2">
-                  <div className="flex items-start gap-2 text-[#854d0e]">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
-                    <div>
-                      <p className="font-semibold">
-                        Применение отраслевого пресета «{pendingPreset.name}»
-                      </p>
-                      <p className="mt-0.5 text-slate-700">
-                        Вы вносили ручные изменения в системный промпт. Применение нового пресета
-                        обновит поля конструктора и сбросит ручные правки к чистому эталонному шаблону.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setPendingPreset(null)}
-                      className="px-2.5 py-1 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    >
-                      Отмена
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applyPreset(pendingPreset)}
-                      className="px-2.5 py-1 text-xs rounded bg-[#4a38f5] text-white hover:bg-[#3d2ee0] font-medium"
-                    >
-                      Применить и сбросить
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 1: VISUAL WIZARD */}
-              {promptTab === "wizard" && (
-                <div className="space-y-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa]/50 p-4">
-                  {/* Preset Selector */}
-                  <div className="space-y-1.5">
                     <label className="block text-xs font-medium text-slate-700">
-                      Отраслевой шаблон (Метод Станиславского v2.0)
+                      Название компании (переменная {"{{tenant.name}}"})
                     </label>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      {INDUSTRY_PRESETS.map((preset, index) => {
-                        const isSelected = wizardConfig?.presetId === preset.id;
-                        const isLast = index === INDUSTRY_PRESETS.length - 1;
-                        return (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            onClick={() => handleSelectPreset(preset)}
-                            className={cn(
-                              "rounded-lg border p-3 text-left transition-all cursor-pointer flex flex-col justify-between",
-                              isLast && "col-span-2",
-                              isSelected
-                                ? "border-[#4a38f5] bg-white ring-1 ring-[#4a38f5] shadow-2xs"
-                                : "border-[#e5e5e5] bg-white hover:border-[#cccccc]",
-                            )}
-                          >
-                            <div>
-                              <div className="flex items-start justify-between gap-2">
-                                <span className="text-xs font-semibold text-[#111111] leading-snug break-words">
-                                  {preset.name}
-                                </span>
-                                {isSelected && <Check className="h-3.5 w-3.5 text-[#4a38f5] shrink-0 mt-0.5" />}
-                              </div>
-                              <p className="mt-1.5 text-[11px] text-[#666666] leading-relaxed break-words">
-                                {preset.description}
-                              </p>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Core Consultant Parameters & Dynamic Variables */}
-                  <div className="grid grid-cols-2 gap-3 pt-2">
-                    {/* Название компании (override) */}
-                    <div className="col-span-2 space-y-1">
-                      <label className="block text-xs font-medium text-slate-700">
-                        Название компании (переменная {"{{tenant.name}}"})
-                      </label>
-                      <input
-                        type="text"
-                        value={companyNameOverride}
-                        onChange={(e) =>
-                          form.setValue("company_name_override", e.target.value, {
-                            shouldDirty: true,
-                          })
-                        }
-                        placeholder="Например: Банкирро (по умолчанию используется название компании из CRM)"
-                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                      />
-                      <p className="text-[11px] text-[#888888]">
-                        Если не заполнено, имя подставляется автоматически из профиля компании в системе.
-                      </p>
-                    </div>
-
-                    {/* Источник консультанта */}
-                    <div className="col-span-2 space-y-1.5">
-                      <label className="block text-xs font-medium text-slate-700">
-                        Источник консультанта ({"{{consultant.name}}"} и {"{{consultant.role}}"})
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => form.setValue("consultant_source", "manual", { shouldDirty: true })}
-                          className={cn(
-                            "rounded-[6px] border px-3 py-1.5 text-xs font-medium text-left transition-colors cursor-pointer",
-                            consultantSource === "manual"
-                              ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                              : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
-                          )}
-                        >
-                          Указать вручную
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => form.setValue("consultant_source", "chat_widget", { shouldDirty: true })}
-                          className={cn(
-                            "rounded-[6px] border px-3 py-1.5 text-xs font-medium text-left transition-colors cursor-pointer",
-                            consultantSource === "chat_widget"
-                              ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                              : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
-                          )}
-                        >
-                          Из настроек онлайн-чата
-                        </button>
-                      </div>
-                    </div>
-
-                    {consultantSource === "chat_widget" ? (
-                      <div className="col-span-2 rounded-[8px] border border-blue-100 bg-blue-50/60 p-3 text-xs text-[#333333] flex items-center gap-2">
-                        <Sparkles className="h-4 w-4 text-[#4a38f5] shrink-0" />
-                        <span className="text-[11px] text-[#555555]">
-                          Имя и должность консультанта подтягиваются динамически из настроек подключенного виджета онлайн-чата на сайте.
-                        </span>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium text-slate-700">
-                            Имя консультанта
-                          </label>
-                          <input
-                            type="text"
-                            value={consultantName || (wizardConfig?.consultantName ?? "")}
-                            onChange={(e) => {
-                              form.setValue("consultant_name", e.target.value, { shouldDirty: true });
-                              form.setValue("wizard_config.consultantName", e.target.value, { shouldDirty: true });
-                            }}
-                            placeholder="Екатерина"
-                            className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium text-slate-700">
-                            Должность / роль консультанта
-                          </label>
-                          <input
-                            type="text"
-                            value={consultantRole || (wizardConfig?.consultantRole ?? "")}
-                            onChange={(e) => {
-                              form.setValue("consultant_role", e.target.value, { shouldDirty: true });
-                              form.setValue("wizard_config.consultantRole", e.target.value, { shouldDirty: true });
-                            }}
-                            placeholder="ведущий специалист профильного отдела"
-                            className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                          />
-                        </div>
-                      </>
-                    )}
-
-                    <div className="col-span-2 space-y-1">
-                      <label className="block text-xs font-medium text-slate-700">
-                        Ниша / профиль компании (в именительном падеже)
-                      </label>
-                      <input
-                        type="text"
-                        value={wizardConfig?.businessNiche ?? ""}
-                        onChange={(e) =>
-                          form.setValue("wizard_config.businessNiche", e.target.value, {
-                            shouldDirty: true,
-                          })
-                        }
-                        placeholder="сервис технического обслуживания автомобилей"
-                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                      />
-                    </div>
-
-                    <div className="col-span-2 space-y-1">
-                      <label className="block text-xs font-medium text-slate-700">
-                        Целевой шаг диалога (целевое действие)
-                      </label>
-                      <input
-                        type="text"
-                        value={wizardConfig?.targetAction ?? ""}
-                        onChange={(e) =>
-                          form.setValue("wizard_config.targetAction", e.target.value, {
-                            shouldDirty: true,
-                          })
-                        }
-                        placeholder="согласование времени для бесплатной диагностики на подъёмнике"
-                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                      />
-                    </div>
-
-                    <div className="col-span-2 space-y-1">
-                      <label className="block text-xs font-medium text-slate-700">
-                        Специалист для эскалации (handoff)
-                      </label>
-                      <input
-                        type="text"
-                        value={wizardConfig?.handoffSpecialist ?? ""}
-                        onChange={(e) =>
-                          form.setValue("wizard_config.handoffSpecialist", e.target.value, {
-                            shouldDirty: true,
-                          })
-                        }
-                        placeholder="руководитель сервисного участка"
-                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Knowledge Base Guidance Banner */}
-                  <div className="rounded-[8px] border border-blue-100 bg-blue-50/60 p-3 text-xs text-[#333333] flex items-start gap-2.5">
-                    <FileText className="h-4 w-4 text-[#4a38f5] shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="font-medium text-[#111111]">
-                        База знаний и фактологическая точность
-                      </p>
-                      <p className="text-[11px] text-[#555555] leading-relaxed">
-                        Конструктор роли задаёт характер и скрипт продаж консультанта. Документы (прайс-листы, КП, регламенты) и ссылки компании можно прикрепить прямо в блоке выше — они автоматически индексируются в фоне. Детальное управление фрагментами и ручное добавление фактов также доступно во вкладке <strong>«База знаний»</strong> после создания бота.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Overwrite Protection Info */}
-                  <div className="flex items-center justify-between pt-2 border-t border-[#e5e5e5]">
-                    <span className="text-[11px] text-[#666666]">
-                      {wizardConfig?.isCustomEdited ? (
-                        <span className="text-amber-600 font-medium">
-                          В промпт внесены ручные правки. Чтобы синхронизировать форму с промптом:
-                        </span>
-                      ) : (
-                        "Параметры подставляются в промпт автоматически на сервере."
-                      )}
+                    <span className="text-[11px] text-[#888888] font-mono">
+                      {"{{tenant.name}}"} / {"{{company.name}}"}
                     </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={companyNameOverride}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      form.setValue("company_name_override", val, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                      const currentWc = form.getValues("wizard_config") || {};
+                      form.setValue(
+                        "wizard_config",
+                        {
+                          ...currentWc,
+                          companyName: val,
+                          company_name_override: val,
+                        },
+                        { shouldDirty: true },
+                      );
+                    }}
+                    placeholder="Например: Банкирро (по умолчанию берётся из названия вашей CRM)"
+                    className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  {/* Мгновенная реактивность через useWatch: живой предпросмотр подстановки */}
+                  <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs shadow-2xs">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-mono text-[11px] font-semibold text-[#4a38f5] shrink-0">
+                        {"{{tenant.name}}"}
+                      </span>
+                      <span className="text-[#888888] text-[11px] shrink-0">→</span>
+                      <span
+                        className="font-medium text-[#111111] text-xs truncate max-w-[340px]"
+                        title={companyNameOverride.trim() || tenantName}
+                      >
+                        {companyNameOverride.trim() || tenantName}
+                      </span>
+                    </div>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-[4px] border px-1.5 py-0.5 text-[10px] font-medium",
+                        companyNameOverride.trim()
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-[#e5e5e5] bg-[#fafafa] text-[#666666]",
+                      )}
+                    >
+                      {companyNameOverride.trim() ? "Оверрайд агента" : `Из CRM: ${tenantName}`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#888888]">
+                    Если не заполнено, название автоматически подставляется из профиля вашей компании в CRM ({tenantName}).
+                  </p>
+                </div>
+
+                {/* 2. Источник консультанта */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700">
+                    Источник консультанта ({"{{consultant.name}}"} и {"{{consultant.role}}"})
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        form.setValue("system_prompt", DIRECTOR_PROMPT_TEMPLATE, {
-                          shouldValidate: true,
-                          shouldDirty: true,
-                        });
-                        form.setValue("wizard_config.isCustomEdited", false, {
-                          shouldDirty: true,
-                        });
-                      }}
-                      className="inline-flex items-center gap-1.5 text-xs text-[#4a38f5] hover:text-[#3d2ee0] font-medium"
+                      onClick={() => form.setValue("consultant_source", "manual", { shouldDirty: true })}
+                      className={cn(
+                        "rounded-[6px] border px-3 py-1.5 text-xs font-medium text-left transition-colors cursor-pointer",
+                        consultantSource === "manual"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                      )}
                     >
-                      <RefreshCw className="h-3 w-3" />
-                      Сбросить к эталону Мета-Промпта v2.0
+                      Указать вручную
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => form.setValue("consultant_source", "chat_widget", { shouldDirty: true })}
+                      className={cn(
+                        "rounded-[6px] border px-3 py-1.5 text-xs font-medium text-left transition-colors cursor-pointer",
+                        consultantSource === "chat_widget"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                      )}
+                    >
+                      Из настроек онлайн-чата
                     </button>
                   </div>
                 </div>
-              )}
 
-              {/* TAB 2: DIRECT PROMPT EDITOR */}
-              {promptTab === "editor" && (
-                <div className="space-y-2">
-                  <PromptTemplateEditor
-                    value={systemPrompt}
-                    onChange={(next) => {
-                      form.setValue("system_prompt", next, {
-                        shouldValidate: true,
+                {consultantSource === "chat_widget" ? (
+                  <div className="rounded-[8px] border border-blue-100 bg-blue-50/60 p-2.5 text-xs text-[#333333] flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-[#4a38f5] shrink-0" />
+                    <span className="text-[11px] text-[#555555]">
+                      Имя и должность консультанта подтягиваются динамически из настроек подключенного виджета онлайн-чата на сайте.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Имя консультанта
+                      </label>
+                      <input
+                        type="text"
+                        value={consultantName || (wizardConfig?.consultantName ?? "")}
+                        onChange={(e) => {
+                          form.setValue("consultant_name", e.target.value, { shouldDirty: true });
+                          form.setValue("wizard_config.consultantName", e.target.value, { shouldDirty: true });
+                        }}
+                        placeholder="Екатерина"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Должность / роль консультанта
+                      </label>
+                      <input
+                        type="text"
+                        value={consultantRole || (wizardConfig?.consultantRole ?? "")}
+                        onChange={(e) => {
+                          form.setValue("consultant_role", e.target.value, { shouldDirty: true });
+                          form.setValue("wizard_config.consultantRole", e.target.value, { shouldDirty: true });
+                        }}
+                        placeholder="ведущий юрист практики"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Ваш продукт, Что продаёте */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-700">
+                    Ваш продукт, Что продаёте (переменная {"{{business.niche}}"})
+                  </label>
+                  <input
+                    type="text"
+                    value={wizardConfig?.businessNiche ?? ""}
+                    onChange={(e) =>
+                      form.setValue("wizard_config.businessNiche", e.target.value, {
                         shouldDirty: true,
-                      });
-                      if (!form.getValues("wizard_config.isCustomEdited")) {
-                        form.setValue("wizard_config.isCustomEdited", true, {
-                          shouldDirty: true,
-                        });
-                      }
-                    }}
-                    contextWindow={modelInfo.context_window}
-                    error={errors.system_prompt?.message}
+                      })
+                    }
+                    placeholder="Например: Банкротство физлиц и списание долгов под ключ / Ремонт стиральных машин"
+                    className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    Какую услугу или товар продаёт консультант. Бот будет держать фокус диалога строго на этом направлении.
+                  </p>
+                </div>
+
+                {/* 4. Ваш клиент. Кому и в какой ситуации помогаете */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-700">
+                    Ваш клиент. Кому и в какой ситуации помогаете (переменная {"{{client.profile}}"})
+                  </label>
+                  <input
+                    type="text"
+                    value={wizardConfig?.clientProfile ?? ""}
+                    onChange={(e) =>
+                      form.setValue("wizard_config.clientProfile", e.target.value, {
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder="Например: Граждане и ИП с долгами от 300 000 руб., которым угрожают коллекторы или заблокировали счета"
+                    className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    Портрет вашей целевой аудитории. Помогает боту понимать жизненную ситуацию клиента и аргументировать выгоду.
+                  </p>
+                </div>
+
+                {/* 5. Целевой шаг диалога, Чем должен закончиться диалог */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-700">
+                    Целевой шаг диалога, Чем должен закончиться диалог (переменная {"{{target.action}}"})
+                  </label>
+                  <input
+                    type="text"
+                    value={wizardConfig?.targetAction ?? ""}
+                    onChange={(e) =>
+                      form.setValue("wizard_config.targetAction", e.target.value, {
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder="Например: Получение номера телефона и согласование времени бесплатной консультации с юристом"
+                    className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    К какому целевому действию консультант ненавязчиво подводит клиента после выявления потребности.
+                  </p>
+                </div>
+
+                {/* 6. Важные ограничения. Что нельзя обещать или делать */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-700">
+                    Важные ограничения. Что нельзя обещать или делать (переменная {"{{constraints}}"})
+                  </label>
+                  <input
+                    type="text"
+                    value={wizardConfig?.constraints ?? ""}
+                    onChange={(e) =>
+                      form.setValue("wizard_config.constraints", e.target.value, {
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder="Например: Не давать 100% гарантий списания без аудита документов; не называть точную цену без юриста"
+                    className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    Строгие запреты (золотая клетка). Защищает компанию от юридических рисков, выдуманных цен и невыполнимых обещаний.
+                  </p>
+                </div>
+
+                {/* 7. Специалист для эскалации (handoff) */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-700">
+                    Специалист для эскалации (handoff, переменная {"{{handoff.specialist}}"})
+                  </label>
+                  <input
+                    type="text"
+                    value={wizardConfig?.handoffSpecialist ?? ""}
+                    onChange={(e) =>
+                      form.setValue("wizard_config.handoffSpecialist", e.target.value, {
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder="Например: старший юрист практики / руководитель сервисного участка"
+                    className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    Сотрудник, на которого переводится диалог при сложных вопросах, жалобах или претензиях. Бот напишет: «Давайте подключу нашего специалиста ([должность]), он этим вопросом занимается напрямую. На какой номер коллеге удобнее вам набрать?» и передаст управление человеку.
+                  </p>
+                </div>
+
+                {/* 8. Самообучение на диалогах (Dialogue Feedback Loop) */}
+                <div className="flex items-start justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-3">
+                  <div className="space-y-0.5">
+                    <label className="text-xs font-semibold text-[#111111] flex items-center gap-1.5 cursor-pointer" htmlFor="feedback-toggle">
+                      <MessageSquare className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Запрашивать комментарии для обучения после диалогов
+                    </label>
+                    <p className="text-[11px] text-[#666666] leading-relaxed">
+                      Оператор или клиент может оценить качество ответа и оставить пожелание по корректировке. Утвержденные правила автоматически дополняют Markdown-базу знаний агента.
+                    </p>
+                  </div>
+                  <input
+                    id="feedback-toggle"
+                    type="checkbox"
+                    checked={form.watch("feedback_learning_enabled") ?? true}
+                    onChange={(e) =>
+                      form.setValue("feedback_learning_enabled", e.target.checked, { shouldDirty: true })
+                    }
+                    className="h-4 w-4 rounded border-slate-300 accent-[#4a38f5] cursor-pointer mt-0.5"
                   />
                 </div>
-              )}
+              </div>
+
+              {/* Информация о вкладке Базы знаний */}
+              <div className="rounded-[8px] border border-slate-200 bg-white p-3 text-xs text-[#555555] flex items-start gap-2.5">
+                <FileText className="h-4 w-4 text-[#4a38f5] shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-[#111111]">База знаний, прайс-листы и сканирование сайта</p>
+                  <p className="text-[11px] text-[#666666] mt-0.5 leading-relaxed">
+                    Загрузка прайс-листов (Excel, PDF, Word), обход страниц сайта через краулер и подключение отзывов с Яндекс Карт / 2ГИС доступны в отдельной вкладке <strong>«База знаний»</strong> на странице созданного бота.
+                  </p>
+                </div>
+              </div>
             </div>
 
-            {/* Status */}
+            {/* Статус активации */}
             <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-slate-50 px-3.5 py-3">
               <input
                 type="checkbox"
@@ -1403,43 +931,628 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               <span className="text-xs text-[#111111]">
                 Активировать сразу
                 <span className="ml-1.5 text-slate-500">
-                  боты на паузе сохраняют настройки, но не работают в каналах
+                  (боты на паузе сохраняют настройки, но не отвечают в каналах связи)
                 </span>
               </span>
             </label>
+
+            {/* ГЕНЕРАТИВНЫЙ СИНТЕЗ РОЛИ И СИСТЕМНОГО ПРОМПТА */}
+            <div className="space-y-3 rounded-lg border border-[#4a38f5]/25 bg-[#4a38f5]/[0.02] p-3.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 text-[#4a38f5]" />
+                  <span className="text-xs font-semibold text-[#111111]">
+                    Генеративный синтез роли и промпта
+                  </span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#4a38f5]/10 text-[#4a38f5] font-medium">
+                  6 навыков продаж (B2B/CRM)
+                </span>
+              </div>
+
+              <p className="text-[11px] text-[#666666] leading-relaxed">
+                Укажите адрес целевой веб-страницы (сайт / лендинг) или контекст бизнеса. ИИ автоматически спарсит страницу, выявит ценность и сгенерирует подробный системный промпт.
+              </p>
+
+              {/* Поле ввода URL целевой страницы */}
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-slate-700">
+                  URL целевой страницы внедрения (сайт / лендинг)
+                </label>
+                <div className="relative">
+                  <Globe className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="url"
+                    value={form.watch("target_page_url") ?? ""}
+                    onChange={(e) =>
+                      form.setValue("target_page_url", e.target.value, { shouldDirty: true })
+                    }
+                    placeholder="https://example.com/services/b2b-consulting"
+                    className="h-8.5 w-full rounded-[8px] border border-[#e5e5e5] bg-white pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+              </div>
+
+              {/* Кнопка генерации + быстрое меню пресетов */}
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={generatePromptMutation.isPending}
+                  onClick={handleGeneratePrompt}
+                  className="h-8 rounded-[8px] bg-[#4a38f5] px-3.5 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                >
+                  {generatePromptMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Синтез промпта и роли...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>Сгенерировать роль и системный промпт</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
+                    className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Быстрые пресеты</span>
+                    <ChevronDown className="h-3 w-3 text-slate-500" />
+                  </button>
+                  {showPresetsDropdown && (
+                    <div className="absolute right-0 top-9 z-20 w-64 rounded-lg border border-[#e5e5e5] bg-white p-1.5 shadow-lg space-y-1">
+                      {INDUSTRY_PRESETS.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            applyPreset(p);
+                            setShowPresetsDropdown(false);
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded text-xs hover:bg-slate-100 flex flex-col cursor-pointer"
+                        >
+                          <span className="font-medium text-[#111111]">{p.name}</span>
+                          <span className="text-[10px] text-[#888888] line-clamp-1">{p.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Интерактивное отображение и инлайн-редактор сгенерированного промпта */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                    <FileCode className="h-3 w-3 text-[#4a38f5]" />
+                    Сгенерированный системный промпт (активный)
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    {(form.watch("system_prompt") || "").length} символов
+                  </span>
+                </div>
+
+                <textarea
+                  rows={6}
+                  value={form.watch("system_prompt")}
+                  onChange={(e) =>
+                    form.setValue("system_prompt", e.target.value, {
+                      shouldValidate: true,
+                      shouldDirty: true,
+                    })
+                  }
+                  placeholder="Системный промпт роли агента..."
+                  className={cn(
+                    "w-full rounded-[8px] border bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:outline-none focus:ring-1 resize-y",
+                    errors.system_prompt
+                      ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-[#e5e5e5] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20",
+                  )}
+                />
+                {errors.system_prompt && (
+                  <p className="text-xs text-rose-500 mt-1">{errors.system_prompt.message}</p>
+                )}
+              </div>
+
+              {/* Интерактивное отображение и инлайн-редактор черновика базы знаний */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                    <BookOpen className="h-3 w-3 text-[#4a38f5]" />
+                    Черновик базы знаний (на проверку)
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    {(form.watch("knowledge_base_md") || "").length} символов
+                  </span>
+                </div>
+
+                <textarea
+                  rows={5}
+                  value={form.watch("knowledge_base_md")}
+                  onChange={(e) =>
+                    form.setValue("knowledge_base_md", e.target.value, {
+                      shouldValidate: true,
+                      shouldDirty: true,
+                    })
+                  }
+                  placeholder="Структурированные факты, прайс-лист, услуги и регламент в Markdown (извлекаются из сайта при генерации)..."
+                  className={cn(
+                    "w-full rounded-[8px] border bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:outline-none focus:ring-1 resize-y",
+                    errors.knowledge_base_md
+                      ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-[#e5e5e5] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20",
+                  )}
+                />
+                {errors.knowledge_base_md && (
+                  <p className="text-xs text-rose-500 mt-1">{errors.knowledge_base_md.message}</p>
+                )}
+                <p className="text-[11px] text-[#888888]">
+                  Факты, прайсы и регламенты из сайта или контекста. При создании бота этот текст автоматически индексируется в базу знаний агента для RAG-поиска.
+                </p>
+              </div>
+
+              {/* Предупреждение о перезаписи промпта */}
+              {pendingPreset && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs space-y-2">
+                  <div className="flex items-start gap-2 text-[#854d0e]">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      <p className="font-semibold">
+                        Применение шаблона «{pendingPreset.name}»
+                      </p>
+                      <p className="mt-0.5 text-slate-700">
+                        В системный промпт вносились ручные правки. Применение нового шаблона обновит анкету и сбросит ручные правки к чистому эталону.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPendingPreset(null)}
+                      className="px-2.5 py-1 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset(pendingPreset)}
+                      className="px-2.5 py-1 text-xs rounded bg-[#4a38f5] text-white hover:bg-[#3d2ee0] font-medium cursor-pointer"
+                    >
+                      Применить и сбросить
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ДОПОЛНИТЕЛЬНЫЕ ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ (LLM, ТЕМПЕРАТУРА, ПРОМПТ) — АККОРДЕОН */}
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/50 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowTechnicalParams((prev) => !prev)}
+                className="w-full flex items-center justify-between p-3.5 text-xs font-semibold text-[#111111] hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-2 text-slate-700">
+                  <Sliders className="h-4 w-4 text-[#888888]" />
+                  Дополнительные технические параметры (LLM, температура, промпт)
+                </span>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 text-[#888888] transition-transform duration-200",
+                    showTechnicalParams && "rotate-180",
+                  )}
+                />
+              </button>
+
+              {showTechnicalParams && (
+                <div className="p-4 pt-1 space-y-4 border-t border-[#e5e5e5] bg-white">
+                  <div className="rounded-[6px] border border-blue-100 bg-blue-50/50 p-2.5 text-[11px] text-[#555555] leading-relaxed flex items-start gap-2">
+                    <Info className="h-3.5 w-3.5 text-[#4a38f5] shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Автоматическая оркестрация:</strong> Платформа по умолчанию использует оптимальную модель (Google Gemini 3.5 Flash) с автоматическим каскадом резервных моделей (Fallback Chain) при сбоях или перегрузках. Ручная смена параметров требуется только инженерам.
+                    </div>
+                  </div>
+
+                  {/* Модель */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="block text-xs font-medium text-slate-700">Модель</span>
+                      {activeProvider && activeProvider.isConfigured ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Провайдер платформы: {activeProvider.name} {activeProvider.chatModel ? `(${activeProvider.chatModel})` : ""}
+                        </span>
+                      ) : modelsList.length > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Подключено моделей: {modelsList.length}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-medium">
+                          Провайдер не настроен
+                        </span>
+                      )}
+                    </div>
+
+                    {modelsLoading ? (
+                      <div className="grid grid-cols-3 gap-2">
+                        {[1, 2, 3].map((i) => (
+                          <div key={i} className="h-14 rounded-lg border border-[#e5e5e5] bg-slate-50 animate-pulse" />
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(showAllModels ? modelsList : modelsList.slice(0, 6)).map((model) => {
+                            const isSelected = selectedModel === model.id;
+                            const isDefault = model.id === activeProvider?.chatModel;
+                            return (
+                              <button
+                                key={model.id}
+                                type="button"
+                                onClick={() =>
+                                  form.setValue("model", model.id as BotModel, {
+                                    shouldValidate: true,
+                                    shouldDirty: true,
+                                  })
+                                }
+                                className={cn(
+                                  "rounded-lg border px-3 py-2 text-left transition-all cursor-pointer flex flex-col justify-between",
+                                  isSelected
+                                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]/30 shadow-2xs"
+                                    : "border-[#e5e5e5] bg-white hover:border-[#cccccc] hover:bg-slate-50",
+                                )}
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span
+                                    className={cn(
+                                      "block text-xs font-semibold leading-tight truncate",
+                                      isSelected ? "text-[#4a38f5]" : "text-[#111111]",
+                                    )}
+                                    title={model.label}
+                                  >
+                                    {model.label}
+                                  </span>
+                                  {isDefault ? (
+                                    <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                                      Основная
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                                      Подключена
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="block text-[11px] text-[#666666] mt-1 truncate">
+                                  {getProviderLabel(model.provider)}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {modelsList.length > 6 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllModels((prev) => !prev)}
+                            className="text-[11px] font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors inline-flex items-center gap-1 mt-1 cursor-pointer"
+                          >
+                            {showAllModels
+                              ? "Свернуть список моделей"
+                              : `Показать все доступные модели (${modelsList.length})`}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Fallback Chains */}
+                  <div className="space-y-1.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/60 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="block text-xs font-medium text-slate-700">
+                        Цепочка отказоустойчивости (Fallback Chain)
+                      </span>
+                      <span className="text-[11px] text-[#666666]">
+                        Каскад при 429 / 5xx / Timeout
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#666666] leading-relaxed">
+                      Если основная модель перегружена или не отвечает, запрос автоматически переключается на резервные модели по порядку:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {modelsList
+                        .filter((m) => m.id !== selectedModel)
+                        .map((m) => {
+                          const isSelected = fallbackModels.includes(m.id);
+                          const priorityIndex = fallbackModels.indexOf(m.id);
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => toggleFallbackModel(m.id)}
+                              className={cn(
+                                "rounded-[6px] border px-2.5 py-1 text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5",
+                                isSelected
+                                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                                  : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                              )}
+                            >
+                              {isSelected && (
+                                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#4a38f5] text-[9px] text-white font-mono">
+                                  {priorityIndex + 1}
+                                </span>
+                              )}
+                              <span>{m.label}</span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  {/* Температура и Макс. токенов */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label htmlFor="bot-temperature" className="block text-xs font-medium text-slate-700">
+                        Температура
+                        <span className="ml-1.5 font-mono text-[#111111]">{temperature.toFixed(1)}</span>
+                      </label>
+                      <input
+                        id="bot-temperature"
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.1}
+                        value={temperature}
+                        onChange={(event) =>
+                          form.setValue("temperature", Number(event.target.value), {
+                            shouldValidate: true,
+                            shouldDirty: true,
+                          })
+                        }
+                        className="w-full accent-[#4a38f5]"
+                      />
+                      <p className="text-[11px] text-slate-500">Зафиксировано 0.6: идеальный баланс естественности и следования прайсу.</p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label htmlFor="bot-max-tokens" className="block text-xs font-medium text-slate-700">
+                        Макс. токенов в ответе
+                      </label>
+                      <input
+                        id="bot-max-tokens"
+                        type="number"
+                        min={128}
+                        max={8192}
+                        step={128}
+                        {...form.register("max_tokens", { valueAsNumber: true })}
+                        className={cn(
+                          "w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] [-moz-appearance:textfield] focus:outline-none focus:border-[#4a38f5] focus:ring-2 focus:ring-[#4a38f5]/20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+                          errors.max_tokens && "border-rose-500",
+                        )}
+                      />
+                      <p className="text-[11px] text-slate-500">Зафиксировано 1024: исключает зависания и длинные роботизированные простыни.</p>
+                    </div>
+                  </div>
+
+                  {/* Прямой редактор системного промпта */}
+                  <div className="space-y-2 pt-2 border-t border-[#e5e5e5]">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPromptTab("wizard")}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer",
+                            promptTab === "wizard"
+                              ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                              : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                          )}
+                        >
+                          <Sliders className="h-3.5 w-3.5" />
+                          Анкета роли
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPromptTab("editor")}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer",
+                            promptTab === "editor"
+                              ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                              : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                          )}
+                        >
+                          <FileCode className="h-3.5 w-3.5" />
+                          Прямой редактор системного промпта
+                          {wizardConfig?.isCustomEdited && (
+                            <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-[#854d0e] border border-[#fef08a]">
+                              кастом
+                            </span>
+                          )}
+                        </button>
+                        {isEdit && bot && (
+                          <button
+                            type="button"
+                            onClick={() => setPromptTab("feedbacks")}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer",
+                              promptTab === "feedbacks"
+                                ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                                : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                            )}
+                          >
+                            <MessageSquareQuote className="h-3.5 w-3.5" />
+                            Обучение на диалогах
+                            {approvedFeedbacks.length > 0 && (
+                              <span className="ml-1 inline-flex items-center px-1.5 py-0.2 rounded text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                {approvedFeedbacks.length}
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          form.setValue("system_prompt", DIRECTOR_PROMPT_TEMPLATE, {
+                            shouldValidate: true,
+                            shouldDirty: true,
+                          });
+                          form.setValue("wizard_config.isCustomEdited", false, {
+                            shouldDirty: true,
+                          });
+                        }}
+                        className="inline-flex items-center gap-1.5 text-[11px] text-[#4a38f5] hover:text-[#3d2ee0] font-medium cursor-pointer"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        Сбросить к эталону Мета-Промпта v2.0
+                      </button>
+                    </div>
+
+                    {promptTab === "editor" && (
+                      <div className="space-y-2 pt-1">
+                        <PromptTemplateEditor
+                          value={systemPrompt}
+                          onChange={(next) => {
+                            form.setValue("system_prompt", next, {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                            });
+                            if (!form.getValues("wizard_config.isCustomEdited")) {
+                              form.setValue("wizard_config.isCustomEdited", true, {
+                                shouldDirty: true,
+                              });
+                            }
+                          }}
+                          contextWindow={modelInfo.context_window}
+                          error={errors.system_prompt?.message}
+                          bot={{
+                            ...(bot ?? {}),
+                            name: form.getValues("name") || bot?.name || "Ассистент",
+                            company_name_override: companyNameOverride,
+                            companyNameOverride: companyNameOverride,
+                            consultant_name: consultantName,
+                            consultantName: consultantName,
+                            consultant_role: consultantRole,
+                            consultantRole: consultantRole,
+                            wizard_config: wizardConfig as any,
+                          }}
+                          tenantName={tenantName}
+                        />
+                      </div>
+                    )}
+
+                    {promptTab === "feedbacks" && (
+                      <div className="space-y-4 pt-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
+                          <div className="space-y-1">
+                            <h4 className="text-xs font-semibold text-[#111111] flex items-center gap-1.5">
+                              <MessageSquareQuote className="h-4 w-4 text-[#4a38f5]" />
+                              Пересборка системного промпта по правилам обучения
+                            </h4>
+                            <p className="text-xs text-[#666666] leading-relaxed">
+                              Утвержденные правила из диалогов с клиентами интегрируются в валидную структуру &lt;director_system_prompt&gt;.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={rebuildPromptMutation.isPending || approvedFeedbacks.length === 0}
+                            onClick={handleRebuildPromptFromFeedbacks}
+                            className="h-8 shrink-0 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs"
+                          >
+                            {rebuildPromptMutation.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            <span>Пересобрать промпт агента</span>
+                          </button>
+                        </div>
+
+                        {approvedFeedbacks.length === 0 ? (
+                          <div className="rounded-[8px] border border-dashed border-[#e5e5e5] p-6 text-center text-xs text-[#666666]">
+                            У этого агента пока нет утвержденных правил обучения. Оценивайте диалоги в CRM или подтверждайте правила в базе знаний.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-[#111111]">
+                              Утвержденные правила обучения ({approvedFeedbacks.length}):
+                            </p>
+                            <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                              {approvedFeedbacks.map((fb, idx) => (
+                                <div key={fb.id} className="p-3 rounded-[6px] border border-[#e5e5e5] bg-white text-xs space-y-1">
+                                  <div className="flex items-center justify-between text-[11px] text-[#666666]">
+                                    <span className="font-semibold text-[#111111]">Правило #{idx + 1}</span>
+                                    <span>Оценка: {fb.rating}/5</span>
+                                  </div>
+                                  <p className="text-[#333333] font-mono text-[11px]">
+                                    {fb.compiledRule || fb.userComment}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Footer */}
-          <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Отмена
-            </button>
-            <button
-              type="submit"
-              disabled={!isValid || isSubmitting || isUploadingDocs}
-              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-            >
-              {isSubmitting || isUploadingDocs ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {isUploadingDocs ? "Загружаем документы..." : "Сохраняем..."}
-                </>
-              ) : isEdit ? (
-                <>
-                  <Save className="h-4 w-4" />
-                  Сохранить изменения
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4" />
-                  Создать бота
-                </>
+          <div className="sticky bottom-0 flex items-center justify-between border-t border-[#e5e5e5] bg-white px-6 py-4">
+            <div>
+              {isEdit && bot && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onDelete(bot);
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-100 cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Удалить агента
+                </button>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Сохраняем...
+                  </>
+                ) : isEdit ? (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Сохранить изменения
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Создать бота
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </SheetContent>

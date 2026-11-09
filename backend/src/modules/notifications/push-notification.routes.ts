@@ -37,13 +37,16 @@ const idParamSchema = z.object({
 
 export async function pushNotificationRoutes(app: FastifyInstance): Promise<void> {
   // Публичный эндпоинт VAPID-ключа (для регистрации Service Worker до или после авторизации)
-  app.get("/notifications/vapid-public-key", async (_request, reply) => {
+  const sendVapidKey = async (_request: FastifyRequest, reply: FastifyReply) => {
     return reply.send({
       data: {
         publicKey: pushNotificationService.getVapidPublicKey(),
       },
     });
-  });
+  };
+
+  app.get("/notifications/vapid-public-key", sendVapidKey);
+  app.get("/notifications/vapid-key", sendVapidKey);
 
   // Авторизованная группа
   await app.register(async (authApp) => {

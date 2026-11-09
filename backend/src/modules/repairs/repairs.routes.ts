@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { RepairsService } from "./repairs.service.js";
+import { innLookupService } from "../integrations/inn-lookup.service.js";
 import {
   changeStatusSchema,
   createBatchRepairSchema,
@@ -222,6 +223,44 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
   app.delete("/catalog/services/:id", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const result = await service.deleteServiceFromCatalog(request.tenant_id, id);
+    return reply.send({ data: result });
+  });
+
+  // GET /repairs/lookup-inn — поиск реквизитов организации по ИНН (DaData / ФНС ЕГРЮЛ)
+  app.get("/lookup-inn", { onRequest: canRead }, async (request, reply) => {
+    const { inn } = z.object({ inn: z.string().min(10).max(12) }).parse(request.query);
+    const result = await innLookupService.lookup(inn);
+    if (!result) {
+      return reply.status(404).send({ error: "Организация по данному ИНН не найдена" });
+    }
+    return reply.send({ data: result });
+  });
+
+  // POST /repairs/batch-status — пакетное изменение статуса наряд-заказов
+  app.post("/batch-status", { onRequest: canWrite }, async (request, reply) => {
+    const body = z.object({
+      ids: z.array(z.string().uuid("id must be a UUID")).min(1, "At least one ID is required"),
+      status: repairStatusSchema,
+      comment: z.string().max(2000).optional(),
+    }).parse(request.body);
+
+    const result = await service.batchUpdateStatus(
+      request.tenant_id,
+      body.ids,
+      body.status,
+      { id: request.authUser.id, name: request.authUser.name },
+      body.comment,
+    );
+    return reply.send({ data: result });
+  });
+
+  // POST /repairs/batch-delete — пакетное удаление наряд-заказов
+  app.post("/batch-delete", { onRequest: canWrite }, async (request, reply) => {
+    const body = z.object({
+      ids: z.array(z.string().uuid("id must be a UUID")).min(1, "At least one ID is required"),
+    }).parse(request.body);
+
+    const result = await service.batchDelete(request.tenant_id, body.ids);
     return reply.send({ data: result });
   });
 

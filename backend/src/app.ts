@@ -20,7 +20,6 @@ import financeRoutes from "./modules/finance/finance.routes.js";
 import invoiceRoutes from "./modules/finance/invoices.routes.js";
 import billingRoutes from "./modules/finance/billing/billing.routes.js";
 import storiesRoutes from "./modules/stories/stories.routes.js";
-import seoRoutes from "./modules/marketing/seo/seo.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import trackingRedirectRoutes from "./modules/channels/tracking-redirect.routes.js";
@@ -28,6 +27,7 @@ import telegramIntegrationRoutes from "./modules/channels/telegram-integration.r
 import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/channels/whatsapp-integration.routes.js";
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
+import { widgetsRoutes } from "./modules/channels/widgets.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import botAliasRoutes from "./modules/ai/bot-alias.routes.js";
@@ -231,8 +231,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
-  await app.register(seoRoutes, { prefix: "/api/v1/marketing/seo" });
-  await app.register(seoRoutes, { prefix: "/api/marketing/seo" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
   await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
   await app.register(analyticsRoutes, { prefix: "/api/analytics" });
@@ -240,6 +238,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.
   await app.register(channelsRoutes, { prefix: "/api/v1/channels" });
+
+  // Выделенный API для управления и bootstrap онлайн-виджетов
+  await app.register(widgetsRoutes, { prefix: "/api/v1/widgets" });
+  await app.register(widgetsRoutes, { prefix: "/api/widgets" });
 
   // Публичный умный редиректор сквозной аналитики (Direct & Deep Links)
   await app.register(trackingRedirectRoutes, { prefix: "/to" });
@@ -613,6 +615,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(aiRoutes, { prefix: "/api/ai" });
   await app.register(botAliasRoutes, { prefix: "/api/bots" });
   await app.register(botAliasRoutes, { prefix: "/api/v1/bots" });
+  await app.register(botAliasRoutes, { prefix: "/api/ai-bots" });
+  await app.register(botAliasRoutes, { prefix: "/api/v1/ai-bots" });
   await app.register(adminTenantRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminMetricsRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });

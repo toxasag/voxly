@@ -70,6 +70,46 @@ const COMMON_NAMES_DICT: Record<string, string> = {
   ilya: "Илья",
   egor: "Егор",
   oleg: "Олег",
+  timur: "Тимур",
+  ruslan: "Руслан",
+  vadim: "Вадим",
+  gleb: "Глеб",
+  yury: "Юрий",
+  yuri: "Юрий",
+  georgy: "Георгий",
+  georgiy: "Георгий",
+  boris: "Борис",
+  valery: "Валерий",
+  valeriy: "Валерий",
+  alisa: "Алиса",
+  dina: "Дина",
+  inna: "Инна",
+  kira: "Кира",
+  lara: "Лара",
+  larisa: "Лариса",
+  maya: "Майя",
+  mira: "Мира",
+  nina: "Нина",
+  rimma: "Римма",
+  sofiya: "София",
+  sofia: "София",
+  tamara: "Тамара",
+  alla: "Алла",
+  zhanna: "Жанна",
+  eliza: "Элиза",
+  evgeniy: "Евгений",
+  evgeny: "Евгений",
+  daniil: "Даниил",
+  danil: "Данил",
+  lev: "Лев",
+  fedor: "Фёдор",
+  fyodor: "Фёдор",
+  stepan: "Степан",
+  semyon: "Семён",
+  semen: "Семён",
+  matvey: "Матвей",
+  yaroslav: "Ярослав",
+  kirill: "Кирилл",
 };
 
 /**
@@ -155,6 +195,81 @@ export function transliterateLatinToCyrillic(latinStr: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+const STOP_WORDS_SET = new Set([
+  "здесь",
+  "тут",
+  "онлайн",
+  "клиент",
+  "посетитель",
+  "пользователь",
+  "заказчик",
+  "покупатель",
+  "мастер",
+  "специалист",
+  "директор",
+  "менеджер",
+  "врач",
+  "косметолог",
+  "отладчик",
+  "тестер",
+  "тестировщик",
+  "программист",
+  "разработчик",
+  "админ",
+  "администратор",
+  "робот",
+  "бот",
+  "гость",
+  "человек",
+  "лид",
+  "lead",
+  "хочу",
+  "могу",
+  "буду",
+  "ищу",
+  "прошу",
+  "думаю",
+  "не",
+  "уже",
+  "тоже",
+  "также",
+  "очень",
+  "просто",
+  "только",
+  "сейчас",
+  "в",
+  "на",
+  "с",
+  "по",
+  "мой",
+  "моя",
+  "мое",
+  "моё",
+  "мои",
+  "наш",
+  "наша",
+  "наше",
+  "наши",
+  "твой",
+  "твоя",
+  "твое",
+  "твоё",
+  "твои",
+  "ваш",
+  "ваша",
+  "ваше",
+  "ваши",
+  "здравствуйте",
+  "привет",
+  "добрый",
+  "номер",
+  "телефон",
+  "подскажите",
+  "уточните",
+  "скажите",
+  "токсасагмск",
+]);
+
 /**
  * Проверяет, является ли имя контакта плейсхолдером/заглушкой:
  * «Клиент +79102470980», «Посетитель сайта (2671)», «Клиент», «noname» и т.п.
@@ -168,6 +283,7 @@ export function isPlaceholderName(
   const full = `${f} ${l}`.trim();
 
   if (full.length === 0) return true;
+  if (STOP_WORDS_SET.has(f) || STOP_WORDS_SET.has(full)) return true;
   if (
     full === "клиент" ||
     full === "client" ||
@@ -219,54 +335,8 @@ export function extractNameFromText(text: string | null | undefined): {
 } | null {
   if (!text || typeof text !== "string") return null;
 
-  // Игнорируем стоп-слова, которые могут идти после "я"
-  const stopWords = new Set([
-    "здесь",
-    "тут",
-    "онлайн",
-    "клиент",
-    "посетитель",
-    "пользователь",
-    "заказчик",
-    "покупатель",
-    "мастер",
-    "специалист",
-    "директор",
-    "менеджер",
-    "врач",
-    "косметолог",
-    "отладчик",
-    "тестер",
-    "тестировщик",
-    "программист",
-    "разработчик",
-    "админ",
-    "администратор",
-    "робот",
-    "бот",
-    "гость",
-    "человек",
-    "лид",
-    "lead",
-    "хочу",
-    "могу",
-    "буду",
-    "ищу",
-    "прошу",
-    "думаю",
-    "не",
-    "уже",
-    "тоже",
-    "также",
-    "очень",
-    "просто",
-    "только",
-    "сейчас",
-    "в",
-    "на",
-    "с",
-    "по",
-  ]);
+  // Игнорируем стоп-слова, которые могут идти после "я", а также местоимения
+  const stopWords = STOP_WORDS_SET;
 
   // 1. «меня зовут [Имя] [Фамилия]» или «мое имя [Имя]»
   const introMatch = text.match(
@@ -372,9 +442,95 @@ export function extractNameFromText(text: string | null | undefined): {
 }
 
 /**
+ * Очищает отображаемое имя контакта из профилей мессенджеров (Telegram, WhatsApp, MAX)
+ * от суффиксов компаний, веб-доменов, должностей и технических пометок.
+ *
+ * Примеры:
+ * «Антон team-big.ru» -> { firstName: "Антон" }
+ * «Антон Сагайдак | team-big.ru» -> { firstName: "Антон", lastName: "Сагайдак" }
+ * «Антон (ООО Вектор)» -> { firstName: "Антон" }
+ * «Антон [HR]» -> { firstName: "Антон" }
+ * «Алексей Смирнов / Руководитель» -> { firstName: "Алексей", lastName: "Смирнов" }
+ * «team-big.ru» -> null (нет имени)
+ */
+export function cleanContactDisplayName(raw: string | null | undefined): {
+  firstName: string;
+  lastName?: string;
+} | null {
+  if (!raw || typeof raw !== "string") return null;
+
+  let s = raw.trim();
+  if (s.length === 0) return null;
+
+  // 1. Удаляем явные URL и веб-домены (например, team-big.ru, www.site.com, site.io)
+  s = s.replace(/https?:\/\/\S+/gi, " ");
+  s = s.replace(/\b[a-zA-Z0-9-]+\.(?:ru|com|net|org|io|me|pro|ai|biz|info|site|online|app|xyz|tech|by|kz|ua)\b/gi, " ");
+
+  // 2. Удаляем email и @handles
+  s = s.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, " ");
+  s = s.replace(/@[a-zA-Z0-9_]+/g, " ");
+
+  // 3. Удаляем содержимое круглых и квадратных скобок (обычно названия компаний/роли)
+  s = s.replace(/\([^)]*\)/g, " ");
+  s = s.replace(/\[[^\]]*\]/g, " ");
+  s = s.replace(/\{[^}]*\}/g, " ");
+
+  // 4. Отрезаем суффиксы после разделителей ( |, -, /, \, —, –, : )
+  const sepMatch = s.search(/\s+[|/\\—–-]\s+/);
+  if (sepMatch !== -1) {
+    s = s.slice(0, sepMatch);
+  }
+
+  // 5. Удаляем префиксы или суффиксы юрлиц (ИП, ООО, ЗАО, АО, LLC, Inc)
+  s = s.replace(/\b(?:ИП|ООО|ЗАО|АО|ОАО|LLC|Inc|Corp|Ltd)\b.*$/gi, " ");
+
+  // 6. Очищаем лишние спецсимволы и пробелы
+  s = s.replace(/[^\p{L}\s-]/gu, " ").replace(/\s+/g, " ").trim();
+
+  if (s.length < 2) return null;
+
+  // Разделяем на слова
+  const words = s
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 2);
+
+  if (words.length === 0) return null;
+
+  const rawFirst = words[0];
+  if (!rawFirst) return null;
+
+  // Проверяем, не является ли первое слово заглушкой
+  if (isPlaceholderName(rawFirst, "")) return null;
+
+  // Нормализуем капитализацию
+  const firstName = rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1);
+  let lastName: string | undefined;
+
+  if (words.length >= 2 && words[1]) {
+    const rawLast = words[1];
+    if (!isPlaceholderName("", rawLast)) {
+      lastName = rawLast.charAt(0).toUpperCase() + rawLast.slice(1);
+    }
+  }
+
+  if (isPlaceholderName(firstName, lastName)) {
+    return null;
+  }
+
+  return { firstName, lastName };
+}
+
+/**
  * Парсит имя и фамилию из Telegram username (CamelCase / snake_case).
+ * СТРОГОЕ ПРАВИЛО: для предотвращения галлюцинаций и транслитерации ников (вроде toxasagmsk -> «Токсасагмск»)
+ * имя признается валидным ТОЛЬКО если оно найдено в словаре русских имен или строго соответствует
+ * структуре Имя_Фамилия с узнаваемым именем.
+ *
  * «NataliaDiudiaeva» -> { firstName: "Наталья", lastName: "Дюдяева" }
  * «natalia_diudiaeva» -> { firstName: "Наталья", lastName: "Дюдяева" }
+ * «alexey» -> { firstName: "Алексей" }
+ * «toxasagmsk» -> null (произвольный никнейм не транслитерируется в имя человека)
  */
 export function parseNameFromTelegramUsername(username: string | null | undefined): {
   firstName: string;
@@ -385,6 +541,11 @@ export function parseNameFromTelegramUsername(username: string | null | undefine
   const clean = username.replace(/^@/, "").trim();
   if (clean.length < 3) return null;
 
+  // Игнорируем чисто технические ники и системные аккаунты
+  if (/^(?:bot|support|admin|info|sales|service|help|channel|group|chat|lead|manager)\b/i.test(clean)) {
+    return null;
+  }
+
   // Разделяем CamelCase, а также символы `_`, `.`, `-`
   const parts = clean
     .split(/(?=[A-Z])|[._\-]/)
@@ -392,16 +553,38 @@ export function parseNameFromTelegramUsername(username: string | null | undefine
     .filter((p) => p.length > 0);
 
   if (parts.length >= 2) {
-    const firstPart = parts[0];
+    const firstPart = parts[0]?.toLowerCase() ?? "";
     const secondPart = parts.slice(1).join("");
-    if (firstPart && secondPart) {
-      const firstName = transliterateLatinToCyrillic(firstPart);
+
+    // Случай 1: parts[0] - известное имя (natalia_diudiaeva, anton_sagaydak, NataliaDiudiaeva)
+    if (COMMON_NAMES_DICT[firstPart] && secondPart.length >= 2) {
+      const firstName = COMMON_NAMES_DICT[firstPart];
       const lastName = transliterateLatinToCyrillic(secondPart);
-      return { firstName, lastName };
+      if (firstName && lastName && !isPlaceholderName(firstName, lastName)) {
+        return { firstName, lastName };
+      }
     }
+
+    // Случай 2: parts[parts.length - 1] - известное имя (diudiaeva_natalia, sagaydak_anton)
+    const lastPart = parts[parts.length - 1]?.toLowerCase() ?? "";
+    const leadingPart = parts.slice(0, parts.length - 1).join("");
+    if (COMMON_NAMES_DICT[lastPart] && leadingPart.length >= 2) {
+      const firstName = COMMON_NAMES_DICT[lastPart];
+      const lastName = transliterateLatinToCyrillic(leadingPart);
+      if (firstName && lastName && !isPlaceholderName(firstName, lastName)) {
+        return { firstName, lastName };
+      }
+    }
+
+    return null;
   } else if (parts.length === 1 && parts[0]) {
-    const firstName = transliterateLatinToCyrillic(parts[0]);
-    return { firstName };
+    // Для одиночного слова — ТОЛЬКО если оно есть в словаре реальных имен!
+    // Категорически запрещено транслитерировать произвольные никнеймы (toxasagmsk, superman и т.п.)
+    const lower = parts[0].toLowerCase();
+    if (COMMON_NAMES_DICT[lower]) {
+      return { firstName: COMMON_NAMES_DICT[lower] };
+    }
+    return null;
   }
 
   return null;

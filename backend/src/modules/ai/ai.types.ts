@@ -34,7 +34,10 @@ export const wizardConfigSchema = z
     consultantName: z.string().optional(),
     consultantRole: z.string().optional(),
     businessNiche: z.string().optional(),
+    clientProfile: z.string().optional(),
+    client_profile: z.string().optional(),
     targetAction: z.string().optional(),
+    constraints: z.string().optional(),
     handoffSpecialist: z.string().optional(),
     fallbackModels: z.array(z.string()).optional(),
     fallback_models: z.array(z.string()).optional(),
@@ -65,7 +68,7 @@ export const createAgentSchema = z.object({
     .string()
     .trim()
     .min(20, "Системный промпт минимум 20 символов")
-    .max(8000, "Системный промпт до 8000 символов")
+    .max(50000, "Системный промпт до 50000 символов")
     .default("Ты — вежливый AI-ассистент компании. Отвечай кратко, дружелюбно и по существу."),
   context_entities: z.array(z.enum(agentContextEntityValues)).default([]),
   company_name_override: z.string().trim().optional().nullable(),
@@ -78,6 +81,14 @@ export const createAgentSchema = z.object({
   consultantRole: z.string().trim().optional().nullable(),
   fallback_models: z.array(z.string()).default([]),
   fallbackModels: z.array(z.string()).optional(),
+  target_page_url: z.string().optional().nullable(),
+  targetPageUrl: z.string().optional().nullable(),
+  generated_system_prompt: z.string().optional().nullable(),
+  generatedSystemPrompt: z.string().optional().nullable(),
+  knowledge_base_md: z.string().optional().default(""),
+  knowledgeBaseMd: z.string().optional(),
+  feedback_learning_enabled: z.boolean().optional().default(true),
+  feedbackLearningEnabled: z.boolean().optional(),
   wizard_config: wizardConfigSchema,
   website_url: z.string().optional().or(z.literal("")),
   websiteUrl: z.string().optional().or(z.literal("")),
@@ -126,10 +137,19 @@ export interface AiAgentDTO {
   systemPrompt: string;
   contextEntities: string[];
   companyNameOverride?: string | null;
+  company_name_override?: string | null;
   consultantSource?: ConsultantSource;
+  consultant_source?: ConsultantSource;
   consultantName?: string | null;
+  consultant_name?: string | null;
   consultantRole?: string | null;
+  consultant_role?: string | null;
   fallbackModels?: string[];
+  fallback_models?: string[];
+  targetPageUrl?: string | null;
+  generatedSystemPrompt?: string | null;
+  knowledgeBaseMd: string;
+  feedbackLearningEnabled: boolean;
   wizardConfig?: WizardConfig | null;
   /** Агрегаты из ai_usage_log: список агентов показывает расход по каждому. */
   tokensUsed: number;
@@ -152,3 +172,110 @@ export interface AiBalanceDTO {
   estimatedTokensLeft: number;
   lastTopupAt: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Генеративный синтез системного промпта из контекста и URL страницы
+// ---------------------------------------------------------------------------
+
+export const generatePromptSchema = z.object({
+  target_page_url: z.string().trim().optional().nullable(),
+  targetPageUrl: z.string().trim().optional().nullable(),
+  business_niche: z.string().trim().optional().nullable(),
+  businessNiche: z.string().trim().optional().nullable(),
+  company_name: z.string().trim().optional().nullable(),
+  companyName: z.string().trim().optional().nullable(),
+  client_profile: z.string().trim().optional().nullable(),
+  clientProfile: z.string().trim().optional().nullable(),
+  target_action: z.string().trim().optional().nullable(),
+  targetAction: z.string().trim().optional().nullable(),
+  constraints: z.string().trim().optional().nullable(),
+  handoff_specialist: z.string().trim().optional().nullable(),
+  handoffSpecialist: z.string().trim().optional().nullable(),
+  consultant_name: z.string().trim().optional().nullable(),
+  consultantName: z.string().trim().optional().nullable(),
+  consultant_role: z.string().trim().optional().nullable(),
+  consultantRole: z.string().trim().optional().nullable(),
+});
+
+export type GeneratePromptPayload = z.infer<typeof generatePromptSchema>;
+
+export interface GeneratedPromptResult {
+  systemPrompt: string;
+  businessNiche: string;
+  clientProfile: string;
+  targetAction: string;
+  constraints: string;
+  consultantName: string;
+  consultantRole: string;
+  handoffSpecialist: string;
+  knowledgeBaseDraftMd: string;
+}
+
+// ---------------------------------------------------------------------------
+// Синхронизация Markdown базы знаний агента
+// ---------------------------------------------------------------------------
+
+export const syncKnowledgeMdSchema = z.object({
+  knowledge_base_md: z.string().optional(),
+  knowledgeBaseMd: z.string().optional(),
+});
+
+export type SyncKnowledgeMdPayload = z.infer<typeof syncKnowledgeMdSchema>;
+
+// ---------------------------------------------------------------------------
+// Петля обучения через обратную связь диалогов (Dialogue Feedback Loop)
+// ---------------------------------------------------------------------------
+
+export const dialogueQuoteItemSchema = z.object({
+  text: z.string(),
+  role: z.string().optional(),
+  author: z.string().optional(),
+  time: z.string().optional(),
+});
+
+export type DialogueQuoteItem = z.infer<typeof dialogueQuoteItemSchema>;
+
+export const createDialogueFeedbackSchema = z.object({
+  agent_id: z.string().uuid().optional().nullable(),
+  agentId: z.string().uuid().optional().nullable(),
+  deal_id: z.string().uuid().optional().nullable(),
+  dealId: z.string().uuid().optional().nullable(),
+  conversation_id: z.string().optional().nullable(),
+  conversationId: z.string().optional().nullable(),
+  rating: z.number().int().min(1).max(5),
+  user_comment: z.string().trim().min(1, "Комментарий обязателен"),
+  userComment: z.string().trim().optional(),
+  clarification_answer: z.string().trim().optional().nullable(),
+  clarificationAnswer: z.string().trim().optional().nullable(),
+  selected_quotes: z.array(dialogueQuoteItemSchema).optional(),
+  selectedQuotes: z.array(dialogueQuoteItemSchema).optional(),
+});
+
+export type CreateDialogueFeedbackPayload = z.infer<typeof createDialogueFeedbackSchema>;
+
+export interface AgentDialogueFeedbackDTO {
+  id: string;
+  agentId: string;
+  dealId?: string | null;
+  dealTitle?: string | null;
+  contactName?: string | null;
+  conversationId?: string | null;
+  lastMessagePreview?: string | null;
+  rating: number;
+  userComment: string;
+  clarificationQa: Array<{ question: string; answer?: string | null }>;
+  compiledRule?: string | null;
+  selectedQuotes?: DialogueQuoteItem[];
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebuildAgentPromptResult {
+  agentId: string;
+  systemPrompt: string;
+  knowledgeBaseMd: string;
+  summaryOfChanges: string;
+  feedbacksCount: number;
+}
+

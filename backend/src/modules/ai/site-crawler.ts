@@ -114,26 +114,46 @@ export function htmlToText(html: string): { title: string; text: string } {
     title = h1Match && h1Match[1] ? h1Match[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
   }
 
-  // Удаляем скрипты, стили, фреймы, служебные теги
+  // Удаляем адаптивные дубликаты мобильных блоков (Tilda и др.), чтобы избежать дублирования карточек
   let cleaned = html
+    .replace(/<div\b[^>]*class="[^"]*t-screenmax-(?:480|640)px[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi, " ");
+
+  // Удаляем скрипты, стили, фреймы, служебные теги
+  cleaned = cleaned
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
     .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ")
     .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, " ")
     .replace(/<canvas\b[^<]*(?:(?!<\/canvas>)<[^<]*)*<\/canvas>/gi, " ")
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, " ");
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, " ")
+    // Удаляем элементы управления слайдерами и крестики закрытия попапов
+    .replace(/<button\b[^>]*class="[^"]*t-popup__close-wrapper[^"]*"[\s\S]*?<\/button>/gi, " ")
+    .replace(/<ul\b[^>]*class="[^"]*t-slds__arrow_container[^"]*"[\s\S]*?<\/ul>/gi, " ")
+    .replace(/<div\b[^>]*class="[^"]*t-slds__arrow_container[^"]*"[\s\S]*?<\/div>/gi, " ");
+
+  // Форматируем таблицы в Markdown (| ячейка | ячейка |)
+  cleaned = cleaned.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi, (_match, row) => {
+    const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) =>
+      c[1].replace(/<[^>]+>/g, " ").trim(),
+    );
+    if (cells.length === 0) return "\n";
+    return `\n| ${cells.join(" | ")} |\n`;
+  });
+
+  // Форматируем списки определений (<dl>, <dt>, <dd>)
+  cleaned = cleaned
+    .replace(/<dt\b[^>]*>([\s\S]*?)<\/dt>/gi, "\n**$1:** ")
+    .replace(/<dd\b[^>]*>([\s\S]*?)<\/dd>/gi, " $1\n");
 
   // Структурные теги заменяем на переводы строк и маркеры
   cleaned = cleaned
-    .replace(/<\/(div|p|section|article|header|footer|aside|table|tr)>/gi, "\n")
+    .replace(/<\/(div|p|section|article|header|footer|aside|table)>/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<h1[^>]*>/gi, "\n\n# ")
     .replace(/<h2[^>]*>/gi, "\n\n## ")
     .replace(/<h3[^>]*>/gi, "\n\n### ")
     .replace(/<h4[^>]*>/gi, "\n\n#### ")
-    .replace(/<li[^>]*>/gi, "\n- ")
-    .replace(/<th[^>]*>/gi, " | ")
-    .replace(/<td[^>]*>/gi, " | ");
+    .replace(/<li[^>]*>/gi, "\n- ");
 
   // Удаляем все остальные теги
   cleaned = cleaned.replace(/<[^>]+>/g, " ");
@@ -150,14 +170,24 @@ export function htmlToText(html: string): { title: string; text: string } {
     .replace(/&raquo;/gi, "»")
     .replace(/&#([0-9]+);/g, (_, code) => String.fromCharCode(Number(code)));
 
-  // Схлопываем множественные пробелы и пустые строки
-  const text = cleaned
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
-    .filter((line) => line.length > 0)
-    .join("\n");
+  // Фильтруем пустые служебные строки, кнопки и дубли
+  const NOISE_LINE_REGEX =
+    /^(р\.|руб\.|рублей|от|до|подробнее|получить прайс|оставить заявку|заказать звонок|заявка|отправить|купить|\d+\s*из\s*\d+|предыдущий слайд|следующий слайд|закрыть диалоговое окно|[-–—•*])$/i;
 
-  return { title, text };
+  const rawLines = cleaned.split("\n");
+  const filteredLines: string[] = [];
+  let lastLine = "";
+
+  for (const rawLine of rawLines) {
+    const line = rawLine.replace(/[ \t]+/g, " ").trim();
+    if (!line) continue;
+    if (NOISE_LINE_REGEX.test(line)) continue;
+    if (line === lastLine) continue;
+    filteredLines.push(line);
+    lastLine = line;
+  }
+
+  return { title, text: filteredLines.join("\n") };
 }
 
 /**

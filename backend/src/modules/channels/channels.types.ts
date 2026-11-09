@@ -48,6 +48,7 @@ export const updateChannelAccountSchema = z
     status_message: z.string().max(500).optional(),
     credentials: z.record(z.unknown()).optional(),
     agent_id: z.string().uuid().nullable().optional(),
+    is_enabled: z.boolean().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нечего обновлять: не передано ни одного поля",
@@ -99,6 +100,8 @@ export interface ChannelAccountDTO {
   externalId: string;
   status: ChannelStatus;
   statusMessage: string;
+  is_enabled?: boolean;
+  isEnabled?: boolean;
   hasCredentials: boolean;
   credentials?: Record<string, unknown>;
   /** Числовой id пользователя на стороне канала; у Telegram — tgUserId. */

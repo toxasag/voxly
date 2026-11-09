@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   AlertCircle,
   CheckCircle2,
+  Clock,
   Copy,
   CreditCard,
   Eye,
@@ -56,7 +57,12 @@ interface LocalProviderItem {
   isLoadingModels?: boolean;
   keyStatuses?: Record<
     number,
-    { status: "valid" | "invalid"; message: string; statusCode?: number }
+    {
+      status: "valid" | "invalid" | "pending_activation";
+      message: string;
+      statusCode?: number;
+      isTemporary?: boolean;
+    }
   >;
   isVerifyingKeys?: boolean;
   verifyingKeyIndex?: number | null;
@@ -259,6 +265,26 @@ export function AdminIntegrationsEditor() {
     }
   }, [data]);
 
+  // Автоматическая фоновая перепроверка ключей, ожидающих активации в Google Cloud
+  useEffect(() => {
+    const pendingProviders = providers.filter((p) => {
+      const statuses = p.keyStatuses ? Object.values(p.keyStatuses) : [];
+      return statuses.some((s) => s.status === "pending_activation");
+    });
+
+    if (pendingProviders.length === 0) return;
+
+    const timer = setTimeout(() => {
+      for (const prov of pendingProviders) {
+        if (!prov.isVerifyingKeys && prov.keys.length > 0) {
+          void handleVerifyAllKeys(prov.id);
+        }
+      }
+    }, 60_000);
+
+    return () => clearTimeout(timer);
+  }, [providers]);
+
   const handleSaveRobokassa = async () => {
     try {
       const payload: {
@@ -412,13 +438,19 @@ export function AdminIntegrationsEditor() {
 
       const statusMap: Record<
         number,
-        { status: "valid" | "invalid"; message: string; statusCode?: number }
+        {
+          status: "valid" | "invalid" | "pending_activation";
+          message: string;
+          statusCode?: number;
+          isTemporary?: boolean;
+        }
       > = {};
       for (const r of res.results) {
         statusMap[r.index] = {
           status: r.status,
           message: r.message,
           statusCode: r.statusCode,
+          isTemporary: r.isTemporary,
         };
       }
 
@@ -436,14 +468,24 @@ export function AdminIntegrationsEditor() {
       );
 
       if (res.summary.invalid === 0) {
-        toast.success(
-          `Все ключи активны! Проверено: ${res.summary.valid} из ${res.summary.total} шт.${
-            res.models ? ` (доступно моделей: ${res.models.length})` : ""
-          }`,
-        );
+        if ((res.summary.pendingActivation ?? 0) > 0) {
+          toast.info(
+            `Проверено: ${res.summary.valid} активны, ${res.summary.pendingActivation} ожидают синхронизации в Google Cloud (~2–5 мин). Ключи в пуле и защищены.`,
+          );
+        } else {
+          toast.success(
+            `Все ключи активны! Проверено: ${res.summary.valid} из ${res.summary.total} шт.${
+              res.models ? ` (доступно моделей: ${res.models.length})` : ""
+            }`,
+          );
+        }
       } else {
         toast.warning(
-          `Проверка ключей: ${res.summary.valid} активны, ${res.summary.invalid} с ошибками`,
+          `Проверка ключей: ${res.summary.valid} активны, ${res.summary.invalid} с ошибками${
+            (res.summary.pendingActivation ?? 0) > 0
+              ? `, ${res.summary.pendingActivation} ожидают активации`
+              : ""
+          }`,
         );
       }
     } catch (err: unknown) {
@@ -496,6 +538,10 @@ export function AdminIntegrationsEditor() {
 
         if (singleRes.status === "valid") {
           toast.success(`Ключ #${keyIndex + 1} активен и работает`);
+        } else if (singleRes.status === "pending_activation") {
+          toast.info(
+            `Ключ #${keyIndex + 1} ожидает активации в Google Cloud (синхронизация IAM ~2–5 мин). Ключ в пуле и защищён.`,
+          );
         } else {
           toast.error(`Ключ #${keyIndex + 1}: ${singleRes.message}`);
         }
@@ -673,6 +719,29 @@ export function AdminIntegrationsEditor() {
             }),
           );
           setSingleKeyInputMap((prev) => ({ ...prev, [providerId]: "" }));
+        } else if (res.status === "pending_activation" || res.isTemporary) {
+          toast.info(
+            `Ключ Google Gemini добавлен в пул! Идёт синхронизация API в Google Cloud (активация 2–5 мин).`,
+          );
+          const nextIndex = provider.keys.length;
+          setProviders((prev) =>
+            prev.map((p) => {
+              if (p.id !== providerId) return p;
+              const updatedStatuses = { ...(p.keyStatuses || {}) };
+              updatedStatuses[nextIndex] = {
+                status: "pending_activation",
+                message: `Синхронизация Google Cloud (активация 2–5 мин)`,
+                statusCode: 403,
+                isTemporary: true,
+              };
+              return {
+                ...p,
+                keys: [...p.keys, inputVal],
+                keyStatuses: updatedStatuses,
+              };
+            }),
+          );
+          setSingleKeyInputMap((prev) => ({ ...prev, [providerId]: "" }));
         }
       } else {
         const res = await verifyKeysMutation.mutateAsync({
@@ -692,6 +761,29 @@ export function AdminIntegrationsEditor() {
                 status: "valid",
                 message: single.message,
                 statusCode: 200,
+              };
+              return {
+                ...p,
+                keys: [...p.keys, inputVal],
+                keyStatuses: updatedStatuses,
+              };
+            }),
+          );
+          setSingleKeyInputMap((prev) => ({ ...prev, [providerId]: "" }));
+        } else if (single?.status === "pending_activation") {
+          toast.info(
+            `Ключ принят и добавлен в пул. Идёт синхронизация в Google Cloud (2–5 мин).`,
+          );
+          const nextIndex = provider.keys.length;
+          setProviders((prev) =>
+            prev.map((p) => {
+              if (p.id !== providerId) return p;
+              const updatedStatuses = { ...(p.keyStatuses || {}) };
+              updatedStatuses[nextIndex] = {
+                status: "pending_activation",
+                message: single.message,
+                statusCode: single.statusCode,
+                isTemporary: true,
               };
               return {
                 ...p,
@@ -754,7 +846,12 @@ export function AdminIntegrationsEditor() {
           const nextKeys = p.keys.filter((k) => !invalidSet.has(k));
           const nextStatuses: Record<
             number,
-            { status: "valid" | "invalid"; message: string; statusCode?: number }
+            {
+              status: "valid" | "invalid" | "pending_activation";
+              message: string;
+              statusCode?: number;
+              isTemporary?: boolean;
+            }
           > = {};
           let newIdx = 0;
           for (let i = 0; i < p.keys.length; i++) {
@@ -1473,9 +1570,10 @@ export function AdminIntegrationsEditor() {
                       (() => {
                         const statuses = Object.values(provider.keyStatuses);
                         const validCount = statuses.filter((s) => s.status === "valid").length;
-                        const invalidCount = statuses.length - validCount;
+                        const pendingCount = statuses.filter((s) => s.status === "pending_activation").length;
+                        const invalidCount = statuses.filter((s) => s.status === "invalid").length;
 
-                        if (invalidCount === 0) {
+                        if (invalidCount === 0 && pendingCount === 0) {
                           return (
                             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
                               <CheckCircle2 className="h-3 w-3 text-emerald-600" />
@@ -1484,10 +1582,19 @@ export function AdminIntegrationsEditor() {
                           );
                         }
 
+                        if (invalidCount === 0 && pendingCount > 0) {
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                              <Clock className="h-3 w-3 text-amber-600" />
+                              {validCount} активны, {pendingCount} синхронизируются в Google Cloud
+                            </span>
+                          );
+                        }
+
                         return (
                           <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700">
                             <AlertCircle className="h-3 w-3 text-rose-600" />
-                            {validCount} активны, {invalidCount} с ошибкой
+                            {validCount} активны, {invalidCount} с ошибкой{pendingCount > 0 ? `, ${pendingCount} синхр.` : ""}
                           </span>
                         );
                       })()
@@ -1573,6 +1680,45 @@ export function AdminIntegrationsEditor() {
                   );
                 })()}
 
+                {/* Баннер ключей, ожидающих активации в Google Cloud */}
+                {(() => {
+                  const statuses = provider.keyStatuses || {};
+                  const pendingIndices = Object.entries(statuses)
+                    .filter(([_, s]) => s.status === "pending_activation")
+                    .map(([idx]) => Number(idx));
+
+                  if (pendingIndices.length === 0) return null;
+
+                  return (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 shadow-2xs">
+                      <div className="flex items-start gap-2.5">
+                        <Clock className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-semibold text-amber-950">
+                            Ожидают активации в Google Cloud ({pendingIndices.length} шт.):
+                          </span>
+                          <p className="mt-0.5 text-[11px] text-amber-800 leading-normal">
+                            Новые ключи Google требуют 2–5 минут для глобальной IAM-синхронизации. Они сохранены в пуле и защищены от удаления — запросы уже обслуживаются другими рабочими ключами.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleVerifyAllKeys(provider.id)}
+                        disabled={provider.isVerifyingKeys}
+                        className="flex items-center gap-1.5 rounded-[6px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 shadow-2xs hover:bg-amber-100 transition-colors disabled:opacity-50"
+                      >
+                        {provider.isVerifyingKeys ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5 text-amber-600" />
+                        )}
+                        Перепроверить сейчас
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* Форма массовой вставки 20 ключей */}
                 {provider.showBatchInput && (
                   <div className="mt-3 rounded-[8px] border border-[#4a38f5]/20 bg-white p-4 shadow-xs space-y-3">
@@ -1653,6 +1799,7 @@ export function AdminIntegrationsEditor() {
                             className={cn(
                               "flex flex-col justify-between rounded-[6px] border bg-white p-2 shadow-2xs transition-colors",
                               kStatus?.status === "valid" && "border-emerald-200 bg-emerald-50/15",
+                              kStatus?.status === "pending_activation" && "border-amber-200 bg-amber-50/25",
                               kStatus?.status === "invalid" && "border-rose-200 bg-rose-50/25",
                               !kStatus && "border-[#e5e5e5]",
                             )}
@@ -1704,6 +1851,19 @@ export function AdminIntegrationsEditor() {
                                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                     {kStatus.message || "Работает"}
                                   </span>
+                                ) : kStatus.status === "pending_activation" ? (
+                                  <div className="flex flex-col gap-1 w-full text-left">
+                                    <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
+                                      <Clock className="h-3 w-3 text-amber-600 flex-shrink-0 animate-pulse" />
+                                      Ожидает активации в Google (2–5 мин)
+                                    </span>
+                                    <span
+                                      className="block rounded bg-amber-50/90 px-1.5 py-1 text-[10px] text-amber-800 border border-amber-200/70 leading-tight font-sans select-text"
+                                      title={kStatus.message}
+                                    >
+                                      {kStatus.message}
+                                    </span>
+                                  </div>
                                 ) : (
                                   <div className="flex flex-col gap-1 w-full text-left">
                                     <span className="inline-flex items-center gap-1 text-rose-600 font-medium">

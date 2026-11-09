@@ -926,12 +926,19 @@ export class AuthService {
         // Пробный период аккаунта фиксируется при создании: без него страница
         // биллинга показывала бы «осталось 0 дней» новой компании.
         const tenant = await tx.queryOne<{ id: string }>(
-          `INSERT INTO tenants (name, slug, plan, status, trial_ends_at)
-           VALUES ($1, $2, 'trial', 'trial', now() + ($3::int * INTERVAL '1 day'))
+          `INSERT INTO tenants (name, slug, plan, status, trial_ends_at, ai_balance_kopecks)
+           VALUES ($1, $2, 'trial', 'trial', now() + ($3::int * INTERVAL '1 day'), 50000)
            RETURNING id`,
           [companyName, slug, TRIAL_DAYS],
         );
         if (tenant === null) throw new Error("Failed to create tenant");
+
+        // Стартовый баланс для AI-ботов (500 руб = 50 000 коп)
+        await tx.query(
+          `INSERT INTO ai_balance_topups (tenant_id, amount_kopecks, source, comment)
+           VALUES ($1, 50000, 'bonus', 'Стартовый баланс для AI-ботов на пробный период')`,
+          [tenant.id],
+        );
 
         // `activated_at = now()`: владелец задаёт пароль здесь же, поэтому он
         // активен сразу. Без этого он не прошёл бы выборки входа, которые

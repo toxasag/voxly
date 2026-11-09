@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CreditCard,
   Gift,
+  PhoneCall,
   UserCircle,
   Users,
   type LucideIcon,
@@ -70,6 +71,12 @@ const SECTIONS: SettingsLink[] = [
     href: "/settings/notifications",
     icon: Bell,
     permission: "tenant:admin",
+  },
+  {
+    label: "Определитель номера (Caller ID)",
+    description: "Android компаньон и всплывающие карточки звонков",
+    href: "/settings/caller-id",
+    icon: PhoneCall,
   },
   {
     label: "Партнёрская программа",

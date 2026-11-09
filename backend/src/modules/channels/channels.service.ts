@@ -60,6 +60,8 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     externalId: row.external_id,
     status: row.status,
     statusMessage: row.status_message ?? "",
+    is_enabled: row.status === "connected",
+    isEnabled: row.status === "connected",
     hasCredentials: row.has_credentials,
     credentials: row.credentials,
     remoteUserId: row.remote_user_id,
@@ -309,6 +311,36 @@ export class ChannelsService {
     });
   }
 
+  async get(tenantId: string, channel: ChannelSlug, id: string): Promise<ChannelAccountDTO> {
+    const row = await queryOne<ChannelAccountRow>(
+      `SELECT ${SELECT_COLUMNS}
+       FROM channel_accounts
+       WHERE tenant_id = $1 AND channel = $2 AND id = $3 AND deleted_at IS NULL`,
+      [tenantId, channel, id],
+    );
+
+    if (row === null) throw new NotFoundError("Подключение не найдено");
+
+    const bound = await queryOne<{ agent_id: string; name: string }>(
+      `SELECT a.id AS agent_id, a.name
+       FROM ai_agent_channel_bindings b
+       JOIN ai_agents a ON a.id = b.agent_id
+       WHERE b.tenant_id = $1 AND b.channel_account_id = $2 AND b.is_enabled = true
+       LIMIT 1`,
+      [tenantId, id],
+    );
+    row.bound_agent_id = bound?.agent_id ?? null;
+    row.bound_agent_name = bound?.name ?? null;
+
+    return toDTO(row);
+  }
+
+  async toggleStatus(tenantId: string, channel: ChannelSlug, id: string): Promise<ChannelAccountDTO> {
+    const current = await this.get(tenantId, channel, id);
+    const nextStatus: ChannelStatus = current.status === "disabled" ? "connected" : "disabled";
+    return this.update(tenantId, channel, id, { status: nextStatus, is_enabled: nextStatus === "connected" });
+  }
+
   /**
    * Изменение подключения.
    *
@@ -322,6 +354,14 @@ export class ChannelsService {
     id: string,
     payload: UpdateChannelAccountPayload,
   ): Promise<ChannelAccountDTO> {
+    const statusToSet =
+      payload.status ??
+      (payload.is_enabled !== undefined
+        ? payload.is_enabled
+          ? "connected"
+          : "disabled"
+        : null);
+
     const row = await queryOne<ChannelAccountRow>(
       `UPDATE channel_accounts SET
          label = COALESCE($4, label),
@@ -342,7 +382,7 @@ export class ChannelsService {
         channel,
         id,
         payload.label ?? null,
-        payload.status ?? null,
+        statusToSet,
         payload.status_message ?? null,
         payload.credentials === undefined ? null : JSON.stringify(payload.credentials),
       ],

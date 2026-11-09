@@ -443,7 +443,7 @@ function PasswordSection({ hasPassword }: { hasPassword: boolean }) {
             id="current_password"
             label="Текущий пароль"
             autoComplete="current-password"
-            placeholder="••••••••"
+            placeholder="Введите текущий пароль"
             error={errors.current_password?.message}
             {...form.register("current_password")}
           />
@@ -452,7 +452,7 @@ function PasswordSection({ hasPassword }: { hasPassword: boolean }) {
             id="new_password"
             label="Новый пароль"
             autoComplete="new-password"
-            placeholder="••••••••"
+            placeholder="Введите новый пароль"
             error={errors.password?.message}
             hint="Минимум 8 символов"
             {...form.register("password")}
@@ -462,7 +462,7 @@ function PasswordSection({ hasPassword }: { hasPassword: boolean }) {
             id="new_password_confirm"
             label="Повторите новый пароль"
             autoComplete="new-password"
-            placeholder="••••••••"
+            placeholder="Повторите новый пароль"
             error={errors.password_confirm?.message}
             {...form.register("password_confirm")}
           />

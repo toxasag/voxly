@@ -117,6 +117,97 @@ export class RepairsService {
     return `ЗН-${year}-${String(row.last_number).padStart(4, "0")}`;
   }
 
+  /**
+   * Safely synchronises equipment brand, model, type, accessories, and malfunctions
+   * with tenant dictionaries within an open transaction without aborting the transaction.
+   */
+  private async syncEquipmentDictionaries(
+    tx: TransactionClient,
+    tenantId: string,
+    item: {
+      equipment_type?: string | null;
+      equipment_brand?: string | null;
+      equipment_model?: string | null;
+      malfunctions?: string[] | null;
+      accessories?: string[] | null;
+    },
+  ): Promise<void> {
+    const eqType = item.equipment_type?.trim() ?? "";
+    const eqBrand = item.equipment_brand?.trim() ?? "";
+    const eqModel = item.equipment_model?.trim() ?? "";
+
+    if (eqType) {
+      await tx.query(
+        `INSERT INTO equipment_types (tenant_id, name)
+         VALUES ($1, $2)
+         ON CONFLICT (tenant_id, name) DO NOTHING`,
+        [tenantId, eqType],
+      );
+    }
+
+    let brandId: string | null = null;
+    let canonicalBrandName = eqBrand;
+    if (eqBrand) {
+      const brandRow = await tx.queryOne<{ id: string; name: string }>(
+        `INSERT INTO equipment_brands (tenant_id, name)
+         VALUES ($1, $2)
+         ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id, name`,
+        [tenantId, eqBrand],
+      );
+      if (brandRow) {
+        brandId = brandRow.id;
+        canonicalBrandName = brandRow.name;
+      }
+    }
+
+    if (brandId && eqModel) {
+      await tx.query(
+        `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
+        [tenantId, brandId, canonicalBrandName, eqModel],
+      );
+    }
+
+    if (eqType && eqBrand && eqModel) {
+      await tx.query(
+        `INSERT INTO device_models (tenant_id, equipment_type, brand, model)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id, brand, model) DO NOTHING`,
+        [tenantId, eqType, canonicalBrandName, eqModel],
+      );
+    }
+
+    if (item.malfunctions) {
+      for (const m of item.malfunctions) {
+        const trimmed = m?.trim();
+        if (trimmed) {
+          await tx.query(
+            `INSERT INTO equipment_malfunctions (tenant_id, name)
+             VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO NOTHING`,
+            [tenantId, trimmed],
+          );
+        }
+      }
+    }
+
+    if (item.accessories) {
+      for (const a of item.accessories) {
+        const trimmed = a?.trim();
+        if (trimmed) {
+          await tx.query(
+            `INSERT INTO equipment_accessories (tenant_id, name)
+             VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO NOTHING`,
+            [tenantId, trimmed],
+          );
+        }
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Reads
   // -------------------------------------------------------------------------
@@ -503,6 +594,32 @@ export class RepairsService {
         }
       }
 
+      // 2.1. Если у контакта еще нет компании, или пользователь ввел новую/другую компанию, привязываем контакт к компании
+      if (customerId && companyId) {
+        await tx.query(
+          `UPDATE contacts
+           SET company_id = $1,
+               company_name = COALESCE(NULLIF($2, ''), company_name),
+               updated_at = now()
+           WHERE tenant_id = $3 AND id = $4
+             AND (company_id IS NULL OR company_id <> $1 OR company_name IS NULL OR company_name = '')`,
+          [companyId, payload.company_name?.trim() ?? "", tenantId, customerId],
+        );
+      }
+
+      // 2.2. Если была выбрана существующая сделка, дополняем её привязками к компании и контакту
+      if (dealId && (companyId || customerId)) {
+        await tx.query(
+          `UPDATE deals
+           SET company_id = COALESCE(company_id, $1),
+               contact_id = COALESCE(contact_id, $2),
+               updated_at = now()
+           WHERE tenant_id = $3 AND id = $4
+             AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+          [companyId || null, customerId || null, tenantId, dealId],
+        );
+      }
+
       // 3. Если сделки всё ещё нет — создаём её автоматически в CRM на стартовом этапе воронки
       if (!dealId) {
         let pipelineRow = await tx.queryOne<{ id: string }>(
@@ -568,6 +685,9 @@ export class RepairsService {
       const packageContentsItems = payload.package_contents_items ?? [];
       const malfunctionsItems = payload.malfunctions ?? [];
 
+      const masterId = payload.master_id && payload.master_id.trim() ? payload.master_id.trim() : author.id;
+      const masterName = payload.master_name && payload.master_name.trim() ? payload.master_name.trim() : author.name;
+
       const row = await tx.queryOneOrThrow<RepairOrderRow>(
         `INSERT INTO repair_orders
            (tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
@@ -596,8 +716,8 @@ export class RepairsService {
           photos,
           additionalContactsJson,
           payload.priority,
-          payload.master_id,
-          payload.master_name,
+          masterId,
+          masterName,
           payload.estimated_cost,
           payload.notes ?? "",
         ],
@@ -618,49 +738,13 @@ export class RepairsService {
         [tenantId, row.id, author.id, author.name, `Order ${ticketNumber} registered at intake`],
       );
 
-      // Keep the catalogue of serviced devices current for autocomplete.
-      await tx.query(
-        `INSERT INTO device_models (tenant_id, equipment_type, brand, model)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (tenant_id, brand, model) DO NOTHING`,
-        [tenantId, payload.equipment_type, payload.equipment_brand, payload.equipment_model],
-      ).catch(() => {});
-
-      // Автопополнение справочников тенанта
-      if (payload.equipment_type) {
-        await tx.query(
-          `INSERT INTO equipment_types (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-          [tenantId, payload.equipment_type.trim()],
-        ).catch(() => {});
-      }
-      if (payload.equipment_brand) {
-        await tx.query(
-          `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-          [tenantId, payload.equipment_brand.trim()],
-        ).catch(() => {});
-      }
-      if (payload.equipment_model) {
-        await tx.query(
-          `INSERT INTO equipment_models (tenant_id, brand_name, name) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, brand_name, name) DO NOTHING`,
-          [tenantId, payload.equipment_brand.trim(), payload.equipment_model.trim()],
-        ).catch(() => {});
-      }
-      for (const m of malfunctionsItems) {
-        if (m.trim()) {
-          await tx.query(
-            `INSERT INTO equipment_malfunctions (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-            [tenantId, m.trim()],
-          ).catch(() => {});
-        }
-      }
-      for (const a of packageContentsItems) {
-        if (a.trim()) {
-          await tx.query(
-            `INSERT INTO equipment_accessories (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-            [tenantId, a.trim()],
-          ).catch(() => {});
-        }
-      }
+      await this.syncEquipmentDictionaries(tx, tenantId, {
+        equipment_type: payload.equipment_type,
+        equipment_brand: payload.equipment_brand,
+        equipment_model: payload.equipment_model,
+        malfunctions: malfunctionsItems,
+        accessories: packageContentsItems,
+      });
 
       const dto = toRepairOrderDTO(row);
       if (dto.dealId) void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
@@ -782,6 +866,19 @@ export class RepairsService {
         }
       }
 
+      // 1.1. Привязываем контакт к компании при наличии обоих идентификаторов
+      if (customerId && companyId) {
+        await tx.query(
+          `UPDATE contacts
+           SET company_id = $1,
+               company_name = COALESCE(NULLIF($2, ''), company_name),
+               updated_at = now()
+           WHERE tenant_id = $3 AND id = $4
+             AND (company_id IS NULL OR company_id <> $1 OR company_name IS NULL OR company_name = '')`,
+          [companyId, payload.company_name?.trim() ?? "", tenantId, customerId],
+        );
+      }
+
       // 2. Сделка
       if (dealId) {
         const deal = await tx.queryOne<{ id: string; contact_id: string | null; company_id: string | null }>(
@@ -789,6 +886,19 @@ export class RepairsService {
           [tenantId, dealId],
         );
         if (!deal) throw new NotFoundError("Выбранная сделка не найдена");
+        if (!companyId && deal.company_id) companyId = deal.company_id;
+        if (!customerId && deal.contact_id) customerId = deal.contact_id;
+        if (companyId || customerId) {
+          await tx.query(
+            `UPDATE deals
+             SET company_id = COALESCE(company_id, $1),
+                 contact_id = COALESCE(contact_id, $2),
+                 updated_at = now()
+             WHERE tenant_id = $3 AND id = $4
+               AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+            [companyId || null, customerId || null, tenantId, dealId],
+          );
+        }
       } else {
         let pipelineRow = await tx.queryOne<{ id: string }>(
           `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
@@ -847,6 +957,8 @@ export class RepairsService {
 
       // 3. Создаем наряд-заказ на каждую единицу оборудования
       const createdOrders: RepairOrderDTO[] = [];
+      const defaultMasterId = payload.master_id && payload.master_id.trim() ? payload.master_id.trim() : author.id;
+      const defaultMasterName = payload.master_name && payload.master_name.trim() ? payload.master_name.trim() : author.name;
 
       for (const eq of payload.equipments) {
         const ticketNumber = await this.allocateTicketNumber(tx, tenantId);
@@ -857,6 +969,8 @@ export class RepairsService {
         const defectPhotos = eq.defect_photos ?? payload.defect_photos ?? [];
 
         const additionalContactsJson = JSON.stringify(payload.additional_contacts ?? []);
+        const itemMasterId = (eq.master_id && eq.master_id.trim()) || defaultMasterId;
+        const itemMasterName = (eq.master_name && eq.master_name.trim()) || defaultMasterName;
 
         const row = await tx.queryOneOrThrow<RepairOrderRow>(
           `INSERT INTO repair_orders (
@@ -890,8 +1004,8 @@ export class RepairsService {
             malfunctions,
             defectPhotos,
             payload.priority ?? "normal",
-            payload.master_id,
-            payload.master_name ?? "",
+            itemMasterId,
+            itemMasterName,
             eq.estimated_cost ?? 0,
             payload.notes ?? "",
             additionalContactsJson,
@@ -905,43 +1019,18 @@ export class RepairsService {
           [tenantId, row.id, author.id, author.name],
         );
 
-        if (eq.equipment_type.trim()) {
-          await tx.query(
-            `INSERT INTO equipment_types (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-            [tenantId, eq.equipment_type.trim()],
-          ).catch(() => {});
-        }
-        if (eq.equipment_brand.trim()) {
-          await tx.query(
-            `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-            [tenantId, eq.equipment_brand.trim()],
-          ).catch(() => {});
-        }
-        if (eq.equipment_model.trim()) {
-          await tx.query(
-            `INSERT INTO equipment_models (tenant_id, brand_name, name) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, brand_name, name) DO NOTHING`,
-            [tenantId, eq.equipment_brand.trim(), eq.equipment_model.trim()],
-          ).catch(() => {});
-        }
-        for (const m of malfunctions) {
-          if (m.trim()) {
-            await tx.query(
-              `INSERT INTO equipment_malfunctions (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-              [tenantId, m.trim()],
-            ).catch(() => {});
-          }
-        }
-        for (const a of packageContentsItems) {
-          if (a.trim()) {
-            await tx.query(
-              `INSERT INTO equipment_accessories (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
-              [tenantId, a.trim()],
-            ).catch(() => {});
-          }
-        }
+        await this.syncEquipmentDictionaries(tx, tenantId, {
+          equipment_type: eq.equipment_type,
+          equipment_brand: eq.equipment_brand,
+          equipment_model: eq.equipment_model,
+          malfunctions,
+          accessories: packageContentsItems,
+        });
 
         createdOrders.push(toRepairOrderDTO(row));
       }
+
+      if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
 
       return createdOrders;
     });
@@ -1491,6 +1580,95 @@ export class RepairsService {
     );
 
     return row !== null;
+  }
+
+  /**
+   * Пакетное удаление наряд-заказов (soft-delete).
+   */
+  async batchDelete(tenantId: string, ids: string[]): Promise<{ count: number; ids: string[] }> {
+    if (ids.length === 0) return { count: 0, ids: [] };
+    const rows = await query<{ id: string }>(
+      `UPDATE repair_orders SET deleted_at = now()
+       WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+       RETURNING id`,
+      [tenantId, ids],
+    );
+    return { count: rows.length, ids: rows.map((r) => r.id) };
+  }
+
+  /**
+   * Пакетная смена статуса наряд-заказов.
+   */
+  async batchUpdateStatus(
+    tenantId: string,
+    ids: string[],
+    status: RepairStatus,
+    author: { id: string; name: string },
+    comment?: string,
+  ): Promise<{ updated: number; ids: string[]; errors: { id: string; error: string }[] }> {
+    const updatedIds: string[] = [];
+    const errors: { id: string; error: string }[] = [];
+
+    for (const id of ids) {
+      try {
+        await this.changeStatus(tenantId, id, author, {
+          status,
+          comment: comment || `Пакетное изменение статуса на «${status}»`,
+        });
+        updatedIds.push(id);
+      } catch {
+        // Если штатный FSM-переход требует промежуточных этапов,
+        // администратор/менеджер в пакете переводит принудительно с сохранением аудита
+        try {
+          await withTenant(tenantId, async (tx) => {
+            const current = await tx.queryOne<RepairOrderRow>(
+              `SELECT ${ORDER_COLUMNS} FROM repair_orders WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+              [tenantId, id],
+            );
+            if (!current) return;
+
+            const from = current.status;
+            if (from === status) {
+              updatedIds.push(id);
+              return;
+            }
+
+            const row = await tx.queryOne<RepairOrderRow>(
+              `UPDATE repair_orders
+               SET status = $3,
+                   completed_at = CASE WHEN $3 = 'ready' THEN COALESCE(completed_at, now()) ELSE completed_at END,
+                   delivered_at = CASE WHEN $3 = 'issued' THEN COALESCE(delivered_at, now()) ELSE delivered_at END
+               WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+               RETURNING ${ORDER_COLUMNS}`,
+              [tenantId, id, status],
+            );
+
+            if (row) {
+              await tx.query(
+                `INSERT INTO repair_notes
+                   (tenant_id, repair_order_id, author_id, author_name, kind, content, from_status, to_status)
+                 VALUES ($1, $2, $3, $4, 'status', $5, $6, $7)`,
+                [
+                  tenantId,
+                  id,
+                  author.id,
+                  author.name,
+                  comment || `Пакетное обновление статуса: ${from} → ${status}`,
+                  from,
+                  status,
+                ],
+              );
+              updatedIds.push(id);
+            }
+          });
+        } catch (fallbackErr: unknown) {
+          const msg = fallbackErr instanceof Error ? fallbackErr.message : "Не удалось обновить статус";
+          errors.push({ id, error: msg });
+        }
+      }
+    }
+
+    return { updated: updatedIds.length, ids: updatedIds, errors };
   }
 
   /**

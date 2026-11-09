@@ -150,6 +150,12 @@ const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/auth/invite",
   "/auth/invite/accept",
   "/health",
+  "/api/ai-bots/generate-prompt",
+  "/api/v1/ai-bots/generate-prompt",
+  "/api/ai/generate-prompt",
+  "/api/v1/ai/generate-prompt",
+  "/api/bots/generate-prompt",
+  "/api/v1/bots/generate-prompt",
 ]);
 
 /**
@@ -172,7 +178,14 @@ export const authenticatePlugin: FastifyPluginAsync = fp(
 
       // Defence in depth: the hook is only registered on protected groups, but
       // a future misplacement must not start demanding tokens on /auth.
-      if (PUBLIC_PATHS.has(path)) return;
+      if (
+        PUBLIC_PATHS.has(path) ||
+        path.includes("/widgets/bootstrap/") ||
+        path.endsWith("/events") ||
+        path.includes("/events/")
+      ) {
+        return;
+      }
 
       let token: string | undefined;
       const authHeader = request.headers.authorization;
