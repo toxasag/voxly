@@ -953,6 +953,54 @@ export function useCreatePhoto(): UseMutationResult<RepairPhotoDTO, ApiClientErr
 }
 
 // ---------------------------------------------------------------------------
+// Batch Operations
+// ---------------------------------------------------------------------------
+
+export interface BatchUpdateStatusResult {
+  updated: number;
+  ids: string[];
+  errors: { id: string; error: string }[];
+}
+
+export function useBatchUpdateRepairStatus(): UseMutationResult<
+  BatchUpdateStatusResult,
+  ApiClientError,
+  { ids: string[]; status: RepairStatus; comment?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<BatchUpdateStatusResult>(`${BASE_PATH}/batch-status`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useBatchDeleteRepairs(): UseMutationResult<
+  { count: number; ids: string[] },
+  ApiClientError,
+  { ids: string[] }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number; ids: string[] }>(`${BASE_PATH}/batch-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export { useCompanyInnLookup, type CompanyInnLookupResult } from "./use-companies";
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
