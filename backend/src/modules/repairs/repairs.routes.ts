@@ -3,6 +3,7 @@ import { z } from "zod";
 import { RepairsService } from "./repairs.service.js";
 import { innLookupService } from "../integrations/inn-lookup.service.js";
 import {
+  changePaymentStatusSchema,
   changeStatusSchema,
   createBatchRepairSchema,
   createNoteSchema,
@@ -12,6 +13,7 @@ import {
   createRepairServiceCatalogSchema,
   createWorkSchema,
   renameDictionaryItemSchema,
+  repairPaymentStatusSchema,
   repairPrioritySchema,
   repairStatusSchema,
   updatePartSchema,
@@ -24,6 +26,7 @@ import { NotFoundError } from "../../plugins/errorHandler.js";
 const listQuerySchema = z.object({
   deal_id: z.string().uuid().optional(),
   status: repairStatusSchema.optional(),
+  payment_status: repairPaymentStatusSchema.optional(),
   priority: repairPrioritySchema.optional(),
   master_id: z.string().uuid().optional(),
   customer_id: z.string().uuid().optional(),
@@ -88,6 +91,7 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     const { items, total } = await service.list(request.tenant_id, {
       dealId: params.deal_id,
       status: params.status,
+      paymentStatus: params.payment_status,
       priority: params.priority,
       masterId: params.master_id,
       customerId: params.customer_id,
@@ -254,6 +258,17 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: result });
   });
 
+  // POST /repairs/batch-payment-status — пакетное изменение статуса оплаты
+  app.post("/batch-payment-status", { onRequest: canWrite }, async (request, reply) => {
+    const body = z.object({
+      ids: z.array(z.string().uuid("id must be a UUID")).min(1, "At least one ID is required"),
+      payment_status: repairPaymentStatusSchema,
+    }).parse(request.body);
+
+    const result = await service.batchUpdatePaymentStatus(request.tenant_id, body.ids, body.payment_status);
+    return reply.send({ data: result });
+  });
+
   // POST /repairs/batch-delete — пакетное удаление наряд-заказов
   app.post("/batch-delete", { onRequest: canWrite }, async (request, reply) => {
     const body = z.object({
@@ -309,6 +324,15 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
 
     if (order === null) throw new NotFoundError("Repair order not found");
 
+    return reply.send({ data: order });
+  });
+
+  // PATCH /repairs/:id/payment-status — смена статуса оплаты (unpaid / invoiced / paid)
+  app.patch("/:id/payment-status", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = changePaymentStatusSchema.parse(request.body);
+
+    const order = await service.updatePaymentStatus(request.tenant_id, id, body.payment_status);
     return reply.send({ data: order });
   });
 

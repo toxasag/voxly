@@ -583,6 +583,7 @@ CREATE TABLE IF NOT EXISTS repair_orders (
   defect_description TEXT NOT NULL,
   defect_photos TEXT[] NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'intake',
+  payment_status TEXT NOT NULL DEFAULT 'unpaid',
   priority TEXT NOT NULL DEFAULT 'normal',
   master_id UUID NOT NULL,
   master_name TEXT NOT NULL,
