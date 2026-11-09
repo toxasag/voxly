@@ -2,14 +2,15 @@
 // Маршруты API интеграции с Битрикс24: /api/v1/settings/integrations/bitrix24
 // ---------------------------------------------------------------------------
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { authenticatePlugin } from "../../../plugins/authenticate.js";
 import { bitrix24Service } from "./bitrix24.service.js";
 
 const updateConfigBody = z.object({
-  webhook_url: z.string().trim().max(500),
+  webhook_url: z.string().trim().max(500).optional(),
   is_enabled: z.boolean().optional(),
+  allowed_sources: z.array(z.string().trim()).optional(),
 });
 
 const testConnectionBody = z.object({
@@ -26,21 +27,30 @@ export default async function bitrix24Routes(app: FastifyInstance): Promise<void
    */
   app.get("/", { onRequest: admin }, async (request, reply) => {
     const config = await bitrix24Service.getConfig(request.tenant_id);
-    return reply.send({ data: config, config });
+    return reply.send({ data: config, config, ...config });
   });
 
-  /**
-   * PUT /
-   * Сохранить настройки вебхука и статус активности.
-   */
-  app.put("/", { onRequest: admin }, async (request, reply) => {
+  const handleUpdate = async (request: FastifyRequest, reply: FastifyReply) => {
     const body = updateConfigBody.parse(request.body);
     const updated = await bitrix24Service.saveConfig(request.tenant_id, {
       webhook_url: body.webhook_url,
       is_enabled: body.is_enabled,
+      allowed_sources: body.allowed_sources,
     });
-    return reply.send({ data: updated, config: updated });
-  });
+    return reply.send({ data: updated, config: updated, ...updated });
+  };
+
+  /**
+   * PUT /
+   * Сохранить настройки вебхука, статус активности и разрешенные источники.
+   */
+  app.put("/", { onRequest: admin }, handleUpdate);
+
+  /**
+   * PATCH /
+   * Частичное обновление настроек интеграции (например, фильтр источников).
+   */
+  app.patch("/", { onRequest: admin }, handleUpdate);
 
   /**
    * POST /test

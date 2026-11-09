@@ -8,17 +8,89 @@
 
 import { query, queryOne } from "../../../db/client.js";
 import { AppError } from "../../../plugins/errorHandler.js";
-import type {
-  Bitrix24ConfigDTO,
-  Bitrix24ConfigRow,
-  Bitrix24LeadAddRequest,
-  Bitrix24LeadAddResponse,
-  Bitrix24TestResult,
-  UpdateBitrix24ConfigPayload,
+import {
+  type Bitrix24ConfigDTO,
+  type Bitrix24ConfigRow,
+  type Bitrix24LeadAddRequest,
+  type Bitrix24LeadAddResponse,
+  type Bitrix24TestResult,
+  type LeadSource,
+  type UpdateBitrix24ConfigPayload,
 } from "./bitrix24.types.js";
 
 export const BITRIX24_SOURCE_ID = "UC_VWN1ZK";
 const DEFAULT_TIMEOUT_MS = 20_000;
+
+/**
+ * Нормализация строкового идентификатора источника к каноническому LeadSource.
+ */
+export function normalizeLeadSource(raw?: string | null): LeadSource | null {
+  if (!raw) return null;
+  const s = raw.trim().toLowerCase();
+  if (s === "whatsapp" || s === "wa") return "whatsapp";
+  if (s === "max" || s === "rumax") return "max";
+  if (s === "telegram_bot" || s === "tg_bot" || s === "bot") return "telegram_bot";
+  if (s === "telegram_personal" || s === "telegram_user" || s === "tg_personal") return "telegram_personal";
+  if (s === "telegram" || s === "tg") return "telegram_personal";
+  if (s === "site_widget" || s === "webchat" || s === "widget" || s === "site") return "site_widget";
+  if (s === "manual" || s === "direct" || s === "manager" || s === "crm") return "manual";
+  return null;
+}
+
+/**
+ * Определение источника заявки по метаданным сделки и контакта.
+ */
+export function resolveLeadSource(data: {
+  source?: string | null;
+  sourceMetadata?: Record<string, unknown> | null;
+  sourceWidgetId?: string | null;
+  contactChannel?: string | null;
+  customFields?: Record<string, unknown> | null;
+}): LeadSource {
+  // 1. Явно переданный источник
+  const explicit = normalizeLeadSource(data.source);
+  if (explicit) return explicit;
+
+  // 2. Метаданные источника
+  const meta = data.sourceMetadata || {};
+  const cf = data.customFields || {};
+
+  const metaChannel = String(meta.channel || meta.channel_type || cf.channel || cf.source || "").toLowerCase();
+  const isBot = Boolean(meta.is_bot || meta.isBot || meta.type === "bot" || meta.sender_type === "bot");
+
+  if (metaChannel === "telegram_bot" || (metaChannel === "telegram" && isBot)) {
+    return "telegram_bot";
+  }
+  if (metaChannel === "telegram" || metaChannel === "telegram_personal") {
+    return "telegram_personal";
+  }
+  if (metaChannel === "whatsapp" || metaChannel === "wa") {
+    return "whatsapp";
+  }
+  if (metaChannel === "max" || metaChannel === "rumax") {
+    return "max";
+  }
+  if (metaChannel === "webchat" || metaChannel === "site_widget" || metaChannel === "widget") {
+    return "site_widget";
+  }
+
+  // 3. Наличие виджета на сайте
+  if (data.sourceWidgetId || meta.widget_id || meta.site_url || meta.page_url) {
+    return "site_widget";
+  }
+
+  // 4. Канал контакта
+  const ch = String(data.contactChannel || "").toLowerCase();
+  if (ch === "whatsapp") return "whatsapp";
+  if (ch === "rumax" || ch === "max") return "max";
+  if (ch === "webchat") return "site_widget";
+  if (ch === "telegram") {
+    return isBot ? "telegram_bot" : "telegram_personal";
+  }
+
+  // 5. Дефолт: ручное создание
+  return "manual";
+}
 
 /**
  * Валидация и нормализация входящего вебхука Битрикс24.
@@ -73,7 +145,7 @@ export class Bitrix24Service {
    */
   async getConfig(tenantId: string): Promise<Bitrix24ConfigDTO> {
     const row = await queryOne<Bitrix24ConfigRow>(
-      `SELECT tenant_id, webhook_url, is_enabled, last_lead_id, last_sync_at, last_error, created_at, updated_at
+      `SELECT tenant_id, webhook_url, is_enabled, allowed_sources, last_lead_id, last_sync_at, last_error, created_at, updated_at
        FROM tenant_bitrix24_configs
        WHERE tenant_id = $1`,
       [tenantId],
@@ -83,15 +155,21 @@ export class Bitrix24Service {
       return {
         webhook_url: "",
         is_enabled: false,
+        allowed_sources: [],
         last_lead_id: null,
         last_sync_at: null,
         last_error: null,
       };
     }
 
+    const allowed = Array.isArray(row.allowed_sources)
+      ? (row.allowed_sources as LeadSource[])
+      : [];
+
     return {
       webhook_url: row.webhook_url,
       is_enabled: row.is_enabled,
+      allowed_sources: allowed,
       last_lead_id: row.last_lead_id,
       last_sync_at:
         row.last_sync_at instanceof Date
@@ -107,8 +185,20 @@ export class Bitrix24Service {
    * Сохранение конфигурации вебхука Битрикс24.
    */
   async saveConfig(tenantId: string, payload: UpdateBitrix24ConfigPayload): Promise<Bitrix24ConfigDTO> {
-    const rawUrl = payload.webhook_url ? payload.webhook_url.trim() : "";
-    const isEnabled = payload.is_enabled ?? false;
+    const current = await this.getConfig(tenantId);
+
+    const rawUrl = payload.webhook_url !== undefined ? payload.webhook_url.trim() : current.webhook_url;
+    const isEnabled = payload.is_enabled !== undefined ? payload.is_enabled : current.is_enabled;
+
+    let cleanAllowedSources: string[] = current.allowed_sources ?? [];
+    if (payload.allowed_sources !== undefined) {
+      const set = new Set<string>();
+      for (const s of payload.allowed_sources) {
+        const clean = String(s).trim().toLowerCase();
+        if (clean) set.add(clean);
+      }
+      cleanAllowedSources = Array.from(set);
+    }
 
     // Если включено, URL обязан быть валидным
     if (isEnabled && !rawUrl) {
@@ -122,15 +212,16 @@ export class Bitrix24Service {
 
     const row = await queryOne<Bitrix24ConfigRow>(
       `INSERT INTO tenant_bitrix24_configs (
-         tenant_id, webhook_url, is_enabled, updated_at
+         tenant_id, webhook_url, is_enabled, allowed_sources, updated_at
        )
-       VALUES ($1, $2, $3, NOW())
+       VALUES ($1, $2, $3, $4, NOW())
        ON CONFLICT (tenant_id) DO UPDATE
        SET webhook_url = EXCLUDED.webhook_url,
            is_enabled = EXCLUDED.is_enabled,
+           allowed_sources = EXCLUDED.allowed_sources,
            updated_at = NOW()
        RETURNING *`,
-      [tenantId, rawUrl, isEnabled],
+      [tenantId, rawUrl, isEnabled, cleanAllowedSources],
     );
 
     if (!row) {
@@ -140,6 +231,7 @@ export class Bitrix24Service {
     return {
       webhook_url: row.webhook_url,
       is_enabled: row.is_enabled,
+      allowed_sources: (row.allowed_sources ?? []) as LeadSource[],
       last_lead_id: row.last_lead_id,
       last_sync_at:
         row.last_sync_at instanceof Date
@@ -266,12 +358,58 @@ export class Bitrix24Service {
       currency?: string | null;
       utmTags?: Record<string, string> | null;
       tenantIdentifier?: string;
+      source?: string | null;
+      sourceMetadata?: Record<string, unknown> | null;
+      sourceWidgetId?: string | null;
+      contactChannel?: string | null;
+      customFields?: Record<string, unknown> | null;
     },
-  ): Promise<{ success: boolean; leadId?: number | string; skipped?: boolean; error?: string }> {
+  ): Promise<{ success: boolean; leadId?: number | string; skipped?: boolean; error?: string; reason?: string }> {
     try {
       const cfg = await this.getConfig(tenantId);
       if (!cfg.is_enabled || !cfg.webhook_url) {
-        return { success: false, skipped: true };
+        return { success: false, skipped: true, reason: "INTEGRATION_DISABLED" };
+      }
+
+      // Проверка фильтрации по источникам заявки (allowed_sources)
+      const resolvedSource = resolveLeadSource({
+        source: leadData.source,
+        sourceMetadata: leadData.sourceMetadata,
+        sourceWidgetId: leadData.sourceWidgetId,
+        contactChannel: leadData.contactChannel,
+        customFields: leadData.customFields,
+      });
+
+      if (cfg.allowed_sources && cfg.allowed_sources.length > 0) {
+        if (!cfg.allowed_sources.includes(resolvedSource)) {
+          console.log(
+            `[Bitrix24] Skipping lead ${leadData.leadId} (tenant: ${tenantId}): source "${resolvedSource}" not in allowed_sources [${cfg.allowed_sources.join(", ")}]`,
+          );
+          try {
+            await query(
+              `INSERT INTO tenant_audit_log (tenant_id, action, entity_type, entity_id, details)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [
+                tenantId,
+                "integration.bitrix24.lead_skipped",
+                "deal",
+                leadData.leadId,
+                JSON.stringify({
+                  reason: "SOURCE_NOT_ALLOWED",
+                  lead_source: resolvedSource,
+                  allowed_sources: cfg.allowed_sources,
+                }),
+              ],
+            );
+          } catch (auditErr) {
+            console.warn("[Bitrix24] Failed to record skip audit log:", auditErr);
+          }
+          return {
+            success: false,
+            skipped: true,
+            reason: `SOURCE_NOT_ALLOWED: ${resolvedSource}`,
+          };
+        }
       }
 
       const targetUrl = normalizeBitrixWebhookUrl(cfg.webhook_url);

@@ -3,17 +3,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/apiClient";
 
+export const LEAD_SOURCES = [
+  "whatsapp",
+  "max",
+  "telegram_personal",
+  "telegram_bot",
+  "site_widget",
+  "manual",
+] as const;
+
+export type LeadSource = (typeof LEAD_SOURCES)[number];
+
 export interface Bitrix24ConfigDTO {
   webhook_url: string;
   is_enabled: boolean;
+  allowed_sources?: LeadSource[];
   last_lead_id: string | null;
   last_sync_at: string | null;
   last_error: string | null;
 }
 
 export interface UpdateBitrix24Payload {
-  webhook_url: string;
+  webhook_url?: string;
   is_enabled?: boolean;
+  allowed_sources?: (LeadSource | string)[];
 }
 
 export interface TestBitrix24Response {
