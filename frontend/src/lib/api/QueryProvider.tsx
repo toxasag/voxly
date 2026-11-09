@@ -26,7 +26,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
               // 4xx responses are deterministic: retrying a validation error
               // or a permission denial only adds latency. 401 is already
               // handled by apiClient's refresh-and-retry.
-              if (error instanceof ApiClientError && error.status < 500) return false;
+              if (error instanceof ApiClientError && error.status < 500 && error.status > 0) return false;
               return failureCount < 2;
             },
           },
