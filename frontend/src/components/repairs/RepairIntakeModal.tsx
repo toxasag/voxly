@@ -604,8 +604,8 @@ export function RepairIntakeModal({
               <h2 className="text-sm font-semibold text-[#111111]">Приёмка оборудования</h2>
               <p className="text-xs text-[#666666]">
                 {equipments.length > 1
-                  ? `Оформить пакетный ремонт (${equipments.length} шт.) и напечатать квитанции`
-                  : "Оформить ремонт и напечатать квитанцию"}
+                  ? `Оформление пакетного ремонта (${equipments.length} шт.)`
+                  : "Оформление наряд-заказа на ремонт"}
               </p>
             </div>
           </div>
@@ -765,12 +765,12 @@ export function RepairIntakeModal({
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Создаём...
+                    <Loader2 className="h-4 w-4 animate-spin" /> Сохраняем...
                   </>
                 ) : equipments.length > 1 ? (
-                  `Оформить пакет (${equipments.length} шт.) и напечатать`
+                  `Сохранить пакет (${equipments.length} шт.)`
                 ) : (
-                  "Оформить и напечатать квитанцию"
+                  "Сохранить"
                 )}
               </button>
             </div>

@@ -22,6 +22,7 @@ import {
 import type { CreateRepairPayload } from "@/schemas/repair.schema";
 import {
   useRepairClientLookup,
+  useCompanyInnLookup,
   type ClientLookupDealDTO,
   type ClientLookupResultDTO,
 } from "@/lib/api/use-repairs";
@@ -117,6 +118,39 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     }, 300);
     return () => clearTimeout(handler);
   }, [customerName]);
+
+  // Debounce ИНН (350ms) для реактивного автопоиска
+  const [debouncedInn, setDebouncedInn] = useState(companyInn);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedInn(companyInn);
+    }, 350);
+    return () => clearTimeout(handler);
+  }, [companyInn]);
+
+  // Сквозной поиск реквизитов организации по ИНН (DaData / ФНС ЕГРЮЛ)
+  const innLookupQuery = useCompanyInnLookup(debouncedInn);
+  const isInnLoading = innLookupQuery.isLoading || innLookupQuery.isFetching;
+
+  // Автозаполнение реквизитов при успешном нахождении в реестре
+  useEffect(() => {
+    if (innLookupQuery.data) {
+      const info = innLookupQuery.data;
+      if (info.name) {
+        form.setValue("company_name", info.name, { shouldDirty: true, shouldValidate: true });
+      }
+      if (info.ogrn) {
+        form.setValue("company_ogrn", info.ogrn, { shouldDirty: true });
+      }
+      if (info.legalAddress) {
+        form.setValue("company_legal_address", info.legalAddress, { shouldDirty: true });
+      }
+      if (info.type === "INDIVIDUAL" && info.directorName && (!customerName || customerName.trim() === "")) {
+        form.setValue("customer_name", info.directorName, { shouldDirty: true });
+      }
+      setIsRequisitesOpen(true);
+    }
+  }, [innLookupQuery.data, form, customerName]);
 
   // Реактивный поиск по телефону или имени
   const lookupQuery = useRepairClientLookup({
@@ -451,17 +485,55 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
         {isCompanyChecked && (
           <div className="space-y-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3">
-            <div className="space-y-1">
-              <label className="text-[11px] font-medium text-[#666666] uppercase tracking-wider">
-                Название компании / контрагента *
-              </label>
-              <input
-                type="text"
-                value={companyName}
-                onChange={(e) => form.setValue("company_name", e.target.value, { shouldDirty: true })}
-                placeholder="ООО «Вектор», ИП Иванов"
-                className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-[11px] font-medium text-[#666666] uppercase tracking-wider">
+                  Название компании / контрагента *
+                </label>
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => form.setValue("company_name", e.target.value, { shouldDirty: true })}
+                  placeholder="ООО «Вектор», ИП Иванов"
+                  className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-medium text-[#666666] uppercase tracking-wider">
+                    ИНН (автопоиск)
+                  </label>
+                  {innLookupQuery.data && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-600">
+                      <Check className="h-3 w-3" /> Найдено
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    maxLength={12}
+                    value={companyInn}
+                    onChange={(e) =>
+                      form.setValue("company_inn", e.target.value.replace(/\D/g, ""), { shouldDirty: true })
+                    }
+                    placeholder="10 или 12 цифр"
+                    className={cn(
+                      "h-8 w-full rounded-[8px] border bg-white px-2.5 text-xs font-mono tabular-nums text-[#111111] focus:outline-none transition-colors",
+                      innLookupQuery.data
+                        ? "border-emerald-300 focus:border-emerald-500"
+                        : "border-[#e5e5e5] focus:border-[#4a38f5]",
+                      isInnLoading && "pr-7",
+                    )}
+                  />
+                  {isInnLoading && (
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Раскрывающийся блок реквизитов */}
@@ -472,21 +544,37 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
                 className="inline-flex items-center gap-1.5 text-xs font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors"
               >
                 {isRequisitesOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                {isRequisitesOpen ? "Скрыть банковские реквизиты" : "Указать реквизиты (ИНН, ОГРН, БИК, Р/с, Адрес)"}
+                {isRequisitesOpen ? "Скрыть банковские реквизиты" : "Указать реквизиты (ОГРН, БИК, Р/с, Адрес)"}
               </button>
 
               {isRequisitesOpen && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-2">
                   <div className="space-y-1">
-                    <label className="text-[11px] text-[#666666]">ИНН (10 или 12 цифр)</label>
-                    <input
-                      type="text"
-                      maxLength={12}
-                      value={companyInn}
-                      onChange={(e) => form.setValue("company_inn", e.target.value.replace(/\D/g, ""), { shouldDirty: true })}
-                      placeholder="7701234567"
-                      className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-mono tabular-nums text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] text-[#666666]">ИНН (10 или 12 цифр)</label>
+                      {innLookupQuery.data && (
+                        <span className="text-[10px] text-emerald-600">✓ ЕГРЮЛ</span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        maxLength={12}
+                        value={companyInn}
+                        onChange={(e) => form.setValue("company_inn", e.target.value.replace(/\D/g, ""), { shouldDirty: true })}
+                        placeholder="7701234567"
+                        className={cn(
+                          "h-8 w-full rounded-[8px] border bg-white px-2.5 text-xs font-mono tabular-nums text-[#111111] focus:outline-none",
+                          innLookupQuery.data ? "border-emerald-300 focus:border-emerald-500" : "border-[#e5e5e5] focus:border-[#4a38f5]",
+                          isInnLoading && "pr-7",
+                        )}
+                      />
+                      {isInnLoading && (
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-1">

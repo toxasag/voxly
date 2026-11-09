@@ -1494,6 +1494,95 @@ export class RepairsService {
   }
 
   /**
+   * Пакетное удаление наряд-заказов (soft-delete).
+   */
+  async batchDelete(tenantId: string, ids: string[]): Promise<{ count: number; ids: string[] }> {
+    if (ids.length === 0) return { count: 0, ids: [] };
+    const rows = await query<{ id: string }>(
+      `UPDATE repair_orders SET deleted_at = now()
+       WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+       RETURNING id`,
+      [tenantId, ids],
+    );
+    return { count: rows.length, ids: rows.map((r) => r.id) };
+  }
+
+  /**
+   * Пакетная смена статуса наряд-заказов.
+   */
+  async batchUpdateStatus(
+    tenantId: string,
+    ids: string[],
+    status: RepairStatus,
+    author: { id: string; name: string },
+    comment?: string,
+  ): Promise<{ updated: number; ids: string[]; errors: { id: string; error: string }[] }> {
+    const updatedIds: string[] = [];
+    const errors: { id: string; error: string }[] = [];
+
+    for (const id of ids) {
+      try {
+        await this.changeStatus(tenantId, id, author, {
+          status,
+          comment: comment || `Пакетное изменение статуса на «${status}»`,
+        });
+        updatedIds.push(id);
+      } catch {
+        // Если штатный FSM-переход требует промежуточных этапов,
+        // администратор/менеджер в пакете переводит принудительно с сохранением аудита
+        try {
+          await withTenant(tenantId, async (tx) => {
+            const current = await tx.queryOne<RepairOrderRow>(
+              `SELECT ${ORDER_COLUMNS} FROM repair_orders WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+              [tenantId, id],
+            );
+            if (!current) return;
+
+            const from = current.status;
+            if (from === status) {
+              updatedIds.push(id);
+              return;
+            }
+
+            const row = await tx.queryOne<RepairOrderRow>(
+              `UPDATE repair_orders
+               SET status = $3,
+                   completed_at = CASE WHEN $3 = 'ready' THEN COALESCE(completed_at, now()) ELSE completed_at END,
+                   delivered_at = CASE WHEN $3 = 'issued' THEN COALESCE(delivered_at, now()) ELSE delivered_at END
+               WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+               RETURNING ${ORDER_COLUMNS}`,
+              [tenantId, id, status],
+            );
+
+            if (row) {
+              await tx.query(
+                `INSERT INTO repair_notes
+                   (tenant_id, repair_order_id, author_id, author_name, kind, content, from_status, to_status)
+                 VALUES ($1, $2, $3, $4, 'status', $5, $6, $7)`,
+                [
+                  tenantId,
+                  id,
+                  author.id,
+                  author.name,
+                  comment || `Пакетное обновление статуса: ${from} → ${status}`,
+                  from,
+                  status,
+                ],
+              );
+              updatedIds.push(id);
+            }
+          });
+        } catch (fallbackErr: unknown) {
+          const msg = fallbackErr instanceof Error ? fallbackErr.message : "Не удалось обновить статус";
+          errors.push({ id, error: msg });
+        }
+      }
+    }
+
+    return { updated: updatedIds.length, ids: updatedIds, errors };
+  }
+
+  /**
    * Reactive lookup for customer identification during repair intake.
    * Searches contacts by phone (normalized digits match) or query (name/company).
    * If customer found, also loads their company requisites and active CRM deals.
