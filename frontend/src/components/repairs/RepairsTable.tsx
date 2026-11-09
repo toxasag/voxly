@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Wrench,
@@ -9,11 +9,16 @@ import {
   Phone,
   Building2,
   AlertCircle,
+  Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import type { RepairTicket, RepairStatus, RepairFilterStatus } from "@/lib/repairs/repairs.types";
 import { getRepairStatusLabel } from "@/lib/repairs/repairs.types";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { useBatchUpdateRepairStatus, useBatchDeleteRepairs } from "@/lib/api/use-repairs";
 import { cn } from "@/lib/utils";
 
 interface RepairsTableProps {
@@ -36,6 +41,20 @@ const STATUS_TABS: { value: RepairFilterStatus; label: string }[] = [
   { value: "ready", label: "Готов" },
   { value: "issued", label: "Выдан" },
 ];
+
+/**
+ * Компактное форматирование номера акта: заменяет громоздкий префикс
+ * №ЗН-2026-0001 на компактный вид № 0001 с сохранением исходного номера.
+ */
+export function formatOrderNumber(rawNumber: string): string {
+  if (!rawNumber) return "";
+  const match = rawNumber.match(/(?:.*-)?(\d+)$/);
+  if (match && match[1]) {
+    return `№ ${match[1]}`;
+  }
+  if (rawNumber.startsWith("№")) return rawNumber;
+  return `№ ${rawNumber}`;
+}
 
 function formatDateTime(iso: string): string {
   try {
@@ -108,6 +127,14 @@ export const RepairsTable = memo(function RepairsTable({
 }: RepairsTableProps) {
   const router = useRouter();
 
+  // Пакетные операции (выбор строк чекбоксами)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedBulkStatus, setSelectedBulkStatus] = useState<string>("");
+
+  const batchStatusMutation = useBatchUpdateRepairStatus();
+  const batchDeleteMutation = useBatchDeleteRepairs();
+
   const handleRowClick = useCallback(
     (id: string) => {
       router.push(`/repairs/${id}`);
@@ -115,18 +142,49 @@ export const RepairsTable = memo(function RepairsTable({
     [router],
   );
 
+  const handleBulkStatusChange = async (newStatus: RepairStatus) => {
+    if (selectedIds.size === 0) return;
+    try {
+      await batchStatusMutation.mutateAsync({
+        ids: Array.from(selectedIds),
+        status: newStatus,
+      });
+      toast.success(`Статус обновлен для ${selectedIds.size} наряд-заказов`);
+      setSelectedIds(new Set());
+      setSelectedBulkStatus("");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Ошибка при смене статуса";
+      toast.error(msg);
+    }
+  };
+
+  const handleBulkDeleteConfirm = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      await batchDeleteMutation.mutateAsync({
+        ids: Array.from(selectedIds),
+      });
+      toast.success(`Удалено наряд-заказов: ${selectedIds.size}`);
+      setSelectedIds(new Set());
+      setIsDeleteDialogOpen(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Ошибка при удалении";
+      toast.error(msg);
+    }
+  };
+
   const columns = useMemo<RecordColumn<RepairTicket>[]>(
     () => [
       {
         id: "ticket_number",
         header: "Акт приёма",
-        width: 135,
+        width: 130,
         sortValue: (t) => t.ticket_number,
         render: (ticket) => (
           <RecordCellShell isLabelIdentifier>
-            <div className="flex flex-col py-0.5">
+            <div className="flex flex-col py-0.5" title={`Исходный номер: ${ticket.ticket_number}`}>
               <span className="font-mono text-xs font-bold text-[#111111]">
-                №{ticket.ticket_number}
+                {formatOrderNumber(ticket.ticket_number)}
               </span>
               <span className="text-[11px] text-[#666666]">
                 {formatDateTime(ticket.received_at)}
@@ -208,16 +266,22 @@ export const RepairsTable = memo(function RepairsTable({
       {
         id: "deal_note",
         header: "Заметка",
-        width: 180,
+        width: 190,
         render: (ticket) => (
           <RecordCellShell>
             {ticket.deal_note ? (
-              <div
-                className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2 py-0.5 text-[11px] text-[#854d0e] truncate max-w-[165px]"
-                title={ticket.deal_note}
-              >
-                {ticket.deal_note}
-              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2 py-0.5 text-[11px] text-[#854d0e] line-clamp-2 max-w-[175px] leading-snug cursor-help"
+                  >
+                    {ticket.deal_note}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs text-xs">
+                  {ticket.deal_note}
+                </TooltipContent>
+              </Tooltip>
             ) : (
               <span className="text-xs text-[#888888]">—</span>
             )}
@@ -279,17 +343,24 @@ export const RepairsTable = memo(function RepairsTable({
         width: 48,
         render: (ticket) => (
           <RecordCellShell>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onPrintReceipt(ticket);
-              }}
-              className="rounded p-1 text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors"
-              title="Печать квитанции"
-            >
-              <Printer className="h-3.5 w-3.5" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPrintReceipt(ticket);
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors"
+                  aria-label="Печать квитанции"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="text-xs">
+                Печать квитанции
+              </TooltipContent>
+            </Tooltip>
           </RecordCellShell>
         ),
       },
@@ -338,59 +409,128 @@ export const RepairsTable = memo(function RepairsTable({
   }
 
   return (
-    <div className="space-y-3">
-      {/* Top Bar: Search + Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Поиск по наряду, клиенту, бренду..."
-            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-9 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
-          />
-        </div>
-
-        <div className="flex items-center gap-1 flex-wrap">
-          {STATUS_TABS.map((st) => (
-            <button
-              key={st.value}
-              type="button"
-              onClick={() => onFilterStatusChange(st.value)}
-              className={cn(
-                "rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
-                filterStatus === st.value
-                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                  : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
-              )}
-            >
-              {st.label}
-            </button>
-          ))}
-        </div>
-
-        <span className="ml-auto text-xs text-[#888888]">
-          {tickets.length} наряд-заказов
-        </span>
-      </div>
-
-      {/* RecordTable */}
-      <RecordTable
-        rows={tickets}
-        columns={columns}
-        getRowId={(ticket) => ticket.id}
-        tableId="repairs"
-        rowHeight={52}
-        scrollPaddingBottom="pb-4"
-        onRowClick={(ticket) => handleRowClick(ticket.id)}
-        emptyState={
-          <div className="flex flex-col items-center gap-2 py-16 text-center">
-            <Wrench className="h-8 w-8 text-[#888888]" />
-            <p className="text-xs text-[#666666]">Нет наряд-заказов</p>
+    <TooltipProvider>
+      <div className="space-y-3">
+        {/* Top Bar: Search + Filters */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Поиск по наряду, клиенту, бренду..."
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-9 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            />
           </div>
-        }
-      />
-    </div>
+
+          <div className="flex items-center gap-1 flex-wrap">
+            {STATUS_TABS.map((st) => (
+              <button
+                key={st.value}
+                type="button"
+                onClick={() => onFilterStatusChange(st.value)}
+                className={cn(
+                  "rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                  filterStatus === st.value
+                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+
+          <span className="ml-auto text-xs text-[#888888]">
+            {tickets.length} наряд-заказов
+          </span>
+        </div>
+
+        {/* RecordTable with Selectable Checkboxes & Floating Bulk Bar */}
+        <RecordTable
+          rows={tickets}
+          columns={columns}
+          getRowId={(ticket) => ticket.id}
+          tableId="repairs"
+          rowHeight={52}
+          selectable={true}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          bulkBar={
+            <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 shadow-2xs">
+              <span className="text-xs font-medium text-[#111111]">
+                Выбрано: <span className="font-mono font-semibold">{selectedIds.size}</span>
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+              >
+                Снять выбор
+              </button>
+
+              <div className="h-4 w-px bg-[#e5e5e5]" />
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#666666]">Сменить статус:</span>
+                <select
+                  value={selectedBulkStatus}
+                  onChange={(e) => {
+                    const val = e.target.value as RepairStatus;
+                    if (val) {
+                      setSelectedBulkStatus(val);
+                      void handleBulkStatusChange(val);
+                    }
+                  }}
+                  disabled={batchStatusMutation.isPending}
+                  className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
+                >
+                  <option value="">Выберите статус...</option>
+                  <option value="intake">Принят</option>
+                  <option value="waiting_parts">Заказ запчастей</option>
+                  <option value="in_progress">В работе</option>
+                  <option value="ready">Готов к выдаче</option>
+                  <option value="issued">Выдан</option>
+                </select>
+              </div>
+
+              <div className="ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  disabled={batchDeleteMutation.isPending}
+                  className="flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Удалить
+                </button>
+              </div>
+            </div>
+          }
+          scrollPaddingBottom="pb-4"
+          onRowClick={(ticket) => handleRowClick(ticket.id)}
+          emptyState={
+            <div className="flex flex-col items-center gap-2 py-16 text-center">
+              <Wrench className="h-8 w-8 text-[#888888]" />
+              <p className="text-xs text-[#666666]">Нет наряд-заказов</p>
+            </div>
+          }
+        />
+
+        {/* Модальное окно подтверждения удаления */}
+        <ConfirmDialog
+          open={isDeleteDialogOpen}
+          onClose={() => setIsDeleteDialogOpen(false)}
+          onConfirm={handleBulkDeleteConfirm}
+          title="Удалить выбранные наряд-заказы?"
+          description={`Вы уверены, что хотите удалить ${selectedIds.size} выбранных наряд-заказов? Данные будут перемещены в архив.`}
+          confirmLabel="Удалить"
+          variant="destructive"
+          isPending={batchDeleteMutation.isPending}
+        />
+      </div>
+    </TooltipProvider>
   );
 });

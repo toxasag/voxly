@@ -33,8 +33,45 @@ export interface CompanyDTO {
 export interface CompanyStatsDTO { contactsCount:number; dealsCount:number; dealsBudgetTotal:number; }
 export interface CompaniesQueryParams { search?:string; managerId?:string; limit?:number; offset?:number; }
 export interface CompaniesListResult { items:CompanyDTO[]; total:number; limit:number; offset:number; }
+
+export interface CompanyInnLookupResult {
+  inn: string;
+  name: string;
+  fullName?: string;
+  kpp?: string;
+  ogrn?: string;
+  legalAddress?: string;
+  directorName?: string;
+  directorPost?: string;
+  type: "LEGAL" | "INDIVIDUAL";
+}
+
 const BASE="/api/v1/crm/companies";
-export const companyKeys={all:["companies"] as const,list:(p:CompaniesQueryParams)=>["companies","list",p] as const,detail:(id:string)=>["companies","detail",id] as const,stats:(id:string)=>["companies","stats",id] as const};
+export const companyKeys={
+  all:["companies"] as const,
+  list:(p:CompaniesQueryParams)=>["companies","list",p] as const,
+  detail:(id:string)=>["companies","detail",id] as const,
+  stats:(id:string)=>["companies","stats",id] as const,
+  innLookup:(inn:string)=>["companies","inn-lookup",inn] as const,
+};
+
+export function useCompanyInnLookup(inn: string | null | undefined): UseQueryResult<CompanyInnLookupResult, ApiClientError> {
+  const cleanInn = (inn ?? "").replace(/\D/g, "").trim();
+  const isValid = cleanInn.length === 10 || cleanInn.length === 12;
+
+  return useQuery({
+    queryKey: companyKeys.innLookup(cleanInn),
+    queryFn: async () => {
+      const res = await apiClient.get<CompanyInnLookupResult>(`${BASE}/lookup-inn`, {
+        query: { inn: cleanInn },
+      });
+      return res.data;
+    },
+    enabled: isValid,
+    staleTime: 1000 * 60 * 60, // 1 час
+    retry: false,
+  });
+}
 export function useCompanies(p:CompaniesQueryParams={}):UseQueryResult<CompaniesListResult,ApiClientError>{const limit=p.limit??25,offset=p.offset??0;return useQuery({queryKey:companyKeys.list({...p,limit,offset}),queryFn:async()=>{const r=await apiClient.get<CompanyDTO[]>(BASE,{query:{search:p.search,manager_id:p.managerId,limit,offset}});const m:ApiMeta=r.meta??{};return{items:r.data,total:typeof m.total==="number"?m.total:r.data.length,limit:typeof m.limit==="number"?m.limit:limit,offset:typeof m.offset==="number"?m.offset:offset};},placeholderData:(x)=>x});}
 /**
  * Одна компания по идентификатору.
