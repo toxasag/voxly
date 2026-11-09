@@ -51,6 +51,7 @@ import {
   type DocumentInfoMetadata,
 } from "@/lib/api/use-crm-chat";
 import { TelegramComposer, type AttachedFile } from "./TelegramComposer";
+import { DialogueFeedbackModal } from "@/components/ai-bots/DialogueFeedbackModal";
 
 export interface CrmChatViewProps {
   entityType: CrmChatEntityType;
@@ -871,6 +872,19 @@ export function CrmChatView({
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
   const aiStatus = aiStatusQuery.data;
 
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+
+  // Поиск последних реплик клиента и ассистента для контекста обучения
+  const lastUserMessage = useMemo(() => {
+    const inbound = messages.filter((m) => m.direction === "inbound" || m.source === "client");
+    return inbound[inbound.length - 1]?.content || "";
+  }, [messages]);
+
+  const lastBotResponse = useMemo(() => {
+    const outbound = messages.filter((m) => m.direction === "outbound" || m.source === "ai" || m.source === "ai_bot");
+    return outbound[outbound.length - 1]?.content || "";
+  }, [messages]);
+
   // Список доступных каналов переписки (с подсчетом сообщений)
   const availableChannels = useMemo(() => {
     const channelMap = new Map<string, { slug: string; label: string; count: number }>();
@@ -983,10 +997,35 @@ export function CrmChatView({
     return sendFromOptions.find((o) => o.channelAccountId === selectedChannelAccountId);
   }, [sendFromOptions, selectedChannelAccountId]);
 
-  // Фильтрация сообщений по выбранному каналу
+  // Фильтрация и дедупликация сообщений по выбранному каналу
   const displayedMessages = useMemo(() => {
-    if (activeChannel === "all") return messages;
-    return messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
+    const filtered =
+      activeChannel === "all"
+        ? messages
+        : messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
+
+    // Дедупликация: исключаем одинаковые сообщения по ID и подряд идущие дубликаты (одинаковый текст, направление и интервал < 60 сек)
+    const seenIds = new Set<string>();
+    const deduplicated: typeof messages = [];
+
+    for (const msg of filtered) {
+      if (seenIds.has(msg.id)) continue;
+      seenIds.add(msg.id);
+
+      const prev = deduplicated[deduplicated.length - 1];
+      if (
+        prev &&
+        prev.direction === msg.direction &&
+        prev.content.trim() === msg.content.trim() &&
+        Math.abs(new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 60_000
+      ) {
+        continue;
+      }
+
+      deduplicated.push(msg);
+    }
+
+    return deduplicated;
   }, [messages, activeChannel]);
 
   // Автоскролл к низу переписки при открытии или получении сообщений
@@ -1221,6 +1260,19 @@ export function CrmChatView({
               </button>
             )}
           </div>
+
+          <div className="h-4 w-px bg-[#e5e5e5]" />
+
+          {/* Кнопка оценки диалога и обучения бота */}
+          <button
+            type="button"
+            onClick={() => setShowFeedbackModal(true)}
+            title="Оценить качество ответов ИИ и обучить агента на этом диалоге"
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2.5 py-1 text-xs font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/10 cursor-pointer shadow-2xs"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+            <span>Обучить бота</span>
+          </button>
         </div>
       </div>
 
@@ -1675,6 +1727,17 @@ export function CrmChatView({
         cancelLabel="Отмена"
         variant="destructive"
         isPending={isTogglingPersonal}
+      />
+
+      <DialogueFeedbackModal
+        open={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+        dealId={isDeal ? entityId : undefined}
+        dealTitle={isDeal ? entityName : undefined}
+        contactName={!isDeal ? entityName : undefined}
+        messages={messages}
+        lastUserMessage={lastUserMessage}
+        lastBotResponse={lastBotResponse}
       />
     </div>
   );

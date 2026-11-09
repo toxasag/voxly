@@ -398,6 +398,55 @@ export function useSalesExamples(
 // Просмотр и редактирование документов (актуализация цен и регламентов)
 // ---------------------------------------------------------------------------
 
+export interface KnowledgeChunkItem {
+  id: string;
+  chunkIndex: number;
+  content: string;
+  charsCount: number;
+}
+
+export function useKnowledgeDocumentChunks(
+  agentId: string,
+  docId: string | null,
+): UseQueryResult<KnowledgeChunkItem[], ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "knowledge", docId, "chunks"],
+    queryFn: async () => {
+      if (!docId) throw new Error("No docId");
+      const res = await apiClient.get<KnowledgeChunkItem[]>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/chunks`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId && docId),
+  });
+}
+
+export interface KnowledgeSearchHitItem {
+  content: string;
+  distance: number;
+  documentId: string;
+  filename: string;
+}
+
+export function useTestKnowledgeSearch(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeSearchHitItem[],
+  ApiClientError,
+  { query: string; limit?: number }
+> {
+  return useMutation({
+    mutationFn: async ({ query, limit }) => {
+      const res = await apiClient.post<KnowledgeSearchHitItem[]>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/search`,
+        { query, limit },
+      );
+      return res.data;
+    },
+  });
+}
+
 export function useKnowledgeDocumentDetail(
   agentId: string,
   docId: string | null,
@@ -453,6 +502,29 @@ export function useApproveKnowledgeDocument(
       const res = await apiClient.post<KnowledgeDocumentDetail>(
         `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/approve`,
         { text, filename, category },
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+export function useRestructureKnowledgeDocument(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { docId: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ docId }) => {
+      const res = await apiClient.post<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/restructure`,
       );
       return res.data;
     },
@@ -677,15 +749,26 @@ export function useSyncKnowledgeMd(agentId: string): UseMutationResult<
 // Петля обучения на диалогах (Dialogue Feedback Loop)
 // ---------------------------------------------------------------------------
 
+export interface DialogueQuoteItem {
+  text: string;
+  role?: string;
+  author?: string;
+  time?: string;
+}
+
 export interface AgentDialogueFeedback {
   id: string;
   agentId: string;
   dealId?: string | null;
+  dealTitle?: string | null;
+  contactName?: string | null;
   conversationId?: string | null;
+  lastMessagePreview?: string | null;
   rating: number;
   userComment: string;
   clarificationQa: Array<{ question: string; answer?: string | null }>;
   compiledRule?: string | null;
+  selectedQuotes?: DialogueQuoteItem[];
   status: "pending" | "approved" | "rejected";
   createdAt: string;
   updatedAt: string;
@@ -707,7 +790,7 @@ export function useAgentFeedbacks(
   });
 }
 
-export function useCreateDialogueFeedback(agentId: string): UseMutationResult<
+export function useCreateDialogueFeedback(agentId?: string): UseMutationResult<
   AgentDialogueFeedback,
   ApiClientError,
   {
@@ -716,11 +799,13 @@ export function useCreateDialogueFeedback(agentId: string): UseMutationResult<
     deal_id?: string;
     conversation_id?: string;
     clarification_answer?: string;
+    selected_quotes?: DialogueQuoteItem[];
   }
 > {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload) => {
+      if (!agentId) throw new Error("No agentId provided");
       const res = await apiClient.post<AgentDialogueFeedback>(
         `${BASE_PATH}/agents/${agentId}/feedback`,
         payload,
@@ -728,7 +813,41 @@ export function useCreateDialogueFeedback(agentId: string): UseMutationResult<
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      if (agentId) {
+        void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+export function useCreateDealFeedback(dealId: string): UseMutationResult<
+  AgentDialogueFeedback,
+  ApiClientError,
+  {
+    rating: number;
+    user_comment: string;
+    agent_id?: string;
+    conversation_id?: string;
+    clarification_answer?: string;
+    selected_quotes?: DialogueQuoteItem[];
+  }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<AgentDialogueFeedback>(
+        `/api/v1/crm/deals/${dealId}/feedback`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+      if (data?.agentId) {
+        void queryClient.invalidateQueries({ queryKey: ["ai", "agents", data.agentId, "feedbacks"] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId] });
     },
   });
 }
@@ -774,6 +893,58 @@ export function useRejectFeedback(agentId: string): UseMutationResult<
     },
   });
 }
+
+export interface RebuildAgentPromptResult {
+  agentId: string;
+  systemPrompt: string;
+  knowledgeBaseMd: string;
+  summaryOfChanges: string;
+  feedbacksCount: number;
+}
+
+export function useRebuildAgentPrompt(agentId: string): UseMutationResult<
+  RebuildAgentPromptResult,
+  ApiClientError,
+  void
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<RebuildAgentPromptResult>(
+        `${BASE_PATH}/agents/${agentId}/rebuild-prompt`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+export function useDeleteFeedback(agentId: string): UseMutationResult<
+  { success: boolean; id: string },
+  ApiClientError,
+  { feedbackId: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ feedbackId }) => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(
+        `${BASE_PATH}/agents/${agentId}/feedback/${feedbackId}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
 
 
 

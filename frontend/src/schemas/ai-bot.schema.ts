@@ -74,8 +74,8 @@ export const createBotSchema = z.object({
     .max(8192, "Maximum is 8192"),
   system_prompt: z
     .string()
-    .min(20, "System prompt must be at least 20 characters")
-    .max(8000, "System prompt is limited to 8000 characters"),
+    .min(20, "Системный промпт должен содержать минимум 20 символов")
+    .max(50000, "Системный промпт ограничен 50 000 символов"),
   context_entities: z
     .array(z.enum(botContextEntityValues))
     .min(1, "Select at least one context entity"),

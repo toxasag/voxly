@@ -80,10 +80,11 @@ export interface AvailableModelItem {
 export interface KeyVerificationResult {
   index: number;
   maskedKey: string;
-  status: "valid" | "invalid";
+  status: "valid" | "invalid" | "pending_activation";
   statusCode?: number;
   message: string;
   modelsCount?: number;
+  isTemporary?: boolean;
 }
 
 export interface VerifyProviderKeysResult {
@@ -92,10 +93,25 @@ export interface VerifyProviderKeysResult {
     total: number;
     valid: number;
     invalid: number;
+    pendingActivation?: number;
   };
   results: KeyVerificationResult[];
   models?: AvailableModelItem[];
   message?: string;
+}
+
+export function isGoogleCloudPropagationDelay(statusCode?: number, errorText?: string): boolean {
+  if (statusCode !== 403 && statusCode !== 400) return false;
+  const lower = (errorText || "").toLowerCase();
+  return (
+    lower.includes("has not been used in project") ||
+    lower.includes("is disabled") ||
+    lower.includes("propagate to our systems") ||
+    lower.includes("service_disabled") ||
+    lower.includes("accessnotconfigured") ||
+    (lower.includes("gemini api") && (lower.includes("enable") || lower.includes("propagation"))) ||
+    lower.includes("wait a few minutes for the action to propagate")
+  );
 }
 
 export interface EffectiveIntegrations {
@@ -164,18 +180,41 @@ export class PlatformConfigService {
   private cacheExpiresAt = 0;
   private roundRobinIndex = 0;
   private invalidKeysMap = new Map<string, number>();
+  private pendingActivationKeysMap = new Map<string, number>();
 
   markKeyInvalid(key: string, ttlMs = 5 * 60 * 1000): void {
     const trimmed = key?.trim();
     if (trimmed) {
       this.invalidKeysMap.set(trimmed, Date.now() + ttlMs);
+      this.pendingActivationKeysMap.delete(trimmed);
     }
+  }
+
+  markKeyPendingActivation(key: string, ttlMs = 2 * 60 * 1000): void {
+    const trimmed = key?.trim();
+    if (trimmed) {
+      this.pendingActivationKeysMap.set(trimmed, Date.now() + ttlMs);
+      this.invalidKeysMap.delete(trimmed);
+    }
+  }
+
+  isKeyPendingActivation(key: string): boolean {
+    const trimmed = key?.trim();
+    if (!trimmed) return false;
+    const expiresAt = this.pendingActivationKeysMap.get(trimmed);
+    if (!expiresAt) return false;
+    if (Date.now() > expiresAt) {
+      this.pendingActivationKeysMap.delete(trimmed);
+      return false;
+    }
+    return true;
   }
 
   markKeyValid(key: string): void {
     const trimmed = key?.trim();
     if (trimmed) {
       this.invalidKeysMap.delete(trimmed);
+      this.pendingActivationKeysMap.delete(trimmed);
     }
   }
 
@@ -968,6 +1007,8 @@ export class PlatformConfigService {
               const modelsList = Array.isArray(data?.data) ? data.data : [];
               const count = modelsList.length;
 
+              this.markKeyValid(item.secret);
+
               results.push({
                 index: item.index,
                 maskedKey: item.masked,
@@ -989,27 +1030,39 @@ export class PlatformConfigService {
                   errDetail = errObj.error.message;
                 }
               } catch {
-                errDetail = text.slice(0, 100);
+                errDetail = text.slice(0, 150);
               }
 
-              let msg = `HTTP ${res.status}`;
-              if (res.status === 400) {
-                msg = `Неверный API-ключ (400)${errDetail ? `: ${errDetail}` : ""}`;
-              } else if (res.status === 401 || res.status === 403) {
-                msg = `Доступ запрещён (HTTP ${res.status})${errDetail ? `: ${errDetail}` : ""}`;
-              } else if (res.status === 429) {
-                msg = `Превышена квота или лимит RPM (429)`;
-              } else if (errDetail) {
-                msg = `HTTP ${res.status}: ${errDetail}`;
-              }
+              if (isGoogleCloudPropagationDelay(res.status, `${errDetail} ${text}`)) {
+                this.markKeyPendingActivation(item.secret);
+                results.push({
+                  index: item.index,
+                  maskedKey: item.masked,
+                  status: "pending_activation",
+                  statusCode: res.status,
+                  isTemporary: true,
+                  message: `Активация в Google Cloud (синхронизация API 2–5 мин). Ключ сохранён, не удаляйте.`,
+                });
+              } else {
+                let msg = `HTTP ${res.status}`;
+                if (res.status === 400) {
+                  msg = `Неверный API-ключ (400)${errDetail ? `: ${errDetail}` : ""}`;
+                } else if (res.status === 401 || res.status === 403) {
+                  msg = `Доступ запрещён (HTTP ${res.status})${errDetail ? `: ${errDetail}` : ""}`;
+                } else if (res.status === 429) {
+                  msg = `Превышена квота или лимит RPM (429)`;
+                } else if (errDetail) {
+                  msg = `HTTP ${res.status}: ${errDetail}`;
+                }
 
-              results.push({
-                index: item.index,
-                maskedKey: item.masked,
-                status: "invalid",
-                statusCode: res.status,
-                message: msg,
-              });
+                results.push({
+                  index: item.index,
+                  maskedKey: item.masked,
+                  status: "invalid",
+                  statusCode: res.status,
+                  message: msg,
+                });
+              }
             }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -1027,7 +1080,8 @@ export class PlatformConfigService {
     results.sort((a, b) => a.index - b.index);
 
     const validCount = results.filter((r) => r.status === "valid").length;
-    const invalidCount = results.length - validCount;
+    const pendingCount = results.filter((r) => r.status === "pending_activation").length;
+    const invalidCount = results.filter((r) => r.status === "invalid").length;
 
     return {
       success: invalidCount === 0,
@@ -1035,6 +1089,7 @@ export class PlatformConfigService {
         total: results.length,
         valid: validCount,
         invalid: invalidCount,
+        pendingActivation: pendingCount,
       },
       results,
       models: fetchedModels,
@@ -1108,13 +1163,16 @@ export class PlatformConfigService {
 
   /**
    * Удаление неработающих/битых ключей из пула.
+   * Ключи в состоянии pending_activation (ожидающие синхронизации Google Cloud) защищены от удаления.
    */
   async removeInvalidKeys(providerId: string, invalidKeys: string[]): Promise<number> {
     this.cachedEffective = null;
     this.cacheExpiresAt = 0;
 
-    const invalidSet = new Set(invalidKeys.map((k) => k.trim()));
-    for (const k of invalidKeys) {
+    // Никогда не удаляем ключи, которые находятся в стадии активации/синхронизации IAM
+    const trulyInvalidKeys = invalidKeys.filter((k) => !this.isKeyPendingActivation(k));
+    const invalidSet = new Set(trulyInvalidKeys.map((k) => k.trim()));
+    for (const k of trulyInvalidKeys) {
       this.markKeyInvalid(k);
     }
 

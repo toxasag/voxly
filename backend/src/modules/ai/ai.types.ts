@@ -68,7 +68,7 @@ export const createAgentSchema = z.object({
     .string()
     .trim()
     .min(20, "Системный промпт минимум 20 символов")
-    .max(8000, "Системный промпт до 8000 символов")
+    .max(50000, "Системный промпт до 50000 символов")
     .default("Ты — вежливый AI-ассистент компании. Отвечай кратко, дружелюбно и по существу."),
   context_entities: z.array(z.enum(agentContextEntityValues)).default([]),
   company_name_override: z.string().trim().optional().nullable(),
@@ -137,10 +137,15 @@ export interface AiAgentDTO {
   systemPrompt: string;
   contextEntities: string[];
   companyNameOverride?: string | null;
+  company_name_override?: string | null;
   consultantSource?: ConsultantSource;
+  consultant_source?: ConsultantSource;
   consultantName?: string | null;
+  consultant_name?: string | null;
   consultantRole?: string | null;
+  consultant_role?: string | null;
   fallbackModels?: string[];
+  fallback_models?: string[];
   targetPageUrl?: string | null;
   generatedSystemPrompt?: string | null;
   knowledgeBaseMd: string;
@@ -221,7 +226,18 @@ export type SyncKnowledgeMdPayload = z.infer<typeof syncKnowledgeMdSchema>;
 // Петля обучения через обратную связь диалогов (Dialogue Feedback Loop)
 // ---------------------------------------------------------------------------
 
+export const dialogueQuoteItemSchema = z.object({
+  text: z.string(),
+  role: z.string().optional(),
+  author: z.string().optional(),
+  time: z.string().optional(),
+});
+
+export type DialogueQuoteItem = z.infer<typeof dialogueQuoteItemSchema>;
+
 export const createDialogueFeedbackSchema = z.object({
+  agent_id: z.string().uuid().optional().nullable(),
+  agentId: z.string().uuid().optional().nullable(),
   deal_id: z.string().uuid().optional().nullable(),
   dealId: z.string().uuid().optional().nullable(),
   conversation_id: z.string().optional().nullable(),
@@ -231,6 +247,8 @@ export const createDialogueFeedbackSchema = z.object({
   userComment: z.string().trim().optional(),
   clarification_answer: z.string().trim().optional().nullable(),
   clarificationAnswer: z.string().trim().optional().nullable(),
+  selected_quotes: z.array(dialogueQuoteItemSchema).optional(),
+  selectedQuotes: z.array(dialogueQuoteItemSchema).optional(),
 });
 
 export type CreateDialogueFeedbackPayload = z.infer<typeof createDialogueFeedbackSchema>;
@@ -239,13 +257,25 @@ export interface AgentDialogueFeedbackDTO {
   id: string;
   agentId: string;
   dealId?: string | null;
+  dealTitle?: string | null;
+  contactName?: string | null;
   conversationId?: string | null;
+  lastMessagePreview?: string | null;
   rating: number;
   userComment: string;
   clarificationQa: Array<{ question: string; answer?: string | null }>;
   compiledRule?: string | null;
+  selectedQuotes?: DialogueQuoteItem[];
   status: "pending" | "approved" | "rejected";
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RebuildAgentPromptResult {
+  agentId: string;
+  systemPrompt: string;
+  knowledgeBaseMd: string;
+  summaryOfChanges: string;
+  feedbacksCount: number;
 }
 

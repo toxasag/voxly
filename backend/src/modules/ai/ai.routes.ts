@@ -31,6 +31,7 @@ import {
 } from "./knowledge-text.js";
 import { queueManager } from "../../infrastructure/queue.js";
 import { AgentPipelineService } from "./agent-pipeline.service.js";
+import { webExtractorService } from "./web-extractor.service.js";
 
 // ---------------------------------------------------------------------------
 // AI-агенты и баланс ИИ, смонтировано в app.ts под /api/v1/ai.
@@ -106,6 +107,11 @@ const crawlSiteSchema = z.object({
  */
 const mapReviewsSchema = z.object({
   url: z.string().url("Укажите корректный URL на Яндекс Карты, 2ГИС, Google Maps, Zoon или Flamp"),
+});
+
+const knowledgeSearchSchema = z.object({
+  query: z.string().trim().min(1, "Поисковый запрос не может быть пустым").max(1000),
+  limit: z.number().int().min(1).max(20).optional(),
 });
 
 /**
@@ -505,6 +511,12 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ data: feedbacks });
   });
 
+  app.get("/agents/:id/training-dialogs", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const feedbacks = await service.listFeedbacks(request.tenant_id, id);
+    return reply.send({ data: feedbacks });
+  });
+
   app.post("/agents/:id/feedback/:feedbackId/approve", { onRequest: writeAgents }, async (request, reply) => {
     const { id, feedbackId } = feedbackParams.parse(request.params);
     const result = await service.approveFeedback(request.tenant_id, id, feedbackId);
@@ -517,20 +529,41 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ data: result });
   });
 
+  app.delete("/agents/:id/feedback/:feedbackId", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, feedbackId } = feedbackParams.parse(request.params);
+    const result = await service.deleteFeedback(request.tenant_id, id, feedbackId);
+    return reply.send({ data: result });
+  });
+
+  app.post("/agents/:id/rebuild-prompt", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const result = await service.rebuildAgentPromptWithFeedbacks(request.tenant_id, id);
+    return reply.send({ data: result });
+  });
+
   const handlePromptPreview = async (
     request: { tenant_id: string; params: unknown; body?: unknown },
     reply: { send: (payload: unknown) => unknown },
   ) => {
     const { id } = agentParams.parse(request.params);
-    const body = (request.body as { system_prompt?: string; systemPrompt?: string } | undefined) ?? {};
+    const body = (request.body as {
+      system_prompt?: string;
+      systemPrompt?: string;
+      company_name_override?: string;
+      companyNameOverride?: string;
+    } | undefined) ?? {};
 
     const agent = await queryOne<{
       id: string;
       name: string;
+      description?: string | null;
       system_prompt: string;
+      company_name_override?: string | null;
+      consultant_name?: string | null;
+      consultant_role?: string | null;
       wizard_config: Record<string, unknown> | null;
     }>(
-      `SELECT id, name, system_prompt, wizard_config
+      `SELECT id, name, description, system_prompt, company_name_override, consultant_name, consultant_role, wizard_config
        FROM ai_agents
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [request.tenant_id, id],
@@ -545,71 +578,52 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     );
     const tenantName = tenantRow?.name || "Компания";
 
-    const docs = await query<{
-      id: string;
-      filename: string;
-      category: string | null;
-      content_text: string | null;
-    }>(
-      `SELECT id, filename, category, content_text
+    const readyCountRow = await queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
        FROM knowledge_base_documents
-       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'ready' AND content_text IS NOT NULL
-       ORDER BY created_at DESC
-       LIMIT 20`,
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'ready'`,
       [request.tenant_id, id],
     );
 
-    const reviewDocs: string[] = [];
-    const websiteDocs: string[] = [];
-    const kbDocs: string[] = [];
-
-    for (const doc of docs) {
-      const fn = (doc.filename || "").toLowerCase();
-      const text = (doc.content_text || "").trim();
-      if (!text) continue;
-
-      if (fn.includes("отзыв") || doc.category === "reviews") {
-        if (reviewDocs.length < 2) {
-          reviewDocs.push(`[${reviewDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1000)}`);
-        }
-      } else if (fn.includes("сайт") || doc.category === "website") {
-        if (websiteDocs.length < 2) {
-          websiteDocs.push(`[${websiteDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
-        }
-      } else {
-        if (kbDocs.length < 3) {
-          kbDocs.push(`[${kbDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
-        }
-      }
-    }
-
-    const kbContext = kbDocs.length > 0
-      ? kbDocs.join("\n\n")
-      : "В базе знаний пока нет добавленных документов. Вы можете загрузить регламенты или прайс на вкладке «База знаний».";
-
-    const websiteContext = websiteDocs.length > 0
-      ? websiteDocs.join("\n\n")
-      : "Материалы сайта пока не загружены.";
-
-    const reviewsContext = reviewDocs.length > 0
-      ? reviewDocs.join("\n\n")
-      : "Отзывы клиентов пока не подключены.";
-
-    const crmExamples = await query<{ customer_query: string; agent_reply: string }>(
-      `SELECT customer_query, agent_reply
-       FROM ai_sales_examples
-       WHERE tenant_id = $1
-       ORDER BY created_at DESC
-       LIMIT 3`,
-      [request.tenant_id],
+    const activeChunksRow = await queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM knowledge_base_chunks ch
+       JOIN knowledge_base_documents d ON d.id = ch.document_id
+       WHERE ch.tenant_id = $1 AND (ch.agent_id = $2 OR ch.agent_id IS NULL) AND d.status = 'ready'`,
+      [request.tenant_id, id],
     );
 
-    let crmContext = "Успешные диалоги формируются автоматически на основе закрытых сделок CRM.";
-    if (crmExamples.length > 0) {
-      crmContext = crmExamples
-        .map((p, i) => `Пример ${i + 1}:\nКлиент: «${p.customer_query}»\nУспешный ответ: «${p.agent_reply}»`)
-        .join("\n\n");
-    }
+    const draftCountRow = await queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'draft'`,
+      [request.tenant_id, id],
+    );
+
+    const draftDocs = await query<{
+      id: string;
+      filename: string;
+      file_size: number;
+      category: string | null;
+      source_url: string | null;
+      created_at: Date | string;
+    }>(
+      `SELECT id, filename, file_size, category, source_url, created_at
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'draft'
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [request.tenant_id, id],
+    );
+
+    const kbContext =
+      "Динамические выдержки из базы знаний и прайса подставляются в блок <retrieved_facts> при каждом запросе клиента на основе векторного поиска.";
+    const websiteContext =
+      "Материалы сайта подгружаются динамически через RAG (<retrieved_facts>).";
+    const reviewsContext =
+      "Отзывы клиентов подгружаются динамически через RAG (<retrieved_facts>).";
+    const crmContext =
+      "Паттерны успешных диалогов из закрытых сделок передаются в блоке <retrieved_facts>.";
 
     const channelAccounts = await query<{ channel: string; label: string | null }>(
       `SELECT c.channel, c.label
@@ -628,16 +642,61 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     }) + " МСК";
 
     const wc = (agent.wizard_config || {}) as Record<string, string | undefined>;
+    const bodyCompanyOverride =
+      (typeof body.company_name_override === "string" && body.company_name_override.trim().length > 0 ? body.company_name_override.trim() : null) ||
+      (typeof body.companyNameOverride === "string" && body.companyNameOverride.trim().length > 0 ? body.companyNameOverride.trim() : null);
+
+    const effectiveCompanyName =
+      bodyCompanyOverride ||
+      (agent.company_name_override && agent.company_name_override.trim().length > 0 ? agent.company_name_override.trim() : null) ||
+      (wc.company_name_override && wc.company_name_override.trim().length > 0 ? wc.company_name_override.trim() : null) ||
+      (wc.companyName && wc.companyName.trim().length > 0 ? wc.companyName.trim() : null) ||
+      tenantName ||
+      "Компания";
+
+    const effectiveConsultantName =
+      (agent.consultant_name && agent.consultant_name.trim().length > 0 ? agent.consultant_name.trim() : null) ||
+      (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) ||
+      agent.name ||
+      "Консультант";
+
+    const effectiveConsultantRole =
+      (agent.consultant_role && agent.consultant_role.trim().length > 0 ? agent.consultant_role.trim() : null) ||
+      (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) ||
+      "онлайн-помощник";
+
+    const effectiveBusinessNiche =
+      (wc.businessNiche && wc.businessNiche.trim().length > 0 ? wc.businessNiche.trim() : null) ||
+      (agent.description && agent.description.trim().length > 5 ? agent.description.trim() : null) ||
+      "оказание профильных услуг и консультация клиентов";
+
+    const effectiveClientProfile =
+      (wc.clientProfile && wc.clientProfile.trim().length > 0 ? wc.clientProfile.trim() : null) ||
+      (wc.client_profile && String(wc.client_profile).trim().length > 0 ? String(wc.client_profile).trim() : null) ||
+      "клиенты, которым требуется экспертная консультация и решение их задачи";
+
+    const effectiveTargetAction =
+      (wc.targetAction && wc.targetAction.trim().length > 0 ? wc.targetAction.trim() : null) ||
+      "согласование деталей заказа и обмен контактами";
+
+    const effectiveConstraints =
+      (wc.constraints && wc.constraints.trim().length > 0 ? wc.constraints.trim() : null) ||
+      "Не давать ложных обещаний, строго следовать закону и регламенту компании.";
+
+    const effectiveHandoffSpecialist =
+      (wc.handoffSpecialist && wc.handoffSpecialist.trim().length > 0 ? wc.handoffSpecialist.trim() : null) ||
+      "старший специалист профильного отдела";
+
     const variables: Record<string, string> = {
-      "tenant.name": tenantName,
-      "company.name": tenantName,
-      "consultant.name": wc.consultantName || agent.name || "Консультант",
-      "consultant.role": wc.consultantRole || "ведущий специалист",
-      "business.niche": wc.businessNiche || "оказание профильных услуг",
-      "client.profile": wc.clientProfile || (wc as Record<string, string | undefined>).client_profile || "клиенты, которым требуется экспертная консультация и решение их задачи",
-      "target.action": wc.targetAction || "согласование деталей заказа",
-      "constraints": wc.constraints || "Не давать ложных обещаний, строго следовать прайсу и регламенту.",
-      "handoff.specialist": wc.handoffSpecialist || "старший специалист",
+      "tenant.name": effectiveCompanyName,
+      "company.name": effectiveCompanyName,
+      "consultant.name": effectiveConsultantName,
+      "consultant.role": effectiveConsultantRole,
+      "business.niche": effectiveBusinessNiche,
+      "client.profile": effectiveClientProfile,
+      "target.action": effectiveTargetAction,
+      "constraints": effectiveConstraints,
+      "handoff.specialist": effectiveHandoffSpecialist,
       "current_time": currentTime,
       "channel_type": channelType,
       "knowledge_base_context": kbContext,
@@ -666,6 +725,19 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       data: {
         resolvedPrompt: resolved,
         variables,
+        ragTelemetry: {
+          readyDocumentsCount: readyCountRow?.count ?? 0,
+          activeChunksCount: activeChunksRow?.count ?? 0,
+          draftDocumentsCount: draftCountRow?.count ?? 0,
+          draftDocuments: draftDocs.map((d) => ({
+            id: d.id,
+            filename: d.filename,
+            fileSize: d.file_size,
+            category: d.category ?? "general",
+            sourceUrl: d.source_url ?? null,
+            createdAt: d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
+          })),
+        },
       },
     });
   };
@@ -834,47 +906,87 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       throw new AppError(502, "FETCH_FAILED", `Ошибка при загрузке URL: ${msg}`);
     }
 
-    const cleanText = html
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
-      .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/\s+/g, " ")
-      .trim();
+    // AI-структурирование и выделение ключевых фактов/разделов страницы
+    const extraction = await webExtractorService.extractAndStructure({
+      url,
+      htmlOrText: html,
+      title,
+      tenantId: request.tenant_id,
+    });
 
-    if (cleanText.length < 50) {
-      throw new AppError(400, "EMPTY_CONTENT", "На странице не найдено достаточного текстового содержимого");
-    }
-
-    const docTitle = title?.trim() || `${parsedUrl.hostname}${parsedUrl.pathname !== "/" ? parsedUrl.pathname : ""}`;
+    const docTitle = title?.trim() || extraction.title || `${parsedUrl.hostname}${parsedUrl.pathname !== "/" ? parsedUrl.pathname : ""}`;
 
     if (isDraft) {
       const draftDoc = await knowledge.createDraftDocument({
         tenantId: request.tenant_id,
         agentId: id,
         filename: `Сайт: ${docTitle}`,
-        mimeType: "text/html",
-        text: cleanText.slice(0, 100_000),
+        mimeType: "text/markdown",
+        text: extraction.structuredMarkdown,
         sourceUrl: url,
         category: "website",
       });
-      return reply.status(201).send({ data: draftDoc });
+      return reply.status(201).send({
+        data: draftDoc,
+        meta: { sectionsCount: extraction.sectionsCount, totalChars: extraction.totalChars },
+      });
     }
 
     const document = await knowledge.addDocument({
       tenantId: request.tenant_id,
       agentId: id,
       filename: `Сайт: ${docTitle}`,
-      mimeType: "text/html",
-      text: cleanText.slice(0, 100_000),
+      mimeType: "text/markdown",
+      text: extraction.structuredMarkdown,
+      category: "website",
     });
 
-    return reply.status(201).send({ data: document });
+    return reply.status(201).send({
+      data: document,
+      meta: { sectionsCount: extraction.sectionsCount, totalChars: extraction.totalChars },
+    });
+  });
+
+  // AI-реструктуризация существующего документа в четкие семантические секции
+  app.post("/agents/:id/knowledge/:docId/restructure", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, docId } = z.object({ id: z.string().uuid(), docId: z.string().uuid() }).parse(request.params);
+
+    const doc = await queryOne<{
+      id: string;
+      filename: string;
+      content_text: string | null;
+      source_url: string | null;
+      status: string;
+    }>(
+      `SELECT id, filename, content_text, source_url, status
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND id = $2 AND agent_id = $3`,
+      [request.tenant_id, docId, id],
+    );
+
+    if (!doc || !doc.content_text) {
+      throw new NotFoundError("Документ не найден или пуст");
+    }
+
+    const extraction = await webExtractorService.extractAndStructure({
+      url: doc.source_url || undefined,
+      htmlOrText: doc.content_text,
+      title: doc.filename.replace(/^Сайт:\s*/, ""),
+      tenantId: request.tenant_id,
+    });
+
+    const updated = await knowledge.updateDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      documentId: docId,
+      filename: doc.filename,
+      text: extraction.structuredMarkdown,
+    });
+
+    return reply.send({
+      data: updated,
+      meta: { sectionsCount: extraction.sectionsCount, totalChars: extraction.totalChars },
+    });
   });
 
   // Сканирование всех страниц сайта (Краулер / Паук по внутренним ссылкам и sitemap.xml)
@@ -1047,6 +1159,24 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     const { id, docId } = documentParams.parse(request.params);
     const doc = await knowledge.getDocument(request.tenant_id, id, docId);
     return reply.send({ data: doc });
+  });
+
+  app.get("/agents/:id/knowledge/:docId/chunks", { onRequest: readAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const chunks = await knowledge.listDocumentChunks(request.tenant_id, id, docId);
+    return reply.send({ data: chunks, meta: { total: chunks.length } });
+  });
+
+  app.post("/agents/:id/knowledge/search", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = knowledgeSearchSchema.parse(request.body);
+    const hits = await knowledge.search({
+      tenantId: request.tenant_id,
+      agentId: id,
+      question: body.query,
+      limit: body.limit ?? 8,
+    });
+    return reply.send({ data: hits, meta: { total: hits.length } });
   });
 
   app.put("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {
