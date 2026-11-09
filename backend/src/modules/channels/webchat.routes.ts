@@ -34,6 +34,13 @@ const messageBodySchema = z
     gaId: z.string().trim().max(100).optional(),
     fbId: z.string().trim().max(100).optional(),
     visitCount: z.number().int().min(0).optional(),
+    coords: z
+      .object({
+        latitude: z.number(),
+        longitude: z.number(),
+        accuracy: z.number().optional(),
+      })
+      .optional(),
     pageHistory: z
       .array(
         z.object({
@@ -187,10 +194,13 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       const { channelAccountId } = request.params;
       const body = messageBodySchema.parse(request.body);
 
+      const cfConnectingIp = request.headers["cf-connecting-ip"];
       const forwarded = request.headers["x-forwarded-for"];
+      const xRealIp = request.headers["x-real-ip"];
       const clientIp =
+        (typeof cfConnectingIp === "string" ? cfConnectingIp.trim() : null) ||
         (typeof forwarded === "string" ? forwarded.split(",")[0]?.trim() : Array.isArray(forwarded) ? forwarded[0] : null) ||
-        (request.headers["x-real-ip"] as string) ||
+        (typeof xRealIp === "string" ? xRealIp.trim() : null) ||
         request.ip;
       const userAgent = (request.headers["user-agent"] as string) || "";
 
@@ -211,6 +221,7 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         analytics: body.analytics as Record<string, string | null> | undefined,
         deviceFingerprint: body.deviceFingerprint,
         deviceInfo: body.deviceInfo,
+        coords: body.coords,
         clientIp,
         userAgent,
         ymUid: body.ymUid,

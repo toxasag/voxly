@@ -22,9 +22,11 @@ export const repairStatusSchema = z.enum([
 ]);
 
 export const repairPrioritySchema = z.enum(["low", "normal", "high", "urgent"]);
+export const repairPaymentStatusSchema = z.enum(["unpaid", "invoiced", "paid"]);
 
 export type RepairStatus = z.infer<typeof repairStatusSchema>;
 export type RepairPriority = z.infer<typeof repairPrioritySchema>;
+export type RepairPaymentStatus = z.infer<typeof repairPaymentStatusSchema>;
 
 /** Ordered happy path: Принят → Заказ запчастей → Готов → Выдан */
 export const REPAIR_STATUS_FLOW: readonly RepairStatus[] = [
@@ -111,6 +113,7 @@ export const createRepairSchema = z.object({
   malfunctions: z.array(z.string()).optional(),
   defect_photos: z.array(z.string().url("Each photo must be a URL")).max(20).optional(),
   priority: repairPrioritySchema.default("normal"),
+  payment_status: repairPaymentStatusSchema.optional(),
   master_id: optionalUuid,
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative("Estimated cost cannot be negative").default(0),
@@ -153,6 +156,7 @@ export const createBatchRepairSchema = z.object({
   equipments: z.array(equipmentIntakeItemSchema).min(1, "Добавьте хотя бы одно оборудование"),
   defect_photos: z.array(z.string()).optional(),
   priority: repairPrioritySchema.default("normal"),
+  payment_status: repairPaymentStatusSchema.optional(),
   master_id: optionalUuid,
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative().default(0),
@@ -187,6 +191,7 @@ export const updateRepairSchema = z.object({
   defect_description: z.string().max(4000).optional(),
   malfunctions: z.array(z.string()).optional(),
   priority: repairPrioritySchema.optional(),
+  payment_status: repairPaymentStatusSchema.optional(),
   master_id: optionalUuid,
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative().optional(),
@@ -221,6 +226,11 @@ export const changeStatusSchema = z.object({
   /** Required when moving diagnostics → approval. */
   diagnostics: diagnosticsSchema.optional(),
 });
+
+export const changePaymentStatusSchema = z.object({
+  payment_status: repairPaymentStatusSchema,
+});
+export type ChangePaymentStatusPayload = z.infer<typeof changePaymentStatusSchema>;
 
 export const createWorkSchema = z.object({
   description: z.string().min(1, "Description is required").max(500),
@@ -293,6 +303,7 @@ export interface RepairOrderRow {
   defect_photos: string[];
   additional_contacts?: AdditionalContact[];
   status: RepairStatus;
+  payment_status?: string | null;
   priority: RepairPriority;
   master_id: string;
   master_name: string;
@@ -446,6 +457,7 @@ export interface RepairOrderDTO {
   defectPhotos: string[];
   additionalContacts?: AdditionalContact[];
   status: RepairStatus;
+  paymentStatus: RepairPaymentStatus;
   nextStatus: RepairStatus | null;
   allowedTransitions: RepairStatus[];
   priority: RepairPriority;
@@ -512,6 +524,7 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
     defectPhotos: row.defect_photos,
     additionalContacts: Array.isArray(row.additional_contacts) ? row.additional_contacts : [],
     status: row.status,
+    paymentStatus: (row.payment_status as RepairPaymentStatus) || (row.status === "issued" ? "paid" : "unpaid"),
     nextStatus: nextStatus(row.status),
     allowedTransitions: [...allowedTransitionsFrom(row.status)],
     priority: row.priority,

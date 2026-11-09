@@ -1,0 +1,39 @@
+name: Build Android Companion APK
+
+on:
+  push:
+    paths:
+      - 'mobile/android-companion/**'
+      - '.github/workflows/android-companion.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Debug & Release APK
+        working-directory: mobile/android-companion
+        run: |
+          chmod +x ./gradlew 2>/dev/null || true
+          gradle assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxly-caller-id-companion-apk
+          path: mobile/android-companion/app/build/outputs/apk/debug/*.apk
+          retention-days: 14

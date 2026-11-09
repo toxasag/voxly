@@ -21,6 +21,7 @@ import { notificationQueue } from "../notifications/notification.queue.js";
 import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution.js";
 import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
+import type { VisitorGeoData } from "../../services/geo-enrichment.service.js";
 
 // Профиль и проверка бота объявлены в `channel-identity.ts` вместе с раскладкой по полям,
 // но реэкспортируются здесь: транспорт получает их вместе с типом входящего
@@ -74,6 +75,7 @@ export interface InboundMessageInput {
   visitCount?: number;
   utmTags?: Record<string, string>;
   sourceMetadata?: Record<string, unknown>;
+  geo?: VisitorGeoData;
 }
 
 /** Найденный контакт: ФИО нужно заголовку сделки, когда профиль недоступен. */
@@ -542,6 +544,15 @@ export class CrmPipelineService {
           );
         }
 
+        if (input.geo) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{geo}', $1::jsonb, true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(input.geo), contact.id, input.tenantId],
+          );
+        }
+
         if (input.sourceMetadata && Object.keys(input.sourceMetadata).length > 0) {
           await tx.query(
             `UPDATE contacts
@@ -629,6 +640,7 @@ export class CrmPipelineService {
         if (input.pageUrl) customFields.page_url = input.pageUrl;
         if (input.visitCount) customFields.visit_count = input.visitCount;
         if (input.pageHistory) customFields.page_history = input.pageHistory;
+        if (input.geo) customFields.geo = input.geo;
 
         const initialName = contactNameFrom(input);
         const resolvedIdentity = resolveContactIdentity({
@@ -712,6 +724,11 @@ export class CrmPipelineService {
       }
       if (input.visitCount) dealCustomFields.visit_count = input.visitCount;
       if (input.pageHistory) dealCustomFields.page_history = input.pageHistory;
+      if (input.geo) {
+        dealCustomFields.geo = input.geo;
+      } else if (contactCf.geo) {
+        dealCustomFields.geo = contactCf.geo;
+      }
 
       if (activeDeal !== null) {
         dealId = activeDeal.id;

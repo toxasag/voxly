@@ -6,7 +6,7 @@ import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase, Tag, Hash,
-  AlertCircle,
+  AlertCircle, ExternalLink, Clock, ShieldCheck, Users,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -14,8 +14,11 @@ import { RepairStatusStepper } from "@/components/repairs/detail/RepairStatusSte
 import { WorkItemsTable } from "@/components/repairs/detail/WorkItemsTable";
 import { PartsTable } from "@/components/repairs/detail/PartsTable";
 import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
+import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
 import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
+import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerModal";
+import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { TagPill, type TagColor } from "@/components/ui/tag";
@@ -105,6 +108,8 @@ export default function RepairDetailPage() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
+  const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
 
   // История по серийному номеру оборудования
   const serialNumber = detail?.equipment?.serialNumber ?? "";
@@ -181,11 +186,6 @@ export default function RepairDetailPage() {
       await updateMutation.mutateAsync({
         id: detail.id,
         payload: {
-          customer_name: editForm.customerName.trim() || undefined,
-          customer_phone: editForm.customerPhone.trim() || undefined,
-          customer_email: editForm.customerEmail.trim() || undefined,
-          company_name: editForm.companyName.trim() || undefined,
-          company_inn: editForm.companyInn.trim() || undefined,
           deal_title: editForm.dealTitle.trim() || undefined,
           deal_note: editForm.dealNote.trim() || undefined,
           equipment_type: editForm.equipmentType.trim() || undefined,
@@ -203,6 +203,78 @@ export default function RepairDetailPage() {
       setIsEditing(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось обновить наряд-заказ");
+    }
+  };
+
+  const handleMasterChange = async (newMasterId: string) => {
+    if (!detail) return;
+    const member = teamMembers.find((m) => m.id === newMasterId);
+    const masterName = member ? member.fullName : "";
+    try {
+      await updateMutation.mutateAsync({
+        id: detail.id,
+        payload: {
+          master_id: newMasterId || undefined,
+          master_name: masterName || undefined,
+        },
+      });
+      setEditForm((prev) => ({ ...prev, masterId: newMasterId }));
+      toast.success(member ? `Ответственный мастер: ${member.fullName}` : "Мастер снят с заказа");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось изменить мастера");
+    }
+  };
+
+  const handleSelectContact = async (c: {
+    id: string;
+    name: string;
+    phone: string;
+    email?: string | null;
+    companyId?: string | null;
+    companyName?: string | null;
+  }) => {
+    if (!detail) return;
+    try {
+      await updateMutation.mutateAsync({
+        id: detail.id,
+        payload: {
+          customer_id: c.id,
+        },
+      });
+      setEditForm((prev) => ({
+        ...prev,
+        customerName: c.name,
+        customerPhone: c.phone,
+        customerEmail: c.email ?? "",
+        companyName: c.companyName ?? prev.companyName,
+      }));
+      toast.success(`Клиент наряда изменён: ${c.name}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось обновить клиента");
+    }
+  };
+
+  const handleSelectCompany = async (comp: {
+    id: string | null;
+    name: string | null;
+    inn: string | null;
+  }) => {
+    if (!detail) return;
+    try {
+      await updateMutation.mutateAsync({
+        id: detail.id,
+        payload: {
+          company_id: comp.id ?? "",
+        },
+      });
+      setEditForm((prev) => ({
+        ...prev,
+        companyName: comp.name ?? "",
+        companyInn: comp.inn ?? "",
+      }));
+      toast.success(comp.id ? `Компания наряда: ${comp.name}` : "Компания отвязана (физ. лицо)");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось обновить компанию");
     }
   };
 
@@ -253,6 +325,7 @@ export default function RepairDetailPage() {
         customer_phone: detail.customerPhone,
         customer_email: detail.customerEmail ?? null,
         customer_id: detail.customerId,
+        additional_contacts: detail.additionalContacts ?? [],
         equipment: {
           type: detail.equipment.type,
           brand: detail.equipment.brand,
@@ -264,6 +337,7 @@ export default function RepairDetailPage() {
         defect_description: detail.defectDescription,
         defect_photos: detail.defectPhotos,
         status: detail.status,
+        payment_status: detail.paymentStatus || (detail.status === "issued" ? "paid" : "unpaid"),
         priority: detail.priority,
         master_id: detail.masterId,
         master_name: detail.masterName,
@@ -348,7 +422,7 @@ export default function RepairDetailPage() {
             </Link>
             <div className="h-4 w-px bg-[#e5e5e5]" />
             <span className="text-[13px] font-mono tabular-nums font-semibold text-[#111111]">
-              №{ticket.ticket_number}
+              {formatOrderNumber(ticket.ticket_number)}
             </span>
             <span
               className={cn(
@@ -458,9 +532,20 @@ export default function RepairDetailPage() {
 
             {/* Client & Company Card */}
             <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-3">
-              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
-                Клиент и компания
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
+                  Клиент и компания
+                </span>
+                {!isEditing && (
+                  <button
+                    type="button"
+                    onClick={() => setContactPickerOpen(true)}
+                    className="text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer"
+                  >
+                    Сменить
+                  </button>
+                )}
+              </div>
 
               {!isEditing ? (
                 <div className="space-y-2.5">
@@ -469,12 +554,23 @@ export default function RepairDetailPage() {
                       {ticket.customer_name ? ticket.customer_name[0] : "К"}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[13px] font-semibold text-[#111111] truncate">
-                        {ticket.customer_name}
-                      </p>
+                      {ticket.customer_id ? (
+                        <Link
+                          href={`/crm/contacts?record=${ticket.customer_id}`}
+                          className="text-[13px] font-semibold text-[#111111] hover:text-[#4a38f5] hover:underline inline-flex items-center gap-1 group truncate max-w-full"
+                          title="Открыть карточку контакта в CRM"
+                        >
+                          <span className="truncate">{ticket.customer_name}</span>
+                          <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 text-[#4a38f5] shrink-0 transition-opacity" />
+                        </Link>
+                      ) : (
+                        <p className="text-[13px] font-semibold text-[#111111] truncate">
+                          {ticket.customer_name}
+                        </p>
+                      )}
                       <div className="flex items-center gap-1.5 text-xs text-[#666666]">
                         <Phone className="h-3 w-3 text-[#888888]" />
-                        <span>{ticket.customer_phone}</span>
+                        <span className="font-mono">{ticket.customer_phone}</span>
                       </div>
                       {ticket.customer_email && (
                         <div className="flex items-center gap-1.5 text-xs text-[#666666] truncate mt-0.5">
@@ -487,9 +583,30 @@ export default function RepairDetailPage() {
 
                   {ticket.company_name ? (
                     <div className="mt-2 rounded-[6px] border border-[#f0f0f0] bg-[#fafafa] p-2 text-xs">
-                      <div className="flex items-center gap-1.5 font-medium text-[#111111]">
-                        <Building2 className="h-3.5 w-3.5 text-[#666666]" />
-                        <span className="truncate">{ticket.company_name}</span>
+                      <div className="flex items-center justify-between font-medium text-[#111111]">
+                        {ticket.company_id ? (
+                          <Link
+                            href={`/crm/companies?record=${ticket.company_id}`}
+                            className="flex items-center gap-1.5 truncate hover:text-[#4a38f5] hover:underline group"
+                            title="Открыть компанию в CRM"
+                          >
+                            <Building2 className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+                            <span className="truncate group-hover:text-[#4a38f5]">{ticket.company_name}</span>
+                            <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 text-[#4a38f5] shrink-0 transition-opacity" />
+                          </Link>
+                        ) : (
+                          <div className="flex items-center gap-1.5 truncate">
+                            <Building2 className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+                            <span className="truncate">{ticket.company_name}</span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCompanyPickerOpen(true)}
+                          className="text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer shrink-0 ml-2"
+                        >
+                          Сменить
+                        </button>
                       </div>
                       {ticket.company_inn && (
                         <p className="mt-0.5 text-[11px] text-[#666666] font-mono">
@@ -498,58 +615,64 @@ export default function RepairDetailPage() {
                       )}
                     </div>
                   ) : (
-                    <p className="text-[11px] text-[#888888]">Физ. лицо (без компании)</p>
+                    <div className="mt-2 flex items-center justify-between text-xs pt-1 border-t border-[#f0f0f0]">
+                      <p className="text-[11px] text-[#888888]">Физ. лицо (без компании)</p>
+                      <button
+                        type="button"
+                        onClick={() => setCompanyPickerOpen(true)}
+                        className="text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer"
+                      >
+                        Привязать юр. лицо
+                      </button>
+                    </div>
                   )}
                 </div>
               ) : (
-                <div className="space-y-2 text-xs">
-                  <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">ФИО клиента *</label>
-                    <input
-                      type="text"
-                      value={editForm.customerName}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, customerName: e.target.value }))}
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                    />
+                <div className="space-y-3 text-xs">
+                  {/* Customer in Edit Mode */}
+                  <div className="rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
+                        Клиент
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setContactPickerOpen(true)}
+                        className="text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer"
+                      >
+                        Выбрать из CRM
+                      </button>
+                    </div>
+                    <p className="font-semibold text-[#111111]">{editForm.customerName || ticket.customer_name}</p>
+                    <p className="text-[11px] text-[#666666] font-mono">{editForm.customerPhone || ticket.customer_phone}</p>
                   </div>
-                  <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">Телефон *</label>
-                    <input
-                      type="text"
-                      value={editForm.customerPhone}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, customerPhone: e.target.value }))}
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">Email</label>
-                    <input
-                      type="email"
-                      value={editForm.customerEmail}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, customerEmail: e.target.value }))}
-                      placeholder="client@mail.ru"
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                    />
-                  </div>
-                  <div className="border-t border-[#f0f0f0] pt-2">
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">Компания</label>
-                    <input
-                      type="text"
-                      value={editForm.companyName}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, companyName: e.target.value }))}
-                      placeholder="ООО «Ромашка»"
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">ИНН компании</label>
-                    <input
-                      type="text"
-                      value={editForm.companyInn}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, companyInn: e.target.value }))}
-                      placeholder="10-12 цифр"
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none font-mono"
-                    />
+
+                  {/* Company in Edit Mode */}
+                  <div className="rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
+                        Компания
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setCompanyPickerOpen(true)}
+                        className="text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer"
+                      >
+                        Выбрать / Сменить
+                      </button>
+                    </div>
+                    {editForm.companyName || ticket.company_name ? (
+                      <div>
+                        <p className="font-semibold text-[#111111]">{editForm.companyName || ticket.company_name}</p>
+                        {(editForm.companyInn || ticket.company_inn) && (
+                          <p className="text-[11px] text-[#666666] font-mono">
+                            ИНН: {editForm.companyInn || ticket.company_inn}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-[#888888]">Физ. лицо (без компании)</p>
+                    )}
                   </div>
                 </div>
               )}
@@ -565,6 +688,22 @@ export default function RepairDetailPage() {
                 <div className="space-y-2">
                   {ticket.deal_title ? (
                     <div>
+                      {ticket.deal_id ? (
+                        <Link
+                          href={`/crm/deals?record=${ticket.deal_id}`}
+                          className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/20 transition-colors group"
+                          title="Открыть сделку в CRM"
+                        >
+                          <Briefcase className="h-3 w-3" />
+                          <span className="truncate">{ticket.deal_title}</span>
+                          <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </Link>
+                      ) : (
+                        <div className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
+                          <Briefcase className="h-3 w-3" />
+                          <span className="truncate">{ticket.deal_title}</span>
+                        </div>
+                      )}
                       <div className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
                         <Briefcase className="h-3 w-3" />
                         <span className="truncate">{ticket.deal_title}</span>
@@ -724,23 +863,25 @@ export default function RepairDetailPage() {
             </div>
 
             {/* Master Assignment Card */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
-              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block mb-2">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2">
+              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
                 Ответственный мастер
               </span>
 
-              {!isEditing ? (
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-[#888888]" />
-                  <span className="text-xs font-medium text-[#111111]">
-                    {ticket.master_name || "Не назначен"}
-                  </span>
-                </div>
-              ) : (
+              <div className="flex items-center gap-2">
+                <User className="h-4 w-4 text-[#888888] shrink-0" />
                 <select
-                  value={editForm.masterId}
-                  onChange={(e) => setEditForm((prev) => ({ ...prev, masterId: e.target.value }))}
-                  className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                  value={isEditing ? editForm.masterId : (ticket.master_id ?? "")}
+                  onChange={(e) => {
+                    const newId = e.target.value;
+                    if (isEditing) {
+                      setEditForm((prev) => ({ ...prev, masterId: newId }));
+                    } else {
+                      handleMasterChange(newId);
+                    }
+                  }}
+                  disabled={updateMutation.isPending}
+                  className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:border-[#cccccc] focus:border-[#4a38f5] focus:outline-none cursor-pointer transition-colors"
                 >
                   <option value="">Не назначен</option>
                   {teamMembers.map((m) => (
@@ -749,7 +890,7 @@ export default function RepairDetailPage() {
                     </option>
                   ))}
                 </select>
-              )}
+              </div>
             </div>
 
             {/* Cost Card */}
@@ -837,20 +978,240 @@ export default function RepairDetailPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#fbfbfb]">
-              {/* Вкладка 1: Данные заказа */}
+              {/* Вкладка 1: Данные заказа — 4 информативных блока */}
               {tab === "details" && (
-                <div className="space-y-4">
-                  <div className="text-sm text-[#111111] leading-relaxed whitespace-pre-wrap">
-                    {ticket.notes || "Дополнительных примечаний нет."}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* Блок 1: Сроки и статус выполнения */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-[#f0f0f0]">
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-[#4a38f5]" />
+                        <h3 className="text-[13px] font-semibold text-[#111111]">
+                          Сроки и статус выполнения
+                        </h3>
+                      </div>
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                          getRepairStatusColors(ticket.status),
+                        )}
+                      >
+                        {getRepairStatusLabel(ticket.status)}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="rounded-[6px] bg-[#fafafa] p-2.5 border border-[#f0f0f0]">
+                        <span className="text-[#888888] block text-[11px] mb-1">Принят в сервис</span>
+                        <span className="font-medium text-[#111111]">{formatDate(ticket.received_at)}</span>
+                      </div>
+                      <div className="rounded-[6px] bg-[#fafafa] p-2.5 border border-[#f0f0f0]">
+                        <span className="text-[#888888] block text-[11px] mb-1">Завершение ремонта</span>
+                        <span className="font-medium text-[#111111]">
+                          {ticket.completed_at ? formatDate(ticket.completed_at) : "В процессе"}
+                        </span>
+                      </div>
+                      <div className="rounded-[6px] bg-[#fafafa] p-2.5 border border-[#f0f0f0]">
+                        <span className="text-[#888888] block text-[11px] mb-1">Выдача клиенту</span>
+                        <span className="font-medium text-[#111111]">
+                          {ticket.delivered_at ? formatDate(ticket.delivered_at) : "Ожидает выдачи"}
+                        </span>
+                      </div>
+                      <div className="rounded-[6px] bg-[#fafafa] p-2.5 border border-[#f0f0f0]">
+                        <span className="text-[#888888] block text-[11px] mb-1">Приоритет наряда</span>
+                        <span
+                          className={cn(
+                            "font-medium",
+                            ticket.priority === "urgent"
+                              ? "text-rose-600"
+                              : ticket.priority === "high"
+                                ? "text-amber-600"
+                                : ticket.priority === "low"
+                                  ? "text-[#888888]"
+                                  : "text-[#111111]",
+                          )}
+                        >
+                          {ticket.priority === "urgent"
+                            ? "Срочный"
+                            : ticket.priority === "high"
+                              ? "Высокий"
+                              : ticket.priority === "low"
+                                ? "Низкий"
+                                : "Стандартный"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 flex items-center justify-between text-xs border-t border-[#f0f0f0]">
+                      <span className="text-[#666666]">Ответственный мастер:</span>
+                      <span className="font-medium text-[#111111]">
+                        {ticket.master_name || "Не назначен"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs space-y-1.5">
-                    <p className="text-xs text-[#666666]">Создан: {formatDate(ticket.received_at)}</p>
-                    {ticket.completed_at && (
-                      <p className="text-xs text-[#666666]">Завершён: {formatDate(ticket.completed_at)}</p>
+
+                  {/* Блок 2: Документооборот и гарантия */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+                    <div className="flex items-center gap-2 pb-3 border-b border-[#f0f0f0]">
+                      <ShieldCheck className="h-4 w-4 text-[#4a38f5]" />
+                      <h3 className="text-[13px] font-semibold text-[#111111]">
+                        Документооборот и гарантия
+                      </h3>
+                    </div>
+
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
+                        Печатные формы
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setReceiptOpen(true)}
+                          className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+                        >
+                          <Printer className="h-3.5 w-3.5 text-[#666666]" />
+                          Акт приемки (Договор)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWorkOrderOpen(true)}
+                          className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+                        >
+                          <Printer className="h-3.5 w-3.5 text-[#666666]" />
+                          Акт выполненных работ
+                        </button>
+                        {hasFinance && (
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceCreateOpen(true)}
+                            className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
+                          >
+                            <Receipt className="h-3.5 w-3.5" />
+                            Счёт на оплату
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[6px] bg-[#fafafa] p-3 border border-[#f0f0f0] space-y-1.5 text-xs">
+                      <span className="font-semibold text-[#111111] block">Условия гарантийного обслуживания</span>
+                      <p className="text-[#666666] leading-relaxed text-[11px]">
+                        Гарантийный срок на произведённые работы составляет 30 календарных дней с момента выдачи оборудования. Гарантия на установленные оригинальные запасные части предоставляется в соответствии с регламентом производителя.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Блок 3: Связанная сделка CRM */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-[#f0f0f0]">
+                      <div className="flex items-center gap-2">
+                        <Briefcase className="h-4 w-4 text-[#4a38f5]" />
+                        <h3 className="text-[13px] font-semibold text-[#111111]">
+                          Связанная сделка CRM
+                        </h3>
+                      </div>
+                      {ticket.deal_id && (
+                        <Link
+                          href={`/crm/deals?record=${ticket.deal_id}`}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-[#4a38f5] hover:underline"
+                        >
+                          Перейти в CRM
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      )}
+                    </div>
+
+                    {ticket.deal_id ? (
+                      <div className="space-y-3">
+                        <div className="rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Link
+                              href={`/crm/deals?record=${ticket.deal_id}`}
+                              className="text-[13px] font-semibold text-[#111111] hover:text-[#4a38f5] hover:underline truncate"
+                            >
+                              {ticket.deal_title || `Сделка по наряду ${ticket.ticket_number}`}
+                            </Link>
+                            {ticket.deal_budget !== null && ticket.deal_budget !== undefined && (
+                              <span className="font-mono tabular-nums font-semibold text-[#111111] text-xs">
+                                {formatCost(ticket.deal_budget)}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-[#888888]">Этап воронки:</span>
+                            <span className="rounded-[4px] bg-white border border-[#e5e5e5] px-2 py-0.5 text-[11px] font-medium text-[#111111]">
+                              {ticket.deal_stage_name || "Новый лид"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {ticket.deal_note && (
+                          <div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] leading-relaxed">
+                            <div className="font-medium text-[11px] text-[#854d0e]/80 uppercase mb-0.5">
+                              Заметка к сделке
+                            </div>
+                            {ticket.deal_note}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-[6px] border border-dashed border-[#e5e5e5] p-6 text-center text-xs text-[#888888]">
+                        Сделка CRM не привязана к данному наряду.
+                      </div>
                     )}
-                    {ticket.delivered_at && (
-                      <p className="text-xs text-[#666666]">Выдан: {formatDate(ticket.delivered_at)}</p>
-                    )}
+                  </div>
+
+                  {/* Блок 4: Примечания и доверенные лица */}
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+                    <div className="flex items-center gap-2 pb-3 border-b border-[#f0f0f0]">
+                      <Users className="h-4 w-4 text-[#4a38f5]" />
+                      <h3 className="text-[13px] font-semibold text-[#111111]">
+                        Примечания и доверенные лица
+                      </h3>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div>
+                        <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block mb-1">
+                          Примечания к заказу
+                        </span>
+                        <div className="rounded-[6px] bg-[#fafafa] border border-[#f0f0f0] p-3 text-xs text-[#111111] leading-relaxed min-h-[48px] whitespace-pre-wrap">
+                          {ticket.notes || "Примечания не указаны."}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block mb-1.5">
+                          Доверенные лица / Доп. контакты
+                        </span>
+                        {ticket.additional_contacts && ticket.additional_contacts.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {ticket.additional_contacts.map((ac, idx) => (
+                              <div
+                                key={idx}
+                                className="flex items-center justify-between rounded-[6px] border border-[#f0f0f0] bg-[#fafafa] px-3 py-2 text-xs"
+                              >
+                                <div>
+                                  <span className="font-medium text-[#111111]">{ac.name}</span>
+                                  {ac.role && (
+                                    <span className="ml-1.5 text-[11px] text-[#666666]">({ac.role})</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 text-[#666666] font-mono">
+                                  <Phone className="h-3 w-3 text-[#888888]" />
+                                  <span>{ac.phone}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-[#888888] italic">
+                            Доверенные лица не указаны при приёмке.
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -941,7 +1302,7 @@ export default function RepairDetailPage() {
                                 <span className="text-[#888888]">Сделка CRM:</span>{" "}
                                 {item.dealTitle ? (
                                   <Link
-                                    href={`/crm/deals/${item.dealId}`}
+                                    href={`/crm/deals?record=${item.dealId}`}
                                     className="font-medium text-[#4a38f5] hover:underline"
                                   >
                                     {item.dealTitle}
@@ -1054,6 +1415,18 @@ export default function RepairDetailPage() {
 
       <RepairReceiptModal open={receiptOpen} ticket={ticket} onClose={() => setReceiptOpen(false)} />
       <RepairWorkOrderModal open={workOrderOpen} ticket={ticket} onClose={() => setWorkOrderOpen(false)} />
+      <ContactPickerModal
+        open={contactPickerOpen}
+        onClose={() => setContactPickerOpen(false)}
+        currentContactId={ticket.customer_id}
+        onSelect={handleSelectContact}
+      />
+      <CompanyPickerModal
+        open={companyPickerOpen}
+        onClose={() => setCompanyPickerOpen(false)}
+        currentCompanyId={ticket.company_id}
+        onSelect={handleSelectCompany}
+      />
       <InvoiceCreateModal
         open={invoiceCreateOpen}
         onClose={() => setInvoiceCreateOpen(false)}

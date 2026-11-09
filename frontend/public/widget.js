@@ -2087,16 +2087,44 @@
     var proactiveTimer = null;
     var BUFFER_WAIT_MS = 3500;
 
+    // Ненавязчивый сбор точных GPS-координат (только если разрешение уже выдано пользователем ранее)
+    var clientGpsCoords = null;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.permissions && typeof navigator.permissions.query === 'function') {
+        navigator.permissions.query({ name: 'geolocation' }).then(function (status) {
+          if (status && status.state === 'granted' && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              function (pos) {
+                if (pos && pos.coords) {
+                  clientGpsCoords = {
+                    latitude: Number(pos.coords.latitude.toFixed(6)),
+                    longitude: Number(pos.coords.longitude.toFixed(6)),
+                    accuracy: Math.round(pos.coords.accuracy || 0),
+                  };
+                }
+              },
+              function () {},
+              { timeout: 4000, maximumAge: 600000, enableHighAccuracy: false }
+            );
+          }
+        }).catch(function () {});
+      }
+    } catch (e) {}
+
     // Отправка событий воронки виджета (VISIT, WIDGET_OPEN) через sendBeacon / fetch keepalive
     function sendWidgetAnalyticsEvent(eventType, meta) {
       try {
+        var eventMeta = meta || {};
+        if (clientGpsCoords && !eventMeta.coords) {
+          eventMeta.coords = clientGpsCoords;
+        }
         var payloadObj = {
           widgetId: channelAccountId,
           sessionId: sessionId,
           visitorId: visitorId,
           eventType: eventType,
           event: eventType,
-          metadata: meta || {}
+          metadata: eventMeta
         };
         var jsonStr = JSON.stringify(payloadObj);
         var targetUrl = apiUrl + '/api/v1/widgets/' + channelAccountId + '/events';
@@ -4125,6 +4153,7 @@
           },
           visitCount: visitCount,
           pageHistory: pageHistory,
+          coords: clientGpsCoords || undefined,
           isDraft: Boolean(isDraft),
         };
 
@@ -4166,7 +4195,7 @@
               ) {
                 continue;
               }
-              var typingDelay = Math.min(Math.max(replyText.length * 35, 1200), 4500);
+              var typingDelay = Math.min(Math.max(replyText.length * 6, 200), 700);
 
               showTypingIndicator(true, 'печатает...');
               await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
@@ -4174,7 +4203,7 @@
 
               saveAndRenderMessage(replyText, false);
               if (i < result.replies.length - 1) {
-                await new Promise(function (resolve) { setTimeout(resolve, 900); });
+                await new Promise(function (resolve) { setTimeout(resolve, 300); });
               }
             }
           } else if (result && result.status === 'operator_needed') {

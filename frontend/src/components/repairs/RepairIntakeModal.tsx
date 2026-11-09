@@ -33,6 +33,7 @@ import {
 } from "@/lib/api/use-repairs";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { toast } from "sonner";
+import type { RepairTicket } from "@/lib/repairs/repairs.types";
 import { RepairClientSection } from "./RepairClientSection";
 import { DictionarySelectField } from "./DictionarySelectField";
 import { EquipmentRepairHistorySheet } from "./EquipmentRepairHistorySheet";
@@ -322,6 +323,7 @@ export interface RepairIntakeModalProps {
   onSubmit: (payload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] }, photos: File[]) => void | Promise<void>;
   initialCustomerId?: string;
   initialDealId?: string | null;
+  copyFromTicket?: RepairTicket | null;
   isSubmitting?: boolean;
 }
 
@@ -331,6 +333,7 @@ export function RepairIntakeModal({
   onSubmit,
   initialCustomerId,
   initialDealId,
+  copyFromTicket,
   isSubmitting = false,
 }: RepairIntakeModalProps) {
   const { data: initialDeal } = useDeal(initialDealId ?? null);
@@ -445,6 +448,48 @@ export function RepairIntakeModal({
         form.setValue("master_name", currentUser.name || "Сотрудник", { shouldValidate: true });
       }
 
+      if (copyFromTicket) {
+        if (copyFromTicket.customer_id) {
+          form.setValue("customer_id", copyFromTicket.customer_id, { shouldValidate: true });
+        }
+        if (copyFromTicket.customer_name) {
+          form.setValue("customer_name", copyFromTicket.customer_name, { shouldValidate: true });
+        }
+        if (copyFromTicket.customer_phone) {
+          form.setValue("customer_phone", copyFromTicket.customer_phone, { shouldValidate: true });
+        }
+        if (copyFromTicket.customer_email) {
+          form.setValue("customer_email", copyFromTicket.customer_email, { shouldValidate: true });
+        }
+        if (copyFromTicket.company_id) {
+          form.setValue("company_id", copyFromTicket.company_id, { shouldValidate: true });
+        }
+        if (copyFromTicket.company_name) {
+          form.setValue("company_name", copyFromTicket.company_name, { shouldValidate: true });
+        }
+        if (copyFromTicket.company_inn) {
+          form.setValue("company_inn", copyFromTicket.company_inn, { shouldValidate: true });
+        }
+        if (copyFromTicket.master_id) {
+          form.setValue("master_id", copyFromTicket.master_id, { shouldValidate: true });
+        }
+        if (copyFromTicket.master_name) {
+          form.setValue("master_name", copyFromTicket.master_name, { shouldValidate: true });
+        }
+        if (copyFromTicket.priority) {
+          form.setValue("priority", copyFromTicket.priority, { shouldValidate: true });
+        }
+        if (copyFromTicket.notes) {
+          form.setValue("notes", copyFromTicket.notes, { shouldValidate: true });
+        }
+        if (copyFromTicket.deal_id) {
+          form.setValue("deal_id", copyFromTicket.deal_id, { shouldValidate: true });
+        }
+        if (copyFromTicket.additional_contacts && copyFromTicket.additional_contacts.length > 0) {
+          form.setValue("additional_contacts", copyFromTicket.additional_contacts, { shouldValidate: true });
+        }
+      }
+
       if (initialCustomerId) {
         form.setValue("customer_id", initialCustomerId, { shouldValidate: true });
       }
@@ -472,7 +517,7 @@ export function RepairIntakeModal({
         form.setValue("deal_id", initialDealId, { shouldValidate: true });
       }
     }
-  }, [open, form, initialCustomerId, initialDeal, initialDealId, teamMembers, currentUser]);
+  }, [open, form, copyFromTicket, initialCustomerId, initialDeal, initialDealId, teamMembers, currentUser]);
 
   // Копирование карточки оборудования
   const handleCopyEquipment = useCallback((idx: number) => {

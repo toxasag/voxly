@@ -4,7 +4,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ShieldAlert, Loader2, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/lib/auth/use-auth";
-import { readImpersonationBackup, restoreAdminSession, getPlatformAdminUrl } from "@/lib/auth/impersonation";
+import {
+  readImpersonationBackup,
+  restoreAdminSessionDetailed,
+  getPlatformAdminUrl,
+} from "@/lib/auth/impersonation";
 
 interface PlatformOwnerGuardProps {
   children: ReactNode;
@@ -31,9 +35,13 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
 
     if (backup) {
       setIsRestoring(true);
-      void restoreAdminSession().then((success) => {
-        if (success) {
-          window.location.reload();
+      void restoreAdminSessionDetailed().then((res) => {
+        if (res.success) {
+          if (res.targetUrl && typeof window !== "undefined" && !window.location.href.includes(res.targetUrl)) {
+            window.location.href = res.targetUrl;
+          } else {
+            window.location.reload();
+          }
         } else {
           setRestoreFailed(true);
           setIsRestoring(false);
@@ -90,9 +98,8 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
               type="button"
               onClick={() => {
                 setIsRestoring(true);
-                void restoreAdminSession().then((success) => {
-                  if (success) window.location.reload();
-                  else window.location.href = getPlatformAdminUrl();
+                void restoreAdminSessionDetailed().then((res) => {
+                  window.location.href = res.targetUrl || getPlatformAdminUrl();
                 });
               }}
               className="mt-6 inline-flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-[#3b2be0] focus-visible:ring-2 focus-visible:ring-[#4a38f5]/50 active:scale-[0.97]"
