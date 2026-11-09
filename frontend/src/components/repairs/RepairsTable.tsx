@@ -10,6 +10,7 @@ import {
   Building2,
   AlertCircle,
   Trash2,
+  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { RepairTicket, RepairStatus, RepairFilterStatus } from "@/lib/repairs/repairs.types";
@@ -28,6 +29,7 @@ interface RepairsTableProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onPrintReceipt: (ticket: RepairTicket) => void;
+  onCopyTicket?: (ticket: RepairTicket) => void;
   isLoading?: boolean;
   isError?: boolean;
   error?: Error | null;
@@ -122,6 +124,7 @@ export const RepairsTable = memo(function RepairsTable({
   searchQuery,
   onSearchChange,
   onPrintReceipt,
+  onCopyTicket,
   isLoading,
   isError,
   error,
@@ -497,7 +500,23 @@ export const RepairsTable = memo(function RepairsTable({
                 </select>
               </div>
 
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-2">
+                {selectedIds.size === 1 && onCopyTicket && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const id = Array.from(selectedIds)[0];
+                      const ticket = tickets.find((t) => t.id === id);
+                      if (ticket) {
+                        onCopyTicket(ticket);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#111111] hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-[#666666]" />
+                    Копировать
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsDeleteDialogOpen(true)}
