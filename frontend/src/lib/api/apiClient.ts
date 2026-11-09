@@ -313,15 +313,38 @@ async function request<T>(
   if (body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
   if (token !== null) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(buildUrl(path, options.query), {
-    method,
-    headers,
-    body: isFormData ? (body as FormData) : body === undefined ? undefined : JSON.stringify(body),
-    // Allows the backend to move to httpOnly cookies (M0.6.5) without a
-    // client change.
-    credentials: "include",
-    ...(options.signal !== undefined && { signal: options.signal }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, options.query), {
+      method,
+      headers,
+      body: isFormData ? (body as FormData) : body === undefined ? undefined : JSON.stringify(body),
+      // Allows the backend to move to httpOnly cookies (M0.6.5) without a
+      // client change.
+      credentials: "include",
+      ...(options.signal !== undefined && { signal: options.signal }),
+    });
+  } catch (networkErr) {
+    if (options.retrying !== true && (!options.signal || !options.signal.aborted)) {
+      // Кратковременный сетевой сбой или перезапуск контейнера бэкенда: одна повторная попытка
+      await new Promise((r) => setTimeout(r, 700));
+      return request<T>(method, path, body, { ...options, retrying: true });
+    }
+    throw new ApiClientError(0, {
+      error: {
+        code: "NETWORK_ERROR",
+        message: networkErr instanceof Error && networkErr.name === "AbortError"
+          ? "Превышено время ожидания запроса"
+          : "Служба временно недоступна, повторите попытку",
+      },
+    });
+  }
+
+  // При получении 502/503/504 (перезапуск бэкенда за прокси) — пробуем повторить запрос один раз
+  if ((res.status === 502 || res.status === 503 || res.status === 504) && options.retrying !== true) {
+    await new Promise((r) => setTimeout(r, 800));
+    return request<T>(method, path, body, { ...options, retrying: true });
+  }
 
   // Expired access token: refresh once, then replay the original request.
   //

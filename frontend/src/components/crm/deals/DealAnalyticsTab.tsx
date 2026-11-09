@@ -148,7 +148,8 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
   const webchatVisitorId = (mergedFields.webchat_visitor_id as string | undefined) || (mergedFields.visitorId as string | undefined);
 
   // Канал поступления
-  const channel = contactQuery.data?.channel || (deal.title.toLowerCase().includes("webchat") || deal.title.includes("Онлайн-чат") ? "webchat" : "unknown");
+  const dealTitleLower = (deal?.title || "").toLowerCase();
+  const channel = contactQuery.data?.channel || (dealTitleLower.includes("webchat") || dealTitleLower.includes("онлайн-чат") ? "webchat" : "unknown");
 
   // 2. UTM-метки
   const utmTags = (
@@ -197,6 +198,10 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
             ? (contactQuery.data.sourceMetadata as Record<string, unknown>).geo
             : undefined
   ) as VisitorGeoData | undefined;
+
+  const geoLat = rawGeo?.latitude !== undefined && rawGeo.latitude !== null ? Number(rawGeo.latitude) : NaN;
+  const geoLon = rawGeo?.longitude !== undefined && rawGeo.longitude !== null ? Number(rawGeo.longitude) : NaN;
+  const hasValidCoords = Number.isFinite(geoLat) && Number.isFinite(geoLon);
 
   const hasAnyAnalytics =
     Boolean(pageUrl) ||
@@ -408,19 +413,19 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
               </div>
             </div>
 
-            {rawGeo.latitude !== undefined && rawGeo.longitude !== undefined && (
+            {hasValidCoords && (
               <div className="space-y-1">
                 <span className="text-xs text-[#666666] font-medium flex items-center gap-1.5">
                   <Navigation className="w-3.5 h-3.5 text-[#888888]" /> Географические координаты
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <CopyableValue
-                    value={`${rawGeo.latitude.toFixed(5)}, ${rawGeo.longitude.toFixed(5)}`}
+                    value={`${geoLat.toFixed(5)}, ${geoLon.toFixed(5)}`}
                     label="Координаты"
                   />
                   <div className="flex items-center gap-1.5 pl-1">
                     <a
-                      href={`https://yandex.ru/maps/?pt=${rawGeo.longitude},${rawGeo.latitude}&z=15&l=map`}
+                      href={`https://yandex.ru/maps/?pt=${geoLon},${geoLat}&z=15&l=map`}
                       target="_blank"
                       rel="noreferrer"
                       className="text-xs font-medium text-[#4a38f5] hover:underline flex items-center gap-0.5"
@@ -429,7 +434,7 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
                     </a>
                     <span className="text-[#cccccc]">·</span>
                     <a
-                      href={`https://www.openstreetmap.org/?mlat=${rawGeo.latitude}&mlon=${rawGeo.longitude}#map=16/${rawGeo.latitude}/${rawGeo.longitude}`}
+                      href={`https://www.openstreetmap.org/?mlat=${geoLat}&mlon=${geoLon}#map=16/${geoLat}/${geoLon}`}
                       target="_blank"
                       rel="noreferrer"
                       className="text-xs font-medium text-[#666666] hover:text-[#111111] flex items-center gap-0.5"
@@ -458,16 +463,16 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
             )}
           </div>
 
-          {rawGeo.latitude !== undefined && rawGeo.longitude !== undefined && (
+          {hasValidCoords && (
             <div className="relative mt-2 h-36 w-full overflow-hidden rounded-[6px] border border-[#e5e5e5] bg-[#f5f5f5]">
               <iframe
                 title="Карта расположения"
                 className="h-full w-full border-0 pointer-events-none"
                 loading="lazy"
-                src={`https://www.openstreetmap.org/export/embed.html?bbox=${rawGeo.longitude - 0.012}%2C${rawGeo.latitude - 0.008}%2C${rawGeo.longitude + 0.012}%2C${rawGeo.latitude + 0.008}&layer=mapnik&marker=${rawGeo.latitude}%2C${rawGeo.longitude}`}
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${geoLon - 0.012}%2C${geoLat - 0.008}%2C${geoLon + 0.012}%2C${geoLat + 0.008}&layer=mapnik&marker=${geoLat}%2C${geoLon}`}
               />
               <a
-                href={`https://yandex.ru/maps/?pt=${rawGeo.longitude},${rawGeo.latitude}&z=15&l=map`}
+                href={`https://yandex.ru/maps/?pt=${geoLon},${geoLat}&z=15&l=map`}
                 target="_blank"
                 rel="noreferrer"
                 className="absolute bottom-2 right-2 flex items-center gap-1 rounded-[6px] bg-white/95 px-2.5 py-1 text-xs font-medium text-[#4a38f5] shadow-xs hover:bg-white hover:underline transition-colors backdrop-blur-xs"
