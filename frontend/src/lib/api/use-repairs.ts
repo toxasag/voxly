@@ -62,6 +62,10 @@ export interface RepairNoteDTO {
   id: string;
   authorId: string;
   authorName: string;
+  userId?: string;
+  repairId?: string;
+  repairOrderId?: string;
+  dealId?: string | null;
   kind: string;
   content: string;
   fromStatus: string | null;
@@ -987,12 +991,18 @@ export function useCreateNote(): UseMutationResult<RepairNoteDTO, ApiClientError
       const res = await apiClient.post<RepairNoteDTO>(`${BASE_PATH}/${orderId}/notes`, payload);
       return res.data;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (data, variables) => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.notes(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      if (data?.dealId) {
+        void queryClient.invalidateQueries({ queryKey: ["notes", "list", "deal", data.dealId] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["notes"] });
     },
   });
 }
+
+export const useCreateRepairNote = useCreateNote;
 
 export function useCreatePhoto(): UseMutationResult<RepairPhotoDTO, ApiClientError, { orderId: string; payload: CreatePhotoPayload }> {
   const queryClient = useQueryClient();

@@ -3,6 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/apiClient";
 
+export type LeadSource =
+  | "whatsapp"
+  | "max"
+  | "telegram_personal"
+  | "telegram_bot"
+  | "site_widget"
+  | "manual";
+
 export interface Bitrix24ConfigDTO {
   webhook_url: string;
   is_enabled: boolean;

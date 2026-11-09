@@ -22,6 +22,8 @@ export interface NoteDTO {
   body: string;
   targetType: NoteTargetType;
   targetId: string;
+  repairOrderId?: string | null;
+  repairTicketNumber?: string | null;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -33,6 +35,7 @@ export interface CreateNotePayload {
   body: string;
   target_type: NoteTargetType;
   target_id: string;
+  repair_order_id?: string;
 }
 
 export interface UpdateNotePayload {
