@@ -15,6 +15,7 @@ import {
   type Bitrix24LeadAddResponse,
   type Bitrix24TestResult,
   type LeadSource,
+  type SimpleWidgetDTO,
   type UpdateBitrix24ConfigPayload,
 } from "./bitrix24.types.js";
 
@@ -141,11 +142,40 @@ export function normalizeBitrixWebhookUrl(rawUrl: string, method = "crm.lead.add
 
 export class Bitrix24Service {
   /**
+   * Получение списка всех доступных виджетов тенанта.
+   */
+  async getTenantWidgets(tenantId: string): Promise<SimpleWidgetDTO[]> {
+    const rows = await query<{
+      id: string;
+      label: string;
+      external_id: string;
+      status: string;
+      created_at: Date | string;
+    }>(
+      `SELECT id, label, external_id, status, created_at
+       FROM channel_accounts
+       WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL
+       ORDER BY label ASC, created_at DESC`,
+      [tenantId],
+    );
+
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.label || "Онлайн-чат",
+      site_domain: r.external_id || "",
+      status: r.status,
+      created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    }));
+  }
+
+  /**
    * Получение текущей конфигурации Битрикс24 для арендатора.
    */
   async getConfig(tenantId: string): Promise<Bitrix24ConfigDTO> {
     const row = await queryOne<Bitrix24ConfigRow>(
-      `SELECT tenant_id, webhook_url, is_enabled, allowed_sources, last_lead_id, last_sync_at, last_error, created_at, updated_at
+      `SELECT tenant_id, webhook_url, is_enabled, allowed_sources, selected_widget_ids,
+              custom_source_id, send_utm_marks, send_geo_data,
+              last_lead_id, last_sync_at, last_error, created_at, updated_at
        FROM tenant_bitrix24_configs
        WHERE tenant_id = $1`,
       [tenantId],
@@ -156,6 +186,10 @@ export class Bitrix24Service {
         webhook_url: "",
         is_enabled: false,
         allowed_sources: [],
+        selected_widget_ids: [],
+        custom_source_id: BITRIX24_SOURCE_ID,
+        send_utm_marks: true,
+        send_geo_data: true,
         last_lead_id: null,
         last_sync_at: null,
         last_error: null,
@@ -166,10 +200,18 @@ export class Bitrix24Service {
       ? (row.allowed_sources as LeadSource[])
       : [];
 
+    const selectedWidgets = Array.isArray(row.selected_widget_ids)
+      ? row.selected_widget_ids
+      : [];
+
     return {
       webhook_url: row.webhook_url,
       is_enabled: row.is_enabled,
       allowed_sources: allowed,
+      selected_widget_ids: selectedWidgets,
+      custom_source_id: (row.custom_source_id && row.custom_source_id.trim()) || BITRIX24_SOURCE_ID,
+      send_utm_marks: row.send_utm_marks ?? true,
+      send_geo_data: row.send_geo_data ?? true,
       last_lead_id: row.last_lead_id,
       last_sync_at:
         row.last_sync_at instanceof Date
@@ -200,6 +242,28 @@ export class Bitrix24Service {
       cleanAllowedSources = Array.from(set);
     }
 
+    let cleanSelectedWidgetIds: string[] = current.selected_widget_ids ?? [];
+    if (payload.selected_widget_ids !== undefined) {
+      const set = new Set<string>();
+      for (const w of payload.selected_widget_ids) {
+        const clean = String(w).trim();
+        if (clean) set.add(clean);
+      }
+      cleanSelectedWidgetIds = Array.from(set);
+    }
+
+    const customSourceId = payload.custom_source_id !== undefined
+      ? (payload.custom_source_id.trim() || BITRIX24_SOURCE_ID)
+      : (current.custom_source_id || BITRIX24_SOURCE_ID);
+
+    const sendUtmMarks = payload.send_utm_marks !== undefined
+      ? Boolean(payload.send_utm_marks)
+      : current.send_utm_marks;
+
+    const sendGeoData = payload.send_geo_data !== undefined
+      ? Boolean(payload.send_geo_data)
+      : current.send_geo_data;
+
     // Если включено, URL обязан быть валидным
     if (isEnabled && !rawUrl) {
       throw new AppError(400, "VALIDATION_ERROR", "Для активации интеграции укажите URL вебхука Битрикс24");
@@ -212,16 +276,30 @@ export class Bitrix24Service {
 
     const row = await queryOne<Bitrix24ConfigRow>(
       `INSERT INTO tenant_bitrix24_configs (
-         tenant_id, webhook_url, is_enabled, allowed_sources, updated_at
+         tenant_id, webhook_url, is_enabled, allowed_sources, selected_widget_ids,
+         custom_source_id, send_utm_marks, send_geo_data, updated_at
        )
-       VALUES ($1, $2, $3, $4, NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
        ON CONFLICT (tenant_id) DO UPDATE
        SET webhook_url = EXCLUDED.webhook_url,
            is_enabled = EXCLUDED.is_enabled,
            allowed_sources = EXCLUDED.allowed_sources,
+           selected_widget_ids = EXCLUDED.selected_widget_ids,
+           custom_source_id = EXCLUDED.custom_source_id,
+           send_utm_marks = EXCLUDED.send_utm_marks,
+           send_geo_data = EXCLUDED.send_geo_data,
            updated_at = NOW()
        RETURNING *`,
-      [tenantId, rawUrl, isEnabled, cleanAllowedSources],
+      [
+        tenantId,
+        rawUrl,
+        isEnabled,
+        cleanAllowedSources,
+        cleanSelectedWidgetIds,
+        customSourceId,
+        sendUtmMarks,
+        sendGeoData,
+      ],
     );
 
     if (!row) {
@@ -232,6 +310,10 @@ export class Bitrix24Service {
       webhook_url: row.webhook_url,
       is_enabled: row.is_enabled,
       allowed_sources: (row.allowed_sources ?? []) as LeadSource[],
+      selected_widget_ids: row.selected_widget_ids ?? [],
+      custom_source_id: (row.custom_source_id && row.custom_source_id.trim()) || BITRIX24_SOURCE_ID,
+      send_utm_marks: row.send_utm_marks ?? true,
+      send_geo_data: row.send_geo_data ?? true,
       last_lead_id: row.last_lead_id,
       last_sync_at:
         row.last_sync_at instanceof Date
@@ -244,7 +326,8 @@ export class Bitrix24Service {
   }
 
   /**
-   * Тестовая отправка лида в Битрикс24 для проверки подключения.
+   * Тестовая проверка соединения с Битрикс24 через вызов crm.lead.fields.json.
+   * Безопасна: не создает фиктивных лидов и проверяет наличие прав на CRM-модуль.
    */
   async testConnection(tenantId: string, customWebhookUrl?: string): Promise<Bitrix24TestResult> {
     let webhookUrl = customWebhookUrl ? customWebhookUrl.trim() : "";
@@ -260,29 +343,13 @@ export class Bitrix24Service {
       };
     }
 
-    const targetUrl = normalizeBitrixWebhookUrl(webhookUrl);
-
-    // Получаем имя арендатора
-    const tenantRow = await queryOne<{ name: string; slug: string }>(
-      `SELECT name, slug FROM tenants WHERE id = $1`,
-      [tenantId],
-    );
-    const tenantIdentifier = tenantRow?.slug || tenantRow?.name || "тест";
-
-    const testPayload: Bitrix24LeadAddRequest = {
-      fields: {
-        TITLE: `[ТЕСТ] Проверка интеграции GetVoxly — [${tenantIdentifier}]`,
-        NAME: "Тестовый Лид",
-        PHONE: [{ VALUE: "+79990000000", VALUE_TYPE: "WORK" }],
-        SOURCE_ID: BITRIX24_SOURCE_ID,
-        UF_CRM_YA_CID: "1234567890123456789",
-        COMMENTS: "Тестовая проверка связи с Битрикс24 из настроек каналов GetVoxly",
-        STATUS_ID: "NEW",
-      },
-      params: {
-        REGISTER_SONET_EVENT: "Y",
-      },
-    };
+    let targetUrl: string;
+    try {
+      targetUrl = normalizeBitrixWebhookUrl(webhookUrl, "crm.lead.fields.json");
+    } catch (normErr: unknown) {
+      const msg = normErr instanceof AppError ? normErr.message : "Некорректный URL входящего вебхука";
+      return { success: false, message: msg, error: msg };
+    }
 
     try {
       const controller = new AbortController();
@@ -291,50 +358,93 @@ export class Bitrix24Service {
       const response = await fetch(targetUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(testPayload),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
-      const data = (await response.json()) as Bitrix24LeadAddResponse;
+      const rawText = await response.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(rawText) as Record<string, unknown>;
+      } catch {
+        const errorText = `Сервер Битрикс24 вернул не-JSON ответ (HTTP ${response.status}): ${rawText.slice(0, 150)}`;
+        await this.updateSyncStatus(tenantId, null, errorText);
+        return { success: false, message: errorText, error: errorText };
+      }
 
       if (!response.ok || data.error) {
-        const errorText = data.error_description || data.error || `HTTP ${response.status}`;
+        const errCode = String(data.error || "");
+        const errDesc = String(data.error_description || "");
+        let errorText: string;
+
+        if (errCode === "ACCESS_DENIED" || response.status === 403) {
+          errorText = "Доступ запрещен: вебхук не имеет прав на модуль CRM в Битрикс24 (отметьте CRM в правах вебхука)";
+        } else if (errCode === "NO_AUTH_FOUND" || response.status === 401) {
+          errorText = "Ошибка авторизации: неверный ключ вебхука или пользователь удален в Битрикс24";
+        } else if (errDesc) {
+          errorText = `Ошибка Битрикс24 (${errCode || response.status}): ${errDesc}`;
+        } else if (errCode) {
+          errorText = `Ошибка Битрикс24: ${errCode}`;
+        } else {
+          errorText = `Ошибка HTTP ${response.status} от сервера Битрикс24`;
+        }
+
         await this.updateSyncStatus(tenantId, null, errorText);
         return {
           success: false,
-          message: `Ошибка Битрикс24: ${errorText}`,
+          message: errorText,
           error: errorText,
         };
       }
 
       if (data.result) {
-        await this.updateSyncStatus(tenantId, String(data.result), null);
+        // Успешная проверка: сбрасываем предыдущую ошибку синхронизации
+        await query(
+          `UPDATE tenant_bitrix24_configs
+           SET last_error = NULL, updated_at = NOW()
+           WHERE tenant_id = $1`,
+          [tenantId],
+        );
+
         return {
           success: true,
-          leadId: data.result,
-          message: `Подключение успешно! Создан тестовый лид ID: ${data.result}`,
+          message: "Подключение к Битрикс24 успешно установлено! Доступ к CRM подтверждён.",
         };
       }
 
+      const unexpectedMsg = "Неожиданный формат ответа от Битрикс24 (поле result отсутствует)";
+      await this.updateSyncStatus(tenantId, null, unexpectedMsg);
       return {
         success: false,
-        message: "Неожиданный ответ от API Битрикс24",
+        message: unexpectedMsg,
       };
     } catch (err: unknown) {
-      const errorMsg =
-        err instanceof Error
-          ? err.name === "AbortError"
-            ? "Таймаут соединения (Битрикс24 не ответил за 20с)"
-            : err.message
-          : String(err);
+      let errorMsg: string;
+      if (err instanceof Error) {
+        if (err.name === "AbortError") {
+          errorMsg = "Таймаут соединения: сервер Битрикс24 не ответил за 20 секунд";
+        } else {
+          const cause = (err as { cause?: { code?: string; message?: string } }).cause;
+          if (cause?.code === "ENOTFOUND") {
+            errorMsg = "Не удалось разрешить домен Битрикс24 (проверьте адрес портала)";
+          } else if (cause?.code === "ECONNREFUSED") {
+            errorMsg = "Сервер Битрикс24 отклонил соединение (порт закрыт)";
+          } else if (cause?.code === "CERT_HAS_EXPIRED" || cause?.code === "DEPTH_ZERO_SELF_SIGNED_CERT") {
+            errorMsg = "Ошибка SSL-сертификата сервера Битрикс24";
+          } else {
+            errorMsg = err.message;
+          }
+        }
+      } else {
+        errorMsg = String(err);
+      }
 
       await this.updateSyncStatus(tenantId, null, errorMsg);
 
       return {
         success: false,
-        message: `Сбой отправки: ${errorMsg}`,
+        message: `Сбой проверки вебхука: ${errorMsg}`,
         error: errorMsg,
       };
     }
@@ -371,7 +481,7 @@ export class Bitrix24Service {
         return { success: false, skipped: true, reason: "INTEGRATION_DISABLED" };
       }
 
-      // Проверка фильтрации по источникам заявки (allowed_sources)
+      // 1. Проверка фильтрации по источникам заявки (allowed_sources)
       const resolvedSource = resolveLeadSource({
         source: leadData.source,
         sourceMetadata: leadData.sourceMetadata,
@@ -412,7 +522,164 @@ export class Bitrix24Service {
         }
       }
 
-      const targetUrl = normalizeBitrixWebhookUrl(cfg.webhook_url);
+      // 2. Проверка фильтрации по конкретным виджетам тенанта (selected_widget_ids)
+      const effectiveWidgetId = leadData.sourceWidgetId ||
+        (leadData.sourceMetadata?.widget_id as string | undefined) ||
+        (leadData.customFields?.widget_id as string | undefined);
+
+      if (resolvedSource === "site_widget" && cfg.selected_widget_ids && cfg.selected_widget_ids.length > 0) {
+        if (!effectiveWidgetId || !cfg.selected_widget_ids.includes(effectiveWidgetId)) {
+          console.log(
+            `[Bitrix24] Skipping lead ${leadData.leadId} (tenant: ${tenantId}): widget "${effectiveWidgetId}" not in selected_widget_ids [${cfg.selected_widget_ids.join(", ")}]`,
+          );
+          try {
+            await query(
+              `INSERT INTO tenant_audit_log (tenant_id, action, entity_type, entity_id, details)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [
+                tenantId,
+                "integration.bitrix24.lead_skipped",
+                "deal",
+                leadData.leadId,
+                JSON.stringify({
+                  reason: "WIDGET_NOT_ALLOWED",
+                  widget_id: effectiveWidgetId,
+                  selected_widget_ids: cfg.selected_widget_ids,
+                }),
+              ],
+            );
+          } catch (auditErr) {
+            console.warn("[Bitrix24] Failed to record skip audit log:", auditErr);
+          }
+          return {
+            success: false,
+            skipped: true,
+            reason: `WIDGET_NOT_ALLOWED: ${effectiveWidgetId || "none"}`,
+          };
+        }
+      }
+
+      // 3. Получение названия и домена виджета из базы
+      let widgetLabel: string | null = null;
+      let widgetDomain: string | null = null;
+      if (effectiveWidgetId) {
+        try {
+          const wRow = await queryOne<{ label: string; external_id: string }>(
+            `SELECT label, external_id FROM channel_accounts
+             WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+            [effectiveWidgetId, tenantId],
+          );
+          if (wRow) {
+            widgetLabel = wRow.label;
+            widgetDomain = wRow.external_id;
+          }
+        } catch {
+          // non-blocking
+        }
+      }
+
+      // 4. Определение SOURCE_ID (кастомный из настроек тенанта или fallback UC_VWN1ZK)
+      const effectiveSourceId = (cfg.custom_source_id && cfg.custom_source_id.trim())
+        ? cfg.custom_source_id.trim()
+        : BITRIX24_SOURCE_ID;
+
+      // 5. Метаданные страницы и источника
+      const meta = leadData.sourceMetadata || {};
+      const cf = leadData.customFields || {};
+
+      const pageObj = (meta.page as { url?: string; title?: string; domain?: string } | undefined) || {};
+      const pageUrl = pageObj.url || (cf.page_url as string | undefined) || "";
+      const referrer = (meta.referrer as string | undefined) || "";
+
+      const sourceDescParts: string[] = [];
+      if (widgetLabel) sourceDescParts.push(`Виджет: ${widgetLabel}`);
+      if (widgetDomain) sourceDescParts.push(`Сайт: ${widgetDomain}`);
+      if (pageUrl) sourceDescParts.push(`URL: ${pageUrl}`);
+      if (referrer) sourceDescParts.push(`Referrer: ${referrer}`);
+      const sourceDescription = sourceDescParts.length > 0 ? sourceDescParts.join(" | ") : undefined;
+
+      // 6. UTM-метки
+      const utmObj = (meta.utm as Record<string, string> | undefined) ||
+                     leadData.utmTags ||
+                     (cf.utm as Record<string, string> | undefined) ||
+                     (cf.utm_tags as Record<string, string> | undefined) ||
+                     {};
+
+      const utmSource = cfg.send_utm_marks ? (utmObj.utm_source || utmObj.source) : undefined;
+      const utmMedium = cfg.send_utm_marks ? (utmObj.utm_medium || utmObj.medium) : undefined;
+      const utmCampaign = cfg.send_utm_marks ? (utmObj.utm_campaign || utmObj.campaign) : undefined;
+      const utmContent = cfg.send_utm_marks ? (utmObj.utm_content || utmObj.content) : undefined;
+      const utmTerm = cfg.send_utm_marks ? (utmObj.utm_term || utmObj.term) : undefined;
+
+      // 7. Гео-данные и технические метки
+      const geoObj = (meta.geo as Record<string, unknown> | undefined) ||
+                     (cf.geo as Record<string, unknown> | undefined) ||
+                     {};
+      const networkObj = (meta.network as Record<string, unknown> | undefined) || {};
+      const deviceObj = (meta.device as Record<string, unknown> | undefined) ||
+                        (cf.device_info as Record<string, unknown> | undefined) ||
+                        {};
+
+      const ip = String(geoObj.ip || networkObj.ip || deviceObj.ip || cf.client_ip || "").trim();
+      const city = String(geoObj.city || networkObj.city || "").trim();
+      const country = String(geoObj.country || networkObj.country || "").trim();
+      const region = String(geoObj.region || networkObj.region || "").trim();
+      const isp = String(geoObj.isp || networkObj.isp || "").trim();
+      const browser = String(deviceObj.browser || "").trim();
+      const os = String(deviceObj.os || "").trim();
+      const deviceType = String(deviceObj.deviceType || "").trim();
+      const visitCount = meta.visitCount || cf.visit_count;
+
+      // 8. Формирование комментариев со структурированным блоком
+      let enrichedComments = leadData.comments ? leadData.comments.trim() : "";
+
+      if (cfg.send_geo_data) {
+        const visitDetails: string[] = [];
+        if (widgetLabel) visitDetails.push(`Виджет: ${widgetLabel}${widgetDomain ? ` (${widgetDomain})` : ""}`);
+        if (pageUrl) visitDetails.push(`Страница заявки: ${pageUrl}`);
+        if (referrer) visitDetails.push(`Источник перехода (Referrer): ${referrer}`);
+
+        const locParts: string[] = [];
+        if (city) locParts.push(city);
+        if (region) locParts.push(region);
+        if (country) locParts.push(country);
+        if (locParts.length > 0) {
+          visitDetails.push(`Геолокация: ${locParts.join(", ")}${isp ? ` (Провайдер: ${isp})` : ""}`);
+        }
+
+        if (ip) visitDetails.push(`IP-адрес: ${ip}`);
+
+        const devParts: string[] = [];
+        if (deviceType) devParts.push(deviceType);
+        if (browser && browser !== "Неизвестно") devParts.push(browser);
+        if (os && os !== "Неизвестно") devParts.push(os);
+        if (devParts.length > 0) {
+          visitDetails.push(`Устройство: ${devParts.join(" / ")}`);
+        }
+
+        if (visitCount) visitDetails.push(`Визитов на сайте: ${visitCount}`);
+        if (leadData.yaClientId) visitDetails.push(`Яндекс Client ID (CID): ${leadData.yaClientId}`);
+
+        const utmSummaryParts: string[] = [];
+        if (utmSource) utmSummaryParts.push(`source=${utmSource}`);
+        if (utmMedium) utmSummaryParts.push(`medium=${utmMedium}`);
+        if (utmCampaign) utmSummaryParts.push(`campaign=${utmCampaign}`);
+        if (utmContent) utmSummaryParts.push(`content=${utmContent}`);
+        if (utmTerm) utmSummaryParts.push(`term=${utmTerm}`);
+        if (utmSummaryParts.length > 0) {
+          visitDetails.push(`UTM-метки: ${utmSummaryParts.join(", ")}`);
+        }
+
+        if (visitDetails.length > 0) {
+          enrichedComments = (enrichedComments ? `${enrichedComments}\n\n` : "") +
+            "--- Данные визита и источник (GetVoxly) ---\n" +
+            visitDetails.join("\n");
+        }
+      }
+
+      // 9. Название лида с указанием виджета
+      const widgetPart = widgetLabel ? ` [Виджет: ${widgetLabel}]` : "";
+      const leadTitle = `Заявка с сайта [${leadData.tenantIdentifier || "getvoxly"}]${widgetPart} — ${leadData.contactName || "Клиент"}`;
 
       const phoneList = leadData.phone && leadData.phone.trim()
         ? [{ VALUE: leadData.phone.trim(), VALUE_TYPE: "WORK" as const }]
@@ -424,26 +691,29 @@ export class Bitrix24Service {
 
       const payload: Bitrix24LeadAddRequest = {
         fields: {
-          TITLE: `Заявка с сайта [${leadData.tenantIdentifier || "getvoxly"}] — ${leadData.contactName || "Клиент"}`,
+          TITLE: leadTitle,
           NAME: leadData.contactName || "Клиент",
           PHONE: phoneList,
           EMAIL: emailList,
-          SOURCE_ID: BITRIX24_SOURCE_ID,
-          UF_CRM_YA_CID: leadData.yaClientId ? String(leadData.yaClientId).trim() : "",
-          COMMENTS: leadData.comments || "",
+          SOURCE_ID: effectiveSourceId,
+          SOURCE_DESCRIPTION: sourceDescription,
+          UF_CRM_YA_CID: leadData.yaClientId ? String(leadData.yaClientId).trim() : undefined,
+          COMMENTS: enrichedComments || undefined,
           STATUS_ID: "NEW",
           OPPORTUNITY: leadData.budget ?? undefined,
           CURRENCY_ID: leadData.currency ?? "RUB",
-          UTM_SOURCE: leadData.utmTags?.utm_source,
-          UTM_MEDIUM: leadData.utmTags?.utm_medium,
-          UTM_CAMPAIGN: leadData.utmTags?.utm_campaign,
-          UTM_CONTENT: leadData.utmTags?.utm_content,
-          UTM_TERM: leadData.utmTags?.utm_term,
+          UTM_SOURCE: utmSource,
+          UTM_MEDIUM: utmMedium,
+          UTM_CAMPAIGN: utmCampaign,
+          UTM_CONTENT: utmContent,
+          UTM_TERM: utmTerm,
         },
         params: {
           REGISTER_SONET_EVENT: "Y",
         },
       };
+
+      const targetUrl = normalizeBitrixWebhookUrl(cfg.webhook_url, "crm.lead.add.json");
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);

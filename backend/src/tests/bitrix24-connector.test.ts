@@ -77,6 +77,10 @@ describe("Bitrix24 Lead Connector", () => {
         webhook_url: "https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/crm.lead.add.json",
         is_enabled: true,
         allowed_sources: ["whatsapp", "site_widget"],
+        selected_widget_ids: [],
+        custom_source_id: "UC_VWN1ZK",
+        send_utm_marks: true,
+        send_geo_data: true,
         last_lead_id: null,
         last_sync_at: null,
         last_error: null,
@@ -98,6 +102,10 @@ describe("Bitrix24 Lead Connector", () => {
         webhook_url: "https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/crm.lead.add.json",
         is_enabled: true,
         allowed_sources: ["whatsapp", "manual"],
+        selected_widget_ids: [],
+        custom_source_id: "UC_VWN1ZK",
+        send_utm_marks: true,
+        send_geo_data: true,
         last_lead_id: null,
         last_sync_at: null,
         last_error: null,
@@ -130,6 +138,10 @@ describe("Bitrix24 Lead Connector", () => {
         webhook_url: "https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/crm.lead.add.json",
         is_enabled: true,
         allowed_sources: [],
+        selected_widget_ids: [],
+        custom_source_id: "UC_VWN1ZK",
+        send_utm_marks: true,
+        send_geo_data: true,
         last_lead_id: null,
         last_sync_at: null,
         last_error: null,
@@ -150,6 +162,100 @@ describe("Bitrix24 Lead Connector", () => {
 
         expect(result.success).toBe(true);
         expect(result.leadId).toBe(777123);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("skips widget lead when widgetId is not in selected_widget_ids", async () => {
+      vi.spyOn(bitrix24Service, "getConfig").mockResolvedValueOnce({
+        webhook_url: "https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/crm.lead.add.json",
+        is_enabled: true,
+        allowed_sources: ["site_widget"],
+        selected_widget_ids: ["widget-allowed-uuid"],
+        custom_source_id: "CUSTOM_SRC",
+        send_utm_marks: true,
+        send_geo_data: true,
+        last_lead_id: null,
+        last_sync_at: null,
+        last_error: null,
+      });
+
+      const result = await bitrix24Service.sendLead("test-tenant-id", {
+        leadId: "lead-widget-skipped",
+        title: "Заявка с другого виджета",
+        source: "site_widget",
+        sourceWidgetId: "widget-other-uuid",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toContain("WIDGET_NOT_ALLOWED");
+    });
+
+    it("uses custom_source_id, maps UTM tags and builds enriched comments", async () => {
+      vi.spyOn(bitrix24Service, "getConfig").mockResolvedValueOnce({
+        webhook_url: "https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/crm.lead.add.json",
+        is_enabled: true,
+        allowed_sources: [],
+        selected_widget_ids: [],
+        custom_source_id: "MY_CUSTOM_SOURCE",
+        send_utm_marks: true,
+        send_geo_data: true,
+        last_lead_id: null,
+        last_sync_at: null,
+        last_error: null,
+      });
+
+      let capturedPayload: unknown = null;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementationOnce(async (_url, init) => {
+        capturedPayload = JSON.parse(init.body as string);
+        return {
+          ok: true,
+          json: async () => ({ result: 888123 }),
+        } as unknown as Response;
+      });
+
+      try {
+        const result = await bitrix24Service.sendLead("test-tenant-id", {
+          leadId: "lead-enriched-1",
+          title: "Заявка на консультацию",
+          contactName: "Алексей Иванов",
+          phone: "+79991234567",
+          email: "alex@example.com",
+          yaClientId: "1234567890",
+          comments: "Хочу списать долги",
+          utmTags: {
+            utm_source: "yandex",
+            utm_medium: "cpc",
+            utm_campaign: "brand_campaign",
+            utm_content: "banner_1",
+            utm_term: "банкротство",
+          },
+          sourceMetadata: {
+            page: { url: "https://site.ru/page" },
+            referrer: "https://yandex.ru/search",
+            network: { ip: "185.12.34.56", city: "Омск", country: "Россия" },
+            device: { browser: "Chrome", os: "Windows", deviceType: "desktop" },
+            visitCount: 3,
+          },
+        });
+
+        expect(result.success).toBe(true);
+        expect(capturedPayload).toBeDefined();
+
+        const p = capturedPayload as { fields: Record<string, unknown> };
+        expect(p.fields.SOURCE_ID).toBe("MY_CUSTOM_SOURCE");
+        expect(p.fields.UTM_SOURCE).toBe("yandex");
+        expect(p.fields.UTM_MEDIUM).toBe("cpc");
+        expect(p.fields.UTM_CAMPAIGN).toBe("brand_campaign");
+        expect(p.fields.UF_CRM_YA_CID).toBe("1234567890");
+        expect(String(p.fields.COMMENTS)).toContain("Хочу списать долги");
+        expect(String(p.fields.COMMENTS)).toContain("Геолокация: Омск, Россия");
+        expect(String(p.fields.COMMENTS)).toContain("IP-адрес: 185.12.34.56");
+        expect(String(p.fields.COMMENTS)).toContain("Устройство: desktop / Chrome / Windows");
+        expect(String(p.fields.COMMENTS)).toContain("Визитов на сайте: 3");
       } finally {
         globalThis.fetch = originalFetch;
       }
