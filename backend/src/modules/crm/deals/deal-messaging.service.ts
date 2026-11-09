@@ -954,6 +954,38 @@ export class DealMessagingService {
       }
     }
 
+    // Синхронизация истории диалогов WhatsApp
+    const whatsappAccount = await queryOne<{ id: string }>(
+      `SELECT id FROM channel_accounts
+       WHERE tenant_id = $1 AND channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL
+       LIMIT 1`,
+      [tenantId],
+    );
+
+    if (whatsappAccount && deal.contact_id) {
+      const contact = await queryOne<{
+        first_name: string;
+        last_name: string;
+        phone: string;
+      }>(
+        `SELECT first_name, last_name, phone FROM contacts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, deal.contact_id],
+      );
+
+      if (contact && contact.phone) {
+        const { syncWhatsappDialogHistory } = await import("../../channels/whatsapp-integration.routes.js");
+        const count = await syncWhatsappDialogHistory({
+          tenantId,
+          dealId,
+          channelAccountId: whatsappAccount.id,
+          phone: contact.phone,
+          senderName: `${contact.first_name} ${contact.last_name}`.trim(),
+        });
+        totalSynced += count;
+      }
+    }
+
     return { ok: true, synced: totalSynced };
   }
 

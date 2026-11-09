@@ -64,7 +64,7 @@ export const TENANT_SLUG_HEADER = "x-tenant-slug";
  * hosts; the rest mirror `reserved_slugs` in the database so a reserved name
  * can never be mistaken for a tenant portal.
  */
-const PLATFORM_HOSTS: ReadonlySet<string> = new Set(["app", "www", "api", "admin"]);
+const PLATFORM_HOSTS: ReadonlySet<string> = new Set(["app", "www", "api", "admin", "voxly"]);
 
 const DEFAULT_AUTHENTICATED_TARGET = "/crm/contacts";
 

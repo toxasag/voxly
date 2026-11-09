@@ -34,7 +34,9 @@ export const wizardConfigSchema = z
     consultantName: z.string().optional(),
     consultantRole: z.string().optional(),
     businessNiche: z.string().optional(),
+    clientProfile: z.string().optional(),
     targetAction: z.string().optional(),
+    constraints: z.string().optional(),
     handoffSpecialist: z.string().optional(),
     isCustomEdited: z.boolean().optional(),
     crawl_status: z.enum(["idle", "pending", "in_progress", "ready", "failed"]).optional(),
@@ -72,8 +74,8 @@ export const createBotSchema = z.object({
     .max(8192, "Maximum is 8192"),
   system_prompt: z
     .string()
-    .min(20, "System prompt must be at least 20 characters")
-    .max(8000, "System prompt is limited to 8000 characters"),
+    .min(20, "Системный промпт должен содержать минимум 20 символов")
+    .max(50000, "Системный промпт ограничен 50 000 символов"),
   context_entities: z
     .array(z.enum(botContextEntityValues))
     .min(1, "Select at least one context entity"),
@@ -82,6 +84,15 @@ export const createBotSchema = z.object({
   map_reviews_url: z.string().url("Укажите корректный URL (http:// или https://)").optional().or(z.literal("")),
   sync_crm: z.boolean().optional(),
   whatsapp_chat_text: z.string().optional(),
+  company_name_override: z.string().max(120).optional().or(z.literal("")),
+  consultant_source: z.enum(["manual", "chat_widget"]).optional(),
+  consultant_name: z.string().max(100).optional().or(z.literal("")),
+  consultant_role: z.string().max(150).optional().or(z.literal("")),
+  fallback_models: z.array(z.string()).optional(),
+  target_page_url: z.string().optional().or(z.literal("")),
+  generated_system_prompt: z.string().optional().or(z.literal("")),
+  knowledge_base_md: z.string().optional(),
+  feedback_learning_enabled: z.boolean().optional(),
 });
 
 export type CreateBotPayload = z.infer<typeof createBotSchema>;

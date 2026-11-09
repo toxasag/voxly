@@ -23,6 +23,21 @@ export const createChannelAccountSchema = z.object({
 
 export type CreateChannelAccountValues = z.infer<typeof createChannelAccountSchema>;
 
+export const updateChannelAccountSchema = z
+  .object({
+    label: z.string().trim().min(1, "Укажите название подключения").max(120).optional(),
+    status: channelStatusSchema.optional(),
+    status_message: z.string().max(500).optional(),
+    credentials: z.record(z.unknown()).optional(),
+    agent_id: z.string().uuid().nullable().optional(),
+    is_enabled: z.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Не указаны поля для обновления",
+  });
+
+export type UpdateChannelAccountValues = z.infer<typeof updateChannelAccountSchema>;
+
 // ---------------------------------------------------------------------------
 // Подключение аккаунта Telegram через MTProto.
 //

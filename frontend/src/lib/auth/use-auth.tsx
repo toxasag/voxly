@@ -281,7 +281,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             applySession(res.data);
             return;
           }
-        } catch {
+        } catch (err) {
+          // Если сервер вернул 429 (Rate Limit) или 5xx (сбой сети), НЕ сбрасываем сессию!
+          if (err instanceof ApiClientError && (err.status === 429 || err.status >= 500)) {
+            if (!cancelled) {
+              setState((prev) => ({ ...prev, isLoading: false }));
+              return;
+            }
+          }
           // Если токен не принят сервером, пробуем обновить через refresh
         }
       }
@@ -297,8 +304,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               return;
             }
           }
-        } catch {
-          // Ошибка обновления
+        } catch (err) {
+          // Если при refresh возникла ошибка 429 (Rate Limit) или сбой сервера, не сбрасываем сессию
+          if (err instanceof ApiClientError && (err.status === 429 || err.status >= 500)) {
+            if (!cancelled) {
+              setState((prev) => ({ ...prev, isLoading: false }));
+              return;
+            }
+          }
         }
       }
 
@@ -336,18 +349,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const remaining = getTokenRemainingSeconds(token);
 
       if (remaining <= 0) {
-        void refreshAccessToken(token).then((refreshed) => {
-          if (refreshed) scheduleRefresh();
-        });
+        void refreshAccessToken(token)
+          .then((refreshed) => {
+            if (refreshed) scheduleRefresh();
+          })
+          .catch(() => {});
         return;
       }
 
       // Обновляем за 120 секунд до истечения срока или минимум через 10 секунд
       const delayMs = Math.max(10, remaining - 120) * 1000;
       timer = setTimeout(async () => {
-        const refreshed = await refreshAccessToken(token);
-        if (refreshed) {
-          scheduleRefresh();
+        try {
+          const refreshed = await refreshAccessToken(token);
+          if (refreshed) {
+            scheduleRefresh();
+          }
+        } catch {
+          // Игнорируем сетевой сбой при фоновом обновлении
         }
       }, delayMs);
     };
@@ -359,9 +378,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = readAccessToken();
         const remaining = getTokenRemainingSeconds(token);
         if (remaining < 120) {
-          void refreshAccessToken(token).then((refreshed) => {
-            if (refreshed) scheduleRefresh();
-          });
+          void refreshAccessToken(token)
+            .then((refreshed) => {
+              if (refreshed) scheduleRefresh();
+            })
+            .catch(() => {});
         }
       }
     };

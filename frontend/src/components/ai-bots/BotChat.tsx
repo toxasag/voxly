@@ -1,12 +1,14 @@
 "use client";
 
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Bot,
+  GraduationCap,
   Info,
   MessageSquare,
   RefreshCw,
+  Sparkles,
   Trash2,
   User,
 } from "lucide-react";
@@ -16,6 +18,7 @@ import { BotChatInput } from "@/components/ai-bots/BotChatInput";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { useBotChat } from "@/lib/api/use-bot-chat";
 import { cn } from "@/lib/utils";
+import { DialogueFeedbackModal } from "@/components/ai-bots/DialogueFeedbackModal";
 
 interface BotChatProps {
   bot: AiBot;
@@ -48,11 +51,14 @@ const SOURCE_BADGE: Record<ChatMessageSource, string> = {
 interface MessageRowProps {
   message: BotChatMessage;
   bot: AiBot;
+  onOpenFeedback?: (botMessage: BotChatMessage) => void;
 }
 
-const MessageRow = memo(function MessageRow({ message, bot }: MessageRowProps) {
+const MessageRow = memo(function MessageRow({ message, bot, onOpenFeedback }: MessageRowProps) {
   const isHuman = message.source === "human";
   const isSystem = message.source === "system";
+  const isAi = message.source === "ai" || message.source === "ai_bot";
+  const canFeedback = isAi && bot.feedback_learning_enabled !== false && !message.streaming && onOpenFeedback;
 
   if (isSystem) {
     return (
@@ -118,17 +124,30 @@ const MessageRow = memo(function MessageRow({ message, bot }: MessageRowProps) {
           )}
         </div>
 
-        {/* Footer stats */}
-        {!message.streaming && (message.tokens !== null || message.latency_ms !== null) && (
-          <div className={cn("mt-1 flex items-center gap-2 px-1", isHuman && "justify-end")}>
-            {message.tokens !== null && (
-              <span className="text-xs text-[#888888]">{message.tokens} tok</span>
-            )}
-            {message.latency_ms !== null && (
-              <span className="text-xs text-[#888888]">{message.latency_ms} ms</span>
-            )}
-          </div>
-        )}
+        {/* Footer stats & feedback */}
+        <div className={cn("mt-1 flex items-center gap-2 px-1", isHuman ? "justify-end" : "justify-between")}>
+          {!message.streaming && (message.tokens !== null || message.latency_ms !== null) && (
+            <div className="flex items-center gap-2">
+              {message.tokens !== null && (
+                <span className="text-xs text-[#888888]">{message.tokens} tok</span>
+              )}
+              {message.latency_ms !== null && (
+                <span className="text-xs text-[#888888]">{message.latency_ms} ms</span>
+              )}
+            </div>
+          )}
+          {canFeedback && (
+            <button
+              type="button"
+              onClick={() => onOpenFeedback(message)}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[#666666] transition-colors hover:bg-[#4a38f5]/10 hover:text-[#4a38f5]"
+              title="Оценить ответ и обучить агента"
+            >
+              <Sparkles className="h-3 w-3" />
+              <span>Обучить</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -144,6 +163,34 @@ export function BotChat({ bot }: BotChatProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const isPaused = bot.status === "paused";
+
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackBotMsg, setFeedbackBotMsg] = useState<string>("");
+  const [feedbackUserMsg, setFeedbackUserMsg] = useState<string>("");
+
+  const handleOpenFeedback = (botMessage: BotChatMessage) => {
+    const idx = messages.findIndex((m) => m.id === botMessage.id);
+    let prevUser = "";
+    if (idx > 0) {
+      for (let i = idx - 1; i >= 0; i--) {
+        if (messages[i].source === "human") {
+          prevUser = messages[i].content;
+          break;
+        }
+      }
+    }
+    setFeedbackBotMsg(botMessage.content);
+    setFeedbackUserMsg(prevUser);
+    setFeedbackOpen(true);
+  };
+
+  const handleOpenGeneralFeedback = () => {
+    const lastBot = [...messages].reverse().find((m) => m.source === "ai" || m.source === "ai_bot");
+    const lastUser = [...messages].reverse().find((m) => m.source === "human");
+    setFeedbackBotMsg(lastBot?.content || "");
+    setFeedbackUserMsg(lastUser?.content || "");
+    setFeedbackOpen(true);
+  };
 
   // Keep the newest message in view as chunks arrive.
   useEffect(() => {
@@ -172,6 +219,17 @@ export function BotChat({ bot }: BotChatProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
+          {bot.feedback_learning_enabled !== false && messages.length > 0 && (
+            <button
+              type="button"
+              onClick={handleOpenGeneralFeedback}
+              className="flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#666666] transition-colors hover:border-[#4a38f5]/30 hover:bg-[#4a38f5]/5 hover:text-[#4a38f5]"
+              title="Оценить диалог и обучить агента"
+            >
+              <GraduationCap className="h-3.5 w-3.5 text-[#4a38f5]" />
+              <span>Обучение по диалогу</span>
+            </button>
+          )}
           {lastPrompt !== null && !isStreaming && (
             <button
               type="button"
@@ -222,7 +280,14 @@ export function BotChat({ bot }: BotChatProps) {
             description={`Отправьте промпт, чтобы увидеть ответ бота ${bot.name}. Переписка не сохраняется, пока не подключён серверный эндпоинт чата.`}
           />
         ) : (
-          messages.map((message) => <MessageRow key={message.id} message={message} bot={bot} />)
+          messages.map((message) => (
+            <MessageRow
+              key={message.id}
+              message={message}
+              bot={bot}
+              onOpenFeedback={handleOpenFeedback}
+            />
+          ))
         )}
       </div>
 
@@ -232,6 +297,15 @@ export function BotChat({ bot }: BotChatProps) {
         isStreaming={isStreaming}
         onSend={sendMessage}
         onStop={stopGeneration}
+      />
+
+      <DialogueFeedbackModal
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        agentId={bot.id}
+        agentName={bot.name}
+        lastUserMessage={feedbackUserMsg}
+        lastBotResponse={feedbackBotMsg}
       />
     </div>
   );

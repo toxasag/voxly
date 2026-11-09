@@ -2,7 +2,7 @@
 
 import { memo, useCallback } from "react";
 import Link from "next/link";
-import { Bot, Settings2, SlidersHorizontal, Zap, Clock } from "lucide-react";
+import { Bot, Settings2, SlidersHorizontal, Zap, Clock, Trash2, Loader2 } from "lucide-react";
 import type { AiBot } from "@/lib/ai-bots/ai-bots.types";
 import {
   getAccentClasses,
@@ -16,6 +16,8 @@ interface BotCardProps {
   bot: AiBot;
   onToggleStatus: (id: string) => void;
   onConfigure: (bot: AiBot) => void;
+  onDelete?: (bot: AiBot) => void;
+  isDeleting?: boolean;
 }
 
 function formatRelative(iso: string | null): string {
@@ -47,6 +49,8 @@ export const BotCard = memo(function BotCard({
   bot,
   onToggleStatus,
   onConfigure,
+  onDelete,
+  isDeleting = false,
 }: BotCardProps) {
   const isActive = bot.status === "active";
   // tokens_limit = 0 означает «лимита нет»: расход ограничен балансом ИИ, а не
@@ -59,6 +63,7 @@ export const BotCard = memo(function BotCard({
 
   const handleToggle = useCallback(() => onToggleStatus(bot.id), [bot.id, onToggleStatus]);
   const handleConfigure = useCallback(() => onConfigure(bot), [bot, onConfigure]);
+  const handleDelete = useCallback(() => onDelete?.(bot), [bot, onDelete]);
 
   return (
     <div className="flex flex-col rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs transition-colors hover:border-[#cccccc]">
@@ -196,6 +201,22 @@ export const BotCard = memo(function BotCard({
           <Settings2 className="h-3.5 w-3.5" />
           Настроить
         </button>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            title={`Удалить бота: ${bot.name}`}
+            aria-label={`Удалить бота: ${bot.name}`}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isDeleting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-600" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
       </div>
     </div>
   );

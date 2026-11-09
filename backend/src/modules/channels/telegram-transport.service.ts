@@ -28,6 +28,7 @@ import {
 } from "./outbound-registry.js";
 import { ChannelProfileCache } from "./profile-cache.js";
 import { isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
+import { chatEventBus } from "../crm/chat/chat-events.js";
 
 // ---------------------------------------------------------------------------
 // Транспорт входящих и исходящих сообщений Telegram (M7.5.16).
@@ -615,6 +616,21 @@ export class TelegramTransportService {
           return;
         }
 
+        // Фоновая синхронизация предшествующей истории переписки при создании сделки
+        if (crmResult?.dealId && crmResult.isNewDeal) {
+          void this.syncDialogHistory({
+            tenantId: account.tenant_id,
+            dealId: crmResult.dealId,
+            channelAccountId: account.id,
+            peerId: senderId,
+            username: profile?.username,
+            phone: profile?.phone,
+            limit: 50,
+          }).catch((err) => {
+            this.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync Telegram history for new deal");
+          });
+        }
+
         // Если с медиа была текстовая подпись, передаем её в буфер для AI-бота
         if (text.length > 0) {
           this.buffer.add({
@@ -700,6 +716,21 @@ export class TelegramTransportService {
 
       dealId = crmResult.dealId;
       contactId = crmResult.contactId;
+
+      // Фоновая синхронизация предшествующей истории переписки при создании сделки
+      if (crmResult.dealId && crmResult.isNewDeal) {
+        void this.syncDialogHistory({
+          tenantId: batch.tenantId,
+          dealId: crmResult.dealId,
+          channelAccountId: batch.channelAccountId,
+          peerId: batch.peerId,
+          username: profile?.username,
+          phone: profile?.phone,
+          limit: 50,
+        }).catch((err) => {
+          this.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync Telegram history for new deal");
+        });
+      }
     } catch (error) {
       this.log.error(
         { error, chatId: batch.chatId, channelAccountId: batch.channelAccountId },
@@ -1297,6 +1328,9 @@ export class TelegramTransportService {
           const contentText =
             text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
 
+          const source = isOutbound ? "manager" : "client";
+          const direction = isOutbound ? "outbound" : "inbound";
+
           // Проверяем наличие сообщения в сделке (дедупликация)
           const existing = await queryOne<{ id: string }>(
             `SELECT id FROM deal_messages
@@ -1304,7 +1338,13 @@ export class TelegramTransportService {
                AND channel = 'telegram'
                AND (
                  (attachment IS NOT NULL AND attachment = $3)
-                 OR (content = $4 AND created_at BETWEEN $5::timestamptz - interval '5 seconds' AND $5::timestamptz + interval '5 seconds')
+                 OR (
+                   content = $4
+                   AND (
+                     created_at BETWEEN $5::timestamptz - interval '60 seconds' AND $5::timestamptz + interval '60 seconds'
+                     OR (direction = $6 AND created_at > now() - interval '2 minutes')
+                   )
+                 )
                )
              LIMIT 1`,
             [
@@ -1313,20 +1353,22 @@ export class TelegramTransportService {
               mediaAttachment?.url ?? null,
               contentText,
               date.toISOString(),
+              direction,
             ],
           );
 
           if (!existing) {
-            await query(
+            const [inserted] = await query<{ id: string }>(
               `INSERT INTO deal_messages
                  (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, attachment, attachment_type, delivery_status, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, 'telegram', $8, $9, $10, $11)`,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 'telegram', $8, $9, $10, $11)
+               RETURNING id`,
               [
                 params.tenantId,
                 params.dealId,
                 params.channelAccountId,
-                isOutbound ? "manager" : "client",
-                isOutbound ? "outbound" : "inbound",
+                source,
+                direction,
                 isOutbound ? "Менеджер" : params.peerId,
                 contentText,
                 mediaAttachment?.url ?? null,
@@ -1336,6 +1378,30 @@ export class TelegramTransportService {
               ],
             );
             importedCount++;
+
+            if (inserted) {
+              chatEventBus.emitChatEvent({
+                type: "message_created",
+                tenantId: params.tenantId,
+                dealId: params.dealId,
+                data: {
+                  id: inserted.id,
+                  tenantId: params.tenantId,
+                  dealId: params.dealId,
+                  channelAccountId: params.channelAccountId,
+                  source: isOutbound ? "manager" : "client",
+                  direction: isOutbound ? "outbound" : "inbound",
+                  senderName: isOutbound ? "Менеджер" : params.peerId,
+                  content: contentText,
+                  channel: "telegram",
+                  deliveryStatus: isOutbound ? "sent" : "neutral",
+                  attachment: mediaAttachment?.url ?? null,
+                  attachmentType: mediaAttachment?.mimeType ?? null,
+                  createdAt: date.toISOString(),
+                },
+                timestamp: new Date().toISOString(),
+              });
+            }
           }
         }
       });

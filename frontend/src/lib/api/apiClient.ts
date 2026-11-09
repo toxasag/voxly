@@ -151,7 +151,24 @@ async function performRefresh(failedToken?: string | null): Promise<string | nul
       credentials: "include",
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // 401 Unauthorized означает, что refresh token действительно недействителен/отозван.
+      // Возвращаем null, чтобы вызывающий код инициировал завершение сессии.
+      // При ошибках 429 (Rate Limit) или 5xx (сбой сервера) выбрасываем ApiClientError,
+      // чтобы НЕ стирать токены пользователя из-за временного троттлинга или сбоя сети.
+      if (res.status === 429 || res.status >= 500) {
+        throw new ApiClientError(res.status, {
+          error: {
+            code: res.status === 429 ? "RATE_LIMIT_EXCEEDED" : "SERVER_ERROR",
+            message:
+              res.status === 429
+                ? "Превышен лимит запросов, повторите попытку через несколько секунд"
+                : "Сервис авторизации временно недоступен",
+          },
+        });
+      }
+      return null;
+    }
 
     const body: unknown = await res.json();
 
@@ -174,7 +191,10 @@ async function performRefresh(failedToken?: string | null): Promise<string | nul
     });
 
     return tokens.access_token;
-  } catch {
+  } catch (err) {
+    if (err instanceof ApiClientError && (err.status === 429 || err.status >= 500)) {
+      throw err;
+    }
     // Network failure during refresh — treat as "cannot refresh" rather than
     // throwing, so the caller falls through to the sign-out path.
     return null;
@@ -311,7 +331,20 @@ async function request<T>(
   // loop: a failed sign-in cleared the session and navigated to /login, so the
   // form appeared to reload silently with no error shown.
   if (res.status === 401 && options.retrying !== true && !isCredentialPath(path)) {
-    const refreshed = await refreshAccessToken(token);
+    let refreshed: string | null = null;
+    try {
+      refreshed = await refreshAccessToken(token);
+    } catch (refreshErr) {
+      // При временных ошибках (429 Rate Limit или 5xx Server Error)
+      // НЕЛЬЗЯ сбрасывать сохранённую сессию и перенаправлять на /login!
+      if (
+        refreshErr instanceof ApiClientError &&
+        (refreshErr.status === 429 || refreshErr.status >= 500)
+      ) {
+        throw refreshErr;
+      }
+      refreshed = null;
+    }
 
     if (refreshed !== null) {
       return request<T>(method, path, body, { ...options, retrying: true });

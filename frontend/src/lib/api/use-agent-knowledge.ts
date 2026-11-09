@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import {
   useMutation,
   useQuery,
@@ -21,11 +22,11 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 const BASE_PATH = "/api/v1/ai";
 
 export const knowledgeKeys = {
-  documents: (agentId: string) => ["ai", "agents", agentId, "knowledge"] as const,
+  documents: (agentId: string) => ["ai", "agents", agentId, "knowledge", "docs"] as const,
   channels: (agentId: string) => ["ai", "agents", agentId, "channels"] as const,
 };
 
-export type DocumentStatus = "processing" | "ready" | "failed";
+export type DocumentStatus = "draft" | "processing" | "ready" | "failed" | "approved";
 
 export interface KnowledgeDocument {
   id: string;
@@ -37,6 +38,7 @@ export interface KnowledgeDocument {
   errorMessage: string;
   chunksCount: number;
   category?: string;
+  sourceUrl?: string | null;
   createdAt: string;
 }
 
@@ -396,6 +398,55 @@ export function useSalesExamples(
 // Просмотр и редактирование документов (актуализация цен и регламентов)
 // ---------------------------------------------------------------------------
 
+export interface KnowledgeChunkItem {
+  id: string;
+  chunkIndex: number;
+  content: string;
+  charsCount: number;
+}
+
+export function useKnowledgeDocumentChunks(
+  agentId: string,
+  docId: string | null,
+): UseQueryResult<KnowledgeChunkItem[], ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "knowledge", docId, "chunks"],
+    queryFn: async () => {
+      if (!docId) throw new Error("No docId");
+      const res = await apiClient.get<KnowledgeChunkItem[]>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/chunks`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId && docId),
+  });
+}
+
+export interface KnowledgeSearchHitItem {
+  content: string;
+  distance: number;
+  documentId: string;
+  filename: string;
+}
+
+export function useTestKnowledgeSearch(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeSearchHitItem[],
+  ApiClientError,
+  { query: string; limit?: number }
+> {
+  return useMutation({
+    mutationFn: async ({ query, limit }) => {
+      const res = await apiClient.post<KnowledgeSearchHitItem[]>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/search`,
+        { query, limit },
+      );
+      return res.data;
+    },
+  });
+}
+
 export function useKnowledgeDocumentDetail(
   agentId: string,
   docId: string | null,
@@ -433,6 +484,76 @@ export function useUpdateKnowledgeDocument(
     onSuccess: (data, variables) => {
       void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
       queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+export function useApproveKnowledgeDocument(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { docId: string; text?: string; filename?: string; category?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ docId, text, filename, category }) => {
+      const res = await apiClient.post<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/approve`,
+        { text, filename, category },
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+export function useRestructureKnowledgeDocument(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { docId: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ docId }) => {
+      const res = await apiClient.post<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/restructure`,
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+export function useCreateKnowledgeDraft(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { title: string; text: string; category?: string; sourceUrl?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ title, text, category, sourceUrl }) => {
+      const res = await apiClient.post<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/draft`,
+        { title, text, category, sourceUrl },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
     },
   });
 }
@@ -506,17 +627,15 @@ export function useCrawlStatus(
   agentId: string | null | undefined,
 ): UseQueryResult<CrawlStatusData, ApiClientError> {
   const queryClient = useQueryClient();
+  const prevStatusRef = useRef<CrawlStatusData["status"] | null>(null);
 
-  return useQuery({
-    queryKey: ["ai", "agents", agentId, "knowledge", "crawl-status"],
+  const query = useQuery<CrawlStatusData, ApiClientError>({
+    queryKey: ["ai", "agents", agentId, "crawl-status"],
     queryFn: async () => {
       if (!agentId) throw new Error("No agentId");
       const res = await apiClient.get<CrawlStatusData>(
         `${BASE_PATH}/agents/${agentId}/knowledge/crawl-status`,
       );
-      if (res.data?.status === "ready" || res.data?.status === "failed") {
-        void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
-      }
       return res.data;
     },
     enabled: Boolean(agentId),
@@ -528,6 +647,304 @@ export function useCrawlStatus(
       return false;
     },
   });
+
+  const currentStatus = query.data?.status;
+  useEffect(() => {
+    if (!agentId || !currentStatus) return;
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = currentStatus;
+
+    // Инвалидируем список документов строго по завершению активного сканирования (переход из pending/in_progress в ready/failed)
+    if (
+      (prev === "pending" || prev === "in_progress") &&
+      (currentStatus === "ready" || currentStatus === "failed")
+    ) {
+      void queryClient.invalidateQueries({
+        queryKey: knowledgeKeys.documents(agentId),
+      });
+    }
+  }, [agentId, currentStatus, queryClient]);
+
+  return query;
 }
+
+// ---------------------------------------------------------------------------
+// Генеративный синтез системного промпта
+// ---------------------------------------------------------------------------
+
+export interface GeneratePromptInput {
+  target_page_url?: string;
+  targetPageUrl?: string;
+  business_niche?: string;
+  businessNiche?: string;
+  company_name?: string;
+  companyName?: string;
+  client_profile?: string;
+  clientProfile?: string;
+  target_action?: string;
+  targetAction?: string;
+  constraints?: string;
+  handoff_specialist?: string;
+  handoffSpecialist?: string;
+  consultant_name?: string;
+  consultantName?: string;
+  consultant_role?: string;
+  consultantRole?: string;
+}
+
+export interface GeneratedPromptResponse {
+  systemPrompt: string;
+  businessNiche: string;
+  clientProfile: string;
+  targetAction: string;
+  constraints: string;
+  consultantName: string;
+  consultantRole: string;
+  handoffSpecialist: string;
+  knowledgeBaseDraftMd: string;
+}
+
+export function useGeneratePrompt(): UseMutationResult<
+  GeneratedPromptResponse,
+  ApiClientError,
+  GeneratePromptInput
+> {
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<GeneratedPromptResponse>(
+        `${BASE_PATH}/generate-prompt`,
+        payload,
+      );
+      return res.data;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Синхронизация Markdown-базы знаний агента
+// ---------------------------------------------------------------------------
+
+export function useSyncKnowledgeMd(agentId: string): UseMutationResult<
+  { id: string; knowledgeBaseMd: string },
+  ApiClientError,
+  { knowledgeBaseMd: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ knowledgeBaseMd }) => {
+      const res = await apiClient.post<{ id: string; knowledgeBaseMd: string }>(
+        `${BASE_PATH}/agents/${agentId}/knowledge-sync`,
+        { knowledgeBaseMd },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Петля обучения на диалогах (Dialogue Feedback Loop)
+// ---------------------------------------------------------------------------
+
+export interface DialogueQuoteItem {
+  text: string;
+  role?: string;
+  author?: string;
+  time?: string;
+}
+
+export interface AgentDialogueFeedback {
+  id: string;
+  agentId: string;
+  dealId?: string | null;
+  dealTitle?: string | null;
+  contactName?: string | null;
+  conversationId?: string | null;
+  lastMessagePreview?: string | null;
+  rating: number;
+  userComment: string;
+  clarificationQa: Array<{ question: string; answer?: string | null }>;
+  compiledRule?: string | null;
+  selectedQuotes?: DialogueQuoteItem[];
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function useAgentFeedbacks(
+  agentId: string | null | undefined,
+): UseQueryResult<AgentDialogueFeedback[], ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "feedbacks"],
+    queryFn: async () => {
+      if (!agentId) throw new Error("No agentId");
+      const res = await apiClient.get<AgentDialogueFeedback[]>(
+        `${BASE_PATH}/agents/${agentId}/feedback`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId),
+  });
+}
+
+export function useCreateDialogueFeedback(agentId?: string): UseMutationResult<
+  AgentDialogueFeedback,
+  ApiClientError,
+  {
+    rating: number;
+    user_comment: string;
+    deal_id?: string;
+    conversation_id?: string;
+    clarification_answer?: string;
+    selected_quotes?: DialogueQuoteItem[];
+  }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      if (!agentId) throw new Error("No agentId provided");
+      const res = await apiClient.post<AgentDialogueFeedback>(
+        `${BASE_PATH}/agents/${agentId}/feedback`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      if (agentId) {
+        void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+export function useCreateDealFeedback(dealId: string): UseMutationResult<
+  AgentDialogueFeedback,
+  ApiClientError,
+  {
+    rating: number;
+    user_comment: string;
+    agent_id?: string;
+    conversation_id?: string;
+    clarification_answer?: string;
+    selected_quotes?: DialogueQuoteItem[];
+  }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<AgentDialogueFeedback>(
+        `/api/v1/crm/deals/${dealId}/feedback`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+      if (data?.agentId) {
+        void queryClient.invalidateQueries({ queryKey: ["ai", "agents", data.agentId, "feedbacks"] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId] });
+    },
+  });
+}
+
+export function useApproveFeedback(agentId: string): UseMutationResult<
+  { feedback: AgentDialogueFeedback; knowledgeBaseMd: string },
+  ApiClientError,
+  { feedbackId: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ feedbackId }) => {
+      const res = await apiClient.post<{ feedback: AgentDialogueFeedback; knowledgeBaseMd: string }>(
+        `${BASE_PATH}/agents/${agentId}/feedback/${feedbackId}/approve`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+export function useRejectFeedback(agentId: string): UseMutationResult<
+  AgentDialogueFeedback,
+  ApiClientError,
+  { feedbackId: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ feedbackId }) => {
+      const res = await apiClient.post<AgentDialogueFeedback>(
+        `${BASE_PATH}/agents/${agentId}/feedback/${feedbackId}/reject`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+    },
+  });
+}
+
+export interface RebuildAgentPromptResult {
+  agentId: string;
+  systemPrompt: string;
+  knowledgeBaseMd: string;
+  summaryOfChanges: string;
+  feedbacksCount: number;
+}
+
+export function useRebuildAgentPrompt(agentId: string): UseMutationResult<
+  RebuildAgentPromptResult,
+  ApiClientError,
+  void
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<RebuildAgentPromptResult>(
+        `${BASE_PATH}/agents/${agentId}/rebuild-prompt`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+export function useDeleteFeedback(agentId: string): UseMutationResult<
+  { success: boolean; id: string },
+  ApiClientError,
+  { feedbackId: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ feedbackId }) => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(
+        `${BASE_PATH}/agents/${agentId}/feedback/${feedbackId}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "feedbacks"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
+
 
 

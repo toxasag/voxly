@@ -4,6 +4,7 @@ import { query, queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { EmailService } from "../../services/email.service.js";
 import { platformConfigService } from "./platform-config.service.js";
+import { modelHealthService } from "../ai/gateway/model-health.service.js";
 
 // ---------------------------------------------------------------------------
 // Платформенные разделы: тарифы/биллинг и системные логи.
@@ -590,6 +591,22 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
     const parsed = bodySchema.parse(request.body ?? {});
     const removedCount = await platformConfigService.removeInvalidKeys(parsed.providerId, parsed.invalidKeys);
     return reply.send({ data: { success: true, removedCount } });
+  });
+
+  /**
+   * Мониторинг доступности и здоровья LLM-моделей по провайдерам.
+   */
+  app.get("/integrations/llm/health", { onRequest: platformOwner }, async (_request, reply) => {
+    const statuses = modelHealthService.getAllModelStatuses();
+    return reply.send({ data: statuses });
+  });
+
+  /**
+   * Запуск полной проверки здоровья активных LLM-моделей.
+   */
+  app.post("/integrations/llm/health/check", { onRequest: platformOwner }, async (_request, reply) => {
+    const results = await modelHealthService.checkAllActiveModels();
+    return reply.send({ data: results });
   });
 }
 

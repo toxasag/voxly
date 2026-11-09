@@ -19,9 +19,11 @@ interface PromptTemplateEditorProps {
   error?: string;
   rows?: number;
   label?: string;
+  bot?: Parameters<typeof renderPromptPreview>[1];
+  tenantName?: string;
 }
 
-const MAX_LENGTH = 8000;
+const MAX_LENGTH = 50000;
 
 export function PromptTemplateEditor({
   value,
@@ -30,6 +32,8 @@ export function PromptTemplateEditor({
   error,
   rows = 8,
   label = "Системный промпт",
+  bot,
+  tenantName,
 }: PromptTemplateEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -37,7 +41,7 @@ export function PromptTemplateEditor({
   const tokens = useMemo(() => estimateTokens(value), [value]);
   const usedVariables = useMemo(() => extractPromptVariables(value), [value]);
   const unknownVariables = useMemo(() => findUnknownVariables(value), [value]);
-  const preview = useMemo(() => renderPromptPreview(value), [value]);
+  const preview = useMemo(() => renderPromptPreview(value, bot, tenantName), [value, bot, tenantName]);
 
   const budgetPercent = Math.min(100, Math.round((tokens / contextWindow) * 100));
 

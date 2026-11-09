@@ -9,7 +9,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { getEnv } from "../../config/env.js";
 import { AuthService } from "../auth/auth.service.js";
-import { setAuthCookies } from "../auth/auth-cookie.js";
+import { setAuthCookies, parseCookies, REFRESH_COOKIE_NAME } from "../auth/auth-cookie.js";
 
 const tenantParams = z.object({ id: z.string().uuid() });
 
@@ -296,9 +296,33 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
   app.post("/tenants/:id/impersonate", { onRequest: platformOwner }, async (request, reply) => {
     const tenantId = tenantParams.parse(request.params).id;
     const authService = new AuthService(app);
-    const tokens = await authService.impersonateTenant(tenantId, request.authUser.id);
+    const actorId =
+      request.authUser?.platform_role === "platform_owner"
+        ? request.authUser.id
+        : request.impersonator_id || request.authUser?.id;
+    if (!actorId) {
+      throw new UnauthorizedError("Не удалось определить идентификатор администратора");
+    }
+    const tokens = await authService.impersonateTenant(tenantId, actorId);
     setAuthCookies(request, reply, tokens);
-    return reply.send({ success: true, data: tokens });
+
+    const cookies = parseCookies(request.headers.cookie);
+    const adminRefreshToken = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"] || "";
+    const adminAccessToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+    return reply.send({
+      success: true,
+      data: {
+        ...tokens,
+        admin_refresh_token: adminRefreshToken,
+        admin_access_token: adminAccessToken,
+        admin_user: {
+          id: actorId,
+          email: request.authUser.email,
+          name: request.authUser.name,
+        },
+      },
+    });
   });
 
   app.post("/tenants/by-slug/:slug/impersonate", async (request, reply) => {
@@ -310,30 +334,60 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     if (!tenant) {
       throw new NotFoundError("Компания не найдена");
     }
-    const isPlatformOwner = request.authUser?.platform_role === "platform_owner";
+    const isPlatformOwner =
+      request.authUser?.platform_role === "platform_owner" ||
+      Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
     const isParentPartner = tenant.parent_tenant_id !== null && tenant.parent_tenant_id === request.tenant_id;
     if (!isPlatformOwner && !isParentPartner) {
       throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
     }
     const authService = new AuthService(app);
-    const tokens = await authService.impersonateTenant(tenant.id, request.authUser.id);
+    const actorId =
+      request.authUser?.platform_role === "platform_owner"
+        ? request.authUser.id
+        : request.impersonator_id || request.authUser?.id;
+    const tokens = await authService.impersonateTenant(tenant.id, actorId);
     setAuthCookies(request, reply, tokens);
-    return reply.send({ success: true, data: tokens });
+
+    const cookies = parseCookies(request.headers.cookie);
+    const adminRefreshToken = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"] || "";
+    const adminAccessToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+    return reply.send({
+      success: true,
+      data: {
+        ...tokens,
+        admin_refresh_token: adminRefreshToken,
+        admin_access_token: adminAccessToken,
+        admin_user: {
+          id: actorId,
+          email: request.authUser.email,
+          name: request.authUser.name,
+        },
+      },
+    });
   });
 
   app.post("/tenants/exit-impersonation", async (request, reply) => {
-    let candidateToken: string | undefined;
+    let candidateRefresh: string | undefined;
+    let candidateAccess: string | undefined;
 
     if (request.body && typeof request.body === "object") {
-      const parsed = z.object({ admin_refresh_token: z.string().min(1) }).safeParse(request.body);
+      const parsed = z
+        .object({
+          admin_refresh_token: z.string().optional(),
+          admin_access_token: z.string().optional(),
+        })
+        .safeParse(request.body);
       if (parsed.success) {
-        candidateToken = parsed.data.admin_refresh_token;
+        candidateRefresh = parsed.data.admin_refresh_token;
+        candidateAccess = parsed.data.admin_access_token;
       }
     }
 
-    if (!candidateToken || typeof candidateToken !== "string" || candidateToken.trim().length === 0) {
-      throw new UnauthorizedError("Admin refresh token is required");
-    }
+    const cookies = parseCookies(request.headers.cookie);
+    const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+    const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
 
     const meta = {
       userAgent: request.headers["user-agent"],
@@ -341,21 +395,14 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     };
 
     const authService = new AuthService(app);
-    const tokens = await authService.refreshToken(candidateToken.trim(), meta);
-
-    const payload = app.jwt.decode<{ sub: string; tenant_id: string; role: string }>(tokens.access_token);
-    if (!payload?.sub) {
-      throw new UnauthorizedError("Недействительный токен администратора");
-    }
-
-    const adminUser = await queryOne<{ id: string; platform_role: string | null }>(
-      "SELECT id, platform_role FROM users WHERE id = $1 AND deleted_at IS NULL",
-      [payload.sub],
+    const tokens = await authService.exitImpersonation(
+      {
+        adminRefreshToken: candidateRefresh,
+        adminAccessToken: candidateAccess || headerToken,
+        cookieRefreshToken: cookieRefresh,
+      },
+      meta,
     );
-
-    if (adminUser?.platform_role !== "platform_owner") {
-      throw new PermissionDeniedError("Сессия не принадлежит владельцу платформы");
-    }
 
     setAuthCookies(request, reply, tokens);
     return reply.send({ success: true, data: tokens });

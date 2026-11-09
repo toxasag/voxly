@@ -20,9 +20,10 @@ import { writeTokens } from "@/lib/auth/session";
 
 export interface ImpersonationBackup {
   accessToken: string;
-  refreshToken: string;
+  refreshToken?: string;
   adminUserEmail?: string;
   adminUserName?: string;
+  adminOriginHost?: string;
   impersonatedTenantSlug?: string;
   impersonatedTenantName?: string;
   impersonatedUserEmail?: string;
@@ -90,7 +91,7 @@ export function readImpersonationBackup(): ImpersonationBackup | null {
         if (value.length > 0) {
           const decoded = decodeURIComponent(value);
           const parsed = JSON.parse(decoded) as ImpersonationBackup;
-          if (parsed.accessToken && parsed.refreshToken) {
+          if (parsed && typeof parsed.accessToken === "string" && parsed.accessToken.length > 0) {
             return parsed;
           }
         }
@@ -105,7 +106,7 @@ export function readImpersonationBackup(): ImpersonationBackup | null {
     const raw = localStorage.getItem(BACKUP_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as ImpersonationBackup;
-      if (parsed.accessToken && parsed.refreshToken) {
+      if (parsed && typeof parsed.accessToken === "string" && parsed.accessToken.length > 0) {
         return parsed;
       }
     }
@@ -151,7 +152,9 @@ export function getPlatformAdminUrl(): string {
 
   const parent = labels.slice(1).join(".");
   const suffix = port ? `:${port}` : "";
-  return `${protocol}//app.${parent}${suffix}/admin/tenants`;
+  const backup = readImpersonationBackup();
+  const platformPrefix = backup?.adminOriginHost?.split(".")[0]?.split(":")[0] || "voxly";
+  return `${protocol}//${platformPrefix}.${parent}${suffix}/admin/tenants`;
 }
 
 /**
@@ -166,44 +169,43 @@ export async function restoreAdminSession(): Promise<boolean> {
   if (!isBrowser()) return false;
 
   const backup = readImpersonationBackup();
-  if (!backup?.refreshToken && !backup?.accessToken) {
+  if (!backup?.accessToken && !backup?.refreshToken) {
     return false;
   }
 
   // 1. Полноценная серверная ротация с выставлением HttpOnly cookie
-  if (backup.refreshToken) {
-    try {
-      const res = await apiClient.post<{
-        access_token?: string;
-        refresh_token?: string;
-        accessToken?: string;
-        refreshToken?: string;
-      }>("/auth/exit-impersonation", {
-        admin_refresh_token: backup.refreshToken,
+  try {
+    const res = await apiClient.post<{
+      access_token?: string;
+      refresh_token?: string;
+      accessToken?: string;
+      refreshToken?: string;
+    }>("/auth/exit-impersonation", {
+      admin_refresh_token: backup.refreshToken || undefined,
+      admin_access_token: backup.accessToken || undefined,
+    });
+
+    const newAccessToken = res.data?.access_token ?? res.data?.accessToken;
+    const newRefreshToken = res.data?.refresh_token ?? res.data?.refreshToken;
+
+    if (newAccessToken && newRefreshToken) {
+      writeTokens({
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
       });
-
-      const newAccessToken = res.data?.access_token ?? res.data?.accessToken;
-      const newRefreshToken = res.data?.refresh_token ?? res.data?.refreshToken;
-
-      if (newAccessToken && newRefreshToken) {
-        writeTokens({
-          accessToken: newAccessToken,
-          refreshToken: newRefreshToken,
-        });
-        clearImpersonationBackup();
-        return true;
-      }
-    } catch (err) {
-      console.warn("Серверный выход из имперсонации не удался, пробуем локальный бэкап:", err);
+      clearImpersonationBackup();
+      return true;
     }
+  } catch (err) {
+    console.warn("Серверный выход из имперсонации не удался, пробуем локальный бэкап:", err);
   }
 
   // 2. Локальный фоллбэк: восстанавливаем токены из бэкапа
-  if (backup.accessToken && backup.refreshToken) {
+  if (backup.accessToken) {
     try {
       writeTokens({
         accessToken: backup.accessToken,
-        refreshToken: backup.refreshToken,
+        refreshToken: backup.refreshToken || backup.accessToken,
       });
       clearImpersonationBackup();
       return true;

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { UnauthorizedError } from "./errorHandler.js";
-import { query, setRequestTenant } from "../db/client.js";
+import { query, queryOne, setRequestTenant } from "../db/client.js";
 import { toPermissions } from "../config/permissions.js";
 import type { Permission, PlatformRole, Role, User } from "../types/index.js";
 
@@ -15,6 +15,8 @@ declare module "fastify" {
     tenant_id: string;
     permissions: Set<Permission>;
     installed_modules: string[];
+    impersonator_id?: string;
+    impersonator_platform_role?: PlatformRole | null;
   }
 }
 
@@ -23,6 +25,7 @@ interface JwtPayload {
   tenant_id: string;
   /** Absent on legacy tokens; `refresh` tokens are rejected on the API. */
   typ?: string;
+  impersonator_id?: string;
 }
 
 interface UserRow {
@@ -147,6 +150,12 @@ const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/auth/invite",
   "/auth/invite/accept",
   "/health",
+  "/api/ai-bots/generate-prompt",
+  "/api/v1/ai-bots/generate-prompt",
+  "/api/ai/generate-prompt",
+  "/api/v1/ai/generate-prompt",
+  "/api/bots/generate-prompt",
+  "/api/v1/bots/generate-prompt",
 ]);
 
 /**
@@ -169,7 +178,14 @@ export const authenticatePlugin: FastifyPluginAsync = fp(
 
       // Defence in depth: the hook is only registered on protected groups, but
       // a future misplacement must not start demanding tokens on /auth.
-      if (PUBLIC_PATHS.has(path)) return;
+      if (
+        PUBLIC_PATHS.has(path) ||
+        path.includes("/widgets/bootstrap/") ||
+        path.endsWith("/events") ||
+        path.includes("/events/")
+      ) {
+        return;
+      }
 
       let token: string | undefined;
       const authHeader = request.headers.authorization;
@@ -216,6 +232,17 @@ export const authenticatePlugin: FastifyPluginAsync = fp(
       request.authUser = user;
       request.tenant_id = user.tenant_id;
       request.permissions = new Set<Permission>(user.permissions);
+
+      if (typeof payload.impersonator_id === "string") {
+        const impersonator = await queryOne<{ id: string; platform_role: PlatformRole | null }>(
+          `SELECT id, platform_role FROM users WHERE id = $1 AND deleted_at IS NULL`,
+          [payload.impersonator_id],
+        );
+        if (impersonator) {
+          request.impersonator_id = impersonator.id;
+          request.impersonator_platform_role = impersonator.platform_role;
+        }
+      }
 
       // Binds the tenant for every subsequent DB call in this request, so the
       // RLS policies apply without each service having to opt in. Set from the

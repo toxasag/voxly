@@ -940,14 +940,14 @@ export class CrmPipelineService {
             : "Вложение"
           : "");
 
-      // Защита от дублирования сообщений при параллельной доставке вебхуков
+      // Защита от дублирования сообщений при параллельной доставке вебхуков и повторах запросов клиентом
       const existingMsg = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND direction = 'inbound'
            AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
            AND channel = $5
-           AND created_at > now() - interval '15 seconds'
+           AND created_at > now() - interval '60 seconds'
          LIMIT 1`,
         [input.tenantId, dealId, contentText, input.attachment ?? null, input.channel],
       );
@@ -1040,6 +1040,25 @@ export class CrmPipelineService {
     senderName?: string;
   }): Promise<void> {
     for (const message of input.reply.messages) {
+      const trimmed = message.trim();
+      if (!trimmed) continue;
+
+      // Дедупликация: исключаем повторную запись идентичного ответа AI в ту же сделку в пределах 60 секунд
+      const duplicate = await queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND direction = 'outbound'
+           AND source = 'ai'
+           AND content = $3
+           AND created_at >= now() - interval '60 seconds'
+         LIMIT 1`,
+        [input.tenantId, input.dealId, trimmed],
+      );
+
+      if (duplicate) {
+        continue;
+      }
+
       await this.deals.createMessage(
         input.tenantId,
         input.dealId,
@@ -1047,7 +1066,7 @@ export class CrmPipelineService {
         {
           source: "ai",
           direction: "outbound",
-          content: message,
+          content: trimmed,
           channel: input.channel,
           channel_account_id: input.channelAccountId,
         },

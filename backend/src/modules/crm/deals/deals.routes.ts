@@ -13,6 +13,9 @@ import {
 } from "./deals.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { ensureTenantDefaults } from "../../tenant/tenant-defaults.js";
+import { queryOne } from "../../../db/client.js";
+import { AiService } from "../../ai/ai.service.js";
+import { createDialogueFeedbackSchema } from "../../ai/ai.types.js";
 
 const listQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
@@ -44,6 +47,7 @@ const stageParamsSchema = z.object({
 export async function dealsRoutes(app: FastifyInstance): Promise<void> {
   const service = new DealsService();
   const messaging = new DealMessagingService(service, app.log);
+  const aiService = new AiService();
 
   const canRead = app.requirePermission("deals:read");
   const canWrite = app.requirePermission("deals:write");
@@ -315,5 +319,39 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const { id } = idParamsSchema.parse(request.params);
     const result = await messaging.syncDealChatHistory(request.tenant_id, id);
     return reply.send({ data: result });
+  });
+
+  /**
+   * Оценка качества диалога и обратная связь оператора для обучения ИИ-агента (RLHF feedback).
+   */
+  app.post("/:id/feedback", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = createDialogueFeedbackSchema.parse(request.body);
+
+    let targetAgentId = body.agent_id ?? body.agentId;
+    if (!targetAgentId) {
+      const activeBot = await queryOne<{ id: string }>(
+        `SELECT id FROM ai_agents WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1`,
+        [request.tenant_id],
+      );
+      targetAgentId = activeBot?.id;
+    }
+    if (!targetAgentId) {
+      const anyBot = await queryOne<{ id: string }>(
+        `SELECT id FROM ai_agents WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1`,
+        [request.tenant_id],
+      );
+      targetAgentId = anyBot?.id;
+    }
+    if (!targetAgentId) {
+      throw new NotFoundError("В системе нет созданных AI-агентов для привязки обучения");
+    }
+
+    const feedback = await aiService.createFeedback(request.tenant_id, targetAgentId, {
+      ...body,
+      deal_id: id,
+    });
+
+    return reply.status(201).send({ data: feedback });
   });
 }

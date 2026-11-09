@@ -77,10 +77,10 @@ export class WidgetAnalyticsService {
     const account = await runWithPlatformScope(() =>
       queryOne<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM channel_accounts
-         WHERE id = $1
+         WHERE (id::text = $1 OR external_id = $1 OR label = $1)
            AND channel = 'webchat'
            AND deleted_at IS NULL
-           AND status != 'disconnected'
+           AND status = 'connected'
          LIMIT 1`,
         [widgetId],
       ),
@@ -102,7 +102,7 @@ export class WidgetAnalyticsService {
            RETURNING id`,
           [
             account.tenant_id,
-            widgetId,
+            account.id,
             sessionId.trim(),
             visitorId.trim(),
             eventType,
@@ -318,6 +318,19 @@ export class WidgetAnalyticsService {
            AND created_at >= $3 AND created_at <= $4
          GROUP BY date_trunc('day', created_at)::date
        ),
+       deals_daily AS (
+         SELECT
+           date_trunc('day', d.created_at)::date AS day,
+           COUNT(DISTINCT d.id) AS crm_leads
+         FROM deals d
+         WHERE d.tenant_id = $1
+           AND (d.source_widget_id = $2 OR EXISTS (
+             SELECT 1 FROM deal_messages dm
+             WHERE dm.tenant_id = $1 AND dm.deal_id = d.id AND dm.channel_account_id = $2
+           ))
+           AND d.created_at >= $3 AND d.created_at <= $4
+         GROUP BY date_trunc('day', d.created_at)::date
+       ),
        won_daily AS (
          SELECT
            date_trunc('day', d.created_at)::date AS day,
@@ -339,11 +352,12 @@ export class WidgetAnalyticsService {
          COALESCE(e.visitors, 0)::int AS visitors,
          COALESCE(e.opens, 0)::int AS opens,
          COALESCE(e.chats, 0)::int AS chats,
-         COALESCE(e.leads, 0)::int AS leads,
+         GREATEST(COALESCE(e.leads, 0), COALESCE(dl.crm_leads, 0))::int AS leads,
          COALESCE(w.won, 0)::int AS won,
          COALESCE(w.revenue, 0)::numeric AS revenue
        FROM dates dt
        LEFT JOIN events_daily e ON e.day = dt.day
+       LEFT JOIN deals_daily dl ON dl.day = dt.day
        LEFT JOIN won_daily w ON w.day = dt.day
        ORDER BY dt.day ASC`,
       [tenantId, widgetId, effectiveSeriesStart.toISOString(), endDate.toISOString()],
