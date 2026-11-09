@@ -27,11 +27,20 @@ interface PasswordFieldProps extends Omit<React.ComponentPropsWithoutRef<"input"
 }
 
 export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
-  function PasswordField({ label, error, hint, footer, className, id, ...inputProps }, ref) {
+  function PasswordField({ label, error, hint, footer, className, id, placeholder, ...inputProps }, ref) {
     const [visible, setVisible] = useState(false);
     const generatedId = useId();
     const fieldId = id ?? generatedId;
     const errorId = `${fieldId}-error`;
+
+    // Если плейсхолдер содержит буллеты (заглушка вида ••••••••),
+    // то в раскрытом режиме показываем человекочитаемый текст вместо точек,
+    // чтобы пустое поле не выглядело как маскированный пароль.
+    const resolvedPlaceholder = visible
+      ? placeholder && /^[•*·\s]+$/.test(placeholder)
+        ? "Введите пароль"
+        : placeholder
+      : placeholder;
 
     return (
       <div className="space-y-2">
@@ -47,6 +56,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
             id={fieldId}
             ref={ref}
             type={visible ? "text" : "password"}
+            placeholder={resolvedPlaceholder}
             aria-invalid={error !== undefined}
             aria-describedby={error !== undefined ? errorId : undefined}
             className={cn(
@@ -61,14 +71,17 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
             tabIndex={-1}: переключатель не должен вставать между полем пароля и
             кнопкой отправки при обходе формы с клавиатуры. Состояние
             озвучивается через aria-pressed, поэтому кнопка остаётся доступной
-            для программ чтения экрана.
+            для программ чтения экрана. onMouseDown с preventDefault предотвращает
+            потерю фокуса и сброс состояния автозаполнения в браузерах.
           */}
           <button
             type="button"
             tabIndex={-1}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => setVisible((previous) => !previous)}
             aria-label={visible ? "Скрыть пароль" : "Показать пароль"}
             aria-pressed={visible}
+            title={visible ? "Скрыть пароль" : "Показать пароль"}
             className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-[#888888] transition-colors hover:text-[#111111] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#4a38f5]"
           >
             {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
