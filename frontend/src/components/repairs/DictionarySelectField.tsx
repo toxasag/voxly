@@ -104,13 +104,12 @@ export function DictionarySelectField({
 
   // Закрытие при клике снаружи
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node) &&
-        addPopoverRef.current &&
-        !addPopoverRef.current.contains(event.target as Node)
-      ) {
+    function handleClickOutside(event: MouseEvent | TouchEvent) {
+      const target = event.target as Node;
+      const clickedInsideContainer = containerRef.current?.contains(target);
+      const clickedInsideAddPopover = addPopoverRef.current?.contains(target);
+
+      if (!clickedInsideContainer && !clickedInsideAddPopover) {
         setIsOpen(false);
         setIsAddOpen(false);
         setEditingId(null);
@@ -118,7 +117,11 @@ export function DictionarySelectField({
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
   }, []);
 
   // Фокус в инпут поиска при открытии дропдауна

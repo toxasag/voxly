@@ -26,6 +26,7 @@ function RepairsPageContent() {
   const [filterStatus, setFilterStatus] = useState<RepairFilterStatus>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [copyTargetTicket, setCopyTargetTicket] = useState<RepairTicket | null>(null);
   const [receiptTarget, setReceiptTarget] = useState<RepairTicket | null>(null);
   const searchParams = useSearchParams();
 
@@ -53,11 +54,14 @@ function RepairsPageContent() {
       deal_id: item.dealId ?? null,
       deal_title: item.dealTitle ?? null,
       deal_note: item.dealNote ?? null,
+      company_id: item.companyId ?? null,
       company_name: item.companyName ?? null,
       company_inn: item.companyInn ?? null,
       customer_name: item.customerName,
       customer_phone: item.customerPhone,
+      customer_email: item.customerEmail ?? null,
       customer_id: item.customerId,
+      additional_contacts: item.additionalContacts ?? [],
       equipment: {
         type: item.equipment.type,
         brand: item.equipment.brand,
@@ -156,6 +160,11 @@ function RepairsPageContent() {
     [createBatchMutation, createMutation],
   );
 
+  const handleCopyTicket = useCallback((ticket: RepairTicket) => {
+    setCopyTargetTicket(ticket);
+    setCreateModalOpen(true);
+  }, []);
+
   return (
     <Guard requiredPermission="service_center:read" requiredModule="service_center">
       <div className="space-y-3.5">
@@ -219,6 +228,7 @@ function RepairsPageContent() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onPrintReceipt={(ticket) => setReceiptTarget(ticket)}
+          onCopyTicket={handleCopyTicket}
           isLoading={isLoading}
           isError={isError}
           error={error}
@@ -227,10 +237,14 @@ function RepairsPageContent() {
         {/* Modals */}
         <RepairIntakeModal
           open={createModalOpen}
-          onClose={() => setCreateModalOpen(false)}
+          onClose={() => {
+            setCreateModalOpen(false);
+            setCopyTargetTicket(null);
+          }}
           onSubmit={handleCreateRepair}
           initialCustomerId={searchParams.get("customer_id") ?? undefined}
           initialDealId={searchParams.get("dealId") ?? undefined}
+          copyFromTicket={copyTargetTicket}
           isSubmitting={createMutation.isPending || createBatchMutation.isPending}
         />
         <RepairReceiptModal

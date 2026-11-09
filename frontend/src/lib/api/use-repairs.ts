@@ -652,6 +652,24 @@ export function useAddRepairServiceToCatalog(): UseMutationResult<
   });
 }
 
+export function useDeleteRepairServiceFromCatalog(): UseMutationResult<
+  { success: boolean },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean }, ApiClientError, string>({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete<{ success: boolean }>(`${BASE_PATH}/catalog/services/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.servicesCatalog });
+    },
+  });
+}
+
 export function useSearchEquipmentBySerial(serial: string): UseQueryResult<EquipmentSearchSerialResultDTO, ApiClientError> {
   const trimmed = serial.trim();
   const isEnabled = trimmed.length >= 3;
