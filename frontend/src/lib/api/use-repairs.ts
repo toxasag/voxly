@@ -682,6 +682,9 @@ export function useCreateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+      void queryClient.invalidateQueries({ queryKey: ["companies"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
     },
   });
 }
@@ -696,6 +699,9 @@ export function useCreateBatchRepair(): UseMutationResult<RepairOrderDTO[], ApiC
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+      void queryClient.invalidateQueries({ queryKey: ["companies"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
     },
   });
 }
