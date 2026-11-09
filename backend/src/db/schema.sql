@@ -1530,6 +1530,7 @@ CREATE TABLE IF NOT EXISTS tenant_bitrix24_configs (
   tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
   webhook_url TEXT NOT NULL DEFAULT '',
   is_enabled BOOLEAN NOT NULL DEFAULT false,
+  allowed_sources TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
   last_lead_id TEXT,
   last_sync_at TIMESTAMPTZ,
   last_error TEXT,

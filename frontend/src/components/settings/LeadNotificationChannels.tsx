@@ -38,8 +38,10 @@ import {
   useBitrix24Config,
   useTestBitrix24Connection,
   useUpdateBitrix24Config,
+  type LeadSource,
 } from "@/lib/api/use-bitrix24";
 import { useTenantInfo } from "@/lib/api/use-team";
+import { SourceMultiSelect, SOURCE_MAP } from "@/components/settings/SourceMultiSelect";
 
 type ExtendedChannelType = NotificationChannelType | "bitrix24";
 
@@ -100,6 +102,7 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
 
   const [bitrixUrl, setBitrixUrl] = useState("");
   const [bitrixEnabled, setBitrixEnabled] = useState(true);
+  const [bitrixAllowedSources, setBitrixAllowedSources] = useState<LeadSource[]>([]);
   const [bitrixTestStatus, setBitrixTestStatus] = useState<{
     success: boolean;
     leadId?: number | string;
@@ -112,6 +115,7 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
       if (bitrixConfig) {
         setBitrixUrl(bitrixConfig.webhook_url || "");
         setBitrixEnabled(bitrixConfig.webhook_url ? Boolean(bitrixConfig.is_enabled) : true);
+        setBitrixAllowedSources(bitrixConfig.allowed_sources ?? []);
       }
       setBitrixTestStatus(null);
     }
@@ -161,6 +165,7 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
         await updateBitrixMutation.mutateAsync({
           webhook_url: cleanUrl,
           is_enabled: bitrixEnabled,
+          allowed_sources: bitrixAllowedSources,
         });
         toast.success("Интеграция с Битрикс24 успешно сохранена и активирована");
         onClose();
@@ -432,6 +437,15 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
                 <Switch checked={bitrixEnabled} onCheckedChange={setBitrixEnabled} />
               </div>
 
+              {/* Мультивыбор источников заявок */}
+              <div className="p-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/50">
+                <SourceMultiSelect
+                  value={bitrixAllowedSources}
+                  onChange={setBitrixAllowedSources}
+                  disabled={updateBitrixMutation.isPending}
+                />
+              </div>
+
               {bitrixTestStatus && (
                 <div
                   className={`rounded-[8px] p-3 text-xs border flex items-start gap-2.5 ${
@@ -692,6 +706,17 @@ export function LeadNotificationChannels() {
                             <span className="text-[#888888]">Приостановлен</span>
                           </>
                         )}
+                      </span>
+                      <span>•</span>
+                      <span>
+                        Источники:{" "}
+                        <strong className="text-[#333333]">
+                          {bitrixConfig.allowed_sources && bitrixConfig.allowed_sources.length > 0
+                            ? bitrixConfig.allowed_sources
+                                .map((s) => SOURCE_MAP.get(s)?.shortLabel || s)
+                                .join(", ")
+                            : "Все каналы"}
+                        </strong>
                       </span>
                       {bitrixConfig.last_sync_at && (
                         <>

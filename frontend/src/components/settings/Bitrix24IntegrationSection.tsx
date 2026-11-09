@@ -18,7 +18,9 @@ import {
   useBitrix24Config,
   useTestBitrix24Connection,
   useUpdateBitrix24Config,
+  type LeadSource,
 } from "@/lib/api/use-bitrix24";
+import { SourceMultiSelect } from "@/components/settings/SourceMultiSelect";
 
 export function Bitrix24IntegrationSection() {
   const { data: config, isLoading } = useBitrix24Config();
@@ -27,6 +29,7 @@ export function Bitrix24IntegrationSection() {
 
   const [webhookUrl, setWebhookUrl] = useState("");
   const [isEnabled, setIsEnabled] = useState(false);
+  const [allowedSources, setAllowedSources] = useState<LeadSource[]>([]);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     leadId?: number | string;
@@ -38,6 +41,7 @@ export function Bitrix24IntegrationSection() {
     if (config) {
       setWebhookUrl(config.webhook_url || "");
       setIsEnabled(Boolean(config.is_enabled));
+      setAllowedSources(config.allowed_sources ?? []);
     }
   }, [config]);
 
@@ -54,6 +58,7 @@ export function Bitrix24IntegrationSection() {
       await updateMutation.mutateAsync({
         webhook_url: cleanUrl,
         is_enabled: isEnabled,
+        allowed_sources: allowedSources,
       });
       toast.success("Настройки Битрикс24 сохранены");
       setTestResult(null);
@@ -105,6 +110,7 @@ export function Bitrix24IntegrationSection() {
         .mutateAsync({
           webhook_url: webhookUrl.trim(),
           is_enabled: checked,
+          allowed_sources: allowedSources,
         })
         .then(() => {
           toast.success(
@@ -206,6 +212,15 @@ export function Bitrix24IntegrationSection() {
             В Битрикс24 перейдите в <strong>Разработчикам → Другое → Входящий вебхук</strong>. Убедитесь,
             что в правах доступа отмечен модуль <strong>CRM</strong>.
           </p>
+        </div>
+
+        {/* Блок фильтрации источников заявок */}
+        <div className="pt-1 border-t border-[#f0f0f0]">
+          <SourceMultiSelect
+            value={allowedSources}
+            onChange={setAllowedSources}
+            disabled={updateMutation.isPending}
+          />
         </div>
 
         {/* Результат проверки подключения */}
