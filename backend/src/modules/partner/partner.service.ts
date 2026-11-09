@@ -3,6 +3,7 @@ import { query, queryOne, transaction } from "../../db/client.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { OWNER_PERMISSIONS } from "../../config/permissions.js";
 import { ensureTenantDefaults } from "../tenant/tenant-defaults.js";
+import { tenantProvisioningQueue } from "../tenant/tenant-provisioning.queue.js";
 import type {
   CreatePartnerTenantInput,
   AuthSettings,
@@ -185,6 +186,20 @@ export class PartnerService {
         // Логируем, но не блокируем создание
         console.error("Failed to seed tenant defaults:", err);
       }
+
+      // Отправка приветственного письма с учетными данными администратора через BullMQ очередь
+      void tenantProvisioningQueue
+        .enqueueWelcomeCredentials({
+          to: adminEmail,
+          subdomain: slug,
+          companyName: input.name.trim(),
+          adminName: (input.admin_name || "Администратор").trim(),
+          loginEmail: adminEmail,
+          password: input.admin_password,
+        })
+        .catch((err) => {
+          console.error("Failed to enqueue welcome credentials email:", err);
+        });
 
       return {
         tenant: {
