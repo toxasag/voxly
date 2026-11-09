@@ -337,6 +337,7 @@ export default function RepairDetailPage() {
         defect_description: detail.defectDescription,
         defect_photos: detail.defectPhotos,
         status: detail.status,
+        payment_status: detail.paymentStatus || (detail.status === "issued" ? "paid" : "unpaid"),
         priority: detail.priority,
         master_id: detail.masterId,
         master_name: detail.masterName,
