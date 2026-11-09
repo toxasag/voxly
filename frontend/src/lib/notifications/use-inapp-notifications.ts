@@ -68,6 +68,18 @@ export function useInAppNotifications() {
   const notifications = data?.data ?? [];
   const unreadCount = data?.meta.unreadCount ?? 0;
 
+  // Синхронизация системного счетчика бейджа на иконке PWA (Android One UI / Desktop)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if ("setAppBadge" in navigator) {
+      if (unreadCount > 0) {
+        navigator.setAppBadge(unreadCount).catch(() => {});
+      } else if ("clearAppBadge" in navigator) {
+        navigator.clearAppBadge().catch(() => {});
+      }
+    }
+  }, [unreadCount]);
+
   // Realtime SSE подключение для мгновенной доставки уведомлений во вкладку
   useEffect(() => {
     if (typeof window === "undefined") return;

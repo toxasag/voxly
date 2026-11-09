@@ -40,7 +40,15 @@ self.addEventListener('push', (event) => {
     tag: payload.data?.type ? `${payload.data.type}-${payload.data.id || Date.now()}` : 'getvoxly-notification',
     renotify: true,
     vibrate: [100, 50, 100],
+    actions: payload.actions || [
+      { action: 'open', title: 'Открыть в CRM' },
+    ],
   };
+
+  // Синхронизация бейджа на иконке приложения (Android WebAPK / Samsung One UI)
+  if ('setAppBadge' in self.navigator) {
+    self.navigator.setAppBadge().catch(() => {});
+  }
 
   event.waitUntil(
     self.registration.showNotification(title, options)
@@ -50,6 +58,11 @@ self.addEventListener('push', (event) => {
 // Слушатель клика по уведомлению: фокусирует существующую вкладку или открывает нужный экран
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+
+  // Сброс бейджа приложения при переходе
+  if ('clearAppBadge' in self.navigator) {
+    self.navigator.clearAppBadge().catch(() => {});
+  }
 
   const targetUrl = event.notification.data?.url || '/dashboard';
 
