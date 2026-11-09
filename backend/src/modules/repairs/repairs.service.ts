@@ -568,6 +568,9 @@ export class RepairsService {
       const packageContentsItems = payload.package_contents_items ?? [];
       const malfunctionsItems = payload.malfunctions ?? [];
 
+      const masterId = payload.master_id && payload.master_id.trim() ? payload.master_id.trim() : author.id;
+      const masterName = payload.master_name && payload.master_name.trim() ? payload.master_name.trim() : author.name;
+
       const row = await tx.queryOneOrThrow<RepairOrderRow>(
         `INSERT INTO repair_orders
            (tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
@@ -596,8 +599,8 @@ export class RepairsService {
           photos,
           additionalContactsJson,
           payload.priority,
-          payload.master_id,
-          payload.master_name,
+          masterId,
+          masterName,
           payload.estimated_cost,
           payload.notes ?? "",
         ],
@@ -847,6 +850,8 @@ export class RepairsService {
 
       // 3. Создаем наряд-заказ на каждую единицу оборудования
       const createdOrders: RepairOrderDTO[] = [];
+      const defaultMasterId = payload.master_id && payload.master_id.trim() ? payload.master_id.trim() : author.id;
+      const defaultMasterName = payload.master_name && payload.master_name.trim() ? payload.master_name.trim() : author.name;
 
       for (const eq of payload.equipments) {
         const ticketNumber = await this.allocateTicketNumber(tx, tenantId);
@@ -857,6 +862,8 @@ export class RepairsService {
         const defectPhotos = eq.defect_photos ?? payload.defect_photos ?? [];
 
         const additionalContactsJson = JSON.stringify(payload.additional_contacts ?? []);
+        const itemMasterId = (eq.master_id && eq.master_id.trim()) || defaultMasterId;
+        const itemMasterName = (eq.master_name && eq.master_name.trim()) || defaultMasterName;
 
         const row = await tx.queryOneOrThrow<RepairOrderRow>(
           `INSERT INTO repair_orders (
@@ -890,8 +897,8 @@ export class RepairsService {
             malfunctions,
             defectPhotos,
             payload.priority ?? "normal",
-            payload.master_id,
-            payload.master_name ?? "",
+            itemMasterId,
+            itemMasterName,
             eq.estimated_cost ?? 0,
             payload.notes ?? "",
             additionalContactsJson,
