@@ -14,6 +14,7 @@ import { createDealMessageSchema } from "../deals/deals.types.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";
 import { ContactActivityService } from "./contact-activity.service.js";
 import { activityChannelSchema, activityKindSchema } from "./contact-activity.types.js";
+import { notificationEventBus } from "../../notifications/push-notification.service.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
@@ -25,6 +26,16 @@ const listQuerySchema = z.object({
 
 const callerIdQuerySchema = z.object({
   phone: z.string().min(3, "Номер телефона слишком короткий").max(40),
+});
+
+const callerIdLogSchema = z.object({
+  phone: z.string().min(3).max(40),
+  direction: z.enum(["inbound", "outbound"]).default("inbound"),
+  status: z.enum(["answered", "missed", "rejected"]).default("answered"),
+  duration_seconds: z.number().int().nonnegative().default(0),
+  contact_id: z.string().uuid().optional(),
+  deal_id: z.string().uuid().optional(),
+  recording_url: z.string().url().optional(),
 });
 
 const idParamsSchema = z.object({ id: z.string().uuid("id must be a UUID") });
@@ -58,6 +69,79 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     const { phone } = callerIdQuerySchema.parse(request.query);
     const result = await service.lookupByPhone(request.tenant_id, phone);
     return reply.send({ data: result });
+  });
+
+  // Фиксация звонка от Android Companion App и мгновенное уведомление в браузер CRM
+  app.post("/caller-id-log", { onRequest: canWrite }, async (request, reply) => {
+    const body = callerIdLogSchema.parse(request.body);
+    const activityService = new ContactActivityService();
+
+    let targetContactId = body.contact_id;
+    let targetDealId = body.deal_id;
+    let contactName = body.phone;
+
+    // Если contact_id не передан, производим быстрый lookup по номеру
+    if (!targetContactId) {
+      const lookup = await service.lookupByPhone(request.tenant_id, body.phone);
+      if (lookup.found && lookup.contact) {
+        targetContactId = lookup.contact.id;
+        contactName = lookup.contact.fullName;
+        if (!targetDealId && lookup.contact.activeDeal) {
+          targetDealId = lookup.contact.activeDeal.id;
+        }
+      }
+    }
+
+    if (targetContactId) {
+      const statusRu = body.status === "answered" ? "Отвечен" : body.status === "missed" ? "Пропущен" : "Отклонен";
+      const dirRu = body.direction === "inbound" ? "Входящий" : "Исходящий";
+      const durationStr = body.duration_seconds > 0 ? ` (${Math.round(body.duration_seconds)} сек.)` : "";
+
+      await activityService.recordActivity({
+        tenantId: request.tenant_id,
+        contactId: targetContactId,
+        dealId: targetDealId ?? null,
+        activityChannel: "call",
+        activityKind: "task",
+        direction: body.direction,
+        title: `${dirRu} звонок: ${contactName} — ${statusRu}${durationStr}`,
+        authorId: request.authUser.id,
+        authorName: request.authUser.name,
+        clientHandle: body.phone,
+        payload: {
+          phone: body.phone,
+          status: body.status,
+          duration_seconds: body.duration_seconds,
+          recording_url: body.recording_url ?? null,
+        },
+      });
+
+      // Эмит события в Real-time шину для мгновенного всплытия карточки в браузере менеджера
+      notificationEventBus.emitNotification(request.tenant_id, null, {
+        id: crypto.randomUUID(),
+        category: "message",
+        entity_type: targetDealId ? "deal" : "contact",
+        entity_id: targetDealId || targetContactId,
+        title: `📞 ${dirRu} звонок: ${contactName}`,
+        description: `Статус: ${statusRu}${durationStr}. Номер: ${body.phone}`,
+        created_at: new Date().toISOString(),
+        read: false,
+        data: {
+          url: targetDealId ? `/crm/deals/${targetDealId}` : `/crm/contacts/${targetContactId}`,
+          phone: body.phone,
+          direction: body.direction,
+          status: body.status,
+        },
+      });
+    }
+
+    return reply.status(201).send({
+      data: {
+        success: true,
+        contact_id: targetContactId ?? null,
+        deal_id: targetDealId ?? null,
+      },
+    });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {
