@@ -249,7 +249,8 @@ export class CrmPipelineService {
     }
 
     const extractedPhone = extractPhoneNumber(rawText);
-    const effectiveSenderPhone = baseInput.senderPhone?.trim() || extractedPhone || undefined;
+    const validatedSenderPhone = baseInput.senderPhone ? extractPhoneNumber(baseInput.senderPhone) : null;
+    const effectiveSenderPhone = validatedSenderPhone || extractedPhone || undefined;
     const extractedEmail = extractEmailAddress(rawText);
     const effectiveSenderEmail = baseInput.senderEmail?.trim() || extractedEmail || undefined;
 
@@ -1018,6 +1019,7 @@ export class CrmPipelineService {
           .enrichContact(input.tenantId, result.contactId, {
             phoneOverride: validPhone,
             channels: ["telegram", "max", "whatsapp"],
+            dealId: result.dealId,
           })
           .catch(() => {
             // Ошибки провайдеров не влияют на создание сделки
