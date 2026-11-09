@@ -4,6 +4,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { ChannelsService } from "./channels.service.js";
 import { WebchatService } from "./webchat.service.js";
 import { WidgetAnalyticsService, type WidgetEventType } from "./widget-analytics.service.js";
+import { GeoEnrichmentService } from "../../services/geo-enrichment.service.js";
 import { channelStatusSchema, updateChannelAccountSchema } from "./channels.types.js";
 
 const widgetParams = z.object({
@@ -100,6 +101,23 @@ export const widgetsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         typeof body.metadata === "object" && body.metadata !== null
           ? (body.metadata as Record<string, unknown>)
           : {};
+
+      const cfConnectingIp = request.headers["cf-connecting-ip"];
+      const forwarded = request.headers["x-forwarded-for"];
+      const xRealIp = request.headers["x-real-ip"];
+      const clientIp =
+        (typeof cfConnectingIp === "string" ? cfConnectingIp.trim() : null) ||
+        (typeof forwarded === "string" ? forwarded.split(",")[0]?.trim() : Array.isArray(forwarded) ? forwarded[0] : null) ||
+        (typeof xRealIp === "string" ? xRealIp.trim() : null) ||
+        request.ip;
+
+      if (!metadata.geo && clientIp) {
+        const geoService = new GeoEnrichmentService(app.log);
+        const geoData = await geoService.lookupIp(clientIp);
+        if (geoData) {
+          metadata.geo = geoData;
+        }
+      }
 
       const analyticsService = new WidgetAnalyticsService(app.log);
       const result = await analyticsService.trackPublicEvent({
