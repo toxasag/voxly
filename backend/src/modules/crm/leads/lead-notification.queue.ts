@@ -35,6 +35,8 @@ export interface LeadNotificationData {
   budget?: number | string | null;
   currency?: string | null;
   custom_fields?: Record<string, unknown> | null;
+  source_metadata?: Record<string, unknown> | null;
+  source_widget_id?: string | null;
   lead_notified_at?: Date | string | null;
   created_at: Date | string;
   contact_id?: string | null;
@@ -303,7 +305,7 @@ export class LeadNotificationQueueService {
       // Извлечение лида со строгой проверкой tenant_id
       const lead = await queryOne<LeadNotificationData>(
       `SELECT d.id, d.tenant_id, d.stage_id, d.title, d.description, d.budget, d.currency,
-              d.custom_fields, d.lead_notified_at, d.created_at,
+              d.custom_fields, d.source_metadata, d.source_widget_id, d.lead_notified_at, d.created_at,
               s.name AS stage_name,
               c.id AS contact_id, c.first_name AS contact_first_name, c.last_name AS contact_last_name,
               c.phone AS contact_phone, c.email AS contact_email, c.telegram_chat_id AS contact_telegram_chat_id,
@@ -552,6 +554,10 @@ export class LeadNotificationQueueService {
         currency: lead.currency || "RUB",
         utmTags: (customFields?.utm_tags as Record<string, string>) || null,
         tenantIdentifier: tenantRow?.slug || lead.tenant_name || "getvoxly",
+        sourceMetadata: lead.source_metadata,
+        sourceWidgetId: lead.source_widget_id,
+        contactChannel: lead.contact_channel,
+        customFields,
       });
 
       if (b24Result.success && b24Result.leadId) {
@@ -560,6 +566,8 @@ export class LeadNotificationQueueService {
           deliveredChannel = "email"; // fallback маркер канала для статистики доставки
         }
         console.log(`[BullMQ] Lead ${lead.id} exported to Bitrix24 (ID: ${b24Result.leadId})`);
+      } else if (b24Result.skipped) {
+        console.log(`[BullMQ] Lead ${lead.id} skipped for Bitrix24 (${b24Result.reason || "skipped"})`);
       }
     } catch (b24Err) {
       console.warn(`[LeadNotification] Bitrix24 lead export non-blocking error:`, b24Err);

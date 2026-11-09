@@ -5,6 +5,7 @@ import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { extractPhoneNumber, extractEmailAddress } from "../crm/channel-identity.js";
 import { extractNameFromText } from "../crm/identity-resolution.js";
 import { preChatModalService } from "../analytics/prechat-modal.service.js";
+import { GeoEnrichmentService } from "../../services/geo-enrichment.service.js";
 
 // ---------------------------------------------------------------------------
 // Сервис публичного онлайн-чата на сайте (WebChat).
@@ -112,6 +113,7 @@ export interface WebchatMessageInput {
   analytics?: Record<string, string | null>;
   deviceFingerprint?: string;
   deviceInfo?: Record<string, unknown>;
+  coords?: { latitude: number; longitude: number; accuracy?: number };
   clientIp?: string;
   userAgent?: string;
   ymUid?: string;
@@ -689,6 +691,12 @@ export class WebchatService {
       }
     }
 
+    const geoService = new GeoEnrichmentService(this.log);
+    const geoData = await geoService.enrichLocation({
+      ip: input.clientIp,
+      coords: input.coords,
+    });
+
     const sourceMetadata: Record<string, unknown> = {
       device: {
         deviceType: (enrichedDeviceInfo.deviceType as string | undefined) || (parsedUa ? parsedUa.deviceType : "desktop"),
@@ -708,9 +716,13 @@ export class WebchatService {
       referrer: input.referrer || "",
       network: {
         ip: input.clientIp || (enrichedDeviceInfo.ip as string | undefined),
-        city: enrichedDeviceInfo.city as string | undefined,
-        country: enrichedDeviceInfo.country as string | undefined,
+        city: geoData?.city || (enrichedDeviceInfo.city as string | undefined),
+        country: geoData?.country || (enrichedDeviceInfo.country as string | undefined),
+        region: geoData?.region,
+        isp: geoData?.isp,
+        timezone: geoData?.timezone,
       },
+      geo: geoData || undefined,
       analytics: {
         yandexuid,
         ymUid,
@@ -769,6 +781,7 @@ export class WebchatService {
         visitCount: input.visitCount,
         utmTags: effectiveUtmTags,
         sourceMetadata,
+        geo: geoData || undefined,
       }),
     );
 
