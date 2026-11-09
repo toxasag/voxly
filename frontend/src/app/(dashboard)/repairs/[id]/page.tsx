@@ -6,7 +6,7 @@ import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase, Tag, Hash,
-  AlertCircle, ExternalLink, Clock, ShieldCheck, Users,
+  AlertCircle, ExternalLink, Clock, ShieldCheck, Users, NotebookPen,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerMod
 import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
+import { RepairNotesSection } from "@/components/repairs/RepairNotesSection";
 import { TagPill, type TagColor } from "@/components/ui/tag";
 import { Guard } from "@/components/shared/Guard";
 import { isModuleInstalled } from "@/lib/context/tenant";
@@ -38,10 +39,11 @@ import {
 import { useTeamMembers } from "@/lib/api/use-team";
 import { cn } from "@/lib/utils";
 
-type DetailTab = "details" | "work_parts" | "history" | "finance" | "chat";
+type DetailTab = "details" | "notes" | "work_parts" | "history" | "finance" | "chat";
 
 const TABS: { key: DetailTab; label: string; icon: typeof FileText }[] = [
   { key: "details", label: "Данные заказа", icon: FileText },
+  { key: "notes", label: "Заметки", icon: NotebookPen },
   { key: "work_parts", label: "Работы и запчасти", icon: Wrench },
   { key: "history", label: "История", icon: History },
   { key: "finance", label: "Финансы", icon: Receipt },
@@ -728,8 +730,17 @@ export default function RepairDetailPage() {
 
                   {ticket.deal_note && (
                     <div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] p-2 text-xs text-[#854d0e] leading-relaxed">
-                      <div className="font-medium text-[11px] text-[#854d0e]/80 uppercase mb-0.5">
-                        Заметка к сделке
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="font-medium text-[11px] text-[#854d0e]/80 uppercase">
+                          Заметка к сделке
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setTab("notes")}
+                          className="text-[10px] text-[#854d0e] hover:underline cursor-pointer"
+                        >
+                          Все заметки
+                        </button>
                       </div>
                       {ticket.deal_note}
                     </div>
@@ -1162,6 +1173,14 @@ export default function RepairDetailPage() {
                     )}
                   </div>
 
+                  {/* Интерактивный блок заметок и истории наряда */}
+                  <RepairNotesSection
+                    orderId={ticket.id}
+                    ticketNumber={ticket.ticket_number}
+                    dealId={ticket.deal_id}
+                    dealTitle={ticket.deal_title}
+                  />
+
                   {/* Блок 4: Примечания и доверенные лица */}
                   <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
                     <div className="flex items-center gap-2 pb-3 border-b border-[#f0f0f0]">
@@ -1213,6 +1232,19 @@ export default function RepairDetailPage() {
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Вкладка: Заметки */}
+              {tab === "notes" && (
+                <div className="space-y-6 max-w-4xl">
+                  <RepairNotesSection
+                    orderId={ticket.id}
+                    ticketNumber={ticket.ticket_number}
+                    dealId={ticket.deal_id}
+                    dealTitle={ticket.deal_title}
+                    fullWidth
+                  />
                 </div>
               )}
 

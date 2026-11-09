@@ -427,11 +427,14 @@ export class RepairsService {
   }
 
   async listNotes(tenantId: string, orderId: string) {
-    const rows = await query<RepairNoteRow>(
-      `SELECT ${NOTE_COLUMNS}
-       FROM repair_notes
-       WHERE tenant_id = $1 AND repair_order_id = $2
-       ORDER BY created_at ASC`,
+    const rows = await query<RepairNoteRow & { deal_id: string | null }>(
+      `SELECT n.id, n.repair_order_id, n.author_id, n.author_name, n.kind, n.content,
+              n.from_status, n.to_status, n.created_at,
+              ro.deal_id
+       FROM repair_notes n
+       JOIN repair_orders ro ON ro.id = n.repair_order_id AND ro.tenant_id = n.tenant_id
+       WHERE n.tenant_id = $1 AND n.repair_order_id = $2
+       ORDER BY n.created_at DESC`,
       [tenantId, orderId],
     );
 
@@ -1619,8 +1622,8 @@ export class RepairsService {
     payload: CreateNotePayload,
   ) {
     return withTenant(tenantId, async (tx) => {
-      const order = await tx.queryOne<{ id: string }>(
-        `SELECT id FROM repair_orders
+      const order = await tx.queryOne<{ id: string; deal_id: string | null; ticket_number: string }>(
+        `SELECT id, deal_id, ticket_number FROM repair_orders
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         [tenantId, orderId],
       );
@@ -1637,7 +1640,33 @@ export class RepairsService {
         [tenantId, orderId, author.id, author.name, payload.content],
       );
 
-      return toRepairNoteDTO(row);
+      // Сквозная синхронизация со сделкой (Dual-Entity Activity Sync)
+      if (order.deal_id) {
+        const userExists = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM users WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, author.id],
+        );
+        const createdByUserId = userExists ? author.id : null;
+
+        const noteTitle = `Наряд №${order.ticket_number}`;
+        const dealNoteRow = await tx.queryOne<{ id: string }>(
+          `INSERT INTO notes (tenant_id, title, body, deal_id, repair_order_id, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [tenantId, noteTitle, payload.content, order.deal_id, order.id, createdByUserId],
+        );
+
+        if (dealNoteRow) {
+          await tx.query(
+            `INSERT INTO note_targets (tenant_id, note_id, target_type, target_id)
+             VALUES ($1, $2, 'deal', $3)
+             ON CONFLICT (note_id, target_type, target_id) DO NOTHING`,
+            [tenantId, dealNoteRow.id, order.deal_id],
+          );
+        }
+      }
+
+      return toRepairNoteDTO({ ...row, deal_id: order.deal_id });
     });
   }
 

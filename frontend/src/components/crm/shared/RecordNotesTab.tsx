@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Check, NotebookPen, Pencil, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Check, ExternalLink, NotebookPen, Pencil, Plus, Trash2, Wrench } from "lucide-react";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import {
@@ -335,11 +336,34 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                 />
               ) : (
                 <div>
-                  {note.title !== "" && (
-                    <h4 className="mb-1.5 break-words text-sm font-semibold text-[#000000]">
-                      {note.title}
-                    </h4>
-                  )}
+                  {note.title !== "" ? (
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                      <h4 className="break-words text-sm font-semibold text-[#000000]">
+                        {note.title}
+                      </h4>
+                      {(note.repairOrderId || note.title.startsWith("Наряд №")) && (
+                        <Link
+                          href={note.repairOrderId ? `/repairs/${note.repairOrderId}` : `/repairs`}
+                          className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-[11px] font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/20"
+                        >
+                          <Wrench className="h-3 w-3" />
+                          {note.repairTicketNumber ? `Наряд №${note.repairTicketNumber}` : "Из наряда"}
+                          <ExternalLink className="h-2.5 w-2.5 opacity-70" />
+                        </Link>
+                      )}
+                    </div>
+                  ) : note.repairOrderId ? (
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <Link
+                        href={`/repairs/${note.repairOrderId}`}
+                        className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-[11px] font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/20"
+                      >
+                        <Wrench className="h-3 w-3" />
+                        {note.repairTicketNumber ? `Наряд №${note.repairTicketNumber}` : "Из наряда"}
+                        <ExternalLink className="h-2.5 w-2.5 opacity-70" />
+                      </Link>
+                    </div>
+                  ) : null}
                   <NoteFormattedBody
                     body={note.body}
                     onToggleCheckbox={
