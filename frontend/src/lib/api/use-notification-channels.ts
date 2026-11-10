@@ -92,6 +92,7 @@ export function useCreateNotificationChannel(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
     },
   });
 }
@@ -113,6 +114,7 @@ export function useUpdateNotificationChannel(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
     },
   });
 }
@@ -133,6 +135,7 @@ export function useDeleteNotificationChannel(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
     },
   });
 }
@@ -154,6 +157,7 @@ export function useToggleNotificationChannel(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
     },
   });
 }

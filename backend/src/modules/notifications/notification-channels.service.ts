@@ -252,15 +252,19 @@ export class NotificationChannelsService {
       row = rows[0] ?? null;
 
       try {
-        await bitrix24Service.saveConfig(tenantId, {
-          webhook_url: cleanDestination,
-          is_enabled: isActive,
-          allowed_sources: (extraMeta.allowed_sources as LeadSource[]) ?? [],
-          selected_widget_ids: (extraMeta.selected_widget_ids as string[]) ?? [],
-          custom_source_id: (extraMeta.custom_source_id as string) || BITRIX24_SOURCE_ID,
-          send_utm_marks: extraMeta.send_utm_marks !== undefined ? Boolean(extraMeta.send_utm_marks) : true,
-          send_geo_data: extraMeta.send_geo_data !== undefined ? Boolean(extraMeta.send_geo_data) : true,
-        });
+        await bitrix24Service.saveConfig(
+          tenantId,
+          {
+            webhook_url: cleanDestination,
+            is_enabled: isActive,
+            allowed_sources: (extraMeta.allowed_sources as LeadSource[]) ?? [],
+            selected_widget_ids: (extraMeta.selected_widget_ids as string[]) ?? [],
+            custom_source_id: (extraMeta.custom_source_id as string) || BITRIX24_SOURCE_ID,
+            send_utm_marks: extraMeta.send_utm_marks !== undefined ? Boolean(extraMeta.send_utm_marks) : true,
+            send_geo_data: extraMeta.send_geo_data !== undefined ? Boolean(extraMeta.send_geo_data) : true,
+          },
+          { syncNotificationChannels: false },
+        );
       } catch (err) {
         console.warn(`[NotificationChannels] Non-blocking legacy bitrix24 sync error:`, err);
       }
@@ -343,15 +347,19 @@ export class NotificationChannelsService {
 
     if (row.channel_type === "bitrix24") {
       try {
-        await bitrix24Service.saveConfig(tenantId, {
-          webhook_url: row.destination,
-          is_enabled: row.is_active,
-          allowed_sources: (mergedExtraMeta.allowed_sources as LeadSource[]) ?? [],
-          selected_widget_ids: (mergedExtraMeta.selected_widget_ids as string[]) ?? [],
-          custom_source_id: (mergedExtraMeta.custom_source_id as string) || BITRIX24_SOURCE_ID,
-          send_utm_marks: mergedExtraMeta.send_utm_marks !== undefined ? Boolean(mergedExtraMeta.send_utm_marks) : true,
-          send_geo_data: mergedExtraMeta.send_geo_data !== undefined ? Boolean(mergedExtraMeta.send_geo_data) : true,
-        });
+        await bitrix24Service.saveConfig(
+          tenantId,
+          {
+            webhook_url: row.destination,
+            is_enabled: row.is_active,
+            allowed_sources: (mergedExtraMeta.allowed_sources as LeadSource[]) ?? [],
+            selected_widget_ids: (mergedExtraMeta.selected_widget_ids as string[]) ?? [],
+            custom_source_id: (mergedExtraMeta.custom_source_id as string) || BITRIX24_SOURCE_ID,
+            send_utm_marks: mergedExtraMeta.send_utm_marks !== undefined ? Boolean(mergedExtraMeta.send_utm_marks) : true,
+            send_geo_data: mergedExtraMeta.send_geo_data !== undefined ? Boolean(mergedExtraMeta.send_geo_data) : true,
+          },
+          { syncNotificationChannels: false },
+        );
       } catch (err) {
         console.warn(`[NotificationChannels] Non-blocking legacy bitrix24 sync error:`, err);
       }

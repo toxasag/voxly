@@ -1404,8 +1404,12 @@ export function LeadNotificationChannels() {
 
       {/* Модальное окно добавления/настройки канала с поддержкой Битрикс24 */}
       <AddChannelModal
+        key={editingChannel ? `edit-${editingChannel.id}` : `new-${modalInitialType}-${modalInitialTab}`}
         open={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
+        onClose={() => {
+          setAddModalOpen(false);
+          setEditingChannel(null);
+        }}
         tenantId={info?.id}
         initialType={modalInitialType}
         initialTab={modalInitialTab}
