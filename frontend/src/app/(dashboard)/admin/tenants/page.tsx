@@ -17,6 +17,10 @@ import {
   TrendingUp,
   X,
   Bot,
+  Briefcase,
+  CornerDownRight,
+  Users,
+  CheckCircle2,
 } from "lucide-react";
 import { PlatformOwnerGuard } from "@/components/auth/PlatformOwnerGuard";
 import {
@@ -244,6 +248,7 @@ export default function AdminTenantsPage() {
 
   // Фильтры и поиск
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [planFilter, setPlanFilter] = useState<string>("all");
   const [nicheFilter, setNicheFilter] = useState<string>("all");
@@ -256,7 +261,10 @@ export default function AdminTenantsPage() {
     let trial = 0;
     let suspended = 0;
     let customPriced = 0;
+    let partnerCount = 0;
+    let clientCount = 0;
     let freePartners = 0;
+    let freeClients = 0;
     let totalAdoption = 0;
     let highAdoption = 0;
     let lowAdoption = 0;
@@ -272,9 +280,17 @@ export default function AdminTenantsPage() {
       else if (t.status === "trial") trial++;
       else if (t.status === "suspended") suspended++;
 
+      const isPartner = (t.is_partner || t.tenant_type === "partner") && t.slug !== "voxly";
+      if (isPartner) {
+        partnerCount++;
+        if (t.custom_price_rubles === 0) freePartners++;
+      } else if (t.slug !== "voxly") {
+        clientCount++;
+        if (t.custom_price_rubles === 0) freeClients++;
+      }
+
       if (t.custom_price_rubles !== null || t.custom_plan_name) {
         customPriced++;
-        if (t.custom_price_rubles === 0) freePartners++;
       }
 
       totalAdoption += t.adoption_score || 0;
@@ -302,7 +318,10 @@ export default function AdminTenantsPage() {
       trial,
       suspended,
       customPriced,
+      partnerCount,
+      clientCount,
       freePartners,
+      freeClients,
       avgAdoption,
       highAdoption,
       lowAdoption,
@@ -326,9 +345,26 @@ export default function AdminTenantsPage() {
         const matchesOwner = t.owner_email?.toLowerCase().includes(q) || t.owner_name?.toLowerCase().includes(q);
         const matchesNiche = t.business_niche?.toLowerCase().includes(q);
         const matchesPlan = t.custom_plan_name?.toLowerCase().includes(q) || t.plan.toLowerCase().includes(q);
-        if (!matchesName && !matchesSlug && !matchesOwner && !matchesNiche && !matchesPlan) {
+        const matchesParent =
+          t.parent_tenant_name?.toLowerCase().includes(q) ||
+          t.parent_tenant_slug?.toLowerCase().includes(q);
+        if (!matchesName && !matchesSlug && !matchesOwner && !matchesNiche && !matchesPlan && !matchesParent) {
           return false;
         }
+      }
+
+      // Фильтр по роли / типу
+      if (typeFilter === "partners") {
+        const isPartner = (t.is_partner || t.tenant_type === "partner") && t.slug !== "voxly";
+        if (!isPartner) return false;
+      } else if (typeFilter === "sub_clients") {
+        const isPartner = (t.is_partner || t.tenant_type === "partner") && t.slug !== "voxly";
+        const hasParent = Boolean(t.parent_tenant_id || t.owner_partner_id);
+        if (isPartner || !hasParent) return false;
+      } else if (typeFilter === "direct_clients") {
+        const isPartner = (t.is_partner || t.tenant_type === "partner");
+        const hasParent = Boolean(t.parent_tenant_id || t.owner_partner_id);
+        if (isPartner || hasParent) return false;
       }
 
       // Фильтр по статусу
@@ -357,7 +393,98 @@ export default function AdminTenantsPage() {
 
       return true;
     });
-  }, [tenants, search, statusFilter, planFilter, nicheFilter, adoptionFilter]);
+  }, [tenants, search, typeFilter, statusFilter, planFilter, nicheFilter, adoptionFilter]);
+
+  // Иерархическое дерево: Партнёры и их суб-клиенты
+  interface HierarchyItem {
+    tenant: AdminTenantDTO;
+    isPartner: boolean;
+    isSubClient: boolean;
+    parentPartner?: AdminTenantDTO | null;
+    parentPartnerName?: string | null;
+    childCount?: number;
+  }
+
+  const hierarchicalTenants = useMemo<HierarchyItem[]>(() => {
+    const tenantMap = new Map<string, AdminTenantDTO>();
+    tenants.forEach((t) => tenantMap.set(t.id, t));
+
+    const partners: AdminTenantDTO[] = [];
+    const directClients: AdminTenantDTO[] = [];
+    const childrenByPartnerId = new Map<string, AdminTenantDTO[]>();
+
+    for (const t of filteredTenants) {
+      const isPartner = (t.is_partner || t.tenant_type === "partner") && t.slug !== "voxly";
+      if (isPartner) {
+        partners.push(t);
+      } else {
+        const parentId = t.parent_tenant_id || t.owner_partner_id;
+        if (parentId && parentId !== "c0000000-0000-0000-0000-000000000001" && (tenantMap.has(parentId) || t.parent_tenant_name)) {
+          const list = childrenByPartnerId.get(parentId) || [];
+          list.push(t);
+          childrenByPartnerId.set(parentId, list);
+        } else {
+          directClients.push(t);
+        }
+      }
+    }
+
+    const result: HierarchyItem[] = [];
+
+    // 1. Корневые партнёры и их субклиенты
+    for (const partner of partners) {
+      const children = childrenByPartnerId.get(partner.id) || [];
+      const totalChildrenCount = tenants.filter(
+        (t) => (t.parent_tenant_id === partner.id || t.owner_partner_id === partner.id) && t.id !== partner.id,
+      ).length;
+
+      result.push({
+        tenant: partner,
+        isPartner: true,
+        isSubClient: false,
+        parentPartner: null,
+        childCount: totalChildrenCount,
+      });
+
+      for (const child of children) {
+        result.push({
+          tenant: child,
+          isPartner: false,
+          isSubClient: true,
+          parentPartner: partner,
+          parentPartnerName: partner.name,
+        });
+      }
+    }
+
+    // 2. Субклиенты, чей партнёр был отфильтрован другим фильтром (например, по нише)
+    for (const [parentId, children] of childrenByPartnerId.entries()) {
+      if (!partners.some((p) => p.id === parentId)) {
+        const parent = tenantMap.get(parentId);
+        for (const child of children) {
+          result.push({
+            tenant: child,
+            isPartner: false,
+            isSubClient: true,
+            parentPartner: parent ?? null,
+            parentPartnerName: parent?.name ?? child.parent_tenant_name,
+          });
+        }
+      }
+    }
+
+    // 3. Прямые клиенты и платформа voxly
+    for (const client of directClients) {
+      result.push({
+        tenant: client,
+        isPartner: (client.is_partner || client.tenant_type === "partner"),
+        isSubClient: false,
+        parentPartner: null,
+      });
+    }
+
+    return result;
+  }, [tenants, filteredTenants]);
 
   // Войти под пользователем (Impersonation)
   const handleImpersonate = useCallback(
@@ -515,7 +642,7 @@ export default function AdminTenantsPage() {
             </div>
             <p className="mt-1 text-2xl font-bold font-mono text-[#111111]">{stats.customPriced}</p>
             <p className="mt-2 text-[11px] text-[#666666]">
-              Бесплатно (0 ₽): <strong className="text-[#111111]">{stats.freePartners}</strong> партнёров
+              Партнёров: <strong className="text-[#111111]">{stats.partnerCount}</strong> • Беспл. клиентов: <strong className="text-[#111111]">{stats.freeClients}</strong>
             </p>
           </div>
 
@@ -587,6 +714,18 @@ export default function AdminTenantsPage() {
               </button>
             )}
           </div>
+
+          {/* Фильтр по роли / типу компании */}
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+          >
+            <option value="all">Все типы компаний</option>
+            <option value="partners">Только партнёры</option>
+            <option value="sub_clients">Клиенты партнёров</option>
+            <option value="direct_clients">Прямые клиенты платформы</option>
+          </select>
 
           {/* Фильтр по статусу */}
           <select
@@ -681,57 +820,170 @@ export default function AdminTenantsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#e5e5e5]">
-                {filteredTenants.map((tenant) => {
+                {hierarchicalTenants.map((item) => {
+                  const tenant = item.tenant;
+                  const isRootPartner = item.isPartner && tenant.slug !== "voxly";
+                  const isPlatformRoot = tenant.slug === "voxly" || tenant.id === "c0000000-0000-0000-0000-000000000001";
+                  const isSubClient = item.isSubClient;
                   const hasCustomPrice = tenant.custom_price_rubles !== null;
-                  const isFreePartner = tenant.custom_price_rubles === 0;
+                  const isFree = tenant.custom_price_rubles === 0;
 
                   return (
                     <tr
                       key={tenant.id}
-                      className="transition-colors hover:bg-[#fafafa]"
+                      className={cn(
+                        "transition-colors",
+                        isRootPartner
+                          ? "bg-[#fafbff]/80 hover:bg-[#f0f4ff]/70 border-l-3 border-l-[#4a38f5]"
+                          : isSubClient
+                            ? "bg-[#fafafa]/50 hover:bg-[#fafafa]"
+                            : "hover:bg-[#fafafa]",
+                      )}
                     >
                       {/* Компания, ниша, контакты владельца */}
                       <td className="px-3.5 py-2.5">
-                        <div className="flex items-start justify-between gap-1">
-                          <span className="font-semibold text-[#111111]">{tenant.name}</span>
-                          {tenant.slug && (
-                            <span className="font-mono text-[11px] text-[#888888]">
-                              {tenant.slug}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Ниша */}
-                        <div className="mt-1 flex items-center gap-1.5">
-                          {tenant.business_niche ? (
-                            <span className="inline-flex items-center rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#4a38f5]">
-                              {tenant.business_niche}
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setManagingTenant(tenant)}
-                              className="text-[10px] text-[#888888] underline underline-offset-2 hover:text-[#111111]"
-                            >
-                              + указать нишу
-                            </button>
-                          )}
-                          {tenant.custom_notes && (
-                            <span
-                              title={`Заметка: ${tenant.custom_notes}`}
-                              className="cursor-help rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-1 py-0.2 text-[10px] text-[#854d0e]"
-                            >
-                              заметка
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Контакты владельца */}
-                        {(tenant.owner_email || tenant.owner_name) && (
-                          <div className="mt-1 flex items-center gap-2 text-[11px] text-[#666666]">
-                            {tenant.owner_name && <span>{tenant.owner_name}</span>}
-                            {tenant.owner_email && (
-                              <span className="text-[#888888]">({tenant.owner_email})</span>
+                        {isRootPartner ? (
+                          <div className="flex items-start gap-2.5">
+                            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-indigo-200 bg-indigo-50 text-indigo-700">
+                              <Briefcase className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold text-sm text-[#111111]">{tenant.name}</span>
+                                <span className="inline-flex items-center gap-1 rounded-[4px] border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                                  <Briefcase className="h-2.5 w-2.5" />
+                                  Партнёр платформы
+                                </span>
+                                {item.childCount !== undefined && item.childCount > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-[4px] border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 shadow-2xs">
+                                    <Users className="h-2.5 w-2.5 text-slate-500" />
+                                    {item.childCount} {item.childCount === 1 ? "клиент" : item.childCount < 5 ? "клиента" : "клиентов"}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[#666666]">
+                                {tenant.slug && (
+                                  <span className="font-mono text-[#888888]">
+                                    {tenant.slug}.getvoxly.ru
+                                  </span>
+                                )}
+                                {tenant.business_niche && (
+                                  <span className="inline-flex items-center rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+                                    {tenant.business_niche}
+                                  </span>
+                                )}
+                              </div>
+                              {(tenant.owner_email || tenant.owner_name) && (
+                                <div className="mt-1 flex items-center gap-2 text-[11px] text-[#666666]">
+                                  {tenant.owner_name && <span>{tenant.owner_name}</span>}
+                                  {tenant.owner_email && (
+                                    <span className="text-[#888888]">({tenant.owner_email})</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : isSubClient ? (
+                          <div className="pl-6 flex items-start gap-2">
+                            <div className="pt-0.5 shrink-0 text-[#888888]">
+                              <CornerDownRight className="h-4 w-4 text-[#888888]" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold text-xs text-[#111111]">{tenant.name}</span>
+                                {tenant.slug && (
+                                  <span className="font-mono text-[11px] text-[#888888]">
+                                    @{tenant.slug}
+                                  </span>
+                                )}
+                                <span className="inline-flex items-center gap-1 rounded-[4px] border border-slate-200 bg-white px-1.5 py-0.2 text-[10px] font-medium text-slate-700 shadow-2xs">
+                                  Клиент партнёра {item.parentPartnerName || "ЭЛЕРОН"}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 flex items-center gap-1.5">
+                                {tenant.business_niche ? (
+                                  <span className="inline-flex items-center rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+                                    {tenant.business_niche}
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setManagingTenant(tenant)}
+                                    className="text-[10px] text-[#888888] underline underline-offset-2 hover:text-[#111111]"
+                                  >
+                                    + указать нишу
+                                  </button>
+                                )}
+                                {tenant.custom_notes && (
+                                  <span
+                                    title={`Заметка: ${tenant.custom_notes}`}
+                                    className="cursor-help rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-1 py-0.2 text-[10px] text-[#854d0e]"
+                                  >
+                                    заметка
+                                  </span>
+                                )}
+                              </div>
+                              {(tenant.owner_email || tenant.owner_name) && (
+                                <div className="mt-1 flex items-center gap-2 text-[11px] text-[#666666]">
+                                  {tenant.owner_name && <span>{tenant.owner_name}</span>}
+                                  {tenant.owner_email && (
+                                    <span className="text-[#888888]">({tenant.owner_email})</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="flex items-start justify-between gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-semibold text-[#111111]">{tenant.name}</span>
+                                {isPlatformRoot ? (
+                                  <span className="inline-flex items-center rounded-[4px] border border-sky-200 bg-sky-50 px-1.5 py-0.2 text-[10px] font-semibold text-sky-700">
+                                    Платформа (Root)
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-1.5 py-0.2 text-[10px] text-[#666666]">
+                                    Клиент
+                                  </span>
+                                )}
+                              </div>
+                              {tenant.slug && (
+                                <span className="font-mono text-[11px] text-[#888888]">
+                                  {tenant.slug}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              {tenant.business_niche ? (
+                                <span className="inline-flex items-center rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#4a38f5]">
+                                  {tenant.business_niche}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setManagingTenant(tenant)}
+                                  className="text-[10px] text-[#888888] underline underline-offset-2 hover:text-[#111111]"
+                                >
+                                  + указать нишу
+                                </button>
+                              )}
+                              {tenant.custom_notes && (
+                                <span
+                                  title={`Заметка: ${tenant.custom_notes}`}
+                                  className="cursor-help rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-1 py-0.2 text-[10px] text-[#854d0e]"
+                                >
+                                  заметка
+                                </span>
+                              )}
+                            </div>
+                            {(tenant.owner_email || tenant.owner_name) && (
+                              <div className="mt-1 flex items-center gap-2 text-[11px] text-[#666666]">
+                                {tenant.owner_name && <span>{tenant.owner_name}</span>}
+                                {tenant.owner_email && (
+                                  <span className="text-[#888888]">({tenant.owner_email})</span>
+                                )}
+                              </div>
                             )}
                           </div>
                         )}
@@ -739,21 +991,37 @@ export default function AdminTenantsPage() {
 
                       {/* Тариф и Цена */}
                       <td className="px-3 py-2.5">
-                        {hasCustomPrice || tenant.custom_plan_name ? (
+                        {isRootPartner ? (
                           <div>
-                            <span
-                              className={cn(
-                                "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11px] font-medium border",
-                                isFreePartner
-                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                  : "border-violet-200 bg-violet-50 text-violet-700",
-                              )}
-                            >
-                              {tenant.custom_plan_name || (isFreePartner ? "Партнёрский" : "Индивидуальный")}
+                            <span className="inline-flex items-center rounded-[4px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                              {tenant.custom_plan_name || "Партнёрский тариф"}
                             </span>
                             <p className="mt-0.5 font-mono text-xs font-semibold text-[#111111]">
-                              {isFreePartner ? "0 ₽ (Бесплатно)" : `${tenant.custom_price_rubles?.toLocaleString("ru-RU")} ₽/мес`}
+                              0 ₽ (Партнёр)
                             </p>
+                            <span className="text-[10px] text-[#888888]">Партнёрский доступ</span>
+                          </div>
+                        ) : isFree ? (
+                          <div>
+                            <span className="inline-flex items-center rounded-[4px] border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                              {tenant.custom_plan_name || "Бесплатный (Клиент)"}
+                            </span>
+                            <p className="mt-0.5 font-mono text-xs font-semibold text-[#111111]">
+                              0 ₽ (Бесплатно)
+                            </p>
+                            <span className="text-[10px] text-[#888888]">
+                              {isSubClient ? "Субклиент партнёра" : "Клиентский тариф"}
+                            </span>
+                          </div>
+                        ) : hasCustomPrice || tenant.custom_plan_name ? (
+                          <div>
+                            <span className="inline-flex items-center rounded-[4px] border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                              {tenant.custom_plan_name || "Индивидуальный"}
+                            </span>
+                            <p className="mt-0.5 font-mono text-xs font-semibold text-[#111111]">
+                              {tenant.custom_price_rubles?.toLocaleString("ru-RU")} ₽/мес
+                            </p>
+                            <span className="text-[10px] text-[#888888]">Спецтариф</span>
                           </div>
                         ) : (
                           <div>
@@ -953,6 +1221,7 @@ export default function AdminTenantsPage() {
         <TenantManageModal
           open={managingTenant !== null}
           tenant={managingTenant}
+          allTenants={tenants}
           onClose={() => setManagingTenant(null)}
           onSaved={() => void refetch()}
         />
