@@ -6,6 +6,7 @@ import {
   Wrench,
   Search,
   Printer,
+  SlidersHorizontal,
   Phone,
   Building2,
   AlertCircle,
@@ -22,6 +23,8 @@ import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTa
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { PrintTemplateSettingsDrawer } from "./PrintTemplateSettingsDrawer";
+import { usePrintTemplateSettings, formatTicketNumber } from "@/lib/api/use-print-templates";
 import {
   useBatchUpdateRepairStatus,
   useBatchDeleteRepairs,
@@ -57,18 +60,15 @@ const STATUS_TABS: { value: RepairFilterStatus; label: string }[] = [
 ];
 
 /**
- * Компактное форматирование номера акта: заменяет громоздкий префикс
- * №ЗН-2026-0001 на компактный вид №0001 с сохранением исходного номера.
+ * Форматирование номера наряда с учетом настроек (компактный №0001 или полный ЗН-2026-0001)
+ * и защитой от дублирования символа №.
  */
-export function formatOrderNumber(rawNumber: string): string {
-  if (!rawNumber) return "";
-  const clean = rawNumber.trim();
-  const match = clean.match(/(?:.*-)?(\d+)$/);
-  if (match && match[1]) {
-    return `№${match[1]}`;
-  }
-  if (clean.startsWith("№")) return clean;
-  return `№${clean}`;
+export function formatOrderNumber(
+  rawNumber: string,
+  format: "compact" | "full" = "compact",
+  prefix: string = "№",
+): string {
+  return formatTicketNumber(rawNumber, format, prefix);
 }
 
 function formatDateTime(iso: string): string {
@@ -154,10 +154,12 @@ function PrintDropdownMenu({
   ticket,
   onPrintReceipt,
   onPrintWorkOrder,
+  onOpenSettings,
 }: {
   ticket: RepairTicket;
   onPrintReceipt: (ticket: RepairTicket) => void;
   onPrintWorkOrder?: (ticket: RepairTicket) => void;
+  onOpenSettings?: () => void;
 }) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
@@ -201,7 +203,7 @@ function PrintDropdownMenu({
   };
 
   return (
-    <div className="relative inline-flex items-center justify-center">
+    <div className="relative inline-flex items-center justify-center gap-0.5">
       <button
         ref={buttonRef}
         type="button"
@@ -212,6 +214,21 @@ function PrintDropdownMenu({
       >
         <Printer className="h-3.5 w-3.5" />
       </button>
+
+      {onOpenSettings && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenSettings();
+          }}
+          className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#888888] hover:text-[#4a38f5] hover:bg-black/[0.04] transition-colors cursor-pointer"
+          aria-label="Настроить бланки"
+          title="Настроить бланки"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+        </button>
+      )}
 
       {isOpen && coords && (
         <>
@@ -243,6 +260,23 @@ function PrintDropdownMenu({
               <CheckSquare className="h-3.5 w-3.5 text-[#666666] shrink-0" />
               <span>Акт выполненных работ</span>
             </button>
+            {onOpenSettings && (
+              <>
+                <div className="my-1 border-t border-[#e5e5e5]" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsOpen(false);
+                    onOpenSettings();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#4a38f5] hover:bg-[#4a38f5]/5 transition-colors cursor-pointer text-left"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-[#4a38f5] shrink-0" />
+                  <span>Настроить бланки</span>
+                </button>
+              </>
+            )}
           </div>
         </>
       )}
@@ -482,8 +516,11 @@ export const RepairsTable = memo(function RepairsTable({
   // Пакетные операции (выбор строк чекбоксами)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [selectedBulkStatus, setSelectedBulkStatus] = useState<string>("");
   const [selectedBulkPaymentStatus, setSelectedBulkPaymentStatus] = useState<string>("");
+
+  const { data: printSettings } = usePrintTemplateSettings();
 
   const batchStatusMutation = useBatchUpdateRepairStatus();
   const batchDeleteMutation = useBatchDeleteRepairs();
@@ -573,7 +610,11 @@ export const RepairsTable = memo(function RepairsTable({
           <RecordCellShell isLabelIdentifier>
             <div className="flex flex-col py-1 min-w-0" title={`Исходный номер: ${ticket.ticket_number}`}>
               <span className="font-mono text-xs font-bold text-[#111111] tracking-tight">
-                {formatOrderNumber(ticket.ticket_number)}
+                {formatTicketNumber(
+                  ticket.ticket_number,
+                  printSettings?.numberingFormat,
+                  printSettings?.numberingPrefix,
+                )}
               </span>
               <span className="text-[11px] text-[#666666] leading-tight mt-0.5 whitespace-nowrap">
                 {formatDateTimeWithFullYear(ticket.received_at)}
@@ -754,8 +795,20 @@ export const RepairsTable = memo(function RepairsTable({
       },
       {
         id: "print",
-        header: <Printer className="h-3.5 w-3.5 mx-auto text-[#666666]" />,
-        width: 50,
+        header: (
+          <div className="flex items-center justify-center gap-1">
+            <Printer className="h-3.5 w-3.5 text-[#666666]" />
+            <button
+              type="button"
+              onClick={() => setSettingsDrawerOpen(true)}
+              className="flex h-5 w-5 items-center justify-center rounded text-[#888888] hover:text-[#4a38f5] hover:bg-black/5 transition-colors cursor-pointer"
+              title="Настроить бланки"
+            >
+              <SlidersHorizontal className="h-3 w-3" />
+            </button>
+          </div>
+        ),
+        width: 72,
         align: "center",
         render: (ticket) => (
           <RecordCellShell align="center">
@@ -763,12 +816,20 @@ export const RepairsTable = memo(function RepairsTable({
               ticket={ticket}
               onPrintReceipt={onPrintReceipt}
               onPrintWorkOrder={onPrintWorkOrder}
+              onOpenSettings={() => setSettingsDrawerOpen(true)}
             />
           </RecordCellShell>
         ),
       },
     ],
-    [onPrintReceipt, onPrintWorkOrder, handleSinglePaymentStatusChange, updatePaymentStatusMutation.isPending],
+    [
+      onPrintReceipt,
+      onPrintWorkOrder,
+      handleSinglePaymentStatusChange,
+      updatePaymentStatusMutation.isPending,
+      printSettings?.numberingFormat,
+      printSettings?.numberingPrefix,
+    ],
   );
 
   if (isLoading) {
@@ -987,6 +1048,12 @@ export const RepairsTable = memo(function RepairsTable({
           confirmLabel="Удалить"
           variant="destructive"
           isPending={batchDeleteMutation.isPending}
+        />
+
+        {/* Шторка настроек конструктора печатных форм */}
+        <PrintTemplateSettingsDrawer
+          open={settingsDrawerOpen}
+          onClose={() => setSettingsDrawerOpen(false)}
         />
       </div>
     </TooltipProvider>
