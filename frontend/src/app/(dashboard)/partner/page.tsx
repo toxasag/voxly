@@ -16,7 +16,7 @@ import {
 import { useAuth } from "@/lib/auth/use-auth";
 import { usePartnerChildTenants, type PartnerChildTenantDTO } from "@/lib/api/use-partner";
 import { CreateTenantDialog } from "@/components/partner/CreateTenantDialog";
-import { writeImpersonationBackup } from "@/lib/auth/impersonation";
+import { writeImpersonationBackup, type ImpersonationBackup } from "@/lib/auth/impersonation";
 import { readAccessToken, readRefreshToken, writeTokens } from "@/lib/auth/session";
 import { apiClient } from "@/lib/api/apiClient";
 import { tenantPortalUrl } from "@/lib/auth/tenant-host";
@@ -44,8 +44,9 @@ export default function PartnerPage() {
       const currentAccessToken = readAccessToken();
       const currentRefreshToken = readRefreshToken();
 
+      let backupData: ImpersonationBackup | null = null;
       if (currentAccessToken) {
-        writeImpersonationBackup({
+        backupData = {
           accessToken: currentAccessToken,
           refreshToken: currentRefreshToken || currentAccessToken,
           adminUserEmail: user?.email ?? "",
@@ -58,7 +59,8 @@ export default function PartnerPage() {
           impersonatedTenantName: child.name,
           impersonatedUserEmail: child.admin?.email ?? undefined,
           enteredAt: new Date().toISOString(),
-        });
+        };
+        writeImpersonationBackup(backupData);
       }
 
       const res = await apiClient.post<AuthTokensDTO>("/api/v1/auth/impersonate", {
@@ -71,10 +73,13 @@ export default function PartnerPage() {
           writeTokens({ accessToken: access_token, refreshToken: refresh_token });
         }
         const targetUrl = tenantPortalUrl(child.slug, "/dashboard");
-        const redirectUrl =
-          targetUrl.includes("://") && access_token
-            ? `${targetUrl}#tenant_token=${encodeURIComponent(access_token)}`
-            : targetUrl;
+        const hashParams = new URLSearchParams();
+        if (access_token) hashParams.set("tenant_token", access_token);
+        if (backupData) hashParams.set("impersonator_backup", JSON.stringify(backupData));
+
+        const redirectUrl = targetUrl.includes("://")
+          ? `${targetUrl}#${hashParams.toString()}`
+          : targetUrl;
         window.location.href = redirectUrl;
       }
     } catch (err) {
