@@ -82,12 +82,41 @@ export const markInvoicePaidSchema = z.object({
   description: z.string().max(500).optional().or(z.literal("")),
 });
 
+export const batchPaymentSchema = z.object({
+  repair_order_ids: z.array(z.string().uuid()).min(1),
+  cash_account_id: accountIdSchema,
+  category_id: optionalUuid,
+  description: z.string().max(500).optional().or(z.literal("")),
+});
+
+export const createInvoiceFromActsSchema = z.object({
+  repair_order_ids: z.array(z.string().uuid()).min(1),
+  company_id: optionalUuid,
+  company_name: z.string().max(200).optional().or(z.literal("")),
+  company_inn: z.string().max(20).optional().or(z.literal("")),
+  company_address: z.string().max(300).optional().or(z.literal("")),
+  contact_name: z.string().max(200).optional().or(z.literal("")),
+  contact_phone: z.string().max(30).optional().or(z.literal("")),
+  deal_id: optionalUuid,
+  due_date: isoDate.optional(),
+  vat_rate: z.number().min(0).max(100).default(20),
+  currency: z.string().length(3).default("RUB"),
+  notes: z.string().max(2000).optional().or(z.literal("")),
+});
+
+export const sendInvoiceSchema = z.object({
+  channel_type: z.enum(["telegram", "whatsapp", "all"]).default("all"),
+});
+
 export type CreateAccountPayload = z.infer<typeof createAccountSchema>;
 export type TransferPayload = z.infer<typeof transferSchema>;
 export type CreateTransactionPayload = z.infer<typeof createTransactionSchema>;
 export type CreateInvoicePayload = z.infer<typeof createInvoiceSchema>;
+export type CreateInvoiceFromActsPayload = z.infer<typeof createInvoiceFromActsSchema>;
 export type UpdateInvoicePayload = z.infer<typeof updateInvoiceSchema>;
 export type MarkInvoicePaidPayload = z.infer<typeof markInvoicePaidSchema>;
+export type BatchPaymentPayload = z.infer<typeof batchPaymentSchema>;
+export type SendInvoicePayload = z.infer<typeof sendInvoiceSchema>;
 export type InvoiceItemPayload = z.infer<typeof invoiceItemSchema>;
 export type InvoiceStatus = z.infer<typeof invoiceStatusSchema>;
 export type TransactionType = z.infer<typeof transactionTypeSchema>;

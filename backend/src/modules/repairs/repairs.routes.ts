@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { RepairsService } from "./repairs.service.js";
+import { InvoicesService } from "../finance/invoices.service.js";
 import { innLookupService } from "../integrations/inn-lookup.service.js";
 import {
   changePaymentStatusSchema,
@@ -358,6 +359,19 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     const totals = await service.totals(request.tenant_id, id);
 
     return reply.send({ data: totals });
+  });
+
+  app.get("/:id/deal-acts", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const acts = await service.getDealActs(request.tenant_id, id);
+    return reply.send({ data: acts });
+  });
+
+  app.get("/:id/invoices", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const invoicesService = new InvoicesService();
+    const invoices = await invoicesService.forRepair(request.tenant_id, id);
+    return reply.send({ data: invoices });
   });
 
   // -------------------------------------------------------------------------

@@ -1099,6 +1099,37 @@ export function useBatchDeleteRepairs(): UseMutationResult<
   });
 }
 
+export interface DealActDTO {
+  id: string;
+  ticketNumber: string;
+  dealId: string | null;
+  equipmentType: string;
+  equipmentBrand: string;
+  equipmentModel: string;
+  equipmentSerial: string;
+  customerName: string;
+  customerPhone: string;
+  status: string;
+  paymentStatus: string;
+  worksTotal: number;
+  partsTotal: number;
+  totalAmount: number;
+  isCurrent: boolean;
+  createdAt: string;
+}
+
+export function useDealActs(repairOrderId: string | null): UseQueryResult<DealActDTO[], ApiClientError> {
+  return useQuery<DealActDTO[], ApiClientError>({
+    queryKey: ["repairs", repairOrderId, "deal-acts"],
+    queryFn: async () => {
+      if (!repairOrderId) return [];
+      const res = await apiClient.get<DealActDTO[]>(`${BASE_PATH}/${repairOrderId}/deal-acts`);
+      return res.data;
+    },
+    enabled: Boolean(repairOrderId),
+  });
+}
+
 export { useCompanyInnLookup, type CompanyInnLookupResult } from "./use-companies";
 
 // ---------------------------------------------------------------------------

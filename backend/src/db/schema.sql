@@ -1795,6 +1795,13 @@ CREATE TABLE IF NOT EXISTS print_template_settings (
   show_parts_table BOOLEAN NOT NULL DEFAULT true,
   show_completion_signatures BOOLEAN NOT NULL DEFAULT true,
   show_completion_stamp BOOLEAN NOT NULL DEFAULT true,
+  bank_name TEXT NOT NULL DEFAULT '',
+  bik TEXT NOT NULL DEFAULT '',
+  corr_account TEXT NOT NULL DEFAULT '',
+  settlement_account TEXT NOT NULL DEFAULT '',
+  company_kpp TEXT NOT NULL DEFAULT '',
+  director_name TEXT NOT NULL DEFAULT '',
+  accountant_name TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT uq_print_template_settings_tenant UNIQUE (tenant_id)
@@ -1813,6 +1820,19 @@ CREATE TABLE IF NOT EXISTS tenant_feature_quotas (
   CONSTRAINT uq_tenant_feature_quotas UNIQUE (tenant_id, feature_key)
 );
 CREATE INDEX IF NOT EXISTS idx_tenant_feature_quotas_tenant ON tenant_feature_quotas(tenant_id);
+
+-- Связь счетов на оплату со множеством наряд-заказов (актов ремонта) сделки
+CREATE TABLE IF NOT EXISTS invoice_repair_orders (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  invoice_id UUID NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_invoice_repair_orders UNIQUE (tenant_id, invoice_id, repair_order_id)
+);
+CREATE INDEX IF NOT EXISTS idx_invoice_repair_orders_repair ON invoice_repair_orders (tenant_id, repair_order_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_repair_orders_invoice ON invoice_repair_orders (tenant_id, invoice_id);
+
 
 
 
