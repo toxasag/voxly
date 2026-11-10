@@ -359,6 +359,8 @@ export default function RepairCompletionPrintPage() {
       <PrintTemplateSettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        initialDocumentType="completion_act"
+        orderId={id}
       />
     </div>
   );

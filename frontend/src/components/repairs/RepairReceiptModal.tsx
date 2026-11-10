@@ -396,6 +396,8 @@ export const RepairReceiptModal = memo(function RepairReceiptModal({
       <PrintTemplateSettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        initialDocumentType="receipt"
+        orderId={ticket?.id}
       />
     </div>
   );

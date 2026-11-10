@@ -378,6 +378,8 @@ export const RepairWorkOrderModal = memo(function RepairWorkOrderModal({
       <PrintTemplateSettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        initialDocumentType="work_order"
+        orderId={ticket?.id}
       />
     </div>
   );

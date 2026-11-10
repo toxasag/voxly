@@ -380,6 +380,8 @@ export default function RepairIntakePrintPage() {
       <PrintTemplateSettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        initialDocumentType="work_order"
+        orderId={id}
       />
     </div>
   );

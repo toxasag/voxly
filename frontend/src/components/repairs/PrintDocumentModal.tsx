@@ -159,6 +159,8 @@ export function PrintDocumentModal({
       <PrintTemplateSettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        initialDocumentType={selectedSlug}
+        orderId={orderId}
       />
     </div>
   );

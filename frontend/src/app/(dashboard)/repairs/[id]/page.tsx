@@ -1490,6 +1490,7 @@ export default function RepairDetailPage() {
       <PrintTemplateSettingsDrawer
         open={settingsDrawerOpen}
         onClose={() => setSettingsDrawerOpen(false)}
+        orderId={ticket?.id}
       />
       <ContactPickerModal
         open={contactPickerOpen}
