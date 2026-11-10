@@ -26,6 +26,7 @@ import {
 import { useAiAgents } from "@/lib/api/use-ai-agents";
 import { WebchatAppearanceSettings } from "./WebchatAppearanceSettings";
 import { WebchatAnalyticsDrawer } from "./WebchatAnalyticsDrawer";
+import { CloneWidgetDrawer } from "./CloneWidgetDrawer";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
@@ -49,6 +50,9 @@ export function WebchatManagementView({
 
   // Выбранный сайт для просмотра воронки и аналитики
   const [analyticsAccount, setAnalyticsAccount] = useState<ChannelAccountDTO | null>(null);
+
+  // Выбранный сайт для клонирования под новый сайт
+  const [cloningAccount, setCloningAccount] = useState<ChannelAccountDTO | null>(null);
 
   // Модалка кода для вставки на сайт
   const [codeModalAccount, setCodeModalAccount] = useState<ChannelAccountDTO | null>(null);
@@ -281,6 +285,16 @@ export function WebchatManagementView({
 
                       <button
                         type="button"
+                        onClick={() => setCloningAccount(acc)}
+                        className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5]"
+                        title="Создать копию для другого сайта"
+                        aria-label={`Клонировать виджет: ${acc.label}`}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           if (confirm(`Удалить сайт «${acc.label}» из CRM?`)) {
                             deleteAccount.mutate({ id: acc.id });
@@ -359,6 +373,16 @@ export function WebchatManagementView({
                     >
                       <BarChart3 className="h-3.5 w-3.5 text-[#4a38f5]" />
                       Воронка
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCloningAccount(acc)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+                      title="Создать копию виджета для другого сайта"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Копировать
                     </button>
 
                     <button
@@ -525,6 +549,20 @@ export function WebchatManagementView({
         account={analyticsAccount}
         open={Boolean(analyticsAccount)}
         onClose={() => setAnalyticsAccount(null)}
+      />
+
+      {/* Шторка клонирования виджета для нового сайта */}
+      <CloneWidgetDrawer
+        sourceAccount={cloningAccount}
+        open={Boolean(cloningAccount)}
+        onClose={() => setCloningAccount(null)}
+        onSuccessCloned={(newAccount) => {
+          setCloningAccount(null);
+          toast.success("Виджет успешно скопирован под новый сайт");
+          // Автоматически открываем модалку с готовым HTML-кодом вставки нового виджета
+          setCodeModalAccount(newAccount);
+        }}
+        limitReached={limitReached}
       />
     </div>
   );

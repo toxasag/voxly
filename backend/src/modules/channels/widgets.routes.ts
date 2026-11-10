@@ -5,7 +5,11 @@ import { ChannelsService } from "./channels.service.js";
 import { WebchatService } from "./webchat.service.js";
 import { WidgetAnalyticsService, type WidgetEventType } from "./widget-analytics.service.js";
 import { GeoEnrichmentService } from "../../services/geo-enrichment.service.js";
-import { channelStatusSchema, updateChannelAccountSchema } from "./channels.types.js";
+import {
+  channelStatusSchema,
+  cloneChannelAccountSchema,
+  updateChannelAccountSchema,
+} from "./channels.types.js";
 
 const widgetParams = z.object({
   id: z.string().uuid("ID виджета должен быть валидным UUID"),
@@ -162,6 +166,13 @@ export const widgetsRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     const body = updateChannelAccountSchema.parse(request.body);
     const account = await channelsService.update(request.tenant_id, "webchat", id, body);
     return reply.send({ data: account });
+  });
+
+  app.post("/:id/clone", { onRequest: authGuards }, async (request, reply) => {
+    const { id } = widgetParams.parse(request.params);
+    const body = cloneChannelAccountSchema.parse(request.body);
+    const account = await channelsService.clone(request.tenant_id, "webchat", id, body);
+    return reply.status(201).send({ data: account });
   });
 
   app.patch("/:id/toggle", { onRequest: authGuards }, async (request, reply) => {

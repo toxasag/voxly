@@ -24,6 +24,7 @@ const messageBodySchema = z
     attachmentType: z.string().trim().max(100).optional(),
     pageUrl: z.string().trim().max(500).optional(),
     pageTitle: z.string().trim().max(300).optional(),
+    pathname: z.string().trim().max(500).optional(),
     referrer: z.string().trim().max(500).optional(),
     utmTags: z.record(z.string()).optional(),
     clickIds: z.record(z.string().nullable().optional()).optional(),
@@ -132,7 +133,16 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
   );
 
   // Инициализация диалога (проверка доступности и сессии)
-  app.post<{ Params: { channelAccountId: string }; Body: { visitorId?: string } }>(
+  app.post<{
+    Params: { channelAccountId: string };
+    Body: {
+      visitorId?: string;
+      pageUrl?: string;
+      pageTitle?: string;
+      pathname?: string;
+      referrer?: string;
+    };
+  }>(
     "/init/:channelAccountId",
     async (request, reply) => {
       const { channelAccountId } = request.params;
@@ -215,6 +225,8 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         attachment: body.attachment,
         attachmentType: body.attachmentType,
         pageUrl: body.pageUrl,
+        pageTitle: body.pageTitle,
+        pathname: body.pathname,
         referrer: body.referrer,
         utmTags: body.utmTags,
         clickIds: body.clickIds as Record<string, string> | undefined,

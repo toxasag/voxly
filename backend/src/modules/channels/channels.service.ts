@@ -2,14 +2,17 @@ import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import type { ChannelSlug } from "../../types/index.js";
 import { channelLinksService } from "./channel-links.service.js";
-import type {
-  ChannelAccountDTO,
-  ChannelAccountLinksDTO,
-  ChannelStatus,
-  ChannelSummaryDTO,
-  CreateChannelAccountPayload,
-  CustomizeAccountLinksQuery,
-  UpdateChannelAccountPayload,
+import {
+  isValidDomain,
+  normalizeDomain,
+  type ChannelAccountDTO,
+  type ChannelAccountLinksDTO,
+  type ChannelStatus,
+  type ChannelSummaryDTO,
+  type CloneChannelAccountPayload,
+  type CreateChannelAccountPayload,
+  type CustomizeAccountLinksQuery,
+  type UpdateChannelAccountPayload,
 } from "./channels.types.js";
 
 interface ChannelAccountRow {
@@ -308,6 +311,75 @@ export class ChannelsService {
       }
 
       return toDTO(row);
+    });
+  }
+
+  /**
+   * Клонирование (дублирование) существующего подключения/виджета.
+   *
+   * Все параметры дизайна, фраз приветствия, маскота, звуков и сценариев AI
+   * копируются 1-в-1 из исходного виджета.
+   * Для нового сайта генерируется отдельная изолированная запись с новым UUID.
+   *
+   * Безопасность:
+   * - Запрос выполняется строго в контексте текущего tenantId (защита от IDOR/RLS).
+   * - Проверяется лимит сайтов по тарифу (409 CHANNEL_LIMIT_REACHED).
+   * - Проверяется отсутствие дубликата домена (409 CHANNEL_ACCOUNT_EXISTS).
+   */
+  async clone(
+    tenantId: string,
+    channel: ChannelSlug,
+    sourceId: string,
+    payload: CloneChannelAccountPayload,
+  ): Promise<ChannelAccountDTO> {
+    const rawDomain = payload.external_id || payload.site_url || payload.domain;
+    if (!rawDomain) {
+      throw new AppError(400, "INVALID_DOMAIN", "Укажите адрес сайта или домен для клонированного виджета");
+    }
+
+    const domain = normalizeDomain(rawDomain);
+    if (!isValidDomain(domain)) {
+      throw new AppError(
+        400,
+        "INVALID_DOMAIN_FORMAT",
+        "Некорректный формат адреса сайта (укажите домен, например: new-shop.ru или sub.company.ru)",
+      );
+    }
+
+    return withTenant(tenantId, async () => {
+      // 1. Получаем исходный виджет строго в контексте тенанта (проверка RLS/IDOR)
+      const source = await this.get(tenantId, channel, sourceId);
+      if (!source) {
+        throw new NotFoundError("Исходный виджет не найден");
+      }
+
+      // 2. Запрет клонирования на точно такой же домен
+      if (normalizeDomain(source.externalId) === domain) {
+        throw new AppError(
+          400,
+          "SAME_DOMAIN_CLONE",
+          "Для клонирования укажите новый адрес сайта, отличный от исходного",
+        );
+      }
+
+      // 3. Формируем название: если не передано, берем "[Название оригинала] (Копия)"
+      const newLabel = payload.label?.trim() || `${source.label} (Копия)`;
+
+      // 4. Привязка AI-ассистента: если явно передана в payload — используем ее, иначе копируем из оригинала
+      const targetAgentId = payload.agent_id !== undefined ? payload.agent_id : source.boundAgentId;
+
+      // 5. Глубокое клонирование всех настроек внешнего вида и параметров виджета
+      const clonedCredentials = source.credentials
+        ? (JSON.parse(JSON.stringify(source.credentials)) as Record<string, unknown>)
+        : {};
+
+      // 6. Создаем новую изолированную запись с новым UUID через create()
+      return this.create(tenantId, channel, {
+        label: newLabel,
+        external_id: domain,
+        credentials: clonedCredentials,
+        agent_id: targetAgentId,
+      });
     });
   }
 
