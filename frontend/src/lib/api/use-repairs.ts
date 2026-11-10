@@ -25,6 +25,7 @@ export interface EquipmentDTO {
   model: string;
   serialNumber: string;
   packageContents: string;
+  packageContentsItems?: string[];
   appearance: string;
 }
 
@@ -208,6 +209,7 @@ export interface RepairOrderDTO {
   customerEmail?: string | null;
   equipment: EquipmentDTO;
   defectDescription: string;
+  malfunctions?: string[];
   defectPhotos: string[];
   additionalContacts?: AdditionalContact[];
   status: RepairStatus;

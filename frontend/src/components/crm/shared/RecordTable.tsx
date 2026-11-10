@@ -84,11 +84,11 @@ const COLLAPSED_IDENTIFIER_WIDTH = 38;
 
 export interface RecordColumn<T> {
   id: string;
-  header: string;
+  header: ReactNode;
   icon?: React.ComponentType<{ className?: string }>;
-  /** Начальная ширина в px; ниже RECORD_TABLE_COLUMN_MIN_WIDTH не опускается. */
+  /** Начальная ширина в px; ниже RECORD_TABLE_COLUMN_MIN_WIDTH не опускается, если не задана явно меньшая. */
   width?: number;
-  align?: "left" | "right";
+  align?: "left" | "right" | "center";
   sortValue?: (row: T) => string | number;
   render: (row: T) => ReactNode;
   /**
@@ -350,7 +350,9 @@ export function RecordTable<T>({
   const filteredMenuColumns = useMemo(() => {
     const q = columnSearch.trim().toLowerCase();
     if (!q) return menuColumns;
-    return menuColumns.filter((col) => col.header.toLowerCase().includes(q));
+    return menuColumns.filter((col) =>
+      (typeof col.header === "string" ? col.header : col.id).toLowerCase().includes(q)
+    );
   }, [menuColumns, columnSearch]);
 
   /**
@@ -425,8 +427,12 @@ export function RecordTable<T>({
         const state = resizeRef.current;
         if (state === null || gridRef.current === null) return;
 
+        const explicitMin =
+          column.width !== undefined && column.width < RECORD_TABLE_COLUMN_MIN_WIDTH
+            ? column.width
+            : RECORD_TABLE_COLUMN_MIN_WIDTH;
         const next = Math.max(
-          RECORD_TABLE_COLUMN_MIN_WIDTH,
+          explicitMin,
           state.startWidth + (moveEvent.clientX - state.startX),
         );
         // Прямая запись в DOM вместо setState: иначе каждый кадр перетаскивания
@@ -441,8 +447,12 @@ export function RecordTable<T>({
         window.removeEventListener("mouseup", onUp);
         if (state === null) return;
 
+        const explicitMin =
+          column.width !== undefined && column.width < RECORD_TABLE_COLUMN_MIN_WIDTH
+            ? column.width
+            : RECORD_TABLE_COLUMN_MIN_WIDTH;
         const finalWidth = Math.round(
-          Math.max(RECORD_TABLE_COLUMN_MIN_WIDTH, state.startWidth + (upEvent.clientX - state.startX)),
+          Math.max(explicitMin, state.startWidth + (upEvent.clientX - state.startX)),
         );
         if (finalWidth === state.startWidth) return;
 
@@ -710,6 +720,7 @@ export function RecordTable<T>({
                     "group relative flex items-center overflow-hidden border-r border-[#e5e5e5] px-2.5 text-[12px] font-medium text-[#666666] bg-white transition-colors",
                     index === 0 && "sticky z-20 bg-white border-r border-[#e5e5e5]",
                     column.align === "right" && "justify-end",
+                    column.align === "center" && "justify-center",
                     dragColumnId === column.id && "opacity-40",
                     dropColumnId === column.id && "shadow-[inset_2px_0_0_#3b82f6]",
                     columnDragEnabled && index > 0 && "cursor-grab active:cursor-grabbing",
@@ -745,7 +756,7 @@ export function RecordTable<T>({
                         <column.icon className="h-3.5 w-3.5 shrink-0 text-[#737373]" />
                       )}
                       {!(index === 0 && identifierCollapsed) && (
-                        <span className="truncate">{column.header}</span>
+                        typeof column.header === "string" ? <span className="truncate">{column.header}</span> : column.header
                       )}
                       {sortColumn === column.id && (
                         <span className="shrink-0 text-[#111111]">
@@ -755,9 +766,13 @@ export function RecordTable<T>({
                     </button>
                   ) : (
                     !(index === 0 && identifierCollapsed) && (
-                      <span className="flex min-w-0 items-center gap-1.5 truncate text-[12px] font-medium text-[#666666]">
+                      <span className={cn(
+                        "flex min-w-0 items-center gap-1.5 truncate text-[12px] font-medium text-[#666666]",
+                        column.align === "center" && "justify-center w-full",
+                        column.align === "right" && "justify-end w-full",
+                      )}>
                         {column.icon && <column.icon className="h-3.5 w-3.5 shrink-0 text-[#737373]" />}
-                        <span className="truncate">{column.header}</span>
+                        {typeof column.header === "string" ? <span className="truncate">{column.header}</span> : column.header}
                       </span>
                     )
                   )}
@@ -876,6 +891,7 @@ export function RecordTable<T>({
                       "flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2.5 pr-1 text-xs text-[#666666]",
                       index === 0 && "sticky z-10 bg-[#fafafa]",
                       column.align === "right" && "justify-end",
+                    column.align === "center" && "justify-center",
                     )}
                     style={index === 0 ? { left: stickyLeft } : undefined}
                   >
@@ -977,7 +993,7 @@ export function RecordTable<T>({
                         ) : (
                           <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
                         )}
-                        <span className="truncate">{column.header}</span>
+                        <span className="truncate">{typeof column.header === "string" ? column.header : column.id}</span>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5 pl-2">
                         {!canHide ? (
