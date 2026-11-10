@@ -17,6 +17,7 @@ import {
   useDeleteAiAgent,
   useUpdateAiAgent,
 } from "@/lib/api/use-ai-agents";
+import { useTenantQuotas } from "@/lib/api/use-tenant-quotas";
 import type { CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,16 @@ function AiBotsContent() {
   const canConfigure = useHasPermission("ai_bots:configure");
 
   const bots = useMemo(() => data ?? [], [data]);
+
+  const { data: quotas } = useTenantQuotas();
+  const aiQuota = useMemo(
+    () => quotas?.find((q) => q.feature_key === "ai_agents"),
+    [quotas],
+  );
+
+  const isUnlimited = Boolean(aiQuota?.is_unlimited);
+  const maxLimit = aiQuota ? (aiQuota.is_unlimited ? null : aiQuota.max_limit) : 2;
+  const isLimitReached = !isUnlimited && maxLimit !== null && bots.length >= maxLimit;
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -130,7 +141,18 @@ function AiBotsContent() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-[#111111]">AI-агенты</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-[#111111]">AI-агенты</h1>
+            {isUnlimited ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
+                Безлимитно
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                {bots.length} из {maxLimit} по тарифу
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-[13px] text-[#666666]">
             {bots.length === 0 ? (
               "Ассистенты для автоответов и квалификации лидов"
@@ -148,14 +170,30 @@ function AiBotsContent() {
             )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
-        >
-          <Plus className="h-4 w-4" />
-          Создать AI-агента
-        </button>
+
+        {isLimitReached ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[#888888]">Лимит тарифа ({maxLimit} шт.) исчерпан</span>
+            <button
+              type="button"
+              disabled
+              title={`Достигнут лимит создания AI-агентов (${maxLimit} шт.). Обратитесь к администратору для увеличения квоты.`}
+              className="flex items-center gap-2 rounded-[8px] bg-[#e5e5e5] px-3.5 py-2 text-[13px] font-medium text-[#888888] cursor-not-allowed shadow-2xs"
+            >
+              <Plus className="h-4 w-4" />
+              Создать AI-агента
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={openCreate}
+            className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+          >
+            <Plus className="h-4 w-4" />
+            Создать AI-агента
+          </button>
+        )}
       </div>
 
       {/*

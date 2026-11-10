@@ -120,13 +120,23 @@ export function WebchatManagementView({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold text-[#111111]">Онлайн-чат на сайт</h1>
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                1 сайт бесплатно в тарифе
-              </span>
+              {summary?.isUnlimited || summary?.is_unlimited ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
+                  Безлимитно
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                  {summary ? `${summary.quantity} ${summary.quantity === 1 ? "сайт" : "сайтов"} по тарифу` : "1 сайт в тарифе"}
+                </span>
+              )}
             </div>
             <p className="mt-1 text-sm text-[#666666]">
               {summary === undefined ? (
                 "Управление сайтами и кодами виджета онлайн-чата"
+              ) : summary.isUnlimited || summary.is_unlimited ? (
+                <>
+                  {summary.total} {summary.total === 1 ? "сайт подключен" : "сайтов подключено"} (Безлимитный тариф)
+                </>
               ) : (
                 <>
                   {summary.total} из {summary.quantity} сайтов подключено по тарифу
@@ -141,13 +151,16 @@ export function WebchatManagementView({
         </div>
 
         {limitReached ? (
-          <Link
-            href="/marketplace"
-            className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
-          >
-            <ShoppingBag className="h-4 w-4" />
-            Увеличить количество сайтов
-          </Link>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[#888888]">Лимит исчерпан ({summary?.quantity})</span>
+            <Link
+              href="/marketplace"
+              className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+            >
+              <ShoppingBag className="h-4 w-4" />
+              Увеличить количество сайтов
+            </Link>
+          </div>
         ) : (
           <button
             type="button"

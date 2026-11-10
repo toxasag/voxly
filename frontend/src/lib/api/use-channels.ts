@@ -55,6 +55,8 @@ export interface ChannelSummaryDTO {
   total: number;
   trialEndsAt: string | null;
   trialActive: boolean;
+  is_unlimited?: boolean;
+  isUnlimited?: boolean;
 }
 
 export interface ChannelAccountsResult {
@@ -67,6 +69,7 @@ const BASE_PATH = "/api/v1/channels";
 export const channelKeys = {
   all: ["channels"] as const,
   accounts: (channel: ChannelSlug) => ["channels", channel, "accounts"] as const,
+  summary: (channel: ChannelSlug) => ["channels", channel, "summary"] as const,
 };
 
 /**
@@ -189,6 +192,37 @@ export function useDeleteChannelAccount(
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+    },
+  });
+}
+
+export interface CloneChannelAccountPayload {
+  id: string;
+  external_id: string;
+  label?: string;
+  agent_id?: string | null;
+}
+
+/**
+ * Клонирование (дублирование) подключения / онлайн-виджета.
+ */
+export function useCloneChannelAccount(channel: ChannelSlug) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: CloneChannelAccountPayload) => {
+      const { id, ...body } = payload;
+      const res = await apiClient.post<ChannelAccountDTO>(
+        `${BASE_PATH}/${channel}/accounts/${id}/clone`,
+        body,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      queryClient.invalidateQueries({ queryKey: channelKeys.summary(channel) });
+      queryClient.invalidateQueries({ queryKey: channelKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["quotas"] });
     },
   });
 }
