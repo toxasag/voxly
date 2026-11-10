@@ -31,6 +31,8 @@ function formatCost(amount: number): string {
 export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps) {
   const [newDesc, setNewDesc] = useState("");
   const [newMaster, setNewMaster] = useState("");
+  const [newQty, setNewQty] = useState("1");
+  const [newUnitPrice, setNewUnitPrice] = useState("");
   const [newCost, setNewCost] = useState("");
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [isCatalogDialogOpen, setIsCatalogDialogOpen] = useState(false);
@@ -81,15 +83,44 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
   const handleSelectCatalogItem = (name: string, defaultPrice: number) => {
     setNewDesc(name);
     if (defaultPrice > 0) {
-      setNewCost(String(defaultPrice));
+      setNewUnitPrice(String(defaultPrice));
+      const q = parseFloat(newQty) || 1;
+      setNewCost(String(Math.round(defaultPrice * q * 100) / 100));
     }
     setCatalogOpen(false);
+  };
+
+  const handleQtyChange = (val: string) => {
+    setNewQty(val);
+    const q = parseFloat(val);
+    const u = parseFloat(newUnitPrice);
+    if (!isNaN(q) && q > 0 && !isNaN(u) && u >= 0) {
+      setNewCost(String(Math.round(q * u * 100) / 100));
+    }
+  };
+
+  const handleUnitPriceChange = (val: string) => {
+    setNewUnitPrice(val);
+    const u = parseFloat(val);
+    const q = parseFloat(newQty) || 1;
+    if (!isNaN(u) && u >= 0 && !isNaN(q) && q > 0) {
+      setNewCost(String(Math.round(q * u * 100) / 100));
+    }
+  };
+
+  const handleCostChange = (val: string) => {
+    setNewCost(val);
+    const c = parseFloat(val);
+    const q = parseFloat(newQty) || 1;
+    if (!isNaN(c) && c >= 0 && !isNaN(q) && q > 0) {
+      setNewUnitPrice(String(Math.round((c / q) * 100) / 100));
+    }
   };
 
   const handleCreateCatalogItem = async () => {
     const trimmed = newDesc.trim();
     if (!trimmed) return;
-    const priceNum = parseFloat(newCost);
+    const priceNum = parseFloat(newUnitPrice) || parseFloat(newCost);
     const default_price = !isNaN(priceNum) && priceNum >= 0 ? priceNum : undefined;
 
     try {
@@ -106,8 +137,11 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
 
   const handleAdd = useCallback(async () => {
     const desc = newDesc.trim();
+    const qtyNum = parseFloat(newQty) || 1;
     const costNum = parseFloat(newCost);
-    if (!desc || !newMaster || isNaN(costNum) || costNum < 0) return;
+    const unitPriceNum = parseFloat(newUnitPrice) || (costNum / qtyNum);
+
+    if (!desc || !newMaster || isNaN(costNum) || costNum < 0 || qtyNum <= 0) return;
 
     const master = masters.find((m) => m.id === newMaster);
     const masterName = master?.fullName ?? "Не назначен";
@@ -120,11 +154,15 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
             description: desc,
             master_id: newMaster,
             master_name: masterName,
+            quantity: qtyNum,
+            unit_price: unitPriceNum,
             cost: costNum,
           },
         });
         toast.success(`Работа «${desc}» добавлена`);
         setNewDesc("");
+        setNewQty("1");
+        setNewUnitPrice("");
         setNewCost("");
         setCatalogOpen(false);
       } catch (err) {
@@ -136,15 +174,19 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
         description: desc,
         master_name: master?.fullName ?? "Не назначен",
         master_id: newMaster,
+        quantity: qtyNum,
+        unit_price: unitPriceNum,
         cost: costNum,
       };
 
       onChange?.([...items, newItem]);
       setNewDesc("");
+      setNewQty("1");
+      setNewUnitPrice("");
       setNewCost("");
       setCatalogOpen(false);
     }
-  }, [newDesc, newMaster, newCost, masters, orderId, createWorkMutation, items, onChange]);
+  }, [newDesc, newMaster, newQty, newUnitPrice, newCost, masters, orderId, createWorkMutation, items, onChange]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
@@ -187,7 +229,9 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
     newMaster.length > 0 &&
     newCost.trim().length > 0 &&
     !isNaN(parseFloat(newCost)) &&
-    parseFloat(newCost) >= 0;
+    parseFloat(newCost) >= 0 &&
+    !isNaN(parseFloat(newQty)) &&
+    parseFloat(newQty) > 0;
 
   return (
     <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
@@ -215,52 +259,71 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
               <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                 Описание
               </th>
-              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[160px]">
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[140px]">
                 Мастер
               </th>
-              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
+              <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[75px]">
+                Кол-во
+              </th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[105px]">
+                Цена/ед.
+              </th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
                 Стоимость
               </th>
-              <th className="px-4 py-2.5 w-[48px]" />
+              <th className="px-4 py-2.5 w-[44px]" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#f0f0f0]">
-            {items.map((item) => (
-              <tr key={item.id} className="transition-colors hover:bg-[#f5f5f5]">
-                <td className="px-4 py-3">
-                  <p className="text-[13px] text-[#111111]">{item.description}</p>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <User className="h-3 w-3 text-[#888888]" />
-                    <span className="text-xs text-[#666666]">{item.master_name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <span className="text-[13px] font-semibold text-[#111111] font-mono">
-                    {formatCost(item.cost)}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(item.id, item.description)}
-                    disabled={deletingId === item.id}
-                    className="rounded p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-40"
-                    title="Удалить работу"
-                  >
-                    {deletingId === item.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-500" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {items.map((item) => {
+              const qty = item.quantity != null && item.quantity > 0 ? item.quantity : 1;
+              const unitPrice = item.unit_price != null ? item.unit_price : (item.cost / qty);
+
+              return (
+                <tr key={item.id} className="transition-colors hover:bg-[#f5f5f5]">
+                  <td className="px-4 py-3">
+                    <p className="text-[13px] text-[#111111]">{item.description}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <User className="h-3 w-3 text-[#888888]" />
+                      <span className="text-xs text-[#666666] truncate max-w-[120px]">{item.master_name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="text-[13px] font-mono text-[#111111]">{qty}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="text-xs text-[#666666] font-mono">
+                      {formatCost(unitPrice)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="text-[13px] font-semibold text-[#111111] font-mono">
+                      {formatCost(item.cost)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(item.id, item.description)}
+                      disabled={deletingId === item.id}
+                      className="rounded p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-40"
+                      title="Удалить работу"
+                    >
+                      {deletingId === item.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-500" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
             {items.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center">
+                <td colSpan={6} className="px-4 py-10 text-center">
                   <p className="text-sm text-[#888888]">Работы пока не добавлены.</p>
                 </td>
               </tr>
@@ -271,7 +334,7 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
 
       {/* Add Row with Combobox */}
       <div className="border-t border-[#e5e5e5] bg-[#fafafa] px-4 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Combobox container */}
           <div ref={comboboxRef} className="relative flex-1">
             <div className="relative">
@@ -380,7 +443,7 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
           <select
             value={newMaster}
             onChange={(e) => setNewMaster(e.target.value)}
-            className="w-[160px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-[#111111] appearance-none focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+            className="w-[140px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-2.5 text-[13px] text-[#111111] appearance-none focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           >
             <option value="" disabled>
               Мастер...
@@ -392,15 +455,43 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
             ))}
           </select>
 
+          {/* Qty input */}
+          <input
+            type="number"
+            min={0.01}
+            step={0.1}
+            value={newQty}
+            onChange={(e) => handleQtyChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Кол-во"
+            title="Количество (нормо-часы или шт.)"
+            className="w-[65px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-2 text-[13px] text-center text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+
+          {/* Unit Price input */}
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={newUnitPrice}
+            onChange={(e) => handleUnitPriceChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Цена/ед."
+            title="Цена за единицу"
+            className="w-[95px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-2.5 text-[13px] text-[#111111] placeholder:text-[#888888] text-right focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+
           {/* Cost input */}
           <input
             type="number"
             min={0}
+            step={1}
             value={newCost}
-            onChange={(e) => setNewCost(e.target.value)}
+            onChange={(e) => handleCostChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="0 ₽"
-            className="w-[110px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] text-right focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none font-mono"
+            placeholder="Итого ₽"
+            title="Итоговая сумма"
+            className="w-[95px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-2.5 text-[13px] font-semibold text-[#111111] placeholder:text-[#888888] text-right focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
 
           {/* Add button */}
@@ -436,7 +527,9 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
         onSelectService={(svc) => {
           setNewDesc(svc.name);
           if (svc.defaultPrice && svc.defaultPrice > 0) {
-            setNewCost(String(svc.defaultPrice));
+            setNewUnitPrice(String(svc.defaultPrice));
+            const q = parseFloat(newQty) || 1;
+            setNewCost(String(Math.round(svc.defaultPrice * q * 100) / 100));
           }
         }}
       />

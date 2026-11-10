@@ -40,23 +40,35 @@ export function ImpersonationBanner() {
   }, [pathname, syncBackup]);
 
   // Если пользователь находится в своём основном рабочем пространстве администратора платформы (Voxly Platform),
+  // или в личном кабинете партнера (где email совпадает с исходным adminUserEmail),
   // он НЕ находится в режиме имперсонации клиента. Плашка категорически не должна отображаться.
   const isPlatformAdminWorkspace =
     user?.platform_role === "platform_owner" &&
     (tenant?.slug === "voxly" || !tenant?.slug || tenant?.tenantName?.toLowerCase().includes("platform"));
 
-  // Если админ вернулся в свой кабинет, сбрасываем оставшийся бэкап
+  const isPartnerOwnWorkspace = Boolean(
+    backup?.isPartner &&
+      backup?.adminUserEmail &&
+      user?.email?.toLowerCase() === backup.adminUserEmail.toLowerCase() &&
+      (!backup.impersonatedTenantSlug || tenant?.slug !== backup.impersonatedTenantSlug),
+  );
+
+  // Если админ или партнер вернулся в свой кабинет, сбрасываем оставшийся бэкап
   useEffect(() => {
-    if (isPlatformAdminWorkspace && backup) {
+    if ((isPlatformAdminWorkspace || isPartnerOwnWorkspace) && backup) {
       clearImpersonationBackup();
       setBackup(null);
     }
-  }, [isPlatformAdminWorkspace, backup]);
+  }, [isPlatformAdminWorkspace, isPartnerOwnWorkspace, backup]);
 
-  if (isPlatformAdminWorkspace || !backup) return null;
+  if (isPlatformAdminWorkspace || isPartnerOwnWorkspace || !backup) return null;
 
-  // Если текущий авторизованный пользователь — сам суперадминистратор, мы не в клиенте
-  if (backup.adminUserEmail && user?.email === backup.adminUserEmail) {
+  // Если текущий авторизованный пользователь — сам суперадминистратор/партнер вне клиента
+  if (
+    backup.adminUserEmail &&
+    user?.email?.toLowerCase() === backup.adminUserEmail.toLowerCase() &&
+    (!backup.impersonatedTenantSlug || tenant?.slug !== backup.impersonatedTenantSlug)
+  ) {
     return null;
   }
 
@@ -72,10 +84,21 @@ export function ImpersonationBanner() {
       }
       window.location.href = getPlatformAdminUrl();
     } catch (err) {
-      console.error("Ошибка возврата в сессию администратора", err);
+      console.error("Ошибка возврата в сессию администратора/партнера", err);
       window.location.href = getPlatformAdminUrl();
     }
   };
+
+  const returnLabel = isExiting
+    ? "Возвращение..."
+    : backup.isPartner && !backup.isPlatformOwner
+    ? "Вернуться в кабинет партнёра"
+    : "Вернуться в панель администратора";
+
+  const headerRoleText =
+    backup.isPartner && !backup.isPlatformOwner
+      ? "Режим просмотра клиента:"
+      : "Режим просмотра арендатора:";
 
   return (
     <aside
@@ -85,7 +108,7 @@ export function ImpersonationBanner() {
     >
       <div className="flex items-center gap-2 text-xs">
         <ShieldAlert className="h-4 w-4 shrink-0 text-[#854d0e]" />
-        <span className="font-semibold">Режим просмотра арендатора:</span>
+        <span className="font-semibold">{headerRoleText}</span>
         <span className="font-medium text-[#713f12]">
           вы вошли от имени{" "}
           <strong className="underline underline-offset-2">
@@ -105,7 +128,7 @@ export function ImpersonationBanner() {
         className="flex items-center gap-1.5 rounded-[8px] bg-[#111111] px-3 py-1 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#333333] focus:outline-none focus:ring-2 focus:ring-[#111111]/30 disabled:opacity-50 cursor-pointer"
       >
         <LogOut className="h-3.5 w-3.5" />
-        <span>{isExiting ? "Возвращение..." : "Вернуться в панель администратора"}</span>
+        <span>{returnLabel}</span>
       </button>
     </aside>
   );

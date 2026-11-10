@@ -86,6 +86,8 @@ export interface User {
   /** Глобальная платформенная роль; null у обычных пользователей CRM. */
   platform_role: PlatformRole | null;
   permissions: Permission[];
+  is_partner?: boolean;
+  tenant_is_partner?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -96,7 +98,9 @@ export interface Tenant {
   slug?: string;
   plan: string;
   status: "trial" | "active" | "past_due" | "suspended";
+  is_partner?: boolean;
   parent_tenant_id?: string | null;
+  owner_partner_id?: string | null;
   auth_settings?: {
     require_telegram_auth: boolean;
     allow_password_auth?: boolean;

@@ -25,6 +25,7 @@ export interface EquipmentDTO {
   model: string;
   serialNumber: string;
   packageContents: string;
+  packageContentsItems?: string[];
   appearance: string;
 }
 
@@ -41,12 +42,16 @@ export interface RepairWorkDTO {
   description: string;
   masterId: string;
   masterName: string;
+  quantity?: number;
+  unitPrice?: number;
   cost: number;
   createdAt: string;
 }
 
 export interface RepairPartDTO {
   id: string;
+  warehouseItemId?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -62,6 +67,10 @@ export interface RepairNoteDTO {
   id: string;
   authorId: string;
   authorName: string;
+  userId?: string;
+  repairId?: string;
+  repairOrderId?: string;
+  dealId?: string | null;
   kind: string;
   content: string;
   fromStatus: string | null;
@@ -200,6 +209,7 @@ export interface RepairOrderDTO {
   customerEmail?: string | null;
   equipment: EquipmentDTO;
   defectDescription: string;
+  malfunctions?: string[];
   defectPhotos: string[];
   additionalContacts?: AdditionalContact[];
   status: RepairStatus;
@@ -367,17 +377,23 @@ export interface CreateWorkPayload {
   description: string;
   master_id: string;
   master_name: string;
-  cost: number;
+  quantity?: number;
+  unit_price?: number;
+  cost?: number;
 }
 
 export interface UpdateWorkPayload {
   description?: string;
   master_id?: string;
   master_name?: string;
+  quantity?: number;
+  unit_price?: number;
   cost?: number;
 }
 
 export interface CreatePartPayload {
+  warehouse_item_id?: string;
+  status?: string;
   name: string;
   article?: string;
   quantity?: number;
@@ -987,12 +1003,18 @@ export function useCreateNote(): UseMutationResult<RepairNoteDTO, ApiClientError
       const res = await apiClient.post<RepairNoteDTO>(`${BASE_PATH}/${orderId}/notes`, payload);
       return res.data;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (data, variables) => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.notes(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      if (data?.dealId) {
+        void queryClient.invalidateQueries({ queryKey: ["notes", "list", "deal", data.dealId] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["notes"] });
     },
   });
 }
+
+export const useCreateRepairNote = useCreateNote;
 
 export function useCreatePhoto(): UseMutationResult<RepairPhotoDTO, ApiClientError, { orderId: string; payload: CreatePhotoPayload }> {
   const queryClient = useQueryClient();

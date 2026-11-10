@@ -41,6 +41,8 @@ import {
   toRepairWorkDTO,
   toIso,
 } from "./repairs.types.js";
+import { warehouseService } from "../warehouse/warehouse.service.js";
+import { financeService } from "../finance/finance.service.js";
 import {
   query,
   queryOne,
@@ -60,8 +62,8 @@ const ORDER_COLUMNS = `
   notes, diagnostics, received_at, completed_at, delivered_at, created_at, updated_at
 `;
 
-const WORK_COLUMNS = `id, repair_order_id, description, master_id, master_name, cost, created_at`;
-const PART_COLUMNS = `id, repair_order_id, name, article, quantity, retail_price, cost_price, created_at`;
+const WORK_COLUMNS = `id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost, created_at`;
+const PART_COLUMNS = `id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price, created_at`;
 const NOTE_COLUMNS = `id, repair_order_id, author_id, author_name, kind, content, from_status, to_status, created_at`;
 const PHOTO_COLUMNS = `id, repair_order_id, url, caption, uploaded_by, created_at`;
 
@@ -427,11 +429,14 @@ export class RepairsService {
   }
 
   async listNotes(tenantId: string, orderId: string) {
-    const rows = await query<RepairNoteRow>(
-      `SELECT ${NOTE_COLUMNS}
-       FROM repair_notes
-       WHERE tenant_id = $1 AND repair_order_id = $2
-       ORDER BY created_at ASC`,
+    const rows = await query<RepairNoteRow & { deal_id: string | null }>(
+      `SELECT n.id, n.repair_order_id, n.author_id, n.author_name, n.kind, n.content,
+              n.from_status, n.to_status, n.created_at,
+              ro.deal_id
+       FROM repair_notes n
+       JOIN repair_orders ro ON ro.id = n.repair_order_id AND ro.tenant_id = n.tenant_id
+       WHERE n.tenant_id = $1 AND n.repair_order_id = $2
+       ORDER BY n.created_at DESC`,
       [tenantId, orderId],
     );
 
@@ -1355,6 +1360,17 @@ export class RepairsService {
         const totals = await this.totalsInTx(tx, tenantId, id);
         params.push(totals.grandTotal);
         assignments.push(`final_cost = $${params.length}`);
+
+        // Списание запчастей со склада FIFO
+        void warehouseService.consumePartsForOrder(tenantId, id, author.id).catch((err) => {
+          console.error("Failed to consume warehouse parts on order issue", { err, orderId: id });
+        });
+      }
+
+      if (to === "rejected") {
+        void warehouseService.releaseReservationsForOrder(tenantId, id).catch((err) => {
+          console.error("Failed to release warehouse reservations on order rejection", { err, orderId: id });
+        });
       }
 
       const row = await tx.queryOneOrThrow<RepairOrderRow>(
@@ -1425,11 +1441,16 @@ export class RepairsService {
   ): Promise<RepairWorkDTO> {
     await this.assertEditable(tenantId, orderId);
 
+    const quantity = payload.quantity ?? 1;
+    const unitPrice =
+      payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
+    const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
+
     return withTenant(tenantId, async (tx) => {
       const row = await tx.queryOneOrThrow<RepairWorkRow>(
         `INSERT INTO repair_works
-           (tenant_id, repair_order_id, description, master_id, master_name, cost)
-         VALUES ($1, $2, $3, $4, $5, $6)
+           (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING ${WORK_COLUMNS}`,
         [
           tenantId,
@@ -1437,7 +1458,9 @@ export class RepairsService {
           payload.description,
           payload.master_id,
           payload.master_name,
-          payload.cost,
+          quantity,
+          unitPrice,
+          cost,
         ],
       );
 
@@ -1466,7 +1489,23 @@ export class RepairsService {
     if (payload.description !== undefined) push("description", payload.description);
     if (payload.master_id !== undefined) push("master_id", payload.master_id);
     if (payload.master_name !== undefined) push("master_name", payload.master_name);
-    if (payload.cost !== undefined) push("cost", payload.cost);
+    if (payload.quantity !== undefined) push("quantity", payload.quantity);
+    if (payload.unit_price !== undefined) push("unit_price", payload.unit_price);
+    if (payload.cost !== undefined) {
+      push("cost", payload.cost);
+    } else if (payload.quantity !== undefined || payload.unit_price !== undefined) {
+      // Авто-пересчет cost = quantity * unit_price
+      const current = await queryOne<RepairWorkRow>(
+        `SELECT quantity, unit_price, cost FROM repair_works
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+        [tenantId, orderId, workId],
+      );
+      if (current) {
+        const q = payload.quantity ?? Number(current.quantity ?? 1);
+        const p = payload.unit_price ?? Number(current.unit_price ?? 0);
+        push("cost", Math.round(q * p * 100) / 100);
+      }
+    }
 
     if (assignments.length === 0) {
       const existing = await queryOne<RepairWorkRow>(
@@ -1522,14 +1561,17 @@ export class RepairsService {
     await this.assertEditable(tenantId, orderId);
 
     return withTenant(tenantId, async (tx) => {
+      const partStatus = payload.status ?? (payload.warehouse_item_id ? "reserved" : "used");
       const row = await tx.queryOneOrThrow<RepairPartRow>(
         `INSERT INTO repair_parts
-           (tenant_id, repair_order_id, name, article, quantity, retail_price, cost_price)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (tenant_id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING ${PART_COLUMNS}`,
         [
           tenantId,
           orderId,
+          payload.warehouse_item_id ?? null,
+          partStatus,
           payload.name,
           payload.article ?? "",
           payload.quantity,
@@ -1537,6 +1579,30 @@ export class RepairsService {
           payload.cost_price,
         ],
       );
+
+      // Если деталь привязана к складу, фиксируем резервирование
+      if (payload.warehouse_item_id) {
+        await tx.query(
+          `INSERT INTO warehouse_reservations
+             (tenant_id, repair_order_id, item_id, quantity, status)
+           VALUES ($1, $2, $3, $4, 'reserved')`,
+          [tenantId, orderId, payload.warehouse_item_id, payload.quantity],
+        );
+
+        await tx.query(
+          `INSERT INTO warehouse_movements
+             (tenant_id, item_id, repair_order_id, type, quantity, cost_price, description)
+           VALUES ($1, $2, $3, 'reserve', $4, $5, $6)`,
+          [
+            tenantId,
+            payload.warehouse_item_id,
+            orderId,
+            payload.quantity,
+            payload.cost_price,
+            `Резерв под наряд №${orderId.slice(0, 8)} (${payload.name})`,
+          ],
+        );
+      }
 
       const result = toRepairPartDTO(row);
       void this.getOrderDealId(tenantId, orderId).then((dealId) => {
@@ -1619,8 +1685,8 @@ export class RepairsService {
     payload: CreateNotePayload,
   ) {
     return withTenant(tenantId, async (tx) => {
-      const order = await tx.queryOne<{ id: string }>(
-        `SELECT id FROM repair_orders
+      const order = await tx.queryOne<{ id: string; deal_id: string | null; ticket_number: string }>(
+        `SELECT id, deal_id, ticket_number FROM repair_orders
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         [tenantId, orderId],
       );
@@ -1637,7 +1703,33 @@ export class RepairsService {
         [tenantId, orderId, author.id, author.name, payload.content],
       );
 
-      return toRepairNoteDTO(row);
+      // Сквозная синхронизация со сделкой (Dual-Entity Activity Sync)
+      if (order.deal_id) {
+        const userExists = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM users WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, author.id],
+        );
+        const createdByUserId = userExists ? author.id : null;
+
+        const noteTitle = `Наряд №${order.ticket_number}`;
+        const dealNoteRow = await tx.queryOne<{ id: string }>(
+          `INSERT INTO notes (tenant_id, title, body, deal_id, repair_order_id, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [tenantId, noteTitle, payload.content, order.deal_id, order.id, createdByUserId],
+        );
+
+        if (dealNoteRow) {
+          await tx.query(
+            `INSERT INTO note_targets (tenant_id, note_id, target_type, target_id)
+             VALUES ($1, $2, 'deal', $3)
+             ON CONFLICT (note_id, target_type, target_id) DO NOTHING`,
+            [tenantId, dealNoteRow.id, order.deal_id],
+          );
+        }
+      }
+
+      return toRepairNoteDTO({ ...row, deal_id: order.deal_id });
     });
   }
 
@@ -1796,6 +1888,25 @@ export class RepairsService {
        WHERE tenant_id = $2 AND id = $3 AND deleted_at IS NULL`,
       [paymentStatus, tenantId, id],
     );
+
+    // Автоматическая фиксация ДДС сплита при оплате
+    if (paymentStatus === "paid" && current.paymentStatus !== "paid") {
+      void (async () => {
+        try {
+          const totals = await this.totals(tenantId, id);
+          await financeService.recordRepairOrderPayment(
+            tenantId,
+            id,
+            current.ticketNumber,
+            current.customerName,
+            totals.worksTotal,
+            totals.partsRetailTotal,
+          );
+        } catch (err) {
+          console.error("Failed to record ДДС payment in finance", { err, orderId: id });
+        }
+      })();
+    }
 
     const updated = await this.get(tenantId, id);
     if (!updated) {

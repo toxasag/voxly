@@ -25,6 +25,12 @@ export interface AdminTenantDTO {
   slug?: string;
   plan: string;
   status: string;
+  is_partner?: boolean;
+  tenant_type?: "partner" | "client";
+  parent_tenant_id?: string | null;
+  owner_partner_id?: string | null;
+  parent_tenant_name?: string | null;
+  parent_tenant_slug?: string | null;
   custom_price_rubles: number | null;
   custom_plan_name: string | null;
   business_niche: string | null;
@@ -62,6 +68,10 @@ export interface AdminTenantDTO {
 
 export type UpdateTenantPayload = {
   status?: "trial" | "active" | "past_due" | "suspended";
+  is_partner?: boolean;
+  tenant_type?: "partner" | "client";
+  parent_tenant_id?: string | null;
+  owner_partner_id?: string | null;
   plan?: string;
   subscription_expires_at?: string | null;
   ai_tokens_balance?: number;

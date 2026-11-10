@@ -7,6 +7,7 @@ import { Plus, Wrench, Clock, CheckCircle2 } from "lucide-react";
 import { RepairsTable } from "@/components/repairs/RepairsTable";
 import { RepairIntakeModal } from "@/components/repairs/RepairIntakeModal";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
+import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
 import { Guard } from "@/components/shared/Guard";
 import type { RepairTicket, RepairFilterStatus, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
 import type { RepairOrderDTO, EquipmentIntakeItem, CreateBatchRepairPayload } from "@/lib/api/use-repairs";
@@ -29,6 +30,7 @@ function RepairsPageContent() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [copyTargetTicket, setCopyTargetTicket] = useState<RepairTicket | null>(null);
   const [receiptTarget, setReceiptTarget] = useState<RepairTicket | null>(null);
+  const [workOrderTarget, setWorkOrderTarget] = useState<RepairTicket | null>(null);
   const searchParams = useSearchParams();
 
   const { data, isLoading, isError, error } = useRepairs({
@@ -73,6 +75,7 @@ function RepairsPageContent() {
         appearance: item.equipment.appearance,
       },
       defect_description: item.defectDescription,
+      malfunctions: item.malfunctions ?? [],
       defect_photos: item.defectPhotos,
       status: item.status,
       payment_status: item.paymentStatus || (item.status === "issued" ? "paid" : "unpaid"),
@@ -233,6 +236,7 @@ function RepairsPageContent() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onPrintReceipt={(ticket) => setReceiptTarget(ticket)}
+          onPrintWorkOrder={(ticket) => setWorkOrderTarget(ticket)}
           onCopyTicket={handleCopyTicket}
           isLoading={isLoading}
           isError={isError}
@@ -256,6 +260,11 @@ function RepairsPageContent() {
           open={!!receiptTarget}
           ticket={receiptTarget}
           onClose={() => setReceiptTarget(null)}
+        />
+        <RepairWorkOrderModal
+          open={!!workOrderTarget}
+          ticket={workOrderTarget}
+          onClose={() => setWorkOrderTarget(null)}
         />
       </div>
     </Guard>

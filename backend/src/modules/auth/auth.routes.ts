@@ -1,5 +1,6 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
+import type { Role, PlatformRole } from "../../types/index.js";
 import { AuthService } from "./auth.service.js";
 import { AuthSessionService } from "./auth-session.service.js";
 import { PasswordResetService } from "./password-reset.service.js";
@@ -9,7 +10,7 @@ import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
-import { UnauthorizedError } from "../../plugins/errorHandler.js";
+import { UnauthorizedError, PermissionDeniedError, NotFoundError } from "../../plugins/errorHandler.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import {
   setAuthCookies,
@@ -753,6 +754,45 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     },
   );
 
+  const handleExitImpersonation = async (request: FastifyRequest, reply: FastifyReply) => {
+    let candidateRefresh: string | undefined;
+    let candidateAccess: string | undefined;
+
+    if (request.body && typeof request.body === "object") {
+      const parsed = z
+        .object({
+          admin_refresh_token: z.string().optional(),
+          admin_access_token: z.string().optional(),
+        })
+        .safeParse(request.body);
+      if (parsed.success) {
+        candidateRefresh = parsed.data.admin_refresh_token;
+        candidateAccess = parsed.data.admin_access_token;
+      }
+    }
+
+    const cookies = parseCookies(request.headers.cookie);
+    const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+    const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+    const meta = {
+      userAgent: request.headers["user-agent"],
+      ip: request.ip,
+    };
+
+    const tokens = await service.exitImpersonation(
+      {
+        adminRefreshToken: candidateRefresh,
+        adminAccessToken: candidateAccess || headerToken,
+        cookieRefreshToken: cookieRefresh,
+      },
+      meta,
+    );
+
+    setAuthCookies(request, reply, tokens);
+    return reply.status(200).send({ success: true, data: tokens });
+  };
+
   app.post(
     "/exit-impersonation",
     {
@@ -763,43 +803,169 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
         },
       },
     },
-    async (request, reply) => {
-      let candidateRefresh: string | undefined;
-      let candidateAccess: string | undefined;
+    handleExitImpersonation,
+  );
 
-      if (request.body && typeof request.body === "object") {
-        const parsed = z
-          .object({
-            admin_refresh_token: z.string().optional(),
-            admin_access_token: z.string().optional(),
-          })
-          .safeParse(request.body);
-        if (parsed.success) {
-          candidateRefresh = parsed.data.admin_refresh_token;
-          candidateAccess = parsed.data.admin_access_token;
-        }
+  app.post(
+    "/revert-impersonation",
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    handleExitImpersonation,
+  );
+
+  const impersonateBodySchema = z
+    .object({
+      tenant_id: z.string().uuid().optional(),
+      slug: z.string().min(1).optional(),
+    })
+    .refine((data) => data.tenant_id !== undefined || data.slug !== undefined, {
+      message: "Необходимо передать tenant_id или slug",
+    });
+
+  app.post(
+    "/impersonate",
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const cookies = parseCookies(request.headers.cookie);
+      const rawToken =
+        (request.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() ||
+        cookies[AUTH_COOKIE_NAME] ||
+        cookies["getvoxly_auth_token"] ||
+        "";
+      if (!rawToken) {
+        throw new UnauthorizedError("Необходима авторизация");
+      }
+      let payload: { sub: string; tenant_id: string; typ?: string; impersonator_id?: string };
+      try {
+        payload = app.jwt.verify(rawToken);
+      } catch {
+        throw new UnauthorizedError("Недействительный токен");
+      }
+      const callerUser = await queryOne<{
+        id: string;
+        tenant_id: string;
+        email: string;
+        name: string;
+        role: Role;
+        platform_role: PlatformRole | null;
+        is_partner: boolean;
+        tenant_is_partner: boolean;
+      }>(
+        `SELECT u.id, u.tenant_id, u.email, u.name, u.role, u.platform_role, u.is_partner, t.is_partner AS tenant_is_partner
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [payload.sub],
+      );
+      if (!callerUser) {
+        throw new UnauthorizedError("Пользователь не найден");
       }
 
-      const cookies = parseCookies(request.headers.cookie);
-      const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
-      const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      let impersonatorUser: {
+        id: string;
+        tenant_id: string;
+        platform_role: PlatformRole | null;
+        is_partner: boolean;
+        role: Role;
+      } | null = null;
 
-      const meta = {
-        userAgent: request.headers["user-agent"],
-        ip: request.ip,
-      };
+      if (typeof payload.impersonator_id === "string") {
+        impersonatorUser = await queryOne(
+          `SELECT u.id, u.tenant_id, u.platform_role, u.is_partner, u.role, t.is_partner AS tenant_is_partner
+           FROM users u
+           JOIN tenants t ON t.id = u.tenant_id
+           WHERE u.id = $1 AND u.deleted_at IS NULL`,
+          [payload.impersonator_id],
+        );
+      }
 
-      const tokens = await service.exitImpersonation(
-        {
-          adminRefreshToken: candidateRefresh,
-          adminAccessToken: candidateAccess || headerToken,
-          cookieRefreshToken: cookieRefresh,
-        },
-        meta,
-      );
+      const body = impersonateBodySchema.parse(request.body);
+      let targetTenant: {
+        id: string;
+        name: string;
+        slug: string;
+        parent_tenant_id: string | null;
+        owner_partner_id: string | null;
+      } | null = null;
 
+      if (body.tenant_id) {
+        targetTenant = await queryOne(
+          `SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE id = $1`,
+          [body.tenant_id],
+        );
+      } else if (body.slug) {
+        targetTenant = await queryOne(
+          `SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE lower(slug) = lower($1)`,
+          [body.slug.trim()],
+        );
+      }
+
+      if (!targetTenant) {
+        throw new NotFoundError("Компания не найдена");
+      }
+
+      const isPlatformOwner =
+        callerUser.platform_role === "platform_owner" ||
+        impersonatorUser?.platform_role === "platform_owner";
+
+      const partnerTenantId = impersonatorUser ? impersonatorUser.tenant_id : callerUser.tenant_id;
+      const isPartner =
+        callerUser.is_partner === true ||
+        callerUser.role === "partner" ||
+        callerUser.tenant_is_partner === true ||
+        impersonatorUser?.is_partner === true ||
+        impersonatorUser?.role === "partner";
+
+      const isTargetChildOfPartner =
+        (targetTenant.parent_tenant_id !== null && targetTenant.parent_tenant_id === partnerTenantId) ||
+        (targetTenant.owner_partner_id !== null && targetTenant.owner_partner_id === partnerTenantId);
+
+      if (!isPlatformOwner && !(isPartner && isTargetChildOfPartner)) {
+        throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
+      }
+
+      const actorId = isPlatformOwner
+        ? callerUser.platform_role === "platform_owner"
+          ? callerUser.id
+          : impersonatorUser?.id || callerUser.id
+        : impersonatorUser?.id || callerUser.id;
+
+      if (!actorId) {
+        throw new UnauthorizedError("Не удалось определить идентификатор администратора или партнера");
+      }
+
+      const tokens = await service.impersonateTenant(targetTenant.id, actorId);
       setAuthCookies(request, reply, tokens);
-      return reply.status(200).send({ success: true, data: tokens });
+
+      const adminRefreshToken = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"] || "";
+      const adminAccessToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+      return reply.send({
+        success: true,
+        data: {
+          ...tokens,
+          admin_refresh_token: adminRefreshToken,
+          admin_access_token: adminAccessToken,
+          admin_user: {
+            id: actorId,
+            email: callerUser.email,
+            name: callerUser.name,
+          },
+        },
+      });
     },
   );
 
