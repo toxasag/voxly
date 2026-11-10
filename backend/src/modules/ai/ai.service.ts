@@ -4,6 +4,7 @@ import { GatewayChatProvider } from "../../services/chat.service.js";
 import { validateUrl, htmlToText } from "./site-crawler.js";
 import { aiTraceLogger } from "./ai-trace-logger.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
+import { quotaService } from "../quotas/quota.service.js";
 import {
   estimateRemainingTokens,
   isAiModelId,
@@ -352,6 +353,8 @@ export class AiService {
       : payload.feedbackLearningEnabled !== undefined
         ? payload.feedbackLearningEnabled
         : true;
+
+    await quotaService.assertQuota(tenantId, "ai_agents", "AI-агентов");
 
     const created = await withTenant(tenantId, async (tx) => {
       // Дубликат имени отклоняется частичным уникальным индексом; переводим в

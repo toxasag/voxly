@@ -37,7 +37,8 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
 
   // Лимит считается по оплаченному количеству: кнопка не должна предлагать
   // действие, которое сервер отклонит с 409 CHANNEL_LIMIT_REACHED.
-  const limitReached = summary !== undefined && summary.total >= summary.quantity;
+  const isUnlimited = Boolean(summary?.isUnlimited || summary?.is_unlimited);
+  const limitReached = summary !== undefined && !isUnlimited && summary.total >= summary.quantity;
   const daysLeft = trialDaysLeft(summary?.trialEndsAt ?? null);
 
   const openConnect = useCallback(() => setConnectOpen(true), []);
