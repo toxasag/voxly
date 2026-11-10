@@ -80,6 +80,23 @@ export interface KnowledgeSearchHit {
   distance: number;
   documentId: string;
   filename: string;
+  sourceUrl?: string | null;
+}
+
+export interface PageContextQuery {
+  tenantId: string;
+  agentId: string;
+  pageUrl?: string;
+  pageTitle?: string;
+  pathname?: string;
+}
+
+export interface MatchedDocument {
+  id: string;
+  filename: string;
+  sourceUrl: string | null;
+  matchReason: "exact_url" | "pathname" | "title_semantic";
+  confidence: number;
 }
 
 interface DocumentRow {
@@ -547,6 +564,7 @@ export class KnowledgeBaseService {
     mimeType: string;
     text: string;
     category?: string;
+    sourceUrl?: string | null;
   }): Promise<KnowledgeDocumentDTO> {
     await this.assertAgentExists(input.tenantId, input.agentId);
 
@@ -572,8 +590,8 @@ export class KnowledgeBaseService {
     const category = input.category?.trim() || "general";
     const created = await queryOne<{ id: string }>(
       `INSERT INTO knowledge_base_documents
-         (tenant_id, agent_id, filename, mime_type, file_size, content_text, status, category)
-       VALUES ($1, $2, $3, $4, $5, $6, 'processing', $7)
+         (tenant_id, agent_id, filename, mime_type, file_size, content_text, status, category, source_url)
+       VALUES ($1, $2, $3, $4, $5, $6, 'processing', $7, $8)
        RETURNING id`,
       [
         input.tenantId,
@@ -583,6 +601,7 @@ export class KnowledgeBaseService {
         Buffer.byteLength(input.text, "utf8"),
         input.text,
         category,
+        input.sourceUrl ?? null,
       ],
     );
 
@@ -750,19 +769,170 @@ export class KnowledgeBaseService {
   // -------------------------------------------------------------------------
 
   /**
+   * Находит документ базы знаний, соответствующий странице сайта, на которой находится посетитель.
+   *
+   * Использует многоуровневый алгоритм сопоставления:
+   * 1. Семантическое/ключевое совпадение заголовка страницы (pageTitle) с названием документа
+   *    (критично для сайтов на Tilda/Webflow, где лендинг клонирован со старым URL, например /about_turkey для Сан-Томе)
+   * 2. Точное/нормализованное совпадение URL (source_url vs pageUrl)
+   * 3. Совпадение пути URL (pathname)
+   */
+  async findDocumentByPageContext(input: PageContextQuery): Promise<MatchedDocument | null> {
+    if (!input.pageUrl && !input.pageTitle && !input.pathname) return null;
+
+    const rows = await query<{
+      id: string;
+      filename: string;
+      source_url: string | null;
+    }>(
+      `SELECT id, filename, source_url
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1
+         AND (agent_id = $2 OR agent_id IS NULL)
+         AND status = 'ready'`,
+      [input.tenantId, input.agentId],
+    );
+
+    if (rows.length === 0) return null;
+
+    const normalizeUrl = (raw?: string | null): string => {
+      if (!raw) return "";
+      try {
+        const u = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+        const host = u.hostname.replace(/^www\./, "").toLowerCase();
+        const path = u.pathname.replace(/\/+$/, "").toLowerCase();
+        return `${host}${path}`;
+      } catch {
+        return raw.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/+$/, "").toLowerCase();
+      }
+    };
+
+    const extractPathname = (raw?: string | null): string => {
+      if (!raw) return "";
+      try {
+        const u = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+        return u.pathname.replace(/\/+$/, "").toLowerCase();
+      } catch {
+        return raw.replace(/\/+$/, "").toLowerCase();
+      }
+    };
+
+    const targetUrlNorm = normalizeUrl(input.pageUrl);
+    const targetPath = (input.pathname ? input.pathname.replace(/\/+$/, "").toLowerCase() : "") || extractPathname(input.pageUrl);
+    const targetTitle = (input.pageTitle || "").toLowerCase().trim();
+
+    // 1. Проверяем семантическое соответствие по заголовку страницы (pageTitle)
+    // В маркетинге (Tilda/Webflow) заголовок страницы ВСЕГДА авторитетнее URL:
+    // если URL = /about_turkey, но заголовок "Сан-Томе и Принсипи", посетитель читает про Сан-Томе!
+    if (targetTitle.length > 3) {
+      for (const doc of rows) {
+        const docNameLower = doc.filename.toLowerCase();
+        const cleanDocName = docNameLower.replace(/^сайт:\s*/i, "").trim();
+
+        if (cleanDocName.length >= 3 && targetTitle.includes(cleanDocName)) {
+          return {
+            id: doc.id,
+            filename: doc.filename,
+            sourceUrl: doc.source_url,
+            matchReason: "title_semantic",
+            confidence: 0.98,
+          };
+        }
+
+        const topicKeywords: Record<string, string[]> = {
+          "сантоме": ["сан-томе", "сантоме", "sao tome", "принсипи", "principe"],
+          "турция": ["турци", "turkey", "turkish"],
+          "вануату": ["вануату", "vanuatu"],
+          "греция": ["греци", "greece"],
+          "португалия": ["португал", "portugal"],
+          "египет": ["египет", "egypt"],
+          "испания": ["испан", "spain"],
+          "кипр": ["кипр", "cyprus"],
+          "оаэ": ["оаэ", "uae", "дубай", "dubai"],
+        };
+
+        for (const [, variants] of Object.entries(topicKeywords)) {
+          const docHasKeyword = variants.some((v) => cleanDocName.includes(v));
+          const titleHasKeyword = variants.some((v) => targetTitle.includes(v));
+          if (docHasKeyword && titleHasKeyword) {
+            return {
+              id: doc.id,
+              filename: doc.filename,
+              sourceUrl: doc.source_url,
+              matchReason: "title_semantic",
+              confidence: 0.95,
+            };
+          }
+        }
+      }
+    }
+
+    // 2. Точное или нормализованное совпадение URL (source_url)
+    if (targetUrlNorm.length > 0) {
+      for (const doc of rows) {
+        if (!doc.source_url) continue;
+        const docUrlNorm = normalizeUrl(doc.source_url);
+        if (docUrlNorm === targetUrlNorm) {
+          return {
+            id: doc.id,
+            filename: doc.filename,
+            sourceUrl: doc.source_url,
+            matchReason: "exact_url",
+            confidence: 1.0,
+          };
+        }
+      }
+    }
+
+    // 3. Совпадение pathname (например, /citizenship_vanuatu)
+    if (targetPath.length > 1 && targetPath !== "/") {
+      for (const doc of rows) {
+        if (!doc.source_url) continue;
+        const docPath = extractPathname(doc.source_url);
+        if (docPath === targetPath && docPath.length > 1 && docPath !== "/") {
+          return {
+            id: doc.id,
+            filename: doc.filename,
+            sourceUrl: doc.source_url,
+            matchReason: "pathname",
+            confidence: 0.9,
+          };
+        }
+      }
+    }
+
+    // 4. Поиск вхождений slug из pathname в название документа
+    if (targetPath.length > 1 && targetPath !== "/") {
+      const slug = targetPath.replace(/^\//, "").replace(/[_-]/g, " ").toLowerCase();
+      for (const doc of rows) {
+        const docNameLower = doc.filename.toLowerCase();
+        if (slug.length >= 4 && (docNameLower.includes(slug) || slug.includes(docNameLower.replace(/^сайт:\s*/i, "")))) {
+          return {
+            id: doc.id,
+            filename: doc.filename,
+            sourceUrl: doc.source_url,
+            matchReason: "pathname",
+            confidence: 0.85,
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Ближайшие к вопросу фрагменты.
    *
-   * Общие документы арендатора (`agent_id IS NULL`) участвуют в поиске наравне с
-   * документами агента — по той же причине, по которой они видны в списке.
-   *
-   * Возвращает пустой массив, когда векторизация не настроена: отсутствие базы
-   * знаний не должно ломать сам вызов модели, агент просто ответит без контекста.
+   * При наличии `priorityDocumentId` (документ текущей открытой посетителем страницы)
+   * чанки из него помещаются в начало выборки, гарантируя строгое заземление ответа.
    */
   async search(input: {
     tenantId: string;
     agentId: string;
     question: string;
     limit?: number;
+    priorityDocumentId?: string;
   }): Promise<KnowledgeSearchHit[]> {
     if (!this.embeddings.isConfigured) return [];
     if (input.question.trim().length === 0) return [];
@@ -773,33 +943,78 @@ export class KnowledgeBaseService {
 
     const effectiveLimit = input.limit && input.limit > 0 ? Math.min(input.limit, 20) : SEARCH_LIMIT;
 
+    let priorityHits: KnowledgeSearchHit[] = [];
+
+    // Если передан ID приоритетного документа (активная страница посетителя),
+    // сначала выбираем наиболее релевантные чанки именно из него
+    if (input.priorityDocumentId) {
+      const pRows = await query<{
+        content: string;
+        distance: string;
+        document_id: string;
+        filename: string;
+        source_url: string | null;
+      }>(
+        `SELECT ch.content,
+                (ch.embedding <=> $3::vector) AS distance,
+                ch.document_id,
+                d.filename,
+                d.source_url
+         FROM knowledge_base_chunks ch
+         JOIN knowledge_base_documents d ON d.id = ch.document_id
+         WHERE ch.tenant_id = $1
+           AND ch.document_id = $2
+           AND d.status = 'ready'
+         ORDER BY distance ASC
+         LIMIT 4`,
+        [input.tenantId, input.priorityDocumentId, toVectorLiteral(vector)],
+      );
+
+      priorityHits = pRows.map((row) => ({
+        content: row.content,
+        distance: Number(row.distance),
+        documentId: row.document_id,
+        filename: row.filename,
+        sourceUrl: row.source_url,
+      }));
+    }
+
+    const remainingLimit = Math.max(1, effectiveLimit - priorityHits.length);
+    const excludeDocId = input.priorityDocumentId ?? "00000000-0000-0000-0000-000000000000";
+
     const rows = await query<{
       content: string;
       distance: string;
       document_id: string;
       filename: string;
+      source_url: string | null;
     }>(
       `SELECT ch.content,
               (ch.embedding <=> $4::vector) AS distance,
               ch.document_id,
-              d.filename
+              d.filename,
+              d.source_url
        FROM knowledge_base_chunks ch
        JOIN knowledge_base_documents d ON d.id = ch.document_id
        WHERE ch.tenant_id = $1
          AND (ch.agent_id = $2 OR ch.agent_id IS NULL)
+         AND ch.document_id != $5
          AND d.status = 'ready'
          AND (ch.embedding <=> $4::vector) <= $3
        ORDER BY distance ASC
-       LIMIT ${effectiveLimit}`,
-      [input.tenantId, input.agentId, SEARCH_MAX_DISTANCE, toVectorLiteral(vector)],
+       LIMIT ${remainingLimit}`,
+      [input.tenantId, input.agentId, SEARCH_MAX_DISTANCE, toVectorLiteral(vector), excludeDocId],
     );
 
-    return rows.map((row) => ({
+    const generalHits: KnowledgeSearchHit[] = rows.map((row) => ({
       content: row.content,
       distance: Number(row.distance),
       documentId: row.document_id,
       filename: row.filename,
+      sourceUrl: row.source_url,
     }));
+
+    return [...priorityHits, ...generalHits];
   }
 
   // -------------------------------------------------------------------------

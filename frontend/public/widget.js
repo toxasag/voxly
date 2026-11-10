@@ -128,6 +128,50 @@
     }
   }
 
+  // 3.1 Сбор метаданных текущей страницы (URL, title, pathname, referrer) с поддержкой iframe
+  function getPageMetadata() {
+    var pageUrl = '';
+    var pageTitle = '';
+    var pathname = '';
+    var referrer = '';
+    try {
+      if (typeof window !== 'undefined') {
+        var inIframe = false;
+        try {
+          inIframe = window.self !== window.top;
+        } catch (e) {
+          inIframe = true;
+        }
+
+        if (inIframe) {
+          try {
+            pageUrl = window.top.location.href;
+            pageTitle = window.top.document.title;
+            pathname = window.top.location.pathname;
+            referrer = window.top.document.referrer;
+          } catch (e) {
+            pageUrl = document.referrer || window.location.href;
+            pageTitle = document.title || '';
+            pathname = window.location.pathname || '';
+            referrer = '';
+          }
+        } else {
+          pageUrl = window.location.href;
+          pageTitle = document.title || '';
+          pathname = window.location.pathname || '';
+          referrer = document.referrer || '';
+        }
+      }
+    } catch (e) {}
+
+    return {
+      pageUrl: pageUrl || (typeof window !== 'undefined' ? window.location.href : ''),
+      pageTitle: (pageTitle || (typeof document !== 'undefined' ? document.title : '') || '').trim(),
+      pathname: pathname || (typeof window !== 'undefined' ? window.location.pathname : '') || '',
+      referrer: referrer || (typeof document !== 'undefined' ? document.referrer : '') || undefined,
+    };
+  }
+
   // 4. Стили виджета с поддержкой тем (Twenty Light Canvas по умолчанию), мобильных устройств и safe-area
   var styles = `
     .getvoxly-widget-wrapper {
@@ -3396,10 +3440,17 @@
       try {
         sendTelemetry('init_fetch_start', channelAccountId);
 
+        var pageMeta = getPageMetadata();
         var res = await fetch(apiUrl + '/api/v1/public/chat/init/' + channelAccountId, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ visitorId: visitorId || undefined }),
+          body: JSON.stringify({
+            visitorId: visitorId || undefined,
+            pageUrl: pageMeta.pageUrl || undefined,
+            pageTitle: pageMeta.pageTitle || undefined,
+            pathname: pageMeta.pathname || undefined,
+            referrer: pageMeta.referrer || undefined,
+          }),
         });
 
         // 404 = аккаунт удален, 403 = чат отключен, 410 = ресурс удален
@@ -4114,6 +4165,7 @@
         var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || detectedEmail || undefined;
         var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || detectedName || undefined;
 
+        var pageMeta = getPageMetadata();
         var payload = {
           visitorId: visitorId,
           sessionId: sessionId,
@@ -4123,8 +4175,10 @@
           senderName: storedName,
           attachment: attachment || undefined,
           attachmentType: attachmentType || undefined,
-          pageUrl: window.location.href,
-          referrer: document.referrer || undefined,
+          pageUrl: pageMeta.pageUrl,
+          pageTitle: pageMeta.pageTitle || undefined,
+          pathname: pageMeta.pathname || undefined,
+          referrer: pageMeta.referrer || undefined,
           utmTags: utmTags,
           clickIds: clickIds,
           analytics: {
@@ -4296,11 +4350,14 @@
       window.addEventListener('beforeunload', function () {
         if (lastDraft.length > 3 && !sentDrafts[lastDraft]) {
           sentDrafts[lastDraft] = true;
+          var pageMeta = getPageMetadata();
           var payload = JSON.stringify({
             visitorId: visitorId,
             text: lastDraft,
-            pageUrl: window.location.href,
-            referrer: document.referrer || undefined,
+            pageUrl: pageMeta.pageUrl,
+            pageTitle: pageMeta.pageTitle || undefined,
+            pathname: pageMeta.pathname || undefined,
+            referrer: pageMeta.referrer || undefined,
             utmTags: utmTags,
             clickIds: clickIds,
             analytics: {

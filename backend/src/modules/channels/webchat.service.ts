@@ -107,6 +107,7 @@ export interface WebchatMessageInput {
   attachmentType?: string;
   pageUrl?: string;
   pageTitle?: string;
+  pathname?: string;
   referrer?: string;
   utmTags?: Record<string, string>;
   clickIds?: Record<string, string>;
@@ -893,16 +894,21 @@ export class WebchatService {
       };
     }
 
-    // Передаем агенту чистый вопрос и контекст текущей страницы для релевантного ответа
-    const promptText = input.pageUrl ? `[Пользователь на странице: ${input.pageUrl}]\n${text}` : text;
+    // Передаем агенту чистый вопрос и структурированный контекст текущей страницы (URL, title, pathname)
     const outcome = await runWithTenantContext(account.tenantId, () =>
       this.agentPipeline.prepareReply({
         tenantId: account.tenantId,
         channelAccountId: account.id,
         chatId: input.visitorId,
-        text: promptText,
+        text,
         channelType: "онлайн-чат на сайте",
         dealId: crmResult.dealId,
+        pageContext: {
+          pageUrl: input.pageUrl,
+          pageTitle: input.pageTitle,
+          pathname: input.pathname,
+          referrer: input.referrer,
+        },
       }),
     );
 
