@@ -425,7 +425,7 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
           senderName: "Менеджер",
           attachment: attachmentUrl,
           attachmentType: attachmentType,
-          pauseMinutes: 30,
+          pauseMinutes: 60,
         }),
       );
       continue;

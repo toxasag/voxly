@@ -533,8 +533,9 @@ export class TelegramTransportService {
         );
       }
 
-      // M5.3: Зеркалирование нативных исходящих от оператора (fromMe)
-      if (message.out === true) {
+      // M5.3: Зеркалирование нативных исходящих от оператора (fromMe / out)
+      const isFromOperator = message.out === true;
+      if (isFromOperator) {
         if (text.length > 0 || mediaAttachment !== null) {
           const contentText =
             text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
@@ -546,7 +547,7 @@ export class TelegramTransportService {
               chatId,
               text: contentText,
               senderName: "Менеджер",
-              pauseMinutes: 30,
+              pauseMinutes: 60,
               attachment: mediaAttachment?.url ?? null,
               attachmentType: mediaAttachment?.mimeType ?? null,
             }),
