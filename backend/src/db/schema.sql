@@ -1679,11 +1679,22 @@ CREATE TABLE IF NOT EXISTS warehouse_movements (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Складской учет: Настройки
+CREATE TABLE IF NOT EXISTS warehouse_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  allow_negative_stock BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_warehouse_settings_tenant UNIQUE (tenant_id)
+);
+
 -- Складской учет: Заявки на закупку
 CREATE TABLE IF NOT EXISTS purchase_requests (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  supplier_order_id UUID,
   item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
   item_name TEXT NOT NULL,
   sku TEXT NOT NULL DEFAULT '',
@@ -1695,6 +1706,39 @@ CREATE TABLE IF NOT EXISTS purchase_requests (
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Заказы поставщикам
+CREATE TABLE IF NOT EXISTS supplier_orders (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  order_number TEXT NOT NULL,
+  supplier_name TEXT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'draft',
+  total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  cash_account_id UUID REFERENCES cash_accounts(id) ON DELETE SET NULL,
+  finance_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  paid_at TIMESTAMPTZ,
+  received_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_order_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  supplier_order_id UUID NOT NULL REFERENCES supplier_orders(id) ON DELETE CASCADE,
+  purchase_request_id UUID REFERENCES purchase_requests(id) ON DELETE SET NULL,
+  item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  item_name TEXT NOT NULL,
+  sku TEXT NOT NULL DEFAULT '',
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  unit TEXT NOT NULL DEFAULT 'шт',
+  price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  total_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Конструктор печатных документов

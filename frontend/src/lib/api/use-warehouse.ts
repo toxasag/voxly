@@ -100,6 +100,84 @@ export interface CreatePurchaseRequestPayload {
   comment?: string;
 }
 
+export interface WarehouseSettingsDTO {
+  allowNegativeStock: boolean;
+}
+
+export interface AggregatedPurchaseRequestDTO {
+  id: string;
+  itemId: string | null;
+  itemName: string;
+  sku: string;
+  unit: string;
+  quantity: number;
+  estimatedPrice: number;
+  status: "pending" | "ordered" | "received" | "cancelled";
+  repairOrders: string;
+  repair_orders: string;
+  requestIds: string[];
+  availableStock: number;
+  totalStock: number;
+}
+
+export interface SupplierOrderItemDTO {
+  id: string;
+  supplierOrderId: string;
+  purchaseRequestId: string | null;
+  itemId: string | null;
+  itemName: string;
+  sku: string;
+  quantity: number;
+  unit: string;
+  price: number;
+  totalPrice: number;
+  createdAt: string;
+}
+
+export interface SupplierOrderDTO {
+  id: string;
+  orderNumber: string;
+  supplierName: string;
+  status: "draft" | "pending_payment" | "paid" | "received" | "cancelled";
+  totalAmount: number;
+  cashAccountId: string | null;
+  financeTransactionId: string | null;
+  notes: string;
+  paidAt: string | null;
+  receivedAt: string | null;
+  createdBy: string | null;
+  createdByName?: string | null;
+  items: SupplierOrderItemDTO[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSupplierOrderPayload {
+  supplier_name: string;
+  purchase_request_ids?: string[];
+  items?: {
+    purchase_request_id?: string;
+    item_id?: string;
+    item_name: string;
+    sku?: string;
+    quantity: number;
+    unit?: string;
+    price: number;
+  }[];
+  notes?: string;
+}
+
+export interface PaySupplierOrderPayload {
+  cash_account_id?: string;
+  comment?: string;
+}
+
+export interface PaySupplierOrderResult {
+  order: SupplierOrderDTO;
+  status: string;
+  transaction_id: string;
+}
+
 export const warehouseKeys = {
   all: ["warehouse"] as const,
   items: (search?: string) => [...warehouseKeys.all, "items", search ?? ""] as const,
@@ -238,6 +316,122 @@ export function useUpdatePurchaseRequest() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+    },
+  });
+}
+
+export function useWarehouseSettings() {
+  return useQuery({
+    queryKey: [...warehouseKeys.all, "settings"] as const,
+    queryFn: async () => {
+      const res = await apiClient.get<WarehouseSettingsDTO>("/api/v1/warehouse/settings");
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateWarehouseSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { allow_negative_stock: boolean }) => {
+      const res = await apiClient.patch<WarehouseSettingsDTO>("/api/v1/warehouse/settings", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "settings"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+    },
+  });
+}
+
+export function useAggregatedPurchaseRequests(status?: string) {
+  return useQuery({
+    queryKey: [...warehouseKeys.all, "aggregated-purchases", status ?? ""] as const,
+    queryFn: async () => {
+      const q = status ? `?status=${encodeURIComponent(status)}` : "";
+      const res = await apiClient.get<AggregatedPurchaseRequestDTO[]>(`/api/v1/warehouse/purchase-requests${q}`);
+      return res.data;
+    },
+  });
+}
+
+export function useSupplierOrders(status?: string) {
+  return useQuery({
+    queryKey: [...warehouseKeys.all, "supplier-orders", status ?? ""] as const,
+    queryFn: async () => {
+      const q = status ? `?status=${encodeURIComponent(status)}` : "";
+      const res = await apiClient.get<SupplierOrderDTO[]>(`/api/v1/warehouse/supplier-orders${q}`);
+      return res.data;
+    },
+  });
+}
+
+export function useCreateSupplierOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateSupplierOrderPayload) => {
+      const res = await apiClient.post<SupplierOrderDTO>("/api/v1/warehouse/supplier-orders", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+    },
+  });
+}
+
+export function usePaySupplierOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload?: PaySupplierOrderPayload;
+    }): Promise<PaySupplierOrderResult> => {
+      const res = await apiClient.post<SupplierOrderDTO>(
+        `/api/v1/warehouse/supplier-orders/${id}/pay`,
+        payload ?? {},
+      );
+      const raw = res as unknown as {
+        data: SupplierOrderDTO;
+        status: string;
+        transaction_id: string;
+      };
+      return {
+        order: raw.data,
+        status: raw.status,
+        transaction_id: raw.transaction_id,
+      };
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
+    },
+  });
+}
+
+export function useCreateReceiptFromSupplierOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.post<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number }>(
+        `/api/v1/warehouse/supplier-orders/${id}/create-receipt`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.batches() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.movements() });
     },
   });
 }

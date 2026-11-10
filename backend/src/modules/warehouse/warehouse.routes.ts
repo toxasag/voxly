@@ -3,14 +3,31 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { warehouseService } from "./warehouse.service.js";
 import {
   createPurchaseRequestSchema,
+  createSupplierOrderSchema,
   createWarehouseItemSchema,
   intakeBatchSchema,
+  paySupplierOrderSchema,
   updatePurchaseRequestSchema,
   updateWarehouseItemSchema,
+  updateWarehouseSettingsSchema,
 } from "./warehouse.types.js";
 
 export async function warehouseRoutes(app: FastifyInstance) {
   await app.register(authenticatePlugin);
+
+  // Настройки склада (продажа в минус и политики остатков)
+  app.get("/settings", async (request, reply) => {
+    const { tenant_id } = request;
+    const settings = await warehouseService.getSettings(tenant_id);
+    return reply.send({ data: settings });
+  });
+
+  app.patch("/settings", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = updateWarehouseSettingsSchema.parse(request.body);
+    const updated = await warehouseService.updateSettings(tenant_id, body);
+    return reply.send({ data: updated });
+  });
 
   // Список деталей с остатками
   app.get("/items", async (request, reply) => {
@@ -73,11 +90,19 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: movements });
   });
 
-  // Список заявок на закупку
+  // Список заявок на закупку (индивидуальные строки)
   app.get("/purchases", async (request, reply) => {
     const { tenant_id } = request;
     const { status, repair_order_id } = request.query as { status?: string; repair_order_id?: string };
     const list = await warehouseService.listPurchaseRequests(tenant_id, status, repair_order_id);
+    return reply.send({ data: list });
+  });
+
+  // Агрегированные заявки на закупку (сводка по номенклатуре с перечнем номеров заказ-нарядов)
+  app.get("/purchase-requests", async (request, reply) => {
+    const { tenant_id } = request;
+    const { status } = request.query as { status?: string };
+    const list = await warehouseService.listAggregatedPurchaseRequests(tenant_id, status);
     return reply.send({ data: list });
   });
 
@@ -100,5 +125,55 @@ export async function warehouseRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Purchase request not found" });
     }
     return reply.send({ data: updated });
+  });
+
+  // -------------------------------------------------------------------------
+  // Заказы поставщикам (Supplier Orders)
+  // -------------------------------------------------------------------------
+
+  app.get("/supplier-orders", async (request, reply) => {
+    const { tenant_id } = request;
+    const { status } = request.query as { status?: string };
+    const list = await warehouseService.listSupplierOrders(tenant_id, status);
+    return reply.send({ data: list });
+  });
+
+  app.post("/supplier-orders", async (request, reply) => {
+    const { tenant_id } = request;
+    const userId = request.authUser?.id ?? null;
+    const body = createSupplierOrderSchema.parse(request.body);
+    const created = await warehouseService.createSupplierOrder(tenant_id, userId, body);
+    return reply.status(201).send({ data: created });
+  });
+
+  app.get("/supplier-orders/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const order = await warehouseService.getSupplierOrder(tenant_id, id);
+    if (!order) {
+      return reply.status(404).send({ error: "Supplier order not found" });
+    }
+    return reply.send({ data: order });
+  });
+
+  app.post("/supplier-orders/:id/pay", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const userId = request.authUser?.id ?? null;
+    const body = paySupplierOrderSchema.parse(request.body ?? {});
+    const res = await warehouseService.paySupplierOrder(tenant_id, id, userId, body);
+    return reply.send({
+      data: res.order,
+      status: "PAID",
+      transaction_id: res.transactionId,
+    });
+  });
+
+  app.post("/supplier-orders/:id/create-receipt", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const userId = request.authUser?.id ?? null;
+    const res = await warehouseService.createReceiptFromSupplierOrder(tenant_id, id, userId);
+    return reply.send({ data: res });
   });
 }
