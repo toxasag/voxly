@@ -7,6 +7,7 @@ import {
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase, Tag, Hash,
   AlertCircle, ExternalLink, Clock, ShieldCheck, Users, NotebookPen,
+  SlidersHorizontal,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -18,6 +19,7 @@ import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
 import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
 import { PrintDocumentModal } from "@/components/repairs/PrintDocumentModal";
+import { PrintTemplateSettingsDrawer } from "@/components/repairs/PrintTemplateSettingsDrawer";
 import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerModal";
 import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
@@ -112,6 +114,7 @@ export default function RepairDetailPage() {
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printModalSlug, setPrintModalSlug] = useState<"work_order" | "completion_act" | "warranty_ticket" | "receipt">("work_order");
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
@@ -473,6 +476,15 @@ export default function RepairDetailPage() {
             >
               <Printer className="h-3.5 w-3.5 text-[#4a38f5]" />
               Печать
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettingsDrawerOpen(true)}
+              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] shadow-2xs hover:text-[#4a38f5] hover:bg-[#fafafa] transition-colors cursor-pointer"
+              title="Настройки шаблонов и реквизитов"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5 text-[#4a38f5]" />
+              Настроить
             </button>
             {hasFinance && (
               <button
@@ -1474,6 +1486,10 @@ export default function RepairDetailPage() {
         orderNumber={ticket.ticket_number}
         initialSlug={printModalSlug}
         onClose={() => setPrintModalOpen(false)}
+      />
+      <PrintTemplateSettingsDrawer
+        open={settingsDrawerOpen}
+        onClose={() => setSettingsDrawerOpen(false)}
       />
       <ContactPickerModal
         open={contactPickerOpen}

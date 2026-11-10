@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { printTemplatesService } from "./print-templates.service.js";
-import { updatePrintTemplateSchema } from "./print-templates.types.js";
+import {
+  updatePrintTemplateSchema,
+  updatePrintTemplateSettingsSchema,
+} from "./print-templates.types.js";
 
 export async function printTemplatesRoutes(app: FastifyInstance) {
   await app.register(authenticatePlugin);
@@ -11,6 +14,27 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
     const { tenant_id } = request;
     const list = await printTemplatesService.list(tenant_id);
     return reply.send({ data: list });
+  });
+
+  // Настройки печати тенанта (реквизиты, брендинг, правила, нумерация)
+  app.get("/settings", async (request, reply) => {
+    const { tenant_id } = request;
+    const settings = await printTemplatesService.getSettings(tenant_id);
+    return reply.send({ data: settings });
+  });
+
+  app.put("/settings", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = updatePrintTemplateSettingsSchema.parse(request.body);
+    const updated = await printTemplatesService.updateSettings(tenant_id, body);
+    return reply.send({ data: updated });
+  });
+
+  app.patch("/settings", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = updatePrintTemplateSettingsSchema.parse(request.body);
+    const updated = await printTemplatesService.updateSettings(tenant_id, body);
+    return reply.send({ data: updated });
   });
 
   // Получение шаблона по слагу

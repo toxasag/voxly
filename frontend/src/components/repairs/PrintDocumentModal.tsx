@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { Printer, X, ExternalLink, FileText, CheckCircle, ShieldCheck, Receipt } from "lucide-react";
+import { Printer, X, ExternalLink, FileText, CheckCircle, ShieldCheck, Receipt, SlidersHorizontal } from "lucide-react";
 import { usePrintTemplates, getPrintRenderUrl, type PrintTemplateDTO } from "@/lib/api/use-print-templates";
+import { PrintTemplateSettingsDrawer } from "./PrintTemplateSettingsDrawer";
 import { cn } from "@/lib/utils";
 
 interface PrintDocumentModalProps {
@@ -28,11 +29,18 @@ export function PrintDocumentModal({
   onClose,
 }: PrintDocumentModalProps) {
   const [selectedSlug, setSelectedSlug] = useState<"work_order" | "completion_act" | "warranty_ticket" | "receipt">(initialSlug);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const { data: templates = [] } = usePrintTemplates();
 
   const renderUrl = orderId ? getPrintRenderUrl(selectedSlug, orderId) : "";
+
+  const cleanOrderNumber = orderNumber
+    ? orderNumber.startsWith("№")
+      ? orderNumber
+      : `№${orderNumber}`
+    : "";
 
   const handlePrint = useCallback(() => {
     if (iframeRef.current && iframeRef.current.contentWindow) {
@@ -60,7 +68,7 @@ export function PrintDocumentModal({
             </div>
             <div>
               <h2 className="text-sm font-semibold text-[#111111]">
-                Печать документов {orderNumber ? `по наряду №${orderNumber}` : ""}
+                Печать документов {cleanOrderNumber ? `по наряду ${cleanOrderNumber}` : ""}
               </h2>
               <p className="text-xs text-[#666666]">
                 Шаблоны с автозаполнением реквизитов, работ и запчастей
@@ -71,8 +79,17 @@ export function PrintDocumentModal({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#666666] hover:text-[#4a38f5] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
+              title="Настройки печатных форм"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5 text-[#4a38f5]" />
+              <span>Настроить</span>
+            </button>
+            <button
+              type="button"
               onClick={handleOpenNewTab}
-              className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#666666] hover:text-[#111111] hover:bg-[#f0f0f0] transition-colors"
+              className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#666666] hover:text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
               title="Открыть в новой вкладке"
             >
               <ExternalLink className="h-3.5 w-3.5" />
@@ -138,6 +155,11 @@ export function PrintDocumentModal({
           </div>
         </div>
       </div>
+
+      <PrintTemplateSettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

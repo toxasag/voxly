@@ -3,9 +3,69 @@ import { AppError } from "../../plugins/errorHandler.js";
 import type {
   PrintTemplateDTO,
   PrintTemplateRow,
+  PrintTemplateSettingsDTO,
+  PrintTemplateSettingsRow,
   PrintTemplateSlug,
   UpdatePrintTemplatePayload,
+  UpdatePrintTemplateSettingsPayload,
 } from "./print-templates.types.js";
+
+export function formatTicketNumber(
+  rawNumber: string,
+  format: "compact" | "full" = "compact",
+  prefix: string = "№",
+): string {
+  if (!rawNumber) return "";
+  const clean = rawNumber.trim();
+  const match = clean.match(/(?:.*-)?(\d+)$/);
+  const digits = match && match[1] ? match[1] : clean.replace(/^[^0-9]+/, "");
+
+  if (format === "full") {
+    if (clean.includes("-") && !clean.startsWith("№")) {
+      return clean;
+    }
+    const year = new Date().getFullYear();
+    const padDigits = digits ? digits.padStart(4, "0") : "0001";
+    return `ЗН-${year}-${padDigits}`;
+  }
+
+  const padDigits = digits ? digits.padStart(4, "0") : clean;
+  const cleanPrefix = prefix ? prefix.trim() : "№";
+  return `${cleanPrefix}${padDigits}`;
+}
+
+function toSettingsDto(row: PrintTemplateSettingsRow): PrintTemplateSettingsDTO {
+  return {
+    id: row.id,
+    companyName: row.company_name,
+    companyAddress: row.company_address,
+    companyPhone: row.company_phone,
+    companyEmail: row.company_email,
+    companyWebsite: row.company_website,
+    companyInn: row.company_inn,
+    companyOgrn: row.company_ogrn,
+    workingHours: row.working_hours,
+    logoUrl: row.logo_url,
+    numberingFormat: row.numbering_format === "full" ? "full" : "compact",
+    numberingPrefix: row.numbering_prefix || "№",
+    intakeTerms: row.intake_terms,
+    intakePdnConsent: row.intake_pdn_consent,
+    showEquipmentSerial: Boolean(row.show_equipment_serial),
+    showAppearance: Boolean(row.show_appearance),
+    showPackageContents: Boolean(row.show_package_contents),
+    showDefectDescription: Boolean(row.show_defect_description),
+    showEstimatedCost: Boolean(row.show_estimated_cost),
+    showClientTearOffTicket: Boolean(row.show_client_tear_off_ticket),
+    showIntakeSignatures: Boolean(row.show_intake_signatures),
+    warrantyTerms: row.warranty_terms,
+    returnPolicy: row.return_policy,
+    showWorksTable: Boolean(row.show_works_table),
+    showPartsTable: Boolean(row.show_parts_table),
+    showCompletionSignatures: Boolean(row.show_completion_signatures),
+    showCompletionStamp: Boolean(row.show_completion_stamp),
+    updatedAt: toIso(row.updated_at),
+  };
+}
 
 function parsePageSize(val: string | null | undefined): "A4" | "A5" | "thermal_80mm" {
   if (val === "A5" || val === "thermal_80mm") return val;
@@ -346,17 +406,115 @@ export class PrintTemplatesService {
   }
 
   /**
+   * Получение настроек конструктора печати (реквизиты, брендинг, правила, видимость)
+   */
+  async getSettings(tenantId: string): Promise<PrintTemplateSettingsDTO> {
+    const row = await queryOne<PrintTemplateSettingsRow>(
+      `SELECT * FROM print_template_settings WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    if (row) {
+      return toSettingsDto(row);
+    }
+
+    const inserted = await withTenant(tenantId, async (tx) => {
+      const tenant = await tx.queryOne<{ name: string }>(
+        `SELECT name FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      const companyName = tenant?.name || "Ремонт инструмента ИП Сагайдак А.Г.";
+
+      return tx.queryOneOrThrow<PrintTemplateSettingsRow>(
+        `INSERT INTO print_template_settings (tenant_id, company_name)
+         VALUES ($1, $2)
+         ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now()
+         RETURNING *`,
+        [tenantId, companyName],
+      );
+    });
+
+    return toSettingsDto(inserted);
+  }
+
+  /**
+   * Обновление настроек конструктора печати
+   */
+  async updateSettings(
+    tenantId: string,
+    payload: UpdatePrintTemplateSettingsPayload,
+  ): Promise<PrintTemplateSettingsDTO> {
+    await this.getSettings(tenantId);
+
+    const fields: string[] = [];
+    const params: SqlParam[] = [tenantId];
+
+    const stringFields = [
+      "company_name",
+      "company_address",
+      "company_phone",
+      "company_email",
+      "company_website",
+      "company_inn",
+      "company_ogrn",
+      "working_hours",
+      "logo_url",
+      "numbering_format",
+      "numbering_prefix",
+      "intake_terms",
+      "intake_pdn_consent",
+      "warranty_terms",
+      "return_policy",
+    ] as const;
+
+    const boolFields = [
+      "show_equipment_serial",
+      "show_appearance",
+      "show_package_contents",
+      "show_defect_description",
+      "show_estimated_cost",
+      "show_client_tear_off_ticket",
+      "show_intake_signatures",
+      "show_works_table",
+      "show_parts_table",
+      "show_completion_signatures",
+      "show_completion_stamp",
+    ] as const;
+
+    for (const key of stringFields) {
+      if (payload[key] !== undefined) {
+        params.push(payload[key]);
+        fields.push(`${key} = $${params.length}`);
+      }
+    }
+
+    for (const key of boolFields) {
+      if (payload[key] !== undefined) {
+        params.push(payload[key]);
+        fields.push(`${key} = $${params.length}`);
+      }
+    }
+
+    if (fields.length > 0) {
+      fields.push(`updated_at = now()`);
+      await query(
+        `UPDATE print_template_settings
+         SET ${fields.join(", ")}
+         WHERE tenant_id = $1`,
+        params,
+      );
+    }
+
+    return this.getSettings(tenantId);
+  }
+
+  /**
    * Рендер шаблона с реальными данными наряда
    */
   async renderForOrder(tenantId: string, slug: string, orderId: string): Promise<string> {
     const tpl = await this.getBySlug(tenantId, slug);
     if (!tpl) throw new AppError(404, "TEMPLATE_NOT_FOUND", `Print template "${slug}" not found`);
 
-    // Загружаем данные компании тенанта
-    const tenant = await queryOne<{ name: string }>(
-      `SELECT name FROM tenants WHERE id = $1`,
-      [tenantId],
-    );
+    const settings = await this.getSettings(tenantId);
 
     // Загружаем данные наряда
     const order = await queryOne<{
@@ -501,31 +659,52 @@ export class PrintTemplatesService {
 
     const totalCost = worksSum + partsSum;
 
+    const displayTicketNumber = formatTicketNumber(
+      order.ticket_number,
+      settings.numberingFormat,
+      settings.numberingPrefix,
+    );
+    const bareTicketNumber = displayTicketNumber.startsWith("№")
+      ? displayTicketNumber.slice(1).trim()
+      : displayTicketNumber;
+
     // Подставляем переменные
     let html = tpl.bodyTemplate;
+
+    // Сначала заменяем префиксные вхождения, чтобы избежать дублирования символа № (№№0005)
+    html = html.replaceAll("№{{ticket_number}}", displayTicketNumber);
+    html = html.replaceAll("№ {{ticket_number}}", displayTicketNumber);
+
     const replacements: Record<string, string> = {
-      "{{company_name}}": tenant?.name || "Сервисный центр",
-      "{{company_phone}}": "+7 (999) 000-00-00",
-      "{{company_address}}": "г. Москва, ул. Сервисная, д. 1",
-      "{{company_inn}}": "7700000000",
-      "{{ticket_number}}": order.ticket_number,
+      "{{company_name}}": settings.companyName || "Сервисный центр",
+      "{{company_phone}}": settings.companyPhone || "+7 (999) 000-00-00",
+      "{{company_address}}": settings.companyAddress || "г. Москва",
+      "{{company_inn}}": settings.companyInn || "—",
+      "{{company_website}}": settings.companyWebsite || "",
+      "{{working_hours}}": settings.workingHours || "",
+      "{{logo_url}}": settings.logoUrl || "/service-logo.png",
+      "{{ticket_number}}": bareTicketNumber,
+      "{{full_ticket_number}}": displayTicketNumber,
       "{{date}}": formatDateRu(order.received_at),
       "{{client_name}}": order.customer_name || "Не указан",
       "{{client_phone}}": order.customer_phone || "—",
       "{{equipment_type}}": order.equipment_type || "",
       "{{equipment_brand}}": order.equipment_brand || "",
       "{{equipment_model}}": order.equipment_model || "",
-      "{{equipment_serial}}": order.equipment_serial || "—",
-      "{{defect_description}}": order.defect_description || "—",
-      "{{appearance}}": order.appearance || "Без видимых повреждений",
-      "{{package_contents}}": order.package_contents || "Аппарат без аксессуаров",
+      "{{equipment_serial}}": settings.showEquipmentSerial ? (order.equipment_serial || "—") : "—",
+      "{{defect_description}}": settings.showDefectDescription ? (order.defect_description || "—") : "—",
+      "{{appearance}}": settings.showAppearance ? (order.appearance || "Без видимых повреждений") : "—",
+      "{{package_contents}}": settings.showPackageContents ? (order.package_contents || "Аппарат без аксессуаров") : "—",
       "{{master_name}}": order.master_name || "Дежурный мастер",
-      "{{estimated_cost}}": formatMoney(Number(order.estimated_cost || 0)),
-      "{{works_table}}": worksTableHtml,
-      "{{parts_table}}": partsTableHtml,
+      "{{estimated_cost}}": settings.showEstimatedCost ? formatMoney(Number(order.estimated_cost || 0)) : "—",
+      "{{works_table}}": settings.showWorksTable ? worksTableHtml : "",
+      "{{parts_table}}": settings.showPartsTable ? partsTableHtml : "",
       "{{works_total}}": formatMoney(worksSum),
       "{{parts_total}}": formatMoney(partsSum),
       "{{total_cost}}": formatMoney(totalCost),
+      "{{intake_terms}}": settings.intakeTerms,
+      "{{warranty_terms}}": settings.warrantyTerms,
+      "{{return_policy}}": settings.returnPolicy,
     };
 
     for (const [key, val] of Object.entries(replacements)) {
@@ -537,7 +716,7 @@ export class PrintTemplatesService {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>${tpl.name} — ${order.ticket_number}</title>
+  <title>${tpl.name} — ${displayTicketNumber}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
