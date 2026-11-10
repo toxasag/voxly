@@ -82,6 +82,7 @@ export interface Tenant {
   slug: string;
   plan: string;
   is_partner?: boolean;
+  tenant_type?: "partner" | "client";
   parent_tenant_id?: string | null;
   owner_partner_id?: string | null;
   installedModules: InstalledModule[];
