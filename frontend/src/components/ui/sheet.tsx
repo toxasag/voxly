@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { X } from "lucide-react";
+import { X, Maximize2, Minimize2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 import { useHorizontalResize } from "@/lib/utils/use-horizontal-resize";
@@ -33,10 +33,15 @@ export function Sheet({
 }: SheetProps) {
   useOverlay(open, { onEscape: onClose });
   const stored = useSidePanelWidth();
+  const dynamicMax =
+    typeof window !== "undefined"
+      ? Math.min(MAX_SIDE_PANEL_WIDTH, Math.max(MIN_SIDE_PANEL_WIDTH, Math.round(window.innerWidth * 0.94)))
+      : MAX_SIDE_PANEL_WIDTH;
+
   const { width: liveWidth, startResize } = useHorizontalResize({
     value: stored.width,
     min: MIN_SIDE_PANEL_WIDTH,
-    max: MAX_SIDE_PANEL_WIDTH,
+    max: dynamicMax,
     onCommit: stored.setWidth,
     invert: side === "right",
   });
@@ -44,11 +49,15 @@ export function Sheet({
   if (!open) return null;
 
   const isRight = side === "right";
-  const widthClass = isMaximized ? "w-full md:w-[920px]" : resizable ? undefined : width;
-  const widthStyle = isMaximized
-    ? { width: "min(100%, 920px)" }
+  const widthClass = isMaximized
+    ? "w-full md:w-[92vw] max-w-[1600px]"
     : resizable
-      ? { width: `min(100%, ${liveWidth}px)` }
+      ? "w-full max-w-[94vw]"
+      : width;
+  const widthStyle = isMaximized
+    ? { width: "min(92vw, 1600px)" }
+    : resizable
+      ? { width: `min(94vw, ${liveWidth}px)` }
       : undefined;
 
   return (
@@ -63,12 +72,14 @@ export function Sheet({
         style={widthStyle}
       >
         {resizable && !isMaximized && (
-          <button
-            type="button"
+          <div
             aria-label="Изменить ширину панели"
+            title="Перетащите для изменения ширины панели"
             onPointerDown={startResize}
-            className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-[#3b82f6]/40 md:block"
-          />
+            className="group/resize absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize items-center justify-center transition-colors md:flex select-none"
+          >
+            <div className="h-10 w-1 rounded-full bg-[#d1d5db] group-hover/resize:bg-[#4a38f5] group-active/resize:bg-[#4a38f5] transition-colors" />
+          </div>
         )}
         {children}
       </div>
@@ -83,6 +94,7 @@ interface SheetHeaderProps {
   isDeleting?: boolean;
   onToggleMaximize?: () => void;
   isMaximized?: boolean;
+  onOpenFullPage?: () => void;
 }
 
 export function SheetHeader({
@@ -92,6 +104,7 @@ export function SheetHeader({
   isDeleting = false,
   onToggleMaximize,
   isMaximized = false,
+  onOpenFullPage,
 }: SheetHeaderProps) {
   return (
     <div className="flex items-center justify-between border-b border-[#e5e5e5] px-6 py-3.5 bg-white shrink-0">
@@ -106,27 +119,29 @@ export function SheetHeader({
           <button
             type="button"
             onClick={onToggleMaximize}
-            aria-label={isMaximized ? "Свернуть" : "Развернуть"}
-            title="Развернуть"
+            aria-label={isMaximized ? "Свернуть в стандартную ширину" : "Развернуть во всю ширину"}
+            title={isMaximized ? "Свернуть в стандартную ширину" : "Развернуть во всю ширину"}
+            className={cn(
+              "rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer",
+              isMaximized && "bg-[#4a38f5]/10 text-[#4a38f5] hover:bg-[#4a38f5]/20 hover:text-[#4a38f5]",
+            )}
+          >
+            {isMaximized ? (
+              <Minimize2 className="h-4 w-4" />
+            ) : (
+              <Maximize2 className="h-4 w-4" />
+            )}
+          </button>
+        )}
+        {onOpenFullPage !== undefined && (
+          <button
+            type="button"
+            onClick={onOpenFullPage}
+            aria-label="Открыть на отдельной странице"
+            title="Открыть на отдельной странице"
             className="rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              {isMaximized ? (
-                <>
-                  <polyline points="4 14 10 14 10 20" />
-                  <polyline points="20 10 14 10 14 4" />
-                  <line x1="14" y1="10" x2="21" y2="3" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </>
-              ) : (
-                <>
-                  <polyline points="15 3 21 3 21 9" />
-                  <polyline points="9 21 3 21 3 15" />
-                  <line x1="21" y1="3" x2="14" y2="10" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </>
-              )}
-            </svg>
+            <ExternalLink className="h-4 w-4" />
           </button>
         )}
         {onClose && (
