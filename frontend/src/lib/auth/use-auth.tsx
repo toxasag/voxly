@@ -52,6 +52,7 @@ export interface UserProfileDTO {
     plan: string;
     status: string;
     is_partner?: boolean;
+    tenant_type?: "partner" | "client";
     parent_tenant_id?: string | null;
     owner_partner_id?: string | null;
   };
@@ -186,6 +187,7 @@ function toTenant(dto: AuthTokensDTO["tenant"]): Tenant {
     slug: dto.slug ?? "",
     plan: dto.plan,
     is_partner: Boolean(dto.is_partner),
+    tenant_type: dto.tenant_type ?? (dto.is_partner ? "partner" : "client"),
     parent_tenant_id: dto.parent_tenant_id ?? null,
     owner_partner_id: dto.owner_partner_id ?? null,
     // Filled reactively from GET /api/v1/tenant/modules in AuthProvider.

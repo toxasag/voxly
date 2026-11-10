@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS tenants (
   custom_plan_name TEXT DEFAULT NULL,
   business_niche TEXT DEFAULT NULL,
   custom_notes TEXT DEFAULT NULL,
+  is_partner BOOLEAN NOT NULL DEFAULT false,
+  tenant_type VARCHAR(20) NOT NULL DEFAULT 'client',
+  parent_tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+  owner_partner_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT tenants_slug_format CHECK (

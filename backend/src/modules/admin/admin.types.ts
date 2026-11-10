@@ -32,6 +32,18 @@ export const updateTenantSchema = z.object({
   /** Внутренние заметки менеджера платформы (допродажи, договоренности). */
   custom_notes: z.string().max(4000).nullable().optional(),
 
+  /** Режим тенанта: партнер или клиент */
+  tenant_type: z.enum(["partner", "client"]).optional(),
+
+  /** Флаг партнера платформы */
+  is_partner: z.boolean().optional(),
+
+  /** ID родительского партнера (для клиентских тенантов) */
+  parent_tenant_id: z.string().uuid().nullable().optional(),
+
+  /** ID владельца-партнера */
+  owner_partner_id: z.string().uuid().nullable().optional(),
+
   /** Политика аутентификации: обязательный 2FA через Telegram-бота */
   require_telegram_auth: z.boolean().optional(),
 
