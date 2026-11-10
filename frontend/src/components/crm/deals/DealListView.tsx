@@ -35,8 +35,8 @@ import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
 import { RecordCellShell, RecordCellEditor, RecordCellSelectEditor } from "@/components/crm/shared/RecordCell";
 import { TagPill } from "@/components/ui/tag";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
-import { CreatorCell } from "@/components/crm/shared/twenty-table-helpers";
-import { cn } from "@/lib/utils";
+import { CreatorCell, formatDateTwenty } from "@/components/crm/shared/twenty-table-helpers";
+import { cn, formatDateTime } from "@/lib/utils";
 
 interface DealListViewProps {
   deals: DealDTO[];
@@ -138,20 +138,6 @@ function formatBudgetTwenty(budget: number, currency: string = "RUB"): string {
     return `${symbol} ${Math.round(budget / 1000)}k`;
   }
   return `${symbol} ${budget.toLocaleString("ru-RU")}`;
-}
-
-// Форматирование даты под Twenty: "31 янв., 2026 19:25"
-function formatDateTwenty(isoString: string): string {
-  const d = new Date(isoString);
-  if (Number.isNaN(d.getTime())) return isoString;
-  const formatted = new Intl.DateTimeFormat("ru-RU", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(d);
-  return formatted.replace(" г.", "");
 }
 
 /**
@@ -294,19 +280,17 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
       id: "created",
       header: "Создано",
       icon: Clock,
-      width: 140,
+      width: 160,
       align: "left",
       sortValue: (deal) => deal.createdAt,
       render: (deal) => (
         <RecordCellShell align="left">
-          <CreatorCell
-            createdBy={deal.createdBy}
-            createdByName={
-              deal.createdBy === "system" || !deal.createdBy
-                ? "System"
-                : (usersById.get(deal.createdBy)?.fullName ?? deal.createdBy)
-            }
-          />
+          <span
+            title={formatDateTime(deal.createdAt)}
+            className="text-[13px] text-[#111111] whitespace-nowrap font-normal"
+          >
+            {formatDateTwenty(deal.createdAt)}
+          </span>
         </RecordCellShell>
       ),
     },
@@ -827,7 +811,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
     },
     {
       id: "createdBy",
-      header: "Кем обновлено",
+      header: "Кем создано",
       icon: User,
       width: 170,
       hideable: true,
