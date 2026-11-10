@@ -33,7 +33,7 @@ interface RecordCellShellProps {
   isEmpty?: boolean;
   editable?: boolean;
   onStartEdit?: () => void;
-  align?: "left" | "right";
+  align?: "left" | "right" | "center";
   /**
    * Ячейка первой колонки (идентификатор записи).
    *
@@ -74,6 +74,7 @@ export function RecordCellShell({
       className={cn(
         "group/cell relative flex h-full w-full items-center overflow-hidden whitespace-nowrap px-1 outline-none",
         align === "right" && "justify-end",
+        align === "center" && "justify-center",
         canEdit && "cursor-text",
         opensOnClick && "cursor-pointer",
         className,
@@ -84,12 +85,14 @@ export function RecordCellShell({
           "flex min-h-[26px] h-full w-full min-w-0 items-center justify-between rounded-[5px] border border-transparent px-1.5 transition-all duration-100",
           editable && "group-hover/cell:border-[#d1d5db] group-hover/cell:bg-white group-hover/cell:shadow-2xs",
           align === "right" && "justify-end",
+        align === "center" && "justify-center",
         )}
       >
         <div
           className={cn(
             "flex min-w-0 flex-1 items-center gap-1.5",
             align === "right" && "justify-end",
+        align === "center" && "justify-center",
           )}
         >
           {isEmpty && emptyLabel !== undefined ? (
@@ -131,7 +134,7 @@ interface TextEditorProps {
   onCommit: (value: string) => void;
   onCancel: () => void;
   type?: "text" | "number" | "date";
-  align?: "left" | "right";
+  align?: "left" | "right" | "center";
 }
 
 /**
