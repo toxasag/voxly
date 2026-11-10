@@ -718,6 +718,26 @@ export interface EquipmentSearchSerialResultDTO {
   history: EquipmentHistoryItemDTO[];
 }
 
+export interface DealActDTO {
+  id: string;
+  ticketNumber: string;
+  dealId: string | null;
+  equipmentType: string;
+  equipmentBrand: string;
+  equipmentModel: string;
+  equipmentSerial: string;
+  customerName: string;
+  customerPhone: string;
+  status: string;
+  paymentStatus: string;
+  worksTotal: number;
+  partsTotal: number;
+  totalAmount: number;
+  isCurrent: boolean;
+  createdAt: string;
+}
+
+
 /** Sums works and parts into the order's money breakdown. */
 export function calculateTotals(
   works: RepairWorkDTO[],
