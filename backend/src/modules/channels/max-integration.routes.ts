@@ -317,7 +317,12 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
 
   // Если сообщение пришло с флагом исходящего (например, из нативного приложения оператора),
   // перенаправляем в обработчик нативных исходящих
-  if (body.out === true || body.fromMe === true || body.direction === "outbound") {
+  if (
+    body.out === true ||
+    body.fromMe === true ||
+    body.direction === "outbound" ||
+    body.senderType === "operator"
+  ) {
     return processMaxOutbound(request, reply);
   }
 
@@ -684,7 +689,7 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
       username: body.username ?? body.senderUsername ?? null,
       text: body.text,
       senderName: "Менеджер",
-      pauseMinutes: 30,
+      pauseMinutes: 60,
       attachment: attachmentUrl,
       attachmentType: attachmentType,
     }),
