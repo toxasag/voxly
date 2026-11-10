@@ -539,10 +539,13 @@ export default function AdminTenantsPage() {
         });
 
         toast.success(`Вход выполнен под организацией «${tenant.name}» ${userEmail ? `(${userEmail})` : ""}`);
-        // Переходим напрямую на персональный домен/поддомен арендатора с handoff токена
+        // Переходим напрямую на персональный домен/поддомен арендатора с handoff токена и бэкапа
         const targetUrl = targetSlug ? tenantPortalUrl(targetSlug, "/crm/deals") : "/crm/deals";
+        const hashParams = new URLSearchParams();
+        hashParams.set("tenant_token", newAccessToken);
+        hashParams.set("impersonator_backup", JSON.stringify(backup));
         const redirectUrl = targetUrl.includes("://")
-          ? `${targetUrl}#tenant_token=${encodeURIComponent(newAccessToken)}`
+          ? `${targetUrl}#${hashParams.toString()}`
           : targetUrl;
         window.location.href = redirectUrl;
       } catch (err) {
