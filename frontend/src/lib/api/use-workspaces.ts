@@ -79,8 +79,9 @@ export async function switchWorkspace(
   }
 
   // При входе в дочернее пространство сохраняем текущую сессию в бэкап
-  if (currentAccessToken && !existingBackup) {
-    writeImpersonationBackup({
+  let activeBackup = existingBackup;
+  if (currentAccessToken && !activeBackup) {
+    activeBackup = {
       accessToken: currentAccessToken,
       refreshToken: currentRefreshToken || currentAccessToken,
       adminUserEmail: userEmail ?? "",
@@ -91,7 +92,8 @@ export async function switchWorkspace(
       isPlatformOwner: isPlatformOwner ?? false,
       impersonatedTenantSlug: normTarget,
       enteredAt: new Date().toISOString(),
-    });
+    };
+    writeImpersonationBackup(activeBackup);
   }
 
   // Выпускаем токены для целевого пространства
@@ -106,10 +108,13 @@ export async function switchWorkspace(
       writeTokens({ accessToken: access_token, refreshToken: refresh_token });
     }
     const targetUrl = tenantPortalUrl(normTarget, "/crm/contacts");
-    const redirectUrl =
-      targetUrl.includes("://") && access_token
-        ? `${targetUrl}#tenant_token=${encodeURIComponent(access_token)}`
-        : targetUrl;
+    const hashParams = new URLSearchParams();
+    if (access_token) hashParams.set("tenant_token", access_token);
+    if (activeBackup) hashParams.set("impersonator_backup", JSON.stringify(activeBackup));
+
+    const redirectUrl = targetUrl.includes("://")
+      ? `${targetUrl}#${hashParams.toString()}`
+      : targetUrl;
     window.location.href = redirectUrl;
   }
 }

@@ -19,6 +19,7 @@ import {
   getTokenRemainingSeconds,
   hasSession,
 } from "@/lib/auth/session";
+import { readImpersonationBackup, writeImpersonationBackup } from "@/lib/auth/impersonation";
 import { isModuleSlug } from "@/types";
 import type {
   CurrentUser,
@@ -33,6 +34,18 @@ import type {
 // ---------------------------------------------------------------------------
 // Backend contract (docs/03_API_CONTRACTS/03_01_AUTH_API.md §4)
 // ---------------------------------------------------------------------------
+
+export interface ImpersonatorInfo {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  platform_role: PlatformRole | null;
+  is_partner?: boolean;
+  tenant_id: string;
+  tenant_slug: string;
+  tenant_name: string;
+}
 
 export interface UserProfileDTO {
   user: {
@@ -56,6 +69,7 @@ export interface UserProfileDTO {
     parent_tenant_id?: string | null;
     owner_partner_id?: string | null;
   };
+  impersonator?: ImpersonatorInfo | null;
 }
 
 export interface AuthTokensDTO extends UserProfileDTO {
@@ -90,6 +104,7 @@ export interface MessageDTO {
 interface AuthState {
   user: CurrentUser | null;
   tenant: Tenant | null;
+  impersonator: ImpersonatorInfo | null;
   isAuthenticated: boolean;
   isLoading: boolean;
 }
@@ -205,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
     tenant: null,
+    impersonator: null,
     isAuthenticated: false,
     isLoading: true,
   });
@@ -255,9 +271,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       writeTokens({ accessToken: dto.access_token, refreshToken: dto.refresh_token });
     }
 
+    if (dto.impersonator) {
+      const existing = readImpersonationBackup();
+      if (!existing) {
+        writeImpersonationBackup({
+          accessToken: readAccessToken() || "",
+          adminUserEmail: dto.impersonator.email,
+          adminUserName: dto.impersonator.name,
+          adminOriginHost: `${dto.impersonator.tenant_slug}.getvoxly.ru`,
+          adminOriginPath: dto.impersonator.platform_role === "platform_owner" ? "/admin/tenants" : "/partner",
+          isPartner: Boolean(dto.impersonator.is_partner || dto.impersonator.role === "partner"),
+          isPlatformOwner: dto.impersonator.platform_role === "platform_owner",
+          impersonatedTenantSlug: dto.tenant.slug,
+          impersonatedTenantName: dto.tenant.name,
+          impersonatedUserEmail: dto.user.email,
+          enteredAt: new Date().toISOString(),
+        });
+      }
+    }
+
     setState({
       user: toCurrentUser(dto.user),
       tenant: toTenant(dto.tenant),
+      impersonator: dto.impersonator ?? null,
       isAuthenticated: true,
       isLoading: false,
     });
@@ -265,7 +301,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resetSession = useCallback(() => {
     clearSession();
-    setState({ user: null, tenant: null, isAuthenticated: false, isLoading: false });
+    setState({ user: null, tenant: null, impersonator: null, isAuthenticated: false, isLoading: false });
   }, []);
 
   /**

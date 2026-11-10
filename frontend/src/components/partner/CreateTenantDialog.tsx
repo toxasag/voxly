@@ -34,7 +34,7 @@ import {
   type CreatePartnerTenantResponse,
 } from "@/lib/api/use-partner";
 import { useAuth, type AuthTokensDTO } from "@/lib/auth/use-auth";
-import { writeImpersonationBackup } from "@/lib/auth/impersonation";
+import { writeImpersonationBackup, type ImpersonationBackup } from "@/lib/auth/impersonation";
 import { readAccessToken, readRefreshToken, writeTokens } from "@/lib/auth/session";
 import { apiClient } from "@/lib/api/apiClient";
 import { tenantPortalUrl } from "@/lib/auth/tenant-host";
@@ -402,8 +402,9 @@ export function CreateTenantDialog({ open, onClose }: CreateTenantDialogProps) {
                       const currentAccessToken = readAccessToken();
                       const currentRefreshToken = readRefreshToken();
                       const child = createdResult.result.tenant;
+                      let backupData: ImpersonationBackup | null = null;
                       if (currentAccessToken) {
-                        writeImpersonationBackup({
+                        backupData = {
                           accessToken: currentAccessToken,
                           refreshToken: currentRefreshToken || currentAccessToken,
                           adminUserEmail: user?.email ?? "",
@@ -416,7 +417,8 @@ export function CreateTenantDialog({ open, onClose }: CreateTenantDialogProps) {
                           impersonatedTenantName: child.name,
                           impersonatedUserEmail: createdResult.result.admin.email,
                           enteredAt: new Date().toISOString(),
-                        });
+                        };
+                        writeImpersonationBackup(backupData);
                       }
                       const res = await apiClient.post<AuthTokensDTO>("/api/v1/auth/impersonate", {
                         slug: child.slug,
@@ -427,9 +429,13 @@ export function CreateTenantDialog({ open, onClose }: CreateTenantDialogProps) {
                           writeTokens({ accessToken: access_token, refreshToken: refresh_token });
                         }
                         const targetUrl = tenantPortalUrl(child.slug, "/dashboard");
+                        const hashParams = new URLSearchParams();
+                        if (access_token) hashParams.set("tenant_token", access_token);
+                        if (backupData) hashParams.set("impersonator_backup", JSON.stringify(backupData));
+
                         window.location.href =
-                          targetUrl.includes("://") && access_token
-                            ? `${targetUrl}#tenant_token=${encodeURIComponent(access_token)}`
+                          targetUrl.includes("://")
+                            ? `${targetUrl}#${hashParams.toString()}`
                             : targetUrl;
                       }
                     } catch (err) {

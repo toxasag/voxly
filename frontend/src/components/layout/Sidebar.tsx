@@ -108,7 +108,7 @@ export function Sidebar({
   onToggle: () => void;
 }) {
   const pathname = usePathname();
-  const { tenant, user, logout } = useAuth();
+  const { tenant, user, logout, impersonator } = useAuth();
   const { data: liveModules } = useTenantModules(tenant?.tenantId ?? null);
   const [tenantMenuOpen, setTenantMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
@@ -185,7 +185,8 @@ export function Sidebar({
 
   const backup = typeof window !== "undefined" ? readImpersonationBackup() : null;
   const isImpersonatingClient = Boolean(
-    backup && (!isPlatformOwner || (tenant?.slug !== "voxly" && Boolean(tenant?.slug))),
+    impersonator ||
+      (backup && (!isPlatformOwner || (tenant?.slug !== "voxly" && Boolean(tenant?.slug)))),
   );
 
   const toggleCollapsed = onToggle;
@@ -196,11 +197,11 @@ export function Sidebar({
     if (isImpersonatingClient) {
       try {
         const res = await restoreAdminSessionDetailed();
-        window.location.href = res.targetUrl || getPlatformAdminUrl();
+        window.location.href = res.targetUrl || getPlatformAdminUrl(undefined, backup);
         return;
       } catch (err) {
         console.error("Ошибка выхода из аккаунта клиента:", err);
-        window.location.href = getPlatformAdminUrl();
+        window.location.href = getPlatformAdminUrl(undefined, backup);
         return;
       }
     }
@@ -208,7 +209,7 @@ export function Sidebar({
     await logout().finally(() => {
       window.location.href = "/login";
     });
-  }, [isImpersonatingClient, logout]);
+  }, [isImpersonatingClient, logout, backup]);
 
   const visibleNav = visibleMainNav(installedSlugs, permissions);
   const visibleChannels = visibleChannelNav(installedSlugs, permissions);
