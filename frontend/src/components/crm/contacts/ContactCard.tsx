@@ -37,7 +37,7 @@ import type { ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.sc
 import { extractContactEmails, prepareEmailsPayload } from "@/lib/crm/emails";
 import { formatSocialDisplay, isDisplayableSocial, socialHref, socialIcon, socialLabel } from "@/lib/crm/socials";
 import { formatPhone, telHref } from "@/lib/utils/phone";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
@@ -662,7 +662,7 @@ export const ContactCard = memo(function ContactCard({
           label="Создан"
           value={contact.createdAt}
           readOnly
-          display={<span title={fullDate(contact.createdAt)}>{timeAgo(contact.createdAt)}</span>}
+          display={<span title={fullDate(contact.createdAt)}>{formatDateTime(contact.createdAt)}</span>}
         />
         <RecordField
           icon={UserCircle2}
@@ -679,7 +679,7 @@ export const ContactCard = memo(function ContactCard({
           label="Изменён"
           value={contact.updatedAt}
           readOnly
-          display={<span title={fullDate(contact.updatedAt)}>{timeAgo(contact.updatedAt)}</span>}
+          display={<span title={fullDate(contact.updatedAt)}>{formatDateTime(contact.updatedAt)}</span>}
         />
         {Object.entries(contact.customFields)
           .filter(([, value]) => value !== null && value !== undefined && String(value) !== "")

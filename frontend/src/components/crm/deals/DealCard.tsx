@@ -26,7 +26,7 @@ import {
   type DealCardFieldVisibility,
 } from "@/components/crm/deals/deal-card-fields";
 import { useIsMobile } from "@/lib/utils/use-is-mobile";
-import { cn } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 
 export type DealCardOptions = DealCardFieldVisibility;
 
@@ -319,14 +319,14 @@ export const DealCard = memo(function DealCard({
         {/* Дата создания */}
         {Boolean(options.createdAt) && (
           <div className="text-xs text-[#888888]">
-            Создана: {new Date(deal.createdAt).toLocaleDateString("ru-RU")}
+            Создана: {formatDateTime(deal.createdAt)}
           </div>
         )}
 
         {/* Дата обновления */}
         {Boolean(options.updatedAt) && (
           <div className="text-xs text-[#888888]">
-            Обновлена: {new Date(deal.updatedAt).toLocaleDateString("ru-RU")}
+            Обновлена: {formatDateTime(deal.updatedAt)}
           </div>
         )}
 
@@ -334,7 +334,7 @@ export const DealCard = memo(function DealCard({
         {Boolean(options.closedAt) && (
           <div className="text-xs text-[#888888]">
             {deal.closedAt
-              ? `Закрыта: ${new Date(deal.closedAt).toLocaleDateString("ru-RU")}`
+              ? `Закрыта: ${formatDateTime(deal.closedAt)}`
               : "Закрыта: —"}
           </div>
         )}

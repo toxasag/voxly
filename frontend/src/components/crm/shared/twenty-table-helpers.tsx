@@ -93,9 +93,10 @@ export function formatBudgetTwenty(budget: number, currency: string = "RUB"): st
 }
 
 // Форматирование даты под Twenty: "31 янв., 2026 19:25"
-export function formatDateTwenty(isoString: string): string {
+export function formatDateTwenty(isoString?: string | null): string {
+  if (!isoString) return "—";
   const d = new Date(isoString);
-  if (Number.isNaN(d.getTime())) return isoString;
+  if (Number.isNaN(d.getTime())) return "—";
   const formatted = new Intl.DateTimeFormat("ru-RU", {
     day: "numeric",
     month: "short",
@@ -183,7 +184,7 @@ export function ContactAvatarCell({
 }
 
 /**
- * Автор записи (колонка «Создано»):
+ * Автор записи (колонка «Кем создано»):
  * Если система — иконка робота и подпись «System» (Скриншоты 4, 5, 6).
  * Если пользователь — круглый цветной аватар с первой буквой имени + имя.
  */
