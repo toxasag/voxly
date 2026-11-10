@@ -105,12 +105,18 @@ export function TenantManageModal({
   const [requireTelegramAuth, setRequireTelegramAuth] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  const isPlatformRoot =
+    tenant?.slug === "voxly" ||
+    tenant?.id === "c0000000-0000-0000-0000-000000000001";
+
   const availablePartners = useMemo(() => {
     return (allTenants || []).filter(
       (t) =>
-        (t.is_partner || t.tenant_type === "partner") &&
-        t.id !== tenant?.id &&
-        t.slug !== "voxly",
+        (t.is_partner ||
+          t.tenant_type === "partner" ||
+          t.slug === "voxly" ||
+          t.id === "c0000000-0000-0000-0000-000000000001") &&
+        t.id !== tenant?.id,
     );
   }, [allTenants, tenant?.id]);
 
@@ -444,7 +450,10 @@ export function TenantManageModal({
             {/* Карточка: Клиент */}
             <button
               type="button"
+              disabled={isPlatformRoot}
+              title={isPlatformRoot ? "Основная платформа GETVOXLY не может быть клиентским аккаунтом" : undefined}
               onClick={() => {
+                if (isPlatformRoot) return;
                 setTenantType("client");
                 if (isCustomPrice && (customPriceRubles === "0" || !customPlanName)) {
                   setCustomPlanName("Бесплатный (Клиент)");
@@ -452,9 +461,11 @@ export function TenantManageModal({
               }}
               className={cn(
                 "relative flex flex-col items-start rounded-[8px] border p-3.5 text-left transition-all",
-                tenantType === "client"
-                  ? "border-[#4a38f5] bg-[#4a38f5]/5 shadow-xs"
-                  : "border-[#e5e5e5] bg-[#fafafa] hover:border-[#cccccc] hover:bg-white",
+                isPlatformRoot
+                  ? "border-[#e5e5e5] bg-[#f5f5f5] opacity-50 cursor-not-allowed"
+                  : tenantType === "client"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/5 shadow-xs"
+                    : "border-[#e5e5e5] bg-[#fafafa] hover:border-[#cccccc] hover:bg-white",
               )}
             >
               <div className="flex w-full items-center justify-between">
@@ -478,7 +489,9 @@ export function TenantManageModal({
                 )}
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-[#666666]">
-                Конечный пользователь CRM (прямой клиент платформы или суб-клиент партнёра).
+                {isPlatformRoot
+                  ? "Основная платформа GETVOXLY управляет всеми организациями."
+                  : "Конечный пользователь CRM (прямой клиент платформы или суб-клиент партнёра)."}
               </p>
             </button>
           </div>
@@ -487,27 +500,32 @@ export function TenantManageModal({
           {tenantType === "client" && (
             <div className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2">
               <label className="block text-xs font-medium text-[#111111]">
-                Партнёр-владелец (Parent Partner)
+                Партнёр-владелец или портал платформы (Parent Organization)
               </label>
               <select
                 value={parentPartnerId}
                 onChange={(e) => setParentPartnerId(e.target.value)}
                 className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               >
-                <option value="">Без партнёра (Прямой клиент платформы)</option>
-                {availablePartners.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} {p.slug ? `(@${p.slug})` : ""} — Партнёр
-                  </option>
-                ))}
+                <option value="">Без партнёра (Прямой независимый клиент)</option>
+                {availablePartners.map((p) => {
+                  const isRoot =
+                    p.slug === "voxly" ||
+                    p.id === "c0000000-0000-0000-0000-000000000001";
+                  return (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.slug ? `(@${p.slug})` : ""} — {isRoot ? "Основная платформа (Voxly)" : "Партнёр платформы"}
+                    </option>
+                  );
+                })}
               </select>
               <p className="text-[11px] text-[#666666]">
                 {parentPartnerId ? (
                   <>
-                    Клиент закреплён за выбранным партнёром. В списке компаний он будет отображаться в иерархическом дереве под партнёром.
+                    Клиент закреплён за выбранной организацией. В списке компаний он будет отображаться в иерархическом дереве как дочерний портал.
                   </>
                 ) : (
-                  <>Клиент работает напрямую с платформой GETVOXLY без посредничества партнёра.</>
+                  <>Клиент работает напрямую и не привязан ни к какому родительскому порталу или партнёру.</>
                 )}
               </p>
             </div>

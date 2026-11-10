@@ -349,7 +349,7 @@ export class AgentPipelineService {
               profileParts.push(`Имя клиента: ${fullName}`);
               profileParts.push(`Имя клиента УЖЕ известно (${contactRow.first_name}). Обязательно обращайся к нему по имени и КАТЕГОРИЧЕСКИ НЕ СПРАШИВАЙ его имя повторно!`);
             } else {
-              profileParts.push(`Имя клиента пока неизвестно. Представься сам (Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}) и вежливо спроси: «Подскажите, как могу к вам обращаться?».`);
+              profileParts.push(`Имя клиента пока неизвестно. Представься сам (Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}) и вежливо спроси суть его задачи: «Подскажите, какой вопрос хотите решить?». Не трать отдельный вопрос на выяснение имени клиента.`);
             }
             if (contactRow.phone) profileParts.push(`Телефон: ${contactRow.phone}`);
             if (contactRow.notes && contactRow.notes.trim()) profileParts.push(`Заметки менеджера: ${contactRow.notes.trim()}`);
