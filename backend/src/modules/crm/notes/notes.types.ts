@@ -23,6 +23,7 @@ export const createNoteSchema = z.object({
   body: z.string().min(1, "Note body is required").max(20000),
   target_type: noteTargetTypeSchema,
   target_id: z.string().uuid("target_id must be a UUID"),
+  repair_order_id: z.string().uuid().optional(),
 });
 
 export const updateNoteSchema = z.object({
@@ -41,6 +42,8 @@ export interface NoteRow {
   contact_id: string | null;
   company_id: string | null;
   deal_id: string | null;
+  repair_order_id?: string | null;
+  repair_ticket_number?: string | null;
   created_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -54,6 +57,8 @@ export interface NoteDTO {
   body: string;
   targetType: NoteTargetType;
   targetId: string;
+  repairOrderId?: string | null;
+  repairTicketNumber?: string | null;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -89,6 +94,8 @@ export function toNoteDTO(row: NoteRow): NoteDTO {
     body: row.body,
     targetType: target.type,
     targetId: target.id,
+    repairOrderId: row.repair_order_id ?? null,
+    repairTicketNumber: row.repair_ticket_number ?? null,
     createdBy: row.created_by,
     createdByName: row.created_by_name ?? null,
     createdAt: toIso(row.created_at),

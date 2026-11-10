@@ -10,13 +10,17 @@ import { query, queryOne, queryOneOrThrow, type SqlParam } from "../../../db/cli
 
 const NOTE_COLUMNS = `
   n.id, n.tenant_id, n.title, n.body, n.contact_id, n.company_id, n.deal_id,
-  n.created_by, n.created_at, n.updated_at,
-  u.name AS created_by_name
+  n.repair_order_id, n.created_by, n.created_at, n.updated_at,
+  u.name AS created_by_name,
+  ro.ticket_number AS repair_ticket_number
 `;
 
 // Автор ограничен арендатором заметки: users вне RLS, и JOIN только по id
 // подставил бы имя пользователя чужого арендатора.
-const NOTE_JOINS = `LEFT JOIN users u ON u.id = n.created_by AND u.tenant_id = n.tenant_id`;
+const NOTE_JOINS = `
+  LEFT JOIN users u ON u.id = n.created_by AND u.tenant_id = n.tenant_id
+  LEFT JOIN repair_orders ro ON ro.id = n.repair_order_id AND ro.tenant_id = n.tenant_id
+`;
 
 export interface ListNotesOptions {
   targetType: NoteTargetType;
@@ -113,11 +117,11 @@ export class NotesService {
     const column = NOTE_TARGET_COLUMN[payload.target_type];
 
     const row = await queryOneOrThrow<NoteRow>(
-      `INSERT INTO notes (tenant_id, title, body, ${column}, created_by)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO notes (tenant_id, title, body, ${column}, repair_order_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, tenant_id, title, body, contact_id, company_id, deal_id,
-                 created_by, created_at, updated_at`,
-      [tenantId, payload.title ?? "", payload.body, payload.target_id, createdBy ?? null],
+                 repair_order_id, created_by, created_at, updated_at`,
+      [tenantId, payload.title ?? "", payload.body, payload.target_id, payload.repair_order_id ?? null, createdBy ?? null],
     );
 
     // Зеркалируем связь в junction-таблицу note_targets (Twenty CRM parity)
