@@ -7,6 +7,7 @@ import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import {
   channelSlugSchema,
   channelStatusSchema,
+  cloneChannelAccountSchema,
   createChannelAccountSchema,
   customizeAccountLinksSchema,
   updateChannelAccountSchema,
@@ -58,6 +59,15 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
     const body = createChannelAccountSchema.parse(request.body);
 
     const account = await service.create(request.tenant_id, channel, body);
+
+    return reply.status(201).send({ data: account });
+  });
+
+  app.post("/:channel/accounts/:id/clone", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const body = cloneChannelAccountSchema.parse(request.body);
+
+    const account = await service.clone(request.tenant_id, channel, id, body);
 
     return reply.status(201).send({ data: account });
   });

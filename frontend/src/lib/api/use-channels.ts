@@ -120,6 +120,36 @@ export function useCreateChannelAccount(
       (await apiClient.post<ChannelAccountDTO>(`${BASE_PATH}/${channel}/accounts`, payload)).data,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      void queryClient.invalidateQueries({ queryKey: ["widgets"] });
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
+    },
+  });
+}
+
+export interface CloneChannelAccountPayload {
+  id: string;
+  external_id: string;
+  label?: string;
+  agent_id?: string | null;
+}
+
+export function useCloneChannelAccount(
+  channel: ChannelSlug = "webchat",
+): UseMutationResult<ChannelAccountDTO, ApiClientError, CloneChannelAccountPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...body }) =>
+      (
+        await apiClient.post<ChannelAccountDTO>(
+          `${BASE_PATH}/${channel}/accounts/${id}/clone`,
+          body,
+        )
+      ).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      void queryClient.invalidateQueries({ queryKey: ["widgets"] });
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
     },
   });
 }
