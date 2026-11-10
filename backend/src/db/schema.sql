@@ -1561,6 +1561,36 @@ CREATE POLICY tenant_bitrix24_configs_isolation ON tenant_bitrix24_configs
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- Журнал синхронизации с Битрикс24 (наблюдаемость исходящих лидов)
+CREATE TABLE IF NOT EXISTS bitrix24_sync_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
+  entity_type VARCHAR(32) NOT NULL DEFAULT 'deal',
+  direction VARCHAR(16) NOT NULL DEFAULT 'outbound',
+  status VARCHAR(32) NOT NULL,
+  bitrix_lead_id VARCHAR(64),
+  webhook_url TEXT,
+  request_payload JSONB,
+  response_status INTEGER,
+  response_body JSONB,
+  error_message TEXT,
+  lead_source VARCHAR(64),
+  widget_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bitrix24_sync_logs_tenant_created ON bitrix24_sync_logs (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bitrix24_sync_logs_deal ON bitrix24_sync_logs (deal_id);
+
+ALTER TABLE bitrix24_sync_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bitrix24_sync_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS bitrix24_sync_logs_isolation ON bitrix24_sync_logs;
+CREATE POLICY bitrix24_sync_logs_isolation ON bitrix24_sync_logs
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Складской учет: Номенклатура
 CREATE TABLE IF NOT EXISTS warehouse_items (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -1644,12 +1674,56 @@ CREATE TABLE IF NOT EXISTS print_templates (
   slug TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  document_type VARCHAR(64) NOT NULL DEFAULT 'work_order',
   page_size TEXT NOT NULL DEFAULT 'A4',
   orientation TEXT NOT NULL DEFAULT 'portrait',
-  body_template TEXT NOT NULL,
+  body_template TEXT NOT NULL DEFAULT '',
+  layout_config JSONB NOT NULL DEFAULT '{}'::jsonb,
   is_default BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT uq_print_templates_tenant_slug UNIQUE (tenant_id, slug)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_print_templates_tenant_doctype_default
+  ON print_templates(tenant_id, document_type)
+  WHERE is_default = true;
+
+CREATE INDEX IF NOT EXISTS idx_print_templates_tenant_doctype
+  ON print_templates(tenant_id, document_type);
+
+-- Настройки печати и брендинга документов
+CREATE TABLE IF NOT EXISTS print_template_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  company_name TEXT NOT NULL DEFAULT 'Ремонт инструмента ИП Сагайдак А.Г.',
+  company_address TEXT NOT NULL DEFAULT 'Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214',
+  company_phone TEXT NOT NULL DEFAULT '+7 977 628 20 49',
+  company_email TEXT NOT NULL DEFAULT '',
+  company_website TEXT NOT NULL DEFAULT 'РЕМОНТ-ИНСТРУМЕНТ.РФ',
+  company_inn TEXT NOT NULL DEFAULT '',
+  company_ogrn TEXT NOT NULL DEFAULT '',
+  working_hours TEXT NOT NULL DEFAULT 'Пн-Пт 10:00-19:00',
+  logo_url TEXT NOT NULL DEFAULT '/service-logo.png',
+  numbering_format TEXT NOT NULL DEFAULT 'compact',
+  numbering_prefix TEXT NOT NULL DEFAULT '№',
+  intake_terms TEXT NOT NULL DEFAULT '',
+  intake_pdn_consent TEXT NOT NULL DEFAULT '',
+  show_equipment_serial BOOLEAN NOT NULL DEFAULT true,
+  show_appearance BOOLEAN NOT NULL DEFAULT true,
+  show_package_contents BOOLEAN NOT NULL DEFAULT true,
+  show_defect_description BOOLEAN NOT NULL DEFAULT true,
+  show_estimated_cost BOOLEAN NOT NULL DEFAULT true,
+  show_client_tear_off_ticket BOOLEAN NOT NULL DEFAULT true,
+  show_intake_signatures BOOLEAN NOT NULL DEFAULT true,
+  warranty_terms TEXT NOT NULL DEFAULT '',
+  return_policy TEXT NOT NULL DEFAULT '',
+  show_works_table BOOLEAN NOT NULL DEFAULT true,
+  show_parts_table BOOLEAN NOT NULL DEFAULT true,
+  show_completion_signatures BOOLEAN NOT NULL DEFAULT true,
+  show_completion_stamp BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_print_template_settings_tenant UNIQUE (tenant_id)
+);
+
 

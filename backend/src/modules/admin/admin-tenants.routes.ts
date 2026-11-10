@@ -375,7 +375,9 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const isPlatformOwner =
       request.authUser?.platform_role === "platform_owner" ||
       Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
-    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const partnerTenantId = request.tenant_is_partner
+      ? request.tenant_id
+      : (request.impersonator_tenant_id || request.tenant_id);
     const isParentPartner =
       (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
       (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
@@ -424,7 +426,9 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const isPlatformOwner =
       request.authUser?.platform_role === "platform_owner" ||
       Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
-    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const partnerTenantId = request.tenant_is_partner
+      ? request.tenant_id
+      : (request.impersonator_tenant_id || request.tenant_id);
     const isParentPartner =
       (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
       (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
