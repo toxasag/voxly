@@ -168,6 +168,12 @@ export class AgentPipelineService {
     text: string;
     channelType?: string;
     dealId?: string;
+    pageContext?: {
+      pageUrl?: string;
+      pageTitle?: string;
+      pathname?: string;
+      referrer?: string;
+    };
   }): Promise<PipelineOutcome> {
     // 0. Channel Gate: если канал не привязан к агенту (чекбокс снят или привязка удалена),
     // немедленно прерываем обработку без обращения к LLM и без списания токенов.
@@ -398,12 +404,40 @@ export class AgentPipelineService {
       }
     }
 
+    const rawUserText = input.text.trim();
+    // Очищаем историческое загрязнение [Пользователь на странице: ...] из пользовательского текста
+    const cleanedUserText = rawUserText.replace(/^\[Пользователь на странице:\s*[^\]]+\]\s*/i, "").trim();
+    const effectiveUserText = cleanedUserText.length > 0 ? cleanedUserText : rawUserText;
+
+    const extractedUrlMatch = rawUserText.match(/^\[Пользователь на странице:\s*([^\]]+)\]/i);
+    const matchedUrl = extractedUrlMatch?.[1]?.trim();
+    const effectivePageContext = {
+      ...input.pageContext,
+      pageUrl: input.pageContext?.pageUrl || matchedUrl || undefined,
+    };
+
+    // Сопоставляем контекст страницы с документами базы знаний агента
+    let matchedDoc: { id: string; filename: string; sourceUrl: string | null; matchReason: string; confidence: number } | null = null;
+    if (effectivePageContext.pageUrl || effectivePageContext.pageTitle || effectivePageContext.pathname) {
+      try {
+        matchedDoc = await this.knowledge.findDocumentByPageContext({
+          tenantId: input.tenantId,
+          agentId: agent.id,
+          pageUrl: effectivePageContext.pageUrl,
+          pageTitle: effectivePageContext.pageTitle,
+          pathname: effectivePageContext.pathname,
+        });
+      } catch (err) {
+        this.log.warn({ err, agentId: agent.id }, "Failed to find document by page context");
+      }
+    }
+
     const recentUserContext = conversationHistory
       .filter((m) => m.role === "user")
       .map((m) => m.content)
       .slice(-2)
       .join(" ");
-    const searchQuestion = recentUserContext ? `${recentUserContext} ${input.text}` : input.text;
+    const searchQuestion = recentUserContext ? `${recentUserContext} ${effectiveUserText}` : effectiveUserText;
 
     // Параллельный 4-слойный поиск: база знаний + закрытые сделки CRM + имя компании
     const [contextChunks, salesExamples, tenantRow] = await Promise.all([
@@ -412,6 +446,7 @@ export class AgentPipelineService {
           tenantId: input.tenantId,
           agentId: agent.id,
           question: searchQuestion,
+          priorityDocumentId: matchedDoc?.id,
         })
         .catch((error: unknown) => {
           this.log.warn(
@@ -514,6 +549,16 @@ export class AgentPipelineService {
       variables["contact.name"] = knownContactName;
     }
 
+    if (effectivePageContext.pageUrl) {
+      variables["current_page.url"] = effectivePageContext.pageUrl;
+    }
+    if (effectivePageContext.pageTitle) {
+      variables["current_page.title"] = effectivePageContext.pageTitle;
+    }
+    if (matchedDoc) {
+      variables["current_page.topic"] = matchedDoc.filename;
+    }
+
     if (wc) {
       if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
       if (wc.clientProfile || (wc as Record<string, unknown>).client_profile) {
@@ -522,6 +567,22 @@ export class AgentPipelineService {
       if (wc.targetAction) variables["target.action"] = wc.targetAction;
       if (wc.constraints) variables["constraints"] = wc.constraints;
       if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
+    }
+
+    let currentPageContextBlock = "";
+    if (effectivePageContext.pageUrl || effectivePageContext.pageTitle || matchedDoc) {
+      const lines: string[] = ["<current_page_context>"];
+      lines.push("Посетитель сайта сейчас находится на странице:");
+      if (effectivePageContext.pageUrl) lines.push(`- URL страницы: ${effectivePageContext.pageUrl}`);
+      if (effectivePageContext.pageTitle) lines.push(`- Заголовок страницы: ${effectivePageContext.pageTitle}`);
+      if (matchedDoc) lines.push(`- Связанный раздел / документ базы знаний: «${matchedDoc.filename}»`);
+      lines.push("");
+      lines.push("ПРАВИЛА ЗАЗЕМЛЕНИЯ (GROUNDING):");
+      lines.push("1. Твои ответы, презентация программ и рекомендации должны строго соответствовать тематике ЭТОЙ страницы.");
+      lines.push("2. Если клиент спрашивает «на какой я странице?», «что тут написано?», «какая программа?», «дай pdf/расчет» — отвечай ИМЕННО по тематике текущей страницы и предлагай материалы именно по ней.");
+      lines.push("3. Если в URL содержится техническое название, но заголовок и содержание страницы явно посвящены другой программе/услуге (например, клонированный лендинг), безусловный приоритет имеет ЗАГОЛОВОК и содержание документа, а не фрагмент URL.");
+      lines.push("</current_page_context>");
+      currentPageContextBlock = lines.join("\n");
     }
 
     const systemPrompt = buildSystemPrompt({
@@ -537,6 +598,7 @@ export class AgentPipelineService {
         agentReply: ex.agentReply,
       })),
       contactProfile: contactProfileContext,
+      currentPageContext: currentPageContextBlock,
     });
 
     try {
@@ -553,7 +615,7 @@ export class AgentPipelineService {
         contactId: contactId ?? null,
         chatId: input.chatId,
         channelType: input.channelType ?? "unknown",
-        incomingMessage: input.text,
+        incomingMessage: effectiveUserText,
         model,
         ragChunksCount: contextChunks.length,
         ragChunks: contextChunks.map((c) => ({
@@ -562,6 +624,9 @@ export class AgentPipelineService {
           similarity: Math.max(0, 1 - c.distance),
           preview: c.content.slice(0, 150),
         })),
+        matchedDoc: matchedDoc ? { id: matchedDoc.id, filename: matchedDoc.filename, matchReason: matchedDoc.matchReason } : null,
+        currentPageUrl: effectivePageContext.pageUrl,
+        currentPageTitle: effectivePageContext.pageTitle,
         fewShotCount: salesExamples.length,
         historyDepth: conversationHistory.length,
         systemPromptLength: systemPrompt.length,
@@ -580,8 +645,8 @@ export class AgentPipelineService {
       });
 
       const userContent = retrievedFacts
-        ? `${retrievedFacts}\n\n${input.text}`
-        : input.text;
+        ? `${retrievedFacts}\n\n${effectiveUserText}`
+        : effectiveUserText;
 
       const completion = await this.chat.complete({
         model: GATEWAY_MODEL[model] ?? model,
@@ -607,10 +672,10 @@ export class AgentPipelineService {
       // 3. Если модель галлюцинирует («номер зафиксировал / передал специалисту»), но клиент ввел
       // неполный или ошибочный номер — перехватываем и заменяем на вежливую просьбу исправить номер.
       if (reply !== null) {
-        const phoneAnalysis = analyzePhoneInText(input.text);
+        const phoneAnalysis = analyzePhoneInText(effectiveUserText);
         const hasValidPhoneInMessage = phoneAnalysis.isValid && phoneAnalysis.phone !== null;
         const escalationRegex = /(?:человек|оператор|менеджер|живой|позови|соедини|переведи|претензи|жалоб|верните деньги|юрист|суд)/i;
-        const hasEscalationIntent = escalationRegex.test(input.text);
+        const hasEscalationIntent = escalationRegex.test(effectiveUserText);
 
         // Проверяем, не утверждает ли ответ бота, что номер записан / заявка передана
         const phoneConfirmationRegex = /(?:номер\s+(?:зафиксировал|записал|принял|сохранен)|(?:зафиксировал|записал|принял)\s+номер|передал(?:\s+в\s+работу)?\s+(?:старшему|специалист|коллег)|коллега\s+свяжется|специалист\s+свяжется|набер[её]т(?:\s+вам)?)/i;
@@ -618,7 +683,7 @@ export class AgentPipelineService {
 
         if (phoneAnalysis.hasAttempt && phoneAnalysis.issue === "fake_number") {
           this.log.warn(
-            { agentId: agent.id, dealId: input.dealId, text: input.text, candidate: phoneAnalysis.rawCandidate },
+            { agentId: agent.id, dealId: input.dealId, text: effectiveUserText, candidate: phoneAnalysis.rawCandidate },
             "[AgentPipeline] Rejected fake/dummy phone number, asking for valid contact",
           );
           reply.handoff_required = false;
@@ -629,7 +694,7 @@ export class AgentPipelineService {
         } else if (!hasValidPhoneInMessage && !hasKnownPhone && !hasEscalationIntent) {
           if (reply.handoff_required) {
             this.log.warn(
-              { agentId: agent.id, dealId: input.dealId, text: input.text, issue: phoneAnalysis.issue },
+              { agentId: agent.id, dealId: input.dealId, text: effectiveUserText, issue: phoneAnalysis.issue },
               "[AgentPipeline] Prevented premature handoff_required: client has not provided valid phone and did not request escalation",
             );
             reply.handoff_required = false;
@@ -653,7 +718,7 @@ export class AgentPipelineService {
               {
                 agentId: agent.id,
                 dealId: input.dealId,
-                inputText: input.text,
+                inputText: effectiveUserText,
                 originalReply: reply.messages,
                 correctionMessage,
               },
@@ -685,7 +750,7 @@ export class AgentPipelineService {
             originalMessage: msg,
             channelLimit,
             channelType,
-            contextBrief: input.text,
+            contextBrief: effectiveUserText,
             tenantId: input.tenantId,
           });
           refinedMessages.push(refinedResult.refinedMessage);
@@ -860,6 +925,12 @@ export class AgentPipelineService {
     message: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
     channelType?: string;
+    pageContext?: {
+      pageUrl?: string;
+      pageTitle?: string;
+      pathname?: string;
+      referrer?: string;
+    };
   }): Promise<{ reply: string; messages: string[]; tokens: number; latencyMs: number }> {
     const agent = await queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
@@ -878,12 +949,39 @@ export class AgentPipelineService {
       throw new Error("Агент не найден или удалён");
     }
 
+    const rawMessage = input.message.trim();
+    const cleanMessage = rawMessage.replace(/^\[Пользователь на странице:\s*[^\]]+\]\s*/i, "").trim();
+    const effectiveMessage = cleanMessage.length > 0 ? cleanMessage : rawMessage;
+
+    const extractedUrlMatch = rawMessage.match(/^\[Пользователь на странице:\s*([^\]]+)\]/i);
+    const matchedUrl = extractedUrlMatch?.[1]?.trim();
+    const effectivePageContext = {
+      ...input.pageContext,
+      pageUrl: input.pageContext?.pageUrl || matchedUrl || undefined,
+    };
+
+    let matchedDoc: { id: string; filename: string; sourceUrl: string | null; matchReason: string; confidence: number } | null = null;
+    if (effectivePageContext.pageUrl || effectivePageContext.pageTitle || effectivePageContext.pathname) {
+      try {
+        matchedDoc = await this.knowledge.findDocumentByPageContext({
+          tenantId: input.tenantId,
+          agentId: agent.id,
+          pageUrl: effectivePageContext.pageUrl,
+          pageTitle: effectivePageContext.pageTitle,
+          pathname: effectivePageContext.pathname,
+        });
+      } catch (err) {
+        this.log.warn({ err, agentId: agent.id }, "Failed to find document by page context in test chat");
+      }
+    }
+
     const [contextChunks, salesExamples, tenantRow] = await Promise.all([
       this.knowledge
         .search({
           tenantId: input.tenantId,
           agentId: agent.id,
-          question: input.message,
+          question: effectiveMessage,
+          priorityDocumentId: matchedDoc?.id,
         })
         .catch((error: unknown) => {
           this.log.warn({ error, agentId: agent.id }, "Knowledge search failed in test chat");
@@ -892,7 +990,7 @@ export class AgentPipelineService {
       this.salesLearn
         .findRelevantSalesExamples({
           tenantId: input.tenantId,
-          query: input.message,
+          query: effectiveMessage,
           limit: 2,
         })
         .catch(() => []),
@@ -929,6 +1027,16 @@ export class AgentPipelineService {
       "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
     };
 
+    if (effectivePageContext.pageUrl) {
+      variables["current_page.url"] = effectivePageContext.pageUrl;
+    }
+    if (effectivePageContext.pageTitle) {
+      variables["current_page.title"] = effectivePageContext.pageTitle;
+    }
+    if (matchedDoc) {
+      variables["current_page.topic"] = matchedDoc.filename;
+    }
+
     if (wc) {
       if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
       if (wc.clientProfile || (wc as Record<string, unknown>).client_profile) {
@@ -937,6 +1045,22 @@ export class AgentPipelineService {
       if (wc.targetAction) variables["target.action"] = wc.targetAction;
       if (wc.constraints) variables["constraints"] = wc.constraints;
       if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
+    }
+
+    let currentPageContextBlock = "";
+    if (effectivePageContext.pageUrl || effectivePageContext.pageTitle || matchedDoc) {
+      const lines: string[] = ["<current_page_context>"];
+      lines.push("Посетитель сайта сейчас находится на странице:");
+      if (effectivePageContext.pageUrl) lines.push(`- URL страницы: ${effectivePageContext.pageUrl}`);
+      if (effectivePageContext.pageTitle) lines.push(`- Заголовок страницы: ${effectivePageContext.pageTitle}`);
+      if (matchedDoc) lines.push(`- Связанный раздел / документ базы знаний: «${matchedDoc.filename}»`);
+      lines.push("");
+      lines.push("ПРАВИЛА ЗАЗЕМЛЕНИЯ (GROUNDING):");
+      lines.push("1. Твои ответы, презентация программ и рекомендации должны строго соответствовать тематике ЭТОЙ страницы.");
+      lines.push("2. Если клиент спрашивает «на какой я странице?», «что тут написано?», «какая программа?», «дай pdf/расчет» — отвечай ИМЕННО по тематике текущей страницы и предлагай материалы именно по ней.");
+      lines.push("3. Если в URL содержится техническое название, но заголовок и содержание страницы явно посвящены другой программе/услуге (например, клонированный лендинг), безусловный приоритет имеет ЗАГОЛОВОК и содержание документа, а не фрагмент URL.");
+      lines.push("</current_page_context>");
+      currentPageContextBlock = lines.join("\n");
     }
 
     const systemPrompt = buildSystemPrompt({
@@ -951,6 +1075,7 @@ export class AgentPipelineService {
         customerQuery: ex.customerQuery,
         agentReply: ex.agentReply,
       })),
+      currentPageContext: currentPageContextBlock,
     });
 
     const model = isAiModelId(agent.model) ? agent.model : FALLBACK_MODEL;
@@ -979,8 +1104,8 @@ export class AgentPipelineService {
     });
 
     const userMessageContent = retrievedFacts
-      ? `${retrievedFacts}\n\n${input.message}`
-      : input.message;
+      ? `${retrievedFacts}\n\n${effectiveMessage}`
+      : effectiveMessage;
 
     chatMessages.push({ role: "user", content: userMessageContent });
 

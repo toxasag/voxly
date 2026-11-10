@@ -939,6 +939,7 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       mimeType: "text/markdown",
       text: extraction.structuredMarkdown,
       category: "website",
+      sourceUrl: url,
     });
 
     return reply.status(201).send({
