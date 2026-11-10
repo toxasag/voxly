@@ -123,6 +123,38 @@ export function useCreateChannelAccount(
       (await apiClient.post<ChannelAccountDTO>(`${BASE_PATH}/${channel}/accounts`, payload)).data,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      void queryClient.invalidateQueries({ queryKey: ["widgets"] });
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
+      void queryClient.invalidateQueries({ queryKey: ["quotas"] });
+    },
+  });
+}
+
+export interface CloneChannelAccountPayload {
+  id: string;
+  external_id: string;
+  label?: string;
+  agent_id?: string | null;
+}
+
+export function useCloneChannelAccount(
+  channel: ChannelSlug = "webchat",
+): UseMutationResult<ChannelAccountDTO, ApiClientError, CloneChannelAccountPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...body }) =>
+      (
+        await apiClient.post<ChannelAccountDTO>(
+          `${BASE_PATH}/${channel}/accounts/${id}/clone`,
+          body,
+        )
+      ).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      void queryClient.invalidateQueries({ queryKey: ["widgets"] });
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
+      void queryClient.invalidateQueries({ queryKey: ["quotas"] });
     },
   });
 }
@@ -192,37 +224,6 @@ export function useDeleteChannelAccount(
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
-    },
-  });
-}
-
-export interface CloneChannelAccountPayload {
-  id: string;
-  external_id: string;
-  label?: string;
-  agent_id?: string | null;
-}
-
-/**
- * Клонирование (дублирование) подключения / онлайн-виджета.
- */
-export function useCloneChannelAccount(channel: ChannelSlug) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (payload: CloneChannelAccountPayload) => {
-      const { id, ...body } = payload;
-      const res = await apiClient.post<ChannelAccountDTO>(
-        `${BASE_PATH}/${channel}/accounts/${id}/clone`,
-        body,
-      );
-      return res.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
-      queryClient.invalidateQueries({ queryKey: channelKeys.summary(channel) });
-      queryClient.invalidateQueries({ queryKey: channelKeys.all });
-      queryClient.invalidateQueries({ queryKey: ["quotas"] });
     },
   });
 }

@@ -374,7 +374,7 @@ export class ChannelsService {
       }
 
       // 2. Запрет клонирования на точно такой же домен
-      if (source.externalId.toLowerCase() === domain) {
+      if (normalizeDomain(source.externalId) === domain) {
         throw new AppError(
           400,
           "SAME_DOMAIN_CLONE",

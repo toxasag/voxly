@@ -38,6 +38,29 @@ export const updateChannelAccountSchema = z
 
 export type UpdateChannelAccountValues = z.infer<typeof updateChannelAccountSchema>;
 
+/**
+ * Клонирование существующего виджета под новый сайт.
+ * Домен очищается и валидируется, название по умолчанию формируется с суффиксом (Копия).
+ */
+export const cloneChannelAccountSchema = z.object({
+  label: z.string().trim().min(1, "Укажите название виджета").max(120),
+  external_id: z
+    .string()
+    .trim()
+    .min(1, "Укажите адрес или домен сайта")
+    .max(200)
+    .refine((val) => {
+      const cleaned = val
+        .replace(/^[a-z]+:\/\//i, "")
+        .replace(/[/?#].*$/, "")
+        .trim();
+      return cleaned.length > 0;
+    }, "Укажите корректный адрес сайта"),
+  agent_id: z.string().uuid("Некорректный ID агента").nullable().optional(),
+});
+
+export type CloneChannelAccountValues = z.infer<typeof cloneChannelAccountSchema>;
+
 // ---------------------------------------------------------------------------
 // Подключение аккаунта Telegram через MTProto.
 //
