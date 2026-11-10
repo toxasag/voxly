@@ -1561,6 +1561,36 @@ CREATE POLICY tenant_bitrix24_configs_isolation ON tenant_bitrix24_configs
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- Журнал синхронизации с Битрикс24 (наблюдаемость исходящих лидов)
+CREATE TABLE IF NOT EXISTS bitrix24_sync_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
+  entity_type VARCHAR(32) NOT NULL DEFAULT 'deal',
+  direction VARCHAR(16) NOT NULL DEFAULT 'outbound',
+  status VARCHAR(32) NOT NULL,
+  bitrix_lead_id VARCHAR(64),
+  webhook_url TEXT,
+  request_payload JSONB,
+  response_status INTEGER,
+  response_body JSONB,
+  error_message TEXT,
+  lead_source VARCHAR(64),
+  widget_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bitrix24_sync_logs_tenant_created ON bitrix24_sync_logs (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bitrix24_sync_logs_deal ON bitrix24_sync_logs (deal_id);
+
+ALTER TABLE bitrix24_sync_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bitrix24_sync_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS bitrix24_sync_logs_isolation ON bitrix24_sync_logs;
+CREATE POLICY bitrix24_sync_logs_isolation ON bitrix24_sync_logs
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Складской учет: Номенклатура
 CREATE TABLE IF NOT EXISTS warehouse_items (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

@@ -91,4 +91,41 @@ export default async function bitrix24Routes(app: FastifyInstance): Promise<void
     }
     return reply.send({ data: result, ...result });
   });
+
+  /**
+   * GET /logs
+   * Журнал исходящей синхронизации лидов с Битрикс24 (наблюдаемость).
+   */
+  app.get("/logs", { onRequest: admin }, async (request, reply) => {
+    const query = request.query as { limit?: string; offset?: string; page?: string };
+    const limit = query.limit ? parseInt(query.limit, 10) : 50;
+    const page = query.page ? parseInt(query.page, 10) : 1;
+    const offset = query.offset ? parseInt(query.offset, 10) : (page - 1) * limit;
+
+    const result = await bitrix24Service.getSyncLogs(request.tenant_id, limit, offset);
+    return reply.send({ data: result.logs, logs: result.logs, total: result.total, limit, offset });
+  });
+
+  /**
+   * POST /retry/:id
+   * Повторная отправка сделки в Битрикс24 по ID лога или ID сделки.
+   */
+  app.post("/retry/:id", { onRequest: admin }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await bitrix24Service.retryLeadSync(request.tenant_id, id);
+    if (!result.success) {
+      return reply.status(400).send({
+        status: "error",
+        error: {
+          code: "BITRIX24_RETRY_FAILED",
+          message: result.error || "Не удалось повторить отправку в Битрикс24",
+        },
+        message: result.error || "Не удалось повторить отправку в Битрикс24",
+        details: result.error,
+        success: false,
+        data: result,
+      });
+    }
+    return reply.send({ data: result, ...result });
+  });
 }

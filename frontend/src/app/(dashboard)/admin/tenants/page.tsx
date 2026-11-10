@@ -21,6 +21,7 @@ import {
   CornerDownRight,
   Users,
   CheckCircle2,
+  Shield,
 } from "lucide-react";
 import { PlatformOwnerGuard } from "@/components/auth/PlatformOwnerGuard";
 import {
@@ -354,17 +355,23 @@ export default function AdminTenantsPage() {
       }
 
       // Фильтр по роли / типу
+      const isPlatformRoot =
+        t.slug === "voxly" ||
+        t.id === "c0000000-0000-0000-0000-000000000001";
+      const isPartner =
+        (t.is_partner || t.tenant_type === "partner") && !isPlatformRoot;
+      const hasParentPartner =
+        Boolean(t.parent_tenant_id || t.owner_partner_id) &&
+        t.parent_tenant_id !== "c0000000-0000-0000-0000-000000000001" &&
+        t.owner_partner_id !== "c0000000-0000-0000-0000-000000000001" &&
+        t.parent_tenant_slug !== "voxly";
+
       if (typeFilter === "partners") {
-        const isPartner = (t.is_partner || t.tenant_type === "partner") && t.slug !== "voxly";
         if (!isPartner) return false;
       } else if (typeFilter === "sub_clients") {
-        const isPartner = (t.is_partner || t.tenant_type === "partner") && t.slug !== "voxly";
-        const hasParent = Boolean(t.parent_tenant_id || t.owner_partner_id);
-        if (isPartner || !hasParent) return false;
+        if (isPartner || !hasParentPartner) return false;
       } else if (typeFilter === "direct_clients") {
-        const isPartner = (t.is_partner || t.tenant_type === "partner");
-        const hasParent = Boolean(t.parent_tenant_id || t.owner_partner_id);
-        if (isPartner || hasParent) return false;
+        if (isPartner || hasParentPartner) return false;
       }
 
       // Фильтр по статусу
@@ -395,10 +402,11 @@ export default function AdminTenantsPage() {
     });
   }, [tenants, search, typeFilter, statusFilter, planFilter, nicheFilter, adoptionFilter]);
 
-  // Иерархическое дерево: Партнёры и их суб-клиенты
+  // Иерархическое дерево: Платформа, Партнёры и их клиенты
   interface HierarchyItem {
     tenant: AdminTenantDTO;
     isPartner: boolean;
+    isPlatformRoot: boolean;
     isSubClient: boolean;
     parentPartner?: AdminTenantDTO | null;
     parentPartnerName?: string | null;
@@ -409,20 +417,34 @@ export default function AdminTenantsPage() {
     const tenantMap = new Map<string, AdminTenantDTO>();
     tenants.forEach((t) => tenantMap.set(t.id, t));
 
+    const isVoxlyIdOrSlug = (idOrSlug?: string | null) =>
+      idOrSlug === "c0000000-0000-0000-0000-000000000001" || idOrSlug === "voxly";
+
+    const isPlatformRootTenant = (t: AdminTenantDTO) =>
+      isVoxlyIdOrSlug(t.id) || isVoxlyIdOrSlug(t.slug);
+
+    let platformRootTenant: AdminTenantDTO | null = null;
     const partners: AdminTenantDTO[] = [];
     const directClients: AdminTenantDTO[] = [];
-    const childrenByPartnerId = new Map<string, AdminTenantDTO[]>();
+    const childrenByParentId = new Map<string, AdminTenantDTO[]>();
 
     for (const t of filteredTenants) {
-      const isPartner = (t.is_partner || t.tenant_type === "partner") && t.slug !== "voxly";
-      if (isPartner) {
+      if (isPlatformRootTenant(t)) {
+        platformRootTenant = t;
+      } else if (t.is_partner || t.tenant_type === "partner") {
         partners.push(t);
       } else {
         const parentId = t.parent_tenant_id || t.owner_partner_id;
-        if (parentId && parentId !== "c0000000-0000-0000-0000-000000000001" && (tenantMap.has(parentId) || t.parent_tenant_name)) {
-          const list = childrenByPartnerId.get(parentId) || [];
+        if (
+          parentId &&
+          (tenantMap.has(parentId) ||
+            t.parent_tenant_name ||
+            isVoxlyIdOrSlug(parentId) ||
+            t.parent_tenant_slug === "voxly")
+        ) {
+          const list = childrenByParentId.get(parentId) || [];
           list.push(t);
-          childrenByPartnerId.set(parentId, list);
+          childrenByParentId.set(parentId, list);
         } else {
           directClients.push(t);
         }
@@ -431,16 +453,56 @@ export default function AdminTenantsPage() {
 
     const result: HierarchyItem[] = [];
 
-    // 1. Корневые партнёры и их субклиенты
+    // 1. Корневая платформа Voxly и её дочерние клиенты/порталы (MPRO и др.)
+    if (platformRootTenant) {
+      const rootChildren =
+        childrenByParentId.get(platformRootTenant.id) ||
+        childrenByParentId.get("c0000000-0000-0000-0000-000000000001") ||
+        [];
+      const totalRootChildrenCount = tenants.filter(
+        (t) =>
+          (t.parent_tenant_id === platformRootTenant!.id ||
+            t.owner_partner_id === platformRootTenant!.id ||
+            isVoxlyIdOrSlug(t.parent_tenant_id) ||
+            isVoxlyIdOrSlug(t.owner_partner_id) ||
+            t.parent_tenant_slug === "voxly") &&
+          t.id !== platformRootTenant!.id,
+      ).length;
+
+      result.push({
+        tenant: platformRootTenant,
+        isPartner: false,
+        isPlatformRoot: true,
+        isSubClient: false,
+        parentPartner: null,
+        childCount: totalRootChildrenCount,
+      });
+
+      for (const child of rootChildren) {
+        result.push({
+          tenant: child,
+          isPartner: false,
+          isPlatformRoot: false,
+          isSubClient: true,
+          parentPartner: platformRootTenant,
+          parentPartnerName: platformRootTenant.name,
+        });
+      }
+    }
+
+    // 2. Внешние партнёры платформы (ЭЛЕРОН и др.) и их суб-клиенты
     for (const partner of partners) {
-      const children = childrenByPartnerId.get(partner.id) || [];
+      const children = childrenByParentId.get(partner.id) || [];
       const totalChildrenCount = tenants.filter(
-        (t) => (t.parent_tenant_id === partner.id || t.owner_partner_id === partner.id) && t.id !== partner.id,
+        (t) =>
+          (t.parent_tenant_id === partner.id || t.owner_partner_id === partner.id) &&
+          t.id !== partner.id,
       ).length;
 
       result.push({
         tenant: partner,
         isPartner: true,
+        isPlatformRoot: false,
         isSubClient: false,
         parentPartner: null,
         childCount: totalChildrenCount,
@@ -450,6 +512,7 @@ export default function AdminTenantsPage() {
         result.push({
           tenant: child,
           isPartner: false,
+          isPlatformRoot: false,
           isSubClient: true,
           parentPartner: partner,
           parentPartnerName: partner.name,
@@ -457,27 +520,40 @@ export default function AdminTenantsPage() {
       }
     }
 
-    // 2. Субклиенты, чей партнёр был отфильтрован другим фильтром (например, по нише)
-    for (const [parentId, children] of childrenByPartnerId.entries()) {
-      if (!partners.some((p) => p.id === parentId)) {
+    // 3. Дочерние клиенты, чей родитель был скрыт фильтром (по поиску, нише или статусу)
+    for (const [parentId, children] of childrenByParentId.entries()) {
+      const parentIsRoot =
+        platformRootTenant &&
+        (parentId === platformRootTenant.id || isVoxlyIdOrSlug(parentId));
+      const parentIsPartner = partners.some((p) => p.id === parentId);
+
+      if (!parentIsRoot && !parentIsPartner) {
         const parent = tenantMap.get(parentId);
+        const parentName =
+          parent?.name ??
+          (isVoxlyIdOrSlug(parentId)
+            ? "Voxly Platform"
+            : children[0]?.parent_tenant_name);
+
         for (const child of children) {
           result.push({
             tenant: child,
             isPartner: false,
+            isPlatformRoot: false,
             isSubClient: true,
             parentPartner: parent ?? null,
-            parentPartnerName: parent?.name ?? child.parent_tenant_name,
+            parentPartnerName: parentName,
           });
         }
       }
     }
 
-    // 3. Прямые клиенты и платформа voxly
+    // 4. Прямые независимые клиенты без родителя (remtoua и др.)
     for (const client of directClients) {
       result.push({
         tenant: client,
-        isPartner: (client.is_partner || client.tenant_type === "partner"),
+        isPartner: false,
+        isPlatformRoot: false,
         isSubClient: false,
         parentPartner: null,
       });
@@ -825,27 +901,79 @@ export default function AdminTenantsPage() {
               <tbody className="divide-y divide-[#e5e5e5]">
                 {hierarchicalTenants.map((item) => {
                   const tenant = item.tenant;
-                  const isRootPartner = item.isPartner && tenant.slug !== "voxly";
-                  const isPlatformRoot = tenant.slug === "voxly" || tenant.id === "c0000000-0000-0000-0000-000000000001";
+                  const isPlatformRoot =
+                    item.isPlatformRoot ||
+                    tenant.slug === "voxly" ||
+                    tenant.id === "c0000000-0000-0000-0000-000000000001";
+                  const isRootPartner = item.isPartner && !isPlatformRoot;
                   const isSubClient = item.isSubClient;
                   const hasCustomPrice = tenant.custom_price_rubles !== null;
                   const isFree = tenant.custom_price_rubles === 0;
+
+                  const isParentVoxly =
+                    item.parentPartner?.slug === "voxly" ||
+                    item.parentPartner?.id === "c0000000-0000-0000-0000-000000000001" ||
+                    item.parentPartnerName === "Voxly Platform" ||
+                    tenant.parent_tenant_slug === "voxly" ||
+                    tenant.parent_tenant_id === "c0000000-0000-0000-0000-000000000001" ||
+                    tenant.owner_partner_id === "c0000000-0000-0000-0000-000000000001";
 
                   return (
                     <tr
                       key={tenant.id}
                       className={cn(
                         "transition-colors",
-                        isRootPartner
-                          ? "bg-[#fafbff]/80 hover:bg-[#f0f4ff]/70 border-l-3 border-l-[#4a38f5]"
-                          : isSubClient
-                            ? "bg-[#fafafa]/50 hover:bg-[#fafafa]"
-                            : "hover:bg-[#fafafa]",
+                        isPlatformRoot
+                          ? "bg-[#f8faff] hover:bg-[#f0f4ff]/80 border-l-3 border-l-sky-500"
+                          : isRootPartner
+                            ? "bg-[#fafbff]/80 hover:bg-[#f0f4ff]/70 border-l-3 border-l-[#4a38f5]"
+                            : isSubClient
+                              ? "bg-[#fafafa]/50 hover:bg-[#fafafa]"
+                              : "hover:bg-[#fafafa]",
                       )}
                     >
                       {/* Компания, ниша, контакты владельца */}
                       <td className="px-3.5 py-2.5">
-                        {isRootPartner ? (
+                        {isPlatformRoot ? (
+                          <div className="flex items-start gap-2.5">
+                            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-sky-200 bg-sky-50 text-sky-700">
+                              <Shield className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold text-sm text-[#111111]">{tenant.name}</span>
+                                <span className="inline-flex items-center gap-1 rounded-[4px] border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+                                  <Shield className="h-2.5 w-2.5" />
+                                  Платформа (Root)
+                                </span>
+                                {item.childCount !== undefined && item.childCount > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-[4px] border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 shadow-2xs">
+                                    <Users className="h-2.5 w-2.5 text-slate-500" />
+                                    {item.childCount} {item.childCount === 1 ? "клиент" : item.childCount < 5 ? "клиента" : "клиентов"}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[#666666]">
+                                {tenant.slug && (
+                                  <span className="font-mono text-[#888888]">
+                                    {tenant.slug}.getvoxly.ru
+                                  </span>
+                                )}
+                                <span className="inline-flex items-center rounded-[4px] bg-slate-100 px-1.5 py-0.2 text-[10px] font-medium text-slate-700">
+                                  Основной портал платформы
+                                </span>
+                              </div>
+                              {(tenant.owner_email || tenant.owner_name) && (
+                                <div className="mt-1 flex items-center gap-2 text-[11px] text-[#666666]">
+                                  {tenant.owner_name && <span>{tenant.owner_name}</span>}
+                                  {tenant.owner_email && (
+                                    <span className="text-[#888888]">({tenant.owner_email})</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : isRootPartner ? (
                           <div className="flex items-start gap-2.5">
                             <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-indigo-200 bg-indigo-50 text-indigo-700">
                               <Briefcase className="h-3.5 w-3.5" />
@@ -899,8 +1027,17 @@ export default function AdminTenantsPage() {
                                     @{tenant.slug}
                                   </span>
                                 )}
-                                <span className="inline-flex items-center gap-1 rounded-[4px] border border-slate-200 bg-white px-1.5 py-0.2 text-[10px] font-medium text-slate-700 shadow-2xs">
-                                  Клиент партнёра {item.parentPartnerName || "ЭЛЕРОН"}
+                                <span
+                                  className={cn(
+                                    "inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.2 text-[10px] font-medium shadow-2xs",
+                                    isParentVoxly
+                                      ? "border border-sky-200 bg-sky-50 text-sky-800"
+                                      : "border border-slate-200 bg-white text-slate-700",
+                                  )}
+                                >
+                                  {isParentVoxly
+                                    ? "Клиент платформы Voxly"
+                                    : `Клиент партнёра ${item.parentPartnerName || "Партнёр"}`}
                                 </span>
                               </div>
                               <div className="mt-0.5 flex items-center gap-1.5">
@@ -941,15 +1078,9 @@ export default function AdminTenantsPage() {
                             <div className="flex items-start justify-between gap-1">
                               <div className="flex items-center gap-1.5">
                                 <span className="font-semibold text-[#111111]">{tenant.name}</span>
-                                {isPlatformRoot ? (
-                                  <span className="inline-flex items-center rounded-[4px] border border-sky-200 bg-sky-50 px-1.5 py-0.2 text-[10px] font-semibold text-sky-700">
-                                    Платформа (Root)
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-1.5 py-0.2 text-[10px] text-[#666666]">
-                                    Клиент
-                                  </span>
-                                )}
+                                <span className="inline-flex items-center rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-1.5 py-0.2 text-[10px] text-[#666666]">
+                                  Клиент
+                                </span>
                               </div>
                               {tenant.slug && (
                                 <span className="font-mono text-[11px] text-[#888888]">

@@ -6,6 +6,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
+  FileText,
   Layers,
   Loader2,
   Mail,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/api/use-notification-channels";
 import {
   useBitrix24Config,
+  useBitrix24Logs,
   useTenantWidgets,
   useTestBitrix24Connection,
   useUpdateBitrix24Config,
@@ -44,6 +46,7 @@ import {
 import { useTenantInfo } from "@/lib/api/use-team";
 import { SourceMultiSelect, SOURCE_MAP } from "@/components/settings/SourceMultiSelect";
 import { WidgetMultiSelect } from "@/components/settings/WidgetMultiSelect";
+import { Bitrix24SyncLogTable } from "@/components/settings/Bitrix24SyncLogTable";
 
 type ExtendedChannelType = NotificationChannelType | "bitrix24";
 
@@ -89,10 +92,20 @@ interface AddChannelModalProps {
   onClose: () => void;
   tenantId?: string;
   initialType?: ExtendedChannelType;
+  initialTab?: "settings" | "logs";
+  onSelectDeal?: (dealId: string) => void;
 }
 
-function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: AddChannelModalProps) {
+function AddChannelModal({
+  open,
+  onClose,
+  tenantId,
+  initialType = "telegram",
+  initialTab = "settings",
+  onSelectDeal,
+}: AddChannelModalProps) {
   const [channelType, setChannelType] = useState<ExtendedChannelType>(initialType);
+  const [activeTab, setActiveTab] = useState<"settings" | "logs">(initialTab);
   const [destination, setDestination] = useState("");
   const createMutation = useCreateNotificationChannel();
   const { data: bindLinkData } = useTelegramBindLink();
@@ -100,8 +113,11 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
   // Битрикс24 стейт
   const { data: bitrixConfig } = useBitrix24Config();
   const { data: widgets = [], isLoading: widgetsLoading } = useTenantWidgets();
+  const { data: logsData } = useBitrix24Logs({ limit: 1 });
   const updateBitrixMutation = useUpdateBitrix24Config();
   const testBitrixMutation = useTestBitrix24Connection();
+
+  const logsTotalCount = logsData?.total ?? 0;
 
   const [bitrixUrl, setBitrixUrl] = useState("");
   const [bitrixEnabled, setBitrixEnabled] = useState(true);
@@ -120,6 +136,7 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
   useEffect(() => {
     if (open) {
       setChannelType(initialType);
+      setActiveTab(initialTab);
       if (bitrixConfig) {
         setBitrixUrl(bitrixConfig.webhook_url || "");
         setBitrixEnabled(bitrixConfig.webhook_url ? Boolean(bitrixConfig.is_enabled) : true);
@@ -237,18 +254,23 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-3 sm:p-6"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl"
+        className="w-full max-w-2xl max-h-[92vh] md:max-h-[88vh] rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-[#e5e5e5] px-5 py-4">
+        {/* Шапка модального окна — фиксированная */}
+        <div className="flex items-center justify-between border-b border-[#e5e5e5] px-6 py-3.5 bg-white flex-shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-[#111111]">Добавить канал передачи заявок</h2>
+            <h2 className="text-base font-semibold text-[#111111]">
+              {channelType === "bitrix24" ? "Интеграция с Битрикс24" : "Добавить канал передачи заявок"}
+            </h2>
             <p className="mt-0.5 text-xs text-[#666666]">
-              Получайте мгновенные оповещения о новых заявках в мессенджеры или передавайте лиды в CRM
+              {channelType === "bitrix24"
+                ? "Автоматический экспорт лидов через вебхук CRM и журнал синхронизаций"
+                : "Получайте мгновенные оповещения о новых заявках в мессенджеры или передавайте лиды в CRM"}
             </p>
           </div>
           <button
@@ -260,7 +282,46 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-5">
+        {/* Табы режима только для Битрикс24 */}
+        {channelType === "bitrix24" && (
+          <div className="flex items-center gap-1 border-b border-[#e5e5e5] px-6 bg-[#fbfbfb] flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveTab("settings")}
+              className={`py-2 px-3 text-xs font-medium border-b-2 transition-all ${
+                activeTab === "settings"
+                  ? "border-[#4a38f5] text-[#4a38f5] font-semibold"
+                  : "border-transparent text-[#666666] hover:text-[#111111]"
+              }`}
+            >
+              Настройки экспорта
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("logs")}
+              className={`py-2 px-3 text-xs font-medium border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === "logs"
+                  ? "border-[#4a38f5] text-[#4a38f5] font-semibold"
+                  : "border-transparent text-[#666666] hover:text-[#111111]"
+              }`}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>Журнал отправок</span>
+              {logsTotalCount > 0 && (
+                <span className="text-[10px] bg-[#4a38f5]/10 text-[#4a38f5] px-1.5 py-0.2 rounded-full font-mono font-semibold">
+                  {logsTotalCount}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Скроллируемая область контента */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {channelType === "bitrix24" && activeTab === "logs" ? (
+            <Bitrix24SyncLogTable onSelectDeal={onSelectDeal} />
+          ) : (
+            <form id="add-channel-form" onSubmit={handleSubmit} className="space-y-5">
           {/* Выбор типа канала — 4 провайдера */}
           <div>
             <label className="text-xs font-semibold text-[#111111] block mb-2">Тип канала</label>
@@ -562,24 +623,66 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#e5e5e5]">
+            </form>
+          )}
+        </div>
+
+        {/* Футер модального окна — фиксированный внизу */}
+        <div className="flex items-center justify-between border-t border-[#e5e5e5] px-6 py-3.5 bg-white flex-shrink-0">
+          <div>
+            {channelType === "bitrix24" && activeTab === "settings" && (
+              <button
+                type="button"
+                onClick={handleTestBitrix}
+                disabled={testBitrixMutation.isPending || !bitrixUrl.trim()}
+                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] disabled:opacity-40 inline-flex items-center gap-1.5"
+              >
+                {testBitrixMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5 text-[#666666]" />
+                )}
+                <span>Проверить вебхук (Тест)</span>
+              </button>
+            )}
+            {channelType === "bitrix24" && activeTab === "logs" && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("settings")}
+                className="text-xs text-[#4a38f5] hover:underline inline-flex items-center gap-1 font-medium"
+              >
+                ← К настройкам экспорта
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={onClose}
-              className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-medium text-[#444444] transition-colors hover:bg-[#fafafa]"
+              className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 text-xs font-medium text-[#444444] transition-colors hover:bg-[#fafafa]"
             >
-              Отмена
+              {activeTab === "logs" ? "Закрыть" : "Отмена"}
             </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="h-8 rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 inline-flex items-center gap-1.5"
-            >
-              {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              <span>{isSaving ? "Сохранение..." : channelType === "bitrix24" ? "Сохранить и подключить" : "Добавить канал"}</span>
-            </button>
+            {activeTab === "settings" && (
+              <button
+                type="submit"
+                form="add-channel-form"
+                disabled={isSaving}
+                className="h-8 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                <span>
+                  {isSaving
+                    ? "Сохранение..."
+                    : channelType === "bitrix24"
+                    ? "Сохранить и подключить"
+                    : "Добавить канал"}
+                </span>
+              </button>
+            )}
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );
@@ -594,6 +697,7 @@ export function LeadNotificationChannels() {
 
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [modalInitialType, setModalInitialType] = useState<ExtendedChannelType>("telegram");
+  const [modalInitialTab, setModalInitialTab] = useState<"settings" | "logs">("settings");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [isDeletingBitrix, setIsDeletingBitrix] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -731,6 +835,7 @@ export function LeadNotificationChannels() {
           type="button"
           onClick={() => {
             setModalInitialType("telegram");
+            setModalInitialTab("settings");
             setAddModalOpen(true);
           }}
           className="inline-flex items-center gap-1.5 h-8 rounded-[8px] bg-[#4a38f5] px-3.5 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] self-start sm:self-auto"
@@ -874,6 +979,21 @@ export function LeadNotificationChannels() {
                     type="button"
                     onClick={() => {
                       setModalInitialType("bitrix24");
+                      setModalInitialTab("logs");
+                      setAddModalOpen(true);
+                    }}
+                    className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] inline-flex items-center gap-1"
+                    title="Открыть журнал синхронизаций с Битрикс24"
+                  >
+                    <FileText className="h-3 w-3 text-[#666666]" />
+                    <span>Журнал</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalInitialType("bitrix24");
+                      setModalInitialTab("settings");
                       setAddModalOpen(true);
                     }}
                     className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] inline-flex items-center gap-1"
@@ -1019,6 +1139,7 @@ export function LeadNotificationChannels() {
               type="button"
               onClick={() => {
                 setModalInitialType("telegram");
+                setModalInitialTab("settings");
                 setAddModalOpen(true);
               }}
               className="inline-flex items-center gap-1.5 h-8 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0]"
@@ -1036,6 +1157,7 @@ export function LeadNotificationChannels() {
         onClose={() => setAddModalOpen(false)}
         tenantId={info?.id}
         initialType={modalInitialType}
+        initialTab={modalInitialTab}
       />
 
       {/* Диалог подтверждения удаления стандартного канала */}
