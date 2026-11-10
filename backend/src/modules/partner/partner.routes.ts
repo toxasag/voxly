@@ -18,18 +18,18 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
   // Все маршруты партнерского модуля требуют авторизации
   await app.register(authenticatePlugin);
 
-  // Проверка партнерских прав: роль partner, owner, admin, наличие права tenant:admin или платформенный владелец
+  // Проверка партнерских прав: роль partner, флаг is_partner, tenant_is_partner или платформенный владелец
   app.addHook("onRequest", async (request) => {
     const user = request.authUser;
     const isPartner =
-      user.role === "partner" ||
-      user.role === "owner" ||
-      user.role === "admin" ||
       user.platform_role === "platform_owner" ||
-      request.permissions.has("tenant:admin");
+      user.is_partner === true ||
+      user.role === "partner" ||
+      request.tenant_is_partner === true ||
+      request.impersonator_is_partner === true;
 
     if (!isPartner) {
-      throw new PermissionDeniedError("Доступ к партнерскому модулю разрешен только партнерам и администраторам");
+      throw new PermissionDeniedError("Доступ к партнерскому модулю разрешен только партнерам и администраторам платформы");
     }
   });
 
@@ -39,7 +39,8 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
    */
   app.post("/tenants", async (request, reply) => {
     const body = createPartnerTenantSchema.parse(request.body);
-    const result = await service.createChildTenant(request.tenant_id, body);
+    const parentTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const result = await service.createChildTenant(parentTenantId, body);
     return reply.status(201).send({ data: result });
   });
 
@@ -48,7 +49,8 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
    * Список дочерних тенантов партнера
    */
   app.get("/tenants", async (request, reply) => {
-    const list = await service.listChildTenants(request.tenant_id);
+    const parentTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const list = await service.listChildTenants(parentTenantId);
     return reply.status(200).send({ data: list });
   });
 
@@ -60,8 +62,9 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
     const params = paramsWithIdSchema.parse(request.params);
     const body = updateAuthSettingsSchema.parse(request.body);
     const isPlatformOwner = request.authUser.platform_role === "platform_owner";
+    const parentTenantId = request.impersonator_tenant_id || request.tenant_id;
     const result = await service.updateAuthSettings(
-      request.tenant_id,
+      parentTenantId,
       params.id,
       body,
       isPlatformOwner,

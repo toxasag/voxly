@@ -83,9 +83,10 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       custom_price_rubles: number | null;
       custom_plan_name: string | null;
       trial_ends_at: Date | string | null;
+      is_partner: boolean;
       created_at: Date | string;
     }>(
-      `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name, trial_ends_at, created_at
+      `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name, trial_ends_at, is_partner, created_at
        FROM tenants WHERE id = $1`,
       [request.tenant_id],
     );
@@ -97,7 +98,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
 
     const hasCustomPrice = row.custom_price_rubles !== null && row.custom_price_rubles !== undefined;
     const isFreeCustomPlan = (hasCustomPrice && Number(row.custom_price_rubles) === 0) || row.plan === "custom_free";
-    const isPartner = isFreeCustomPlan || row.plan === "partner" || row.plan === "custom_free";
+    const isPartner = Boolean(row.is_partner || row.plan === "partner" || request.authUser?.is_partner);
     const isTrialAccount = (row.plan === "trial" || row.status === "trial") && !isFreeCustomPlan && !isPartner;
 
     const rawTrialEndsAt = toIso(row.trial_ends_at);
@@ -192,12 +193,12 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     const currentTenantId = request.tenant_id;
     const user = request.authUser;
     const isPlatformOwner = user.platform_role === "platform_owner";
-    const canManageTenants =
+    const isPartner =
       isPlatformOwner ||
+      user.is_partner === true ||
       user.role === "partner" ||
-      user.role === "owner" ||
-      user.role === "admin" ||
-      request.permissions.has("tenant:admin");
+      request.tenant_is_partner === true ||
+      request.impersonator_is_partner === true;
 
     const currentTenant = await queryOne<{
       id: string;
@@ -206,8 +207,10 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       plan: string;
       status: string;
       parent_tenant_id: string | null;
+      owner_partner_id: string | null;
+      is_partner: boolean;
     }>(
-      "SELECT id, name, slug, plan, status, parent_tenant_id FROM tenants WHERE id = $1",
+      "SELECT id, name, slug, plan, status, parent_tenant_id, owner_partner_id, is_partner FROM tenants WHERE id = $1",
       [currentTenantId],
     );
 
@@ -237,7 +240,8 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       role: user.role,
     });
 
-    if (currentTenant.parent_tenant_id) {
+    const parentTenantRef = currentTenant.owner_partner_id ?? currentTenant.parent_tenant_id;
+    if (parentTenantRef) {
       const parentTenant = await queryOne<{
         id: string;
         name: string;
@@ -246,7 +250,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         status: string;
       }>(
         "SELECT id, name, slug, plan, status FROM tenants WHERE id = $1",
-        [currentTenant.parent_tenant_id],
+        [parentTenantRef],
       );
       if (parentTenant) {
         workspaces.push({
@@ -262,8 +266,10 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       }
     }
 
-    if (canManageTenants) {
-      const parentIdForChildren = currentTenant.parent_tenant_id ?? currentTenant.id;
+    if (isPartner) {
+      const parentIdForChildren =
+        request.impersonator_tenant_id ??
+        (currentTenant.owner_partner_id ?? currentTenant.parent_tenant_id ?? currentTenant.id);
       interface ChildTenantRow {
         id: string;
         name: string;
@@ -271,11 +277,12 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         plan: string;
         status: string;
         parent_tenant_id: string | null;
+        owner_partner_id: string | null;
       }
       const childRows = await query<ChildTenantRow>(
-        `SELECT id, name, slug, plan, status, parent_tenant_id
+        `SELECT id, name, slug, plan, status, parent_tenant_id, owner_partner_id
          FROM tenants
-         WHERE parent_tenant_id = $1 AND id != $2
+         WHERE (parent_tenant_id = $1 OR owner_partner_id = $1) AND id != $2
          ORDER BY name ASC`,
         [parentIdForChildren, currentTenant.id],
       );

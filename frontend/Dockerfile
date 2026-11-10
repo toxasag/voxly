@@ -7,6 +7,7 @@ ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 COPY package.json package-lock.json ./
 RUN npm ci --legacy-peer-deps
+ARG CACHEBUST=1
 COPY . .
 RUN mkdir -p public && npm run build
 
