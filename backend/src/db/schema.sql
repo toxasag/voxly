@@ -606,6 +606,8 @@ CREATE TABLE IF NOT EXISTS repair_works (
   description TEXT NOT NULL,
   master_id UUID NOT NULL,
   master_name TEXT NOT NULL,
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
   cost NUMERIC NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -614,6 +616,8 @@ CREATE TABLE IF NOT EXISTS repair_parts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  warehouse_item_id UUID,
+  status TEXT NOT NULL DEFAULT 'used',
   name TEXT NOT NULL,
   article TEXT NOT NULL DEFAULT '',
   quantity INT NOT NULL DEFAULT 1,
@@ -746,6 +750,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   cash_account_id UUID NOT NULL REFERENCES cash_accounts(id),
   category_id UUID REFERENCES finance_categories(id),
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
   amount NUMERIC NOT NULL,
   currency TEXT NOT NULL DEFAULT 'RUB',
   direction TEXT NOT NULL,
@@ -1551,4 +1556,96 @@ CREATE POLICY tenant_bitrix24_configs_isolation ON tenant_bitrix24_configs
   FOR ALL
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- Складской учет: Номенклатура
+CREATE TABLE IF NOT EXISTS warehouse_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  sku TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  unit TEXT NOT NULL DEFAULT 'шт',
+  min_stock NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  retail_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+-- Складской учет: Партии поступления (FIFO)
+CREATE TABLE IF NOT EXISTS warehouse_batches (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  batch_number TEXT NOT NULL DEFAULT '',
+  supplier_name TEXT NOT NULL DEFAULT '',
+  purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  initial_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  remaining_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Резервы
+CREATE TABLE IF NOT EXISTS warehouse_reservations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  batch_id UUID REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'reserved',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Журнал движений
+CREATE TABLE IF NOT EXISTS warehouse_movements (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  batch_id UUID REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  type TEXT NOT NULL,
+  quantity NUMERIC(10, 2) NOT NULL,
+  cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  description TEXT NOT NULL DEFAULT '',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Заявки на закупку
+CREATE TABLE IF NOT EXISTS purchase_requests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  item_name TEXT NOT NULL,
+  sku TEXT NOT NULL DEFAULT '',
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  unit TEXT NOT NULL DEFAULT 'шт',
+  estimated_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  comment TEXT NOT NULL DEFAULT '',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Конструктор печатных документов
+CREATE TABLE IF NOT EXISTS print_templates (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  page_size TEXT NOT NULL DEFAULT 'A4',
+  orientation TEXT NOT NULL DEFAULT 'portrait',
+  body_template TEXT NOT NULL,
+  is_default BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_print_templates_tenant_slug UNIQUE (tenant_id, slug)
+);
 
