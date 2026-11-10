@@ -198,7 +198,13 @@ export class DealMessagingService {
        SET ai_paused_until = CASE
          WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '9000-01-01'::timestamptz THEN ai_paused_until
          ELSE now() + interval '1 hour'
-       END
+       END,
+       custom_fields = jsonb_set(
+         COALESCE(custom_fields, '{}'::jsonb),
+         '{ai_paused_reason}',
+         to_jsonb('manual_takeover'::text),
+         true
+       )
        WHERE tenant_id = $1 AND id = $2`,
       [tenantId, dealId],
     ).catch(() => {});
@@ -402,8 +408,8 @@ export class DealMessagingService {
     pausedReason: string | null;
     status: "enabled" | "paused" | "disabled";
   }> {
-    const row = await queryOne<{ ai_paused_until: string | null }>(
-      `SELECT ai_paused_until FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+    const row = await queryOne<{ ai_paused_until: string | null; custom_fields: Record<string, unknown> | null }>(
+      `SELECT ai_paused_until, custom_fields FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [tenantId, dealId],
     );
     if (!row || !row.ai_paused_until) {
@@ -427,11 +433,12 @@ export class DealMessagingService {
       };
     }
     if (pausedUntilDate > now) {
+      const customReason = typeof row.custom_fields?.ai_paused_reason === "string" ? row.custom_fields.ai_paused_reason : null;
       return {
         aiControl: "paused",
         isPaused: true,
         pausedUntil: row.ai_paused_until,
-        pausedReason: "manual_takeover",
+        pausedReason: customReason || "manual_takeover",
         status: "paused",
       };
     }
@@ -464,21 +471,32 @@ export class DealMessagingService {
     );
 
     let targetDate: string | null = null;
+    let reason: string | null = null;
     if (action === "pause") {
       targetDate = "now() + interval '1 hour'";
+      reason = "manual_takeover";
     } else if (action === "disable") {
       targetDate = "'9999-12-31 23:59:59+00'::timestamptz";
     }
 
     if (targetDate) {
       await query(
-        `UPDATE deals SET ai_paused_until = ${targetDate}
+        `UPDATE deals SET 
+           ai_paused_until = ${targetDate},
+           custom_fields = jsonb_set(
+             COALESCE(custom_fields, '{}'::jsonb),
+             '{ai_paused_reason}',
+             to_jsonb($4::text),
+             true
+           )
          WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
-        [tenantId, dealId, deal?.contact_id ?? null],
+        [tenantId, dealId, deal?.contact_id ?? null, reason ?? "manual_takeover"],
       );
     } else {
       await query(
-        `UPDATE deals SET ai_paused_until = NULL
+        `UPDATE deals SET 
+           ai_paused_until = NULL,
+           custom_fields = custom_fields - 'ai_paused_reason'
          WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
         [tenantId, dealId, deal?.contact_id ?? null],
       );
@@ -827,9 +845,9 @@ export class DealMessagingService {
     pausedReason: string | null;
     status: "enabled" | "paused" | "disabled";
   }> {
-    let updateSql = `UPDATE deals SET ai_paused_until = NULL WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+    let updateSql = `UPDATE deals SET ai_paused_until = NULL, custom_fields = custom_fields - 'ai_paused_reason' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
     if (action === "pause") {
-      updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+      updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour', custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{ai_paused_reason}', to_jsonb('manual_takeover'::text), true) WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
     } else if (action === "disable") {
       updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
     }

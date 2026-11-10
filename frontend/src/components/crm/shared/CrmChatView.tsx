@@ -853,6 +853,12 @@ export function CrmChatView({
   const [activeChannel, setActiveChannel] = useState<string>("all");
   const hasUserSelectedTabRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hasTriggeredTakeoverRef = useRef(false);
+
+  // Сброс флага ручного перехвата при переключении сущности/диалога
+  useEffect(() => {
+    hasTriggeredTakeoverRef.current = false;
+  }, [entityId]);
 
   const queryClient = useQueryClient();
 
@@ -871,6 +877,12 @@ export function CrmChatView({
   const messages = messagesQuery.data ?? [];
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
   const aiStatus = aiStatusQuery.data;
+
+  const isAiActive =
+    (aiStatus?.aiControl === "enabled" || aiStatus?.status === "enabled") &&
+    !aiStatus?.isPaused &&
+    aiStatus?.status !== "paused";
+  const isAiPaused = Boolean(aiStatus?.isPaused || aiStatus?.status === "paused");
 
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
@@ -1112,6 +1124,32 @@ export function CrmChatView({
     [aiControlMutation],
   );
 
+  // Ручной перехват диалога оператором при активности поля ввода (onFocus или набор текста)
+  const handleInputActivity = useCallback(() => {
+    // Не инициируем паузу, если AI не включен, уже на паузе, в процессе мутации или уже сработал триггер
+    if (
+      !isAiActive ||
+      isAiPaused ||
+      hasTriggeredTakeoverRef.current ||
+      aiControlMutation.isPending
+    ) {
+      return;
+    }
+
+    hasTriggeredTakeoverRef.current = true;
+    aiControlMutation.mutate(
+      { action: "pause" },
+      {
+        onSuccess: () => {
+          toast.info("AI-автопилот приостановлен на 1 час (ручной перехват)");
+        },
+        onError: () => {
+          hasTriggeredTakeoverRef.current = false;
+        },
+      },
+    );
+  }, [isAiActive, isAiPaused, aiControlMutation]);
+
   // Ручная синхронизация истории сообщений из подключенных каналов (MAX, Telegram)
   const handleSyncHistory = useCallback(async () => {
     try {
@@ -1152,12 +1190,6 @@ export function CrmChatView({
     return groups;
   }, [displayedMessages]);
 
-  const isAiActive =
-    (aiStatus?.aiControl === "enabled" || aiStatus?.status === "enabled") &&
-    !aiStatus?.isPaused &&
-    aiStatus?.status !== "paused";
-  const isAiPaused = Boolean(aiStatus?.isPaused || aiStatus?.status === "paused");
-
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}>
       {/* Шапка: статус AI-автопилота и управление */}
@@ -1181,7 +1213,8 @@ export function CrmChatView({
                 <span className="font-semibold text-emerald-700">AI Автопилот активен</span>
               ) : isAiPaused ? (
                 <span className="text-amber-700 font-medium">
-                  AI на паузе {aiStatus?.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
+                  AI на паузе {aiStatus?.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""}{" "}
+                  ({aiStatus?.pausedReason === "messenger_takeover" ? "ручной перехват (мессенджер)" : "ручной перехват"})
                 </span>
               ) : (
                 <span className="text-[#666666]">AI Автопилот выключен</span>
@@ -1707,7 +1740,13 @@ export function CrmChatView({
         <div className="rounded-[12px] border border-[#e5e5e5] bg-white shadow-2xs transition-colors focus-within:border-[#cccccc]">
           <TelegramComposer
             value={input}
-            onChange={setInput}
+            onChange={(val) => {
+              setInput(val);
+              if (val.trim().length > 0) {
+                handleInputActivity();
+              }
+            }}
+            onFocus={handleInputActivity}
             onSend={(attached) => void handleSend(attached)}
             isSending={sendMessageMutation.isPending}
             onAiDraft={handleGenerateAiDraft}

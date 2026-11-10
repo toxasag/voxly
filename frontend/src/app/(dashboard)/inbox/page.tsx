@@ -116,6 +116,10 @@ export default function InboxPage() {
   }, [threads]);
 
   const handleSelectThread = (thread: InboxThreadDTO) => {
+    // Сбрасываем фокус с поля ввода перед переключением диалога, исключая паразитный onFocus
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     setSelectedDealId(thread.dealId);
     setMobileDetailOpen(true);
   };
