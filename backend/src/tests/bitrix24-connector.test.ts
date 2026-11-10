@@ -311,5 +311,23 @@ describe("Bitrix24 Lead Connector", () => {
     it("rejects empty string", () => {
       expect(() => normalizeBitrixWebhookUrl("   ")).toThrow("не может быть пустым");
     });
+
+    it("rejects urls without /rest/ path", () => {
+      expect(() =>
+        normalizeBitrixWebhookUrl("https://bankirromsk.ru/webhook/261/token/"),
+      ).toThrow("INVALID_REST_PATH");
+    });
+
+    it("rejects incomplete rest path missing user id or token (e.g. /rest/token)", () => {
+      expect(() =>
+        normalizeBitrixWebhookUrl("https://bankirromsk.ru/rest/x8ci14yw7f8xzi3"),
+      ).toThrow("INVALID_REST_PATH");
+    });
+
+    it("supports custom method such as crm.lead.fields.json", () => {
+      const input = "https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/";
+      const result = normalizeBitrixWebhookUrl(input, "crm.lead.fields.json");
+      expect(result).toBe("https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/crm.lead.fields.json");
+    });
   });
 });
