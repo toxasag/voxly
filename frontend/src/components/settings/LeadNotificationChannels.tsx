@@ -15,6 +15,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
@@ -160,8 +161,20 @@ function AddChannelModal({ open, onClose, tenantId, initialType = "telegram" }: 
         toast.error(msg);
       }
     } catch (err: unknown) {
-      const anyErr = err as { data?: { message?: string; details?: string; error?: string }; message?: string };
-      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.data?.error || anyErr.message || "Ошибка проверки вебхука";
+      const anyErr = err as {
+        message?: string;
+        details?: Record<string, string[]> | string;
+        data?: { message?: string; details?: string; error?: string };
+        error?: { message?: string };
+      };
+      const msg =
+        (typeof anyErr.details === "string" && anyErr.details) ||
+        anyErr.data?.details ||
+        anyErr.data?.message ||
+        anyErr.data?.error ||
+        anyErr.error?.message ||
+        anyErr.message ||
+        "Ошибка проверки вебхука";
       setBitrixTestStatus({ success: false, message: msg, error: msg });
       toast.error(msg);
     }
@@ -623,8 +636,20 @@ export function LeadNotificationChannels() {
         toast.error(msg);
       }
     } catch (err: unknown) {
-      const anyErr = err as { data?: { message?: string; details?: string; error?: string }; message?: string };
-      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.data?.error || anyErr.message || "Ошибка проверки Битрикс24";
+      const anyErr = err as {
+        message?: string;
+        details?: Record<string, string[]> | string;
+        data?: { message?: string; details?: string; error?: string };
+        error?: { message?: string };
+      };
+      const msg =
+        (typeof anyErr.details === "string" && anyErr.details) ||
+        anyErr.data?.details ||
+        anyErr.data?.message ||
+        anyErr.data?.error ||
+        anyErr.error?.message ||
+        anyErr.message ||
+        "Ошибка проверки Битрикс24";
       toast.error(msg);
     } finally {
       setTestingBitrix(false);
@@ -852,10 +877,11 @@ export function LeadNotificationChannels() {
                       setModalInitialType("bitrix24");
                       setAddModalOpen(true);
                     }}
-                    className="h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#f5f5f5] flex items-center justify-center"
-                    title="Настроить Битрикс24"
+                    className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] inline-flex items-center gap-1"
+                    title="Настроить параметры Битрикс24"
                   >
-                    <Settings className="h-3.5 w-3.5" />
+                    <SlidersHorizontal className="h-3 w-3 text-[#666666]" />
+                    <span>Настроить</span>
                   </button>
 
                   <button
@@ -1005,10 +1031,12 @@ export function LeadNotificationChannels() {
         )}
       </div>
 
-      {/* Постоянная секция расширенной настройки Битрикс24 под списком */}
-      <div className="pt-2">
-        <Bitrix24IntegrationSection />
-      </div>
+      {/* Секция быстрой интеграции с Битрикс24 под списком (отображается только если Битрикс еще не настроен) */}
+      {!hasBitrixConfigured && (
+        <div className="pt-2">
+          <Bitrix24IntegrationSection />
+        </div>
+      )}
 
       {/* Модальное окно добавления канала с поддержкой Битрикс24 */}
       <AddChannelModal

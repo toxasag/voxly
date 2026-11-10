@@ -81,8 +81,20 @@ export function Bitrix24IntegrationSection() {
       toast.success("Настройки Битрикс24 сохранены");
       setTestResult(null);
     } catch (err: unknown) {
-      const anyErr = err as { data?: { message?: string; details?: string }; message?: string };
-      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.message || "Не удалось сохранить настройки";
+      const anyErr = err as {
+        message?: string;
+        details?: Record<string, string[]> | string;
+        data?: { message?: string; details?: string; error?: string };
+        error?: { message?: string };
+      };
+      const msg =
+        (typeof anyErr.details === "string" && anyErr.details) ||
+        anyErr.data?.details ||
+        anyErr.data?.message ||
+        anyErr.data?.error ||
+        anyErr.error?.message ||
+        anyErr.message ||
+        "Не удалось сохранить настройки";
       toast.error(msg);
     }
   };
@@ -114,8 +126,20 @@ export function Bitrix24IntegrationSection() {
         toast.error(msg);
       }
     } catch (err: unknown) {
-      const anyErr = err as { data?: { message?: string; details?: string; error?: string }; message?: string };
-      const msg = anyErr.data?.details || anyErr.data?.message || anyErr.data?.error || anyErr.message || "Ошибка проверки вебхука";
+      const anyErr = err as {
+        message?: string;
+        details?: Record<string, string[]> | string;
+        data?: { message?: string; details?: string; error?: string };
+        error?: { message?: string };
+      };
+      const msg =
+        (typeof anyErr.details === "string" && anyErr.details) ||
+        anyErr.data?.details ||
+        anyErr.data?.message ||
+        anyErr.data?.error ||
+        anyErr.error?.message ||
+        anyErr.message ||
+        "Ошибка проверки вебхука";
       setTestResult({
         success: false,
         message: msg,

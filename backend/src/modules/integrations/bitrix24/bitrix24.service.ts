@@ -134,8 +134,27 @@ export function normalizeBitrixWebhookUrl(rawUrl: string, method = "crm.lead.add
   }
 
   let cleanPath = parsed.pathname.replace(/\/+$/, "");
-  // Убираем уже указанный метод, если пользователь вставил полную ссылку
-  cleanPath = cleanPath.replace(/\/(crm\.lead\.add(\.json)?|profile(\.json)?)$/i, "");
+  // Убираем уже указанный метод, если пользователь вставил полную ссылку с методом
+  cleanPath = cleanPath.replace(/\/(crm\.lead\.(add|fields)(\.json)?|profile(\.json)?)$/i, "");
+
+  // Проверка структуры REST пути Битрикс24: /rest/<userId>/<token>
+  const restIdx = cleanPath.toLowerCase().indexOf("/rest/");
+  if (restIdx === -1) {
+    throw new AppError(
+      400,
+      "INVALID_REST_PATH",
+      "URL вебхука должен содержать путь /rest/<ID_пользователя>/<код_вебхука>/ (скопируйте ссылку из Битрикс24: Разработчикам → Другое → Входящий вебхук)",
+    );
+  }
+
+  const subPath = cleanPath.slice(restIdx + 6).split("/").filter(Boolean);
+  if (subPath.length < 2) {
+    throw new AppError(
+      400,
+      "INVALID_REST_PATH",
+      "Неполный URL вебхука: в адресе пропущен ID пользователя или секретный код. Ожидается: https://домен/rest/<ID_пользователя>/<код_вебхука>/ (например: https://bankirromsk.ru/rest/261/x8ci14yw7f8xzi39/)",
+    );
+  }
 
   return `${parsed.origin}${cleanPath}/${method}`;
 }
@@ -382,6 +401,8 @@ export class Bitrix24Service {
           errorText = "Доступ запрещен: вебхук не имеет прав на модуль CRM в Битрикс24 (отметьте CRM в правах вебхука)";
         } else if (errCode === "NO_AUTH_FOUND" || response.status === 401) {
           errorText = "Ошибка авторизации: неверный ключ вебхука или пользователь удален в Битрикс24";
+        } else if (errCode === "ERROR_METHOD_NOT_FOUND") {
+          errorText = "Ошибка Битрикс24: метод не найден. Проверьте формат URL: в адресе обязательно должен быть указан ID пользователя и секретный ключ вебхука (например: /rest/1/код/)";
         } else if (errDesc) {
           errorText = `Ошибка Битрикс24 (${errCode || response.status}): ${errDesc}`;
         } else if (errCode) {
@@ -426,12 +447,29 @@ export class Bitrix24Service {
           errorMsg = "Таймаут соединения: сервер Битрикс24 не ответил за 20 секунд";
         } else {
           const cause = (err as { cause?: { code?: string; message?: string } }).cause;
-          if (cause?.code === "ENOTFOUND") {
+          const causeCode = cause?.code || "";
+          const causeMsg = cause?.message || "";
+
+          if (causeCode === "ENOTFOUND") {
             errorMsg = "Не удалось разрешить домен Битрикс24 (проверьте адрес портала)";
-          } else if (cause?.code === "ECONNREFUSED") {
+          } else if (causeCode === "ECONNREFUSED") {
             errorMsg = "Сервер Битрикс24 отклонил соединение (порт закрыт)";
-          } else if (cause?.code === "CERT_HAS_EXPIRED" || cause?.code === "DEPTH_ZERO_SELF_SIGNED_CERT") {
-            errorMsg = "Ошибка SSL-сертификата сервера Битрикс24";
+          } else if (
+            causeCode === "UND_ERR_CONNECT_TIMEOUT" ||
+            causeCode === "ETIMEDOUT" ||
+            causeMsg.includes("Connect Timeout")
+          ) {
+            errorMsg = "Таймаут подключения (10 с): сервер Битрикс24 не ответил на попытку соединения. Проверьте доступность портала и адрес вебхука";
+          } else if (
+            causeCode === "CERT_HAS_EXPIRED" ||
+            causeCode === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
+            causeCode === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+          ) {
+            errorMsg = `Ошибка SSL-сертификата сервера Битрикс24: ${causeMsg || causeCode}`;
+          } else if (err.message === "fetch failed") {
+            errorMsg = causeMsg
+              ? `Ошибка сетевого подключения к Битрикс24: ${causeMsg}`
+              : "Сбой сетевого соединения с Битрикс24 (проверьте доступность портала)";
           } else {
             errorMsg = err.message;
           }
@@ -444,7 +482,10 @@ export class Bitrix24Service {
 
       return {
         success: false,
-        message: `Сбой проверки вебхука: ${errorMsg}`,
+        message:
+          errorMsg.startsWith("Сбой") || errorMsg.startsWith("Ошибка") || errorMsg.startsWith("Некорректный") || errorMsg.startsWith("Таймаут")
+            ? errorMsg
+            : `Сбой проверки вебхука: ${errorMsg}`,
         error: errorMsg,
       };
     }
@@ -744,12 +785,24 @@ export class Bitrix24Service {
 
       return { success: false, error: "Ответ без ID лида" };
     } catch (err: unknown) {
-      const errorMsg =
-        err instanceof Error
-          ? err.name === "AbortError"
-            ? "Таймаут соединения (20с)"
-            : err.message
-          : String(err);
+      let errorMsg: string;
+      if (err instanceof Error) {
+        if (err.name === "AbortError") {
+          errorMsg = "Таймаут соединения (20 с)";
+        } else {
+          const cause = (err as { cause?: { code?: string; message?: string } }).cause;
+          const causeMsg = cause?.message || "";
+          if (err.message === "fetch failed") {
+            errorMsg = causeMsg
+              ? `Ошибка сетевого подключения к Битрикс24: ${causeMsg}`
+              : "Сбой сетевого соединения с Битрикс24 (проверьте доступность портала)";
+          } else {
+            errorMsg = err.message;
+          }
+        }
+      } else {
+        errorMsg = String(err);
+      }
 
       console.warn(`[Bitrix24] Exception dispatching lead ${leadData.leadId}: ${errorMsg}`);
       await this.updateSyncStatus(tenantId, null, errorMsg);

@@ -78,10 +78,14 @@ export default async function bitrix24Routes(app: FastifyInstance): Promise<void
     const result = await bitrix24Service.testConnection(request.tenant_id, body.webhook_url);
     if (!result.success) {
       return reply.status(400).send({
-        success: false,
+        status: "error",
+        error: {
+          code: "BITRIX24_TEST_FAILED",
+          message: result.message,
+        },
         message: result.message,
-        error: result.error || result.message,
         details: result.error || result.message,
+        success: false,
         data: result,
       });
     }

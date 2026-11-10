@@ -293,15 +293,32 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     });
   });
 
-  app.post("/tenants/:id/impersonate", { onRequest: platformOwner }, async (request, reply) => {
+  app.post("/tenants/:id/impersonate", async (request, reply) => {
     const tenantId = tenantParams.parse(request.params).id;
+    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null; owner_partner_id: string | null }>(
+      "SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE id = $1",
+      [tenantId],
+    );
+    if (!tenant) {
+      throw new NotFoundError("Компания не найдена");
+    }
+    const isPlatformOwner =
+      request.authUser?.platform_role === "platform_owner" ||
+      Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
+    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const isParentPartner =
+      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
+      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
+    if (!isPlatformOwner && !isParentPartner) {
+      throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
+    }
     const authService = new AuthService(app);
     const actorId =
       request.authUser?.platform_role === "platform_owner"
         ? request.authUser.id
         : request.impersonator_id || request.authUser?.id;
     if (!actorId) {
-      throw new UnauthorizedError("Не удалось определить идентификатор администратора");
+      throw new UnauthorizedError("Не удалось определить идентификатор администратора или партнера");
     }
     const tokens = await authService.impersonateTenant(tenantId, actorId);
     setAuthCookies(request, reply, tokens);
@@ -327,8 +344,8 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
 
   app.post("/tenants/by-slug/:slug/impersonate", async (request, reply) => {
     const { slug } = z.object({ slug: z.string().min(1) }).parse(request.params);
-    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null }>(
-      "SELECT id, name, slug, parent_tenant_id FROM tenants WHERE slug = $1",
+    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null; owner_partner_id: string | null }>(
+      "SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE slug = $1",
       [slug.toLowerCase()],
     );
     if (!tenant) {
@@ -337,7 +354,10 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const isPlatformOwner =
       request.authUser?.platform_role === "platform_owner" ||
       Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
-    const isParentPartner = tenant.parent_tenant_id !== null && tenant.parent_tenant_id === request.tenant_id;
+    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const isParentPartner =
+      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
+      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
     if (!isPlatformOwner && !isParentPartner) {
       throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
     }
