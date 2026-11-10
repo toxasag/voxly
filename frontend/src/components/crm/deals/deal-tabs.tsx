@@ -75,7 +75,7 @@ import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
@@ -1361,10 +1361,10 @@ function HomeTab({
           <div className="space-y-0.5 py-0.5">
             <FieldRow icon={Calendar} label="Дата создания">
               <span title={fullDate(deal.createdAt)} className="text-[#111111]">
-                {timeAgo(deal.createdAt)}
+                {formatDateTime(deal.createdAt)}
               </span>
             </FieldRow>
-            <FieldRow icon={Bot} label="Создано">
+            <FieldRow icon={Bot} label="Кем создано">
               <span title={`Создано: ${creator !== undefined ? creator.fullName : "System"}`} className="inline-flex items-center gap-1.5 text-[#111111]">
                 <Bot className="h-3 w-3 text-[#888888]" />
                 <span>{creator !== undefined ? creator.fullName : "System"}</span>

@@ -18,6 +18,7 @@ import {
   Search,
   Trash2,
   User,
+  UserCheck,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -39,8 +40,9 @@ import {
   ContactAvatarCell,
   CreatorCell,
   PillBadge,
+  formatDateTwenty,
 } from "@/components/crm/shared/twenty-table-helpers";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import {
   useCompanies,
   useCompanyStats,
@@ -247,8 +249,8 @@ function CompaniesContent() {
     },
     {
       id: "created_by",
-      header: "Создано",
-      icon: Clock,
+      header: "Кем создано",
+      icon: UserCheck,
       width: 140,
       sortValue: (company) => company.createdByName ?? company.createdBy ?? "",
       render: (company) => (
@@ -278,15 +280,15 @@ function CompaniesContent() {
       id: "created",
       header: "Дата создания",
       icon: Calendar,
-      width: 140,
+      width: 160,
       sortValue: (company) => company.createdAt,
       render: (company) => (
         <RecordCellShell align="left">
           <span
-            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(company.createdAt))}
-            className="text-[13px] text-[#111111]"
+            title={formatDateTime(company.createdAt)}
+            className="text-[13px] text-[#111111] whitespace-nowrap font-normal"
           >
-            {timeAgo(company.createdAt)}
+            {formatDateTwenty(company.createdAt)}
           </span>
         </RecordCellShell>
       ),
