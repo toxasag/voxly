@@ -13,6 +13,8 @@ import {
   type Bitrix24ConfigRow,
   type Bitrix24LeadAddRequest,
   type Bitrix24LeadAddResponse,
+  type Bitrix24SyncLogDTO,
+  type Bitrix24SyncStatus,
   type Bitrix24TestResult,
   type LeadSource,
   type SimpleWidgetDTO,
@@ -157,6 +159,13 @@ export function normalizeBitrixWebhookUrl(rawUrl: string, method = "crm.lead.add
   }
 
   return `${parsed.origin}${cleanPath}/${method}`;
+}
+
+function safeUuidOrNull(val?: string | null): string | null {
+  if (!val) return null;
+  const trimmed = val.trim();
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(trimmed) ? trimmed : null;
 }
 
 export class Bitrix24Service {
@@ -492,8 +501,56 @@ export class Bitrix24Service {
   }
 
   /**
+   * Запись события исходящей синхронизации в bitrix24_sync_logs (наблюдаемость интеграции).
+   * Отказоустойчива: ошибки записи в лог не ломают бизнес-логику отправки лида.
+   */
+  private async recordSyncLog(params: {
+    tenantId: string;
+    dealId?: string | null;
+    status: Bitrix24SyncStatus;
+    bitrixLeadId?: string | null;
+    webhookUrl?: string | null;
+    requestPayload?: Record<string, unknown> | null;
+    responseStatus?: number | null;
+    responseBody?: Record<string, unknown> | null;
+    errorMessage?: string | null;
+    leadSource?: string | null;
+    widgetId?: string | null;
+  }): Promise<string | null> {
+    try {
+      const res = await queryOne<{ id: string }>(
+        `INSERT INTO bitrix24_sync_logs (
+           tenant_id, deal_id, entity_type, direction, status,
+           bitrix_lead_id, webhook_url, request_payload, response_status,
+           response_body, error_message, lead_source, widget_id, created_at
+         )
+         VALUES ($1, $2, 'deal', 'outbound', $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+         RETURNING id`,
+        [
+          params.tenantId,
+          safeUuidOrNull(params.dealId),
+          params.status,
+          params.bitrixLeadId ? String(params.bitrixLeadId) : null,
+          params.webhookUrl || null,
+          params.requestPayload ? JSON.stringify(params.requestPayload) : null,
+          params.responseStatus || null,
+          params.responseBody ? JSON.stringify(params.responseBody) : null,
+          params.errorMessage || null,
+          params.leadSource || null,
+          safeUuidOrNull(params.widgetId),
+        ],
+      );
+      return res?.id || null;
+    } catch (err) {
+      console.warn("[Bitrix24] Failed to record sync log:", err);
+      return null;
+    }
+  }
+
+  /**
    * Отправка реального лида в Битрикс24 при поступлении заявки.
    * Отказоустойчива: никогда не выбрасывает наружу необработанные исключения.
+   * Фиксирует подробный аудит-лог в bitrix24_sync_logs на каждом этапе.
    */
   async sendLead(
     tenantId: string,
@@ -516,6 +573,11 @@ export class Bitrix24Service {
       customFields?: Record<string, unknown> | null;
     },
   ): Promise<{ success: boolean; leadId?: number | string; skipped?: boolean; error?: string; reason?: string }> {
+    let targetUrl: string | null = null;
+    let payload: Bitrix24LeadAddRequest | null = null;
+    let resolvedSource: LeadSource | "manual" = "manual";
+    let effectiveWidgetId: string | null = null;
+
     try {
       const cfg = await this.getConfig(tenantId);
       if (!cfg.is_enabled || !cfg.webhook_url) {
@@ -523,7 +585,7 @@ export class Bitrix24Service {
       }
 
       // 1. Проверка фильтрации по источникам заявки (allowed_sources)
-      const resolvedSource = resolveLeadSource({
+      resolvedSource = resolveLeadSource({
         source: leadData.source,
         sourceMetadata: leadData.sourceMetadata,
         sourceWidgetId: leadData.sourceWidgetId,
@@ -531,11 +593,26 @@ export class Bitrix24Service {
         customFields: leadData.customFields,
       });
 
+      effectiveWidgetId = leadData.sourceWidgetId ||
+        (leadData.sourceMetadata?.widget_id as string | undefined) ||
+        (leadData.customFields?.widget_id as string | undefined) ||
+        null;
+
       if (cfg.allowed_sources && cfg.allowed_sources.length > 0) {
         if (!cfg.allowed_sources.includes(resolvedSource)) {
+          const skipReason = `SOURCE_NOT_ALLOWED: ${resolvedSource}`;
           console.log(
             `[Bitrix24] Skipping lead ${leadData.leadId} (tenant: ${tenantId}): source "${resolvedSource}" not in allowed_sources [${cfg.allowed_sources.join(", ")}]`,
           );
+          await this.recordSyncLog({
+            tenantId,
+            dealId: leadData.leadId,
+            status: "skipped",
+            webhookUrl: cfg.webhook_url,
+            errorMessage: skipReason,
+            leadSource: resolvedSource,
+            widgetId: effectiveWidgetId,
+          });
           try {
             await query(
               `INSERT INTO tenant_audit_log (tenant_id, action, entity_type, entity_id, details)
@@ -558,21 +635,27 @@ export class Bitrix24Service {
           return {
             success: false,
             skipped: true,
-            reason: `SOURCE_NOT_ALLOWED: ${resolvedSource}`,
+            reason: skipReason,
           };
         }
       }
 
       // 2. Проверка фильтрации по конкретным виджетам тенанта (selected_widget_ids)
-      const effectiveWidgetId = leadData.sourceWidgetId ||
-        (leadData.sourceMetadata?.widget_id as string | undefined) ||
-        (leadData.customFields?.widget_id as string | undefined);
-
       if (resolvedSource === "site_widget" && cfg.selected_widget_ids && cfg.selected_widget_ids.length > 0) {
         if (!effectiveWidgetId || !cfg.selected_widget_ids.includes(effectiveWidgetId)) {
+          const skipReason = `WIDGET_NOT_ALLOWED: ${effectiveWidgetId || "none"}`;
           console.log(
             `[Bitrix24] Skipping lead ${leadData.leadId} (tenant: ${tenantId}): widget "${effectiveWidgetId}" not in selected_widget_ids [${cfg.selected_widget_ids.join(", ")}]`,
           );
+          await this.recordSyncLog({
+            tenantId,
+            dealId: leadData.leadId,
+            status: "skipped",
+            webhookUrl: cfg.webhook_url,
+            errorMessage: skipReason,
+            leadSource: resolvedSource,
+            widgetId: effectiveWidgetId,
+          });
           try {
             await query(
               `INSERT INTO tenant_audit_log (tenant_id, action, entity_type, entity_id, details)
@@ -595,7 +678,7 @@ export class Bitrix24Service {
           return {
             success: false,
             skipped: true,
-            reason: `WIDGET_NOT_ALLOWED: ${effectiveWidgetId || "none"}`,
+            reason: skipReason,
           };
         }
       }
@@ -730,7 +813,7 @@ export class Bitrix24Service {
         ? [{ VALUE: leadData.email.trim(), VALUE_TYPE: "WORK" as const }]
         : undefined;
 
-      const payload: Bitrix24LeadAddRequest = {
+      payload = {
         fields: {
           TITLE: leadTitle,
           NAME: leadData.contactName || "Клиент",
@@ -754,7 +837,7 @@ export class Bitrix24Service {
         },
       };
 
-      const targetUrl = normalizeBitrixWebhookUrl(cfg.webhook_url, "crm.lead.add.json");
+      targetUrl = normalizeBitrixWebhookUrl(cfg.webhook_url, "crm.lead.add.json");
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -774,15 +857,51 @@ export class Bitrix24Service {
         const errorText = data.error_description || data.error || `HTTP ${response.status}`;
         console.warn(`[Bitrix24] Failed to send lead ${leadData.leadId}: ${errorText}`);
         await this.updateSyncStatus(tenantId, null, errorText);
+        await this.recordSyncLog({
+          tenantId,
+          dealId: leadData.leadId,
+          status: "error",
+          webhookUrl: targetUrl,
+          requestPayload: payload as unknown as Record<string, unknown>,
+          responseStatus: response.status,
+          responseBody: data as unknown as Record<string, unknown>,
+          errorMessage: errorText,
+          leadSource: resolvedSource,
+          widgetId: effectiveWidgetId,
+        });
         return { success: false, error: errorText };
       }
 
       if (data.result) {
         console.log(`[Bitrix24] Lead ${leadData.leadId} successfully exported to Bitrix24 with ID: ${data.result}`);
         await this.updateSyncStatus(tenantId, String(data.result), null);
+        await this.recordSyncLog({
+          tenantId,
+          dealId: leadData.leadId,
+          status: "success",
+          bitrixLeadId: String(data.result),
+          webhookUrl: targetUrl,
+          requestPayload: payload as unknown as Record<string, unknown>,
+          responseStatus: response.status,
+          responseBody: data as unknown as Record<string, unknown>,
+          leadSource: resolvedSource,
+          widgetId: effectiveWidgetId,
+        });
         return { success: true, leadId: data.result };
       }
 
+      await this.recordSyncLog({
+        tenantId,
+        dealId: leadData.leadId,
+        status: "error",
+        webhookUrl: targetUrl,
+        requestPayload: payload as unknown as Record<string, unknown>,
+        responseStatus: response.status,
+        responseBody: data as unknown as Record<string, unknown>,
+        errorMessage: "Ответ без ID лида",
+        leadSource: resolvedSource,
+        widgetId: effectiveWidgetId,
+      });
       return { success: false, error: "Ответ без ID лида" };
     } catch (err: unknown) {
       let errorMsg: string;
@@ -806,8 +925,179 @@ export class Bitrix24Service {
 
       console.warn(`[Bitrix24] Exception dispatching lead ${leadData.leadId}: ${errorMsg}`);
       await this.updateSyncStatus(tenantId, null, errorMsg);
+      await this.recordSyncLog({
+        tenantId,
+        dealId: leadData.leadId,
+        status: "error",
+        webhookUrl: targetUrl,
+        requestPayload: payload as unknown as Record<string, unknown>,
+        errorMessage: errorMsg,
+        leadSource: resolvedSource,
+        widgetId: effectiveWidgetId,
+      });
       return { success: false, error: errorMsg };
     }
+  }
+
+  /**
+   * Получение журнала синхронизации сделок с Битрикс24 для тенанта.
+   */
+  async getSyncLogs(
+    tenantId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<{ logs: Bitrix24SyncLogDTO[]; total: number }> {
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+    const safeOffset = Math.max(0, offset);
+
+    const countRow = await queryOne<{ count: string }>(
+      `SELECT COUNT(*)::text as count FROM bitrix24_sync_logs WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    const total = parseInt(countRow?.count || "0", 10);
+
+    const rows = await query<{
+      id: string;
+      deal_id: string | null;
+      deal_title: string | null;
+      contact_name: string | null;
+      contact_phone: string | null;
+      status: string;
+      bitrix_lead_id: string | null;
+      response_status: number | null;
+      error_message: string | null;
+      lead_source: string | null;
+      widget_name: string | null;
+      request_payload: Record<string, unknown> | null;
+      response_body: Record<string, unknown> | null;
+      created_at: Date | string;
+    }>(
+      `SELECT
+         l.id,
+         l.deal_id,
+         d.title AS deal_title,
+         c.first_name AS contact_name,
+         c.phone AS contact_phone,
+         l.status,
+         l.bitrix_lead_id,
+         l.response_status,
+         l.error_message,
+         l.lead_source,
+         ca.label AS widget_name,
+         l.request_payload,
+         l.response_body,
+         l.created_at
+       FROM bitrix24_sync_logs l
+       LEFT JOIN deals d ON d.id = l.deal_id
+       LEFT JOIN contacts c ON c.id = d.contact_id
+       LEFT JOIN channel_accounts ca ON ca.id = l.widget_id
+       WHERE l.tenant_id = $1
+       ORDER BY l.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [tenantId, safeLimit, safeOffset],
+    );
+
+    const logs: Bitrix24SyncLogDTO[] = rows.map((r) => ({
+      id: r.id,
+      deal_id: r.deal_id,
+      deal_title: r.deal_title,
+      contact_name: r.contact_name,
+      contact_phone: r.contact_phone,
+      status: (r.status || "pending") as Bitrix24SyncStatus,
+      bitrix_lead_id: r.bitrix_lead_id,
+      response_status: r.response_status,
+      error_message: r.error_message,
+      lead_source: r.lead_source,
+      widget_name: r.widget_name,
+      request_payload: r.request_payload,
+      response_body: r.response_body,
+      created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    }));
+
+    return { logs, total };
+  }
+
+  /**
+   * Повторная отправка сделки в Битрикс24 по ID лога или сделки.
+   */
+  async retryLeadSync(
+    tenantId: string,
+    logOrDealId: string,
+  ): Promise<{ success: boolean; leadId?: number | string; error?: string }> {
+    let targetDealId = logOrDealId;
+    const logRow = await queryOne<{ deal_id: string }>(
+      `SELECT deal_id FROM bitrix24_sync_logs WHERE id = $1 AND tenant_id = $2`,
+      [logOrDealId, tenantId],
+    );
+    if (logRow?.deal_id) {
+      targetDealId = logRow.deal_id;
+    }
+
+    const deal = await queryOne<{
+      id: string;
+      tenant_id: string;
+      title: string;
+      description: string | null;
+      budget: number | string | null;
+      currency: string | null;
+      custom_fields: Record<string, unknown> | null;
+      source_metadata: Record<string, unknown> | null;
+      source_widget_id: string | null;
+      contact_id: string | null;
+      contact_first_name: string | null;
+      contact_last_name: string | null;
+      contact_phone: string | null;
+      contact_email: string | null;
+      contact_channel: string | null;
+      tenant_name: string;
+      tenant_slug: string;
+    }>(
+      `SELECT d.id, d.tenant_id, d.title, d.description, d.budget, d.currency,
+              d.custom_fields, d.source_metadata, d.source_widget_id,
+              c.id AS contact_id, c.first_name AS contact_first_name, c.last_name AS contact_last_name,
+              c.phone AS contact_phone, c.email AS contact_email, c.channel AS contact_channel,
+              t.name AS tenant_name, t.slug AS tenant_slug
+       FROM deals d
+       JOIN tenants t ON t.id = d.tenant_id
+       LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, targetDealId],
+    );
+
+    if (!deal) {
+      throw new AppError(404, "DEAL_NOT_FOUND", "Сделка не найдена для повторной отправки в Битрикс24");
+    }
+
+    const contactNameParts = [deal.contact_first_name, deal.contact_last_name].filter(Boolean);
+    const contactName = contactNameParts.length > 0 ? contactNameParts.join(" ") : null;
+    const customFields = deal.custom_fields || {};
+    const phone = deal.contact_phone || (customFields.phone as string | undefined) || null;
+    const email = deal.contact_email || (customFields.email as string | undefined) || null;
+    const yaClientId =
+      (customFields.ym_uid as string) ||
+      (customFields.ym_client_id as string) ||
+      (customFields.ya_client_id as string) ||
+      (customFields.yandex_client_id as string) ||
+      (customFields.ya_cid as string) ||
+      null;
+
+    return this.sendLead(tenantId, {
+      leadId: deal.id,
+      title: deal.title,
+      contactName,
+      phone,
+      email,
+      yaClientId,
+      comments: deal.description || null,
+      budget: deal.budget ? Number(deal.budget) : null,
+      currency: deal.currency || "RUB",
+      utmTags: (customFields.utm_tags as Record<string, string>) || null,
+      tenantIdentifier: deal.tenant_slug || deal.tenant_name || "getvoxly",
+      sourceMetadata: deal.source_metadata,
+      sourceWidgetId: deal.source_widget_id,
+      contactChannel: deal.contact_channel,
+      customFields,
+    });
   }
 
   private async updateSyncStatus(

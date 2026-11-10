@@ -53,10 +53,38 @@ export interface TestBitrix24Response {
   details?: string;
 }
 
+export type Bitrix24SyncStatus = "success" | "error" | "skipped" | "pending";
+
+export interface Bitrix24SyncLogDTO {
+  id: string;
+  deal_id: string | null;
+  deal_title: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  status: Bitrix24SyncStatus;
+  bitrix_lead_id: string | null;
+  response_status: number | null;
+  error_message: string | null;
+  lead_source: string | null;
+  widget_name: string | null;
+  request_payload: Record<string, unknown> | null;
+  response_body: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface Bitrix24LogsResponse {
+  data: Bitrix24SyncLogDTO[];
+  logs: Bitrix24SyncLogDTO[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export const bitrix24Keys = {
   all: ["settings", "integrations", "bitrix24"] as const,
   config: () => [...bitrix24Keys.all, "config"] as const,
   widgets: () => [...bitrix24Keys.all, "widgets"] as const,
+  logs: (params?: { limit?: number; page?: number }) => [...bitrix24Keys.all, "logs", params] as const,
 };
 
 export function useTenantWidgets() {
@@ -114,6 +142,41 @@ export function useTestBitrix24Connection() {
       return res.data;
     },
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: bitrix24Keys.config() });
+    },
+  });
+}
+
+export function useBitrix24Logs(params: { limit?: number; page?: number } = {}) {
+  const limit = params.limit ?? 50;
+  const page = params.page ?? 1;
+
+  return useQuery({
+    queryKey: bitrix24Keys.logs({ limit, page }),
+    queryFn: async () => {
+      const res = await apiClient.get<Bitrix24LogsResponse>(
+        `/api/v1/settings/integrations/bitrix24/logs?limit=${limit}&page=${page}`,
+      );
+      return res.data;
+    },
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+  });
+}
+
+export function useRetryBitrix24Sync() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (logOrDealId: string) => {
+      const res = await apiClient.post<{ success: boolean; leadId?: number | string; error?: string }>(
+        `/api/v1/settings/integrations/bitrix24/retry/${logOrDealId}`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: bitrix24Keys.logs() });
       void queryClient.invalidateQueries({ queryKey: bitrix24Keys.config() });
     },
   });
