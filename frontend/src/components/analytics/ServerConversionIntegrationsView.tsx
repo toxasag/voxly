@@ -3,10 +3,12 @@
 import { useMemo, useState } from "react";
 import {
   BarChart3,
+  Check,
   CheckCircle2,
   Copy,
   ExternalLink,
   Globe,
+  KeyRound,
   Loader2,
   Megaphone,
   Pencil,
@@ -17,6 +19,7 @@ import {
   Share2,
   ShieldCheck,
   Sparkles,
+  Target,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -108,6 +111,46 @@ const PROVIDERS_CATALOG: ProviderMeta[] = [
   },
 ];
 
+interface YandexGoalGuide {
+  id: string;
+  name: string;
+  identifier: string;
+  aliases: string[];
+  triggerCondition: string;
+  type: string;
+  payloadInfo: string;
+}
+
+const YANDEX_GOALS: YandexGoalGuide[] = [
+  {
+    id: "lead",
+    name: "Новый квалифицированный лид",
+    identifier: "lead",
+    aliases: ["submit_lead", "lead_qualified"],
+    triggerCondition: "Получены контакты клиента (телефон, email, telegram) или сделка переведена в этап «Новый лид»",
+    type: "JavaScript-событие",
+    payloadInfo: "Передаётся ClientID, номер телефона, email и UTM-метки источника",
+  },
+  {
+    id: "purchase",
+    name: "Успешная продажа / Оплата",
+    identifier: "purchase",
+    aliases: ["sale", "order_paid"],
+    triggerCondition: "Сделка успешно закрыта и переведена в статус «Успешно реализована»",
+    type: "JavaScript-событие",
+    payloadInfo: "Передаётся сумма сделки (бюджет в рублях), валюта RUB и ClientID",
+  },
+  {
+    id: "chat",
+    name: "Первое сообщение в чат / Мессенджер",
+    identifier: "chat",
+    aliases: ["getvoxly_messenger_click", "first_message"],
+    triggerCondition: "Посетитель отправил первое входящее сообщение через веб-чат или мессенджер",
+    type: "JavaScript-событие",
+    payloadInfo: "Передаётся ClientID посетителя, платформа чата и URL страницы",
+  },
+];
+
 export function ServerConversionIntegrationsView() {
   const { data: integrations = [], isLoading, refetch } = useAnalyticsIntegrations();
   const createMutation = useCreateAnalyticsIntegration();
@@ -142,6 +185,7 @@ export function ServerConversionIntegrationsView() {
     onDealWon: true,
     onFirstMessage: true,
   });
+  const [copiedGoal, setCopiedGoal] = useState<string | null>(null);
 
   // Уникальные сайты для фильтра в тулбаре
   const uniqueSites = useMemo(() => {
@@ -342,13 +386,13 @@ export function ServerConversionIntegrationsView() {
           success: isSuccess,
           status: res.status,
           message: isSuccess
-            ? `Конверсия доставлена (HTTP ${res.status})`
+            ? (res.responseSnippet || `Конверсия доставлена (HTTP ${res.status})`)
             : `Ошибка доставки (HTTP ${res.status}): ${res.error || "Проверьте токены"}`,
         },
       }));
 
       if (isSuccess) {
-        toast.success(`Тестовое событие успешно отправлено в ${res.provider}`);
+        toast.success(res.responseSnippet || `Счётчик успешно проверен`);
       } else {
         toast.error(`Ответ ${res.status}: ${res.error || "Ошибка авторизации или ID"}`);
       }
@@ -357,6 +401,15 @@ export function ServerConversionIntegrationsView() {
     } finally {
       setTestingId(null);
     }
+  };
+
+  const handleCopyGoal = (identifier: string) => {
+    void navigator.clipboard.writeText(identifier);
+    setCopiedGoal(identifier);
+    toast.success(`Идентификатор «${identifier}» скопирован`);
+    setTimeout(() => {
+      setCopiedGoal((current) => (current === identifier ? null : current));
+    }, 2000);
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -600,18 +653,25 @@ export function ServerConversionIntegrationsView() {
                   {/* Результат тестовой отправки */}
                   {testResult && (
                     <div
-                      className={`flex items-start gap-1.5 rounded-[4px] p-2 text-[11px] ${
+                      className={`flex items-start gap-2 rounded-[6px] p-2.5 text-[11px] ${
                         testResult.success
                           ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
                           : "bg-rose-50 text-rose-800 border border-rose-200"
                       }`}
                     >
                       {testResult.success ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
                       ) : (
-                        <XCircle className="h-3.5 w-3.5 text-rose-600 shrink-0 mt-0.5" />
+                        <XCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
                       )}
-                      <span>{testResult.message}</span>
+                      <div className="flex-1 space-y-1">
+                        <div className="font-medium leading-snug">{testResult.message}</div>
+                        {!testResult.success && canonical === "yandex" && (
+                          <div className="text-[10px] text-rose-700/90 leading-relaxed border-t border-rose-200/60 pt-1 mt-1">
+                            Рекомендация: проверьте номер счётчика и наличие OAuth-токена с правами metrika:read и metrika:write в настройках.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -770,6 +830,63 @@ export function ServerConversionIntegrationsView() {
                   </p>
                 </div>
 
+                {sheetProvider === "yandex" && (
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-[#111111]">
+                        <KeyRound className="h-3.5 w-3.5 text-[#4a38f5]" />
+                        <span>Инструкция: как получить OAuth-токен Яндекс</span>
+                      </div>
+                      <a
+                        href="https://oauth.yandex.ru/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-[#4a38f5] hover:underline"
+                      >
+                        <span>oauth.yandex.ru</span>
+                        <ExternalLink className="h-2.5 w-2.5" />
+                      </a>
+                    </div>
+                    <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-[#666666] leading-relaxed">
+                      <li>
+                        Войдите в Яндекс под аккаунтом владельца счётчика и перейдите на{" "}
+                        <a
+                          href="https://oauth.yandex.ru/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-[#4a38f5] hover:underline"
+                        >
+                          oauth.yandex.ru
+                        </a>
+                        . Нажмите <span className="font-medium text-[#111111]">«Создать приложение»</span>.
+                      </li>
+                      <li>
+                        В блоке <span className="font-medium text-[#111111]">«Платформы»</span> выберите{" "}
+                        <span className="font-medium text-[#111111]">«Веб-сервисы»</span> и укажите Redirect URI:{" "}
+                        <code className="rounded bg-black/[0.04] px-1 py-0.5 font-mono text-[10px] text-[#111111]">
+                          https://oauth.yandex.ru/verification_code
+                        </code>
+                      </li>
+                      <li>
+                        В разделе <span className="font-medium text-[#111111]">«Доступ к данным»</span> найдите{" "}
+                        <span className="font-medium text-[#111111]">«Яндекс Метрика»</span> и отметьте права:
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          <span className="rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 font-mono text-[10px] text-[#111111]">
+                            metrika:read (чтение)
+                          </span>
+                          <span className="rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 font-mono text-[10px] text-[#111111]">
+                            metrika:write (запись конверсий)
+                          </span>
+                        </div>
+                      </li>
+                      <li>
+                        Сохраните приложение и получите токен авторизации (начинается на{" "}
+                        <code className="font-mono font-semibold text-[#111111]">y0_...</code>).
+                      </li>
+                    </ol>
+                  </div>
+                )}
+
                 {meta.hasTestEventCode && (
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-[#111111]">Test Event Code (опционально)</label>
@@ -785,6 +902,84 @@ export function ServerConversionIntegrationsView() {
               </div>
             );
           })()}
+
+          {/* Цели в Яндекс Метрике (JavaScript-события) */}
+          {sheetProvider === "yandex" && (
+            <div className="space-y-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4">
+              <div className="border-b border-[#f0f0f0] pb-2">
+                <div className="flex items-center gap-1.5">
+                  <Target className="h-4 w-4 text-[#4a38f5]" />
+                  <h4 className="text-xs font-semibold text-[#111111]">
+                    Цели в Яндекс Метрике (JavaScript-события)
+                  </h4>
+                </div>
+                <p className="mt-0.5 text-[11px] text-[#666666]">
+                  Создайте в интерфейсе Яндекс Метрики цели с типом «JavaScript-событие» и скопируйте идентификаторы ниже:
+                </p>
+              </div>
+
+              <div className="space-y-2.5">
+                {YANDEX_GOALS.map((goal) => {
+                  const isCopied = copiedGoal === goal.identifier;
+                  return (
+                    <div
+                      key={goal.id}
+                      className="rounded-[6px] border border-[#e5e5e5] bg-[#fbfbfb] p-3 space-y-1.5 transition-colors hover:border-[#cccccc]"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-[#111111]">{goal.name}</span>
+                          <span className="rounded-[4px] bg-[#f0f0f0] px-1.5 py-0.5 text-[10px] font-medium text-[#666666]">
+                            {goal.type}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyGoal(goal.identifier)}
+                          className={`inline-flex items-center gap-1 rounded-[6px] border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                            isCopied
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                              : "border-[#e5e5e5] bg-white text-[#111111] hover:border-[#cccccc] hover:bg-[#fafafa]"
+                          }`}
+                        >
+                          {isCopied ? (
+                            <>
+                              <Check className="h-3 w-3 text-emerald-600" />
+                              <span>Скопировано</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3 w-3 text-[#666666]" />
+                              <span>Скопировать</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-[#666666]">Идентификатор цели:</span>
+                        <code className="rounded-[4px] border border-[#e5e5e5] bg-white px-2 py-0.5 font-mono text-xs font-semibold text-[#4a38f5]">
+                          {goal.identifier}
+                        </code>
+                        {goal.aliases.length > 0 && (
+                          <span className="text-[10px] text-[#888888]">
+                            (алиасы: {goal.aliases.join(", ")})
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-[11px] text-[#666666] leading-relaxed">
+                        {goal.triggerCondition}
+                      </p>
+                      <div className="text-[10px] text-[#888888]">
+                        Данные: {goal.payloadInfo}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Правила отправки конверсий (Event Rules) */}
           <div className="space-y-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/30 p-4">
