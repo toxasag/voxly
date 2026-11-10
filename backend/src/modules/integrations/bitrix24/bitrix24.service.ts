@@ -334,6 +334,44 @@ export class Bitrix24Service {
       throw new AppError(500, "DB_ERROR", "Не удалось сохранить конфигурацию Битрикс24");
     }
 
+    // Синхронизируем tenant_notification_channels для сквозной поддержки списка каналов
+    if (rawUrl) {
+      try {
+        const extraMeta = {
+          custom_source_id: customSourceId,
+          allowed_sources: cleanAllowedSources,
+          selected_widget_ids: cleanSelectedWidgetIds,
+          send_utm_marks: sendUtmMarks,
+          send_geo_data: sendGeoData,
+        };
+        const existingChannel = await queryOne<{ id: string }>(
+          `SELECT id FROM tenant_notification_channels
+           WHERE tenant_id = $1 AND channel_type = 'bitrix24' AND destination = $2`,
+          [tenantId, rawUrl],
+        );
+        if (existingChannel) {
+          await query(
+            `UPDATE tenant_notification_channels
+             SET extra_meta = tenant_notification_channels.extra_meta || $3,
+                 is_active = $4,
+                 updated_at = NOW()
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, existingChannel.id, JSON.stringify(extraMeta), isEnabled],
+          );
+        } else {
+          await query(
+            `INSERT INTO tenant_notification_channels (
+               tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+             )
+             VALUES ($1, 'bitrix24', $2, $3, $4, true)`,
+            [tenantId, rawUrl, JSON.stringify(extraMeta), isEnabled],
+          );
+        }
+      } catch (syncErr) {
+        console.warn(`[Bitrix24Service] Sync to tenant_notification_channels warning:`, syncErr);
+      }
+    }
+
     return {
       webhook_url: row.webhook_url,
       is_enabled: row.is_enabled,
@@ -572,6 +610,7 @@ export class Bitrix24Service {
       contactChannel?: string | null;
       customFields?: Record<string, unknown> | null;
     },
+    overrideConfig?: Partial<Bitrix24ConfigDTO>,
   ): Promise<{ success: boolean; leadId?: number | string; skipped?: boolean; error?: string; reason?: string }> {
     let targetUrl: string | null = null;
     let payload: Bitrix24LeadAddRequest | null = null;
@@ -579,7 +618,16 @@ export class Bitrix24Service {
     let effectiveWidgetId: string | null = null;
 
     try {
-      const cfg = await this.getConfig(tenantId);
+      const baseCfg = await this.getConfig(tenantId);
+      const cfg: Bitrix24ConfigDTO = overrideConfig
+        ? {
+            ...baseCfg,
+            ...overrideConfig,
+            allowed_sources: (overrideConfig.allowed_sources ?? baseCfg.allowed_sources) as LeadSource[],
+            selected_widget_ids: overrideConfig.selected_widget_ids ?? baseCfg.selected_widget_ids,
+          }
+        : baseCfg;
+
       if (!cfg.is_enabled || !cfg.webhook_url) {
         return { success: false, skipped: true, reason: "INTEGRATION_DISABLED" };
       }

@@ -18,6 +18,8 @@ import { query, queryOne, runWithTenantContext } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
 import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
 import { bitrix24Service } from "../../integrations/bitrix24/bitrix24.service.js";
+import type { LeadSource } from "../../integrations/bitrix24/bitrix24.types.js";
+import type { NotificationChannelType } from "../../notifications/notification-channels.types.js";
 import { getDealConversationSummary } from "./lead-summary.service.js";
 
 export interface LeadNotificationJobData {
@@ -356,10 +358,10 @@ export class LeadNotificationQueueService {
     let providerMessageId: string | null = null;
     let providerResponse: Record<string, unknown> | null = null;
 
-    // 1. Извлекаем активные каналы уведомлений тенанта (Email, Telegram, WhatsApp)
+    // 1. Извлекаем активные каналы уведомлений тенанта (Email, Telegram, WhatsApp, Bitrix24)
     const configuredChannels = await query<{
       id: string;
-      channel_type: "email" | "telegram" | "whatsapp";
+      channel_type: NotificationChannelType;
       destination: string;
       extra_meta: Record<string, unknown>;
     }>(
@@ -542,7 +544,7 @@ export class LeadNotificationQueueService {
         [tenantId],
       );
 
-      const b24Result = await bitrix24Service.sendLead(tenantId, {
+      const b24Payload = {
         leadId: lead.id,
         title: lead.title,
         contactName,
@@ -558,16 +560,72 @@ export class LeadNotificationQueueService {
         sourceWidgetId: lead.source_widget_id,
         contactChannel: lead.contact_channel,
         customFields,
-      });
+      };
 
-      if (b24Result.success && b24Result.leadId) {
-        delivered = true;
-        if (!deliveredChannel) {
-          deliveredChannel = "email"; // fallback маркер канала для статистики доставки
+      const b24Channels = configuredChannels.filter((c) => c.channel_type === "bitrix24");
+
+      if (b24Channels.length > 0) {
+        for (const b24Ch of b24Channels) {
+          const meta = b24Ch.extra_meta ?? {};
+          const allowedSources = Array.isArray(meta.allowed_sources)
+            ? (meta.allowed_sources as LeadSource[])
+            : [];
+          const selectedWidgets = Array.isArray(meta.selected_widget_ids)
+            ? (meta.selected_widget_ids as string[])
+            : [];
+          const customSourceId = typeof meta.custom_source_id === "string" && meta.custom_source_id.trim()
+            ? meta.custom_source_id.trim()
+            : "UC_VWN1ZK";
+
+          const b24Result = await bitrix24Service.sendLead(
+            tenantId,
+            b24Payload,
+            {
+              webhook_url: b24Ch.destination,
+              is_enabled: true,
+              allowed_sources: allowedSources,
+              selected_widget_ids: selectedWidgets,
+              custom_source_id: customSourceId,
+              send_utm_marks: meta.send_utm_marks !== false,
+              send_geo_data: meta.send_geo_data !== false,
+            },
+          );
+
+          if (b24Result.success && b24Result.leadId) {
+            delivered = true;
+            if (!deliveredChannel) deliveredChannel = "email";
+            console.log(`[BullMQ] Lead ${lead.id} exported to Bitrix24 (ID: ${b24Result.leadId}, Channel: ${b24Ch.id})`);
+            try {
+              await query(
+                `UPDATE tenant_notification_channels
+                 SET extra_meta = extra_meta || $3::jsonb, updated_at = NOW()
+                 WHERE tenant_id = $1 AND id = $2`,
+                [
+                  tenantId,
+                  b24Ch.id,
+                  JSON.stringify({
+                    last_lead_id: String(b24Result.leadId),
+                    last_sync_at: new Date().toISOString(),
+                    last_error: null,
+                  }),
+                ],
+              );
+            } catch {}
+          } else if (b24Result.skipped) {
+            console.log(`[BullMQ] Lead ${lead.id} skipped for Bitrix24 channel ${b24Ch.id} (${b24Result.reason || "skipped"})`);
+          }
         }
-        console.log(`[BullMQ] Lead ${lead.id} exported to Bitrix24 (ID: ${b24Result.leadId})`);
-      } else if (b24Result.skipped) {
-        console.log(`[BullMQ] Lead ${lead.id} skipped for Bitrix24 (${b24Result.reason || "skipped"})`);
+      } else {
+        const b24Result = await bitrix24Service.sendLead(tenantId, b24Payload);
+        if (b24Result.success && b24Result.leadId) {
+          delivered = true;
+          if (!deliveredChannel) {
+            deliveredChannel = "email"; // fallback маркер канала для статистики доставки
+          }
+          console.log(`[BullMQ] Lead ${lead.id} exported to Bitrix24 (ID: ${b24Result.leadId})`);
+        } else if (b24Result.skipped) {
+          console.log(`[BullMQ] Lead ${lead.id} skipped for Bitrix24 (${b24Result.reason || "skipped"})`);
+        }
       }
     } catch (b24Err) {
       console.warn(`[LeadNotification] Bitrix24 lead export non-blocking error:`, b24Err);
