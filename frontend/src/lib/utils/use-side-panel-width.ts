@@ -3,12 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 
 const STORAGE_KEY = "getvoxly.sidePanel.width.v1";
-export const DEFAULT_SIDE_PANEL_WIDTH = 500;
+export const DEFAULT_SIDE_PANEL_WIDTH = 560;
 export const MIN_SIDE_PANEL_WIDTH = 360;
-export const MAX_SIDE_PANEL_WIDTH = 800;
+export const MAX_SIDE_PANEL_WIDTH = 1800;
 
 function clamp(value: number): number {
-  return Math.min(MAX_SIDE_PANEL_WIDTH, Math.max(MIN_SIDE_PANEL_WIDTH, Math.round(value)));
+  const max =
+    typeof window !== "undefined"
+      ? Math.min(MAX_SIDE_PANEL_WIDTH, Math.max(800, Math.round(window.innerWidth * 0.94)))
+      : MAX_SIDE_PANEL_WIDTH;
+  return Math.min(max, Math.max(MIN_SIDE_PANEL_WIDTH, Math.round(value)));
 }
 
 function readStored(): number | null {

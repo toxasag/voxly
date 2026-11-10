@@ -89,15 +89,17 @@ export function RecordDetailShell({
         телефоне карточка занимает весь экран.
       */}
       <div
-        className="relative flex h-full w-full flex-col bg-white shadow-2xl md:w-[var(--side-panel-width)] md:border-l md:border-[#e5e5e5]"
+        className="relative flex h-full w-full flex-col bg-white shadow-2xl md:w-[var(--side-panel-width)] md:border-l md:border-[#e5e5e5] max-w-[94vw]"
         style={{ ["--side-panel-width" as string]: `${width}px` }}
       >
-        <button
-          type="button"
+        <div
           aria-label="Изменить ширину панели"
+          title="Перетащите для изменения ширины панели"
           onPointerDown={startResize}
-          className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-black/10 md:block"
-        />
+          className="group/resize absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize items-center justify-center transition-colors md:flex select-none"
+        >
+          <div className="h-10 w-1 rounded-full bg-[#d1d5db] group-hover/resize:bg-[#4a38f5] group-active/resize:bg-[#4a38f5] transition-colors" />
+        </div>
         {/* Summary card: аватар, имя, «добавлено N назад» — их ShowPageSummaryCard. */}
         <div className="flex items-start justify-between gap-3 border-b border-[#e5e5e5] px-4 py-3 bg-white">
           <div className="flex min-w-0 items-center gap-3">
