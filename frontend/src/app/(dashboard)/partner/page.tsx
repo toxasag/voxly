@@ -130,9 +130,11 @@ export default function PartnerPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold text-[#111111]">Кабинет партнёра</h1>
+              <h1 className="text-lg font-semibold text-[#111111]">
+                {tenant?.tenantName ? `Кабинет партнёра: ${tenant.tenantName}` : "Кабинет партнёра"}
+              </h1>
               <span className="rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-2 py-0.5 text-[11px] font-medium text-[#666666]">
-                Партнёрская программа
+                {tenant?.slug ? `${tenant.slug}.getvoxly.ru` : "Партнёрская программа"}
               </span>
             </div>
             <p className="mt-1 text-xs text-[#666666]">

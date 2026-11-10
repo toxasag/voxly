@@ -325,7 +325,7 @@ export class PartnerService {
               t.auth_settings, t.custom_pricing, t.custom_price_rubles,
               t.created_at, t.updated_at
        FROM tenants t
-       WHERE t.id = $1 AND ($2 = true OR t.parent_tenant_id = $3)`,
+       WHERE t.id = $1 AND ($2 = true OR t.parent_tenant_id = $3 OR t.owner_partner_id = $3)`,
       [targetTenantId, isPlatformOwner, parentTenantId],
     );
 

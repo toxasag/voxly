@@ -227,6 +227,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       is_current: boolean;
       is_parent: boolean;
       role: string;
+      is_partner: boolean;
     }> = [];
 
     workspaces.push({
@@ -238,6 +239,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       is_current: true,
       is_parent: false,
       role: user.role,
+      is_partner: Boolean(currentTenant.is_partner),
     });
 
     const parentTenantRef = currentTenant.owner_partner_id ?? currentTenant.parent_tenant_id;
@@ -248,8 +250,9 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         slug: string;
         plan: string;
         status: string;
+        is_partner: boolean;
       }>(
-        "SELECT id, name, slug, plan, status FROM tenants WHERE id = $1",
+        "SELECT id, name, slug, plan, status, is_partner FROM tenants WHERE id = $1",
         [parentTenantRef],
       );
       if (parentTenant) {
@@ -262,14 +265,17 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
           is_current: false,
           is_parent: true,
           role: "owner",
+          is_partner: Boolean(parentTenant.is_partner),
         });
       }
     }
 
     if (isPartner) {
-      const parentIdForChildren =
-        request.impersonator_tenant_id ??
-        (currentTenant.owner_partner_id ?? currentTenant.parent_tenant_id ?? currentTenant.id);
+      const parentIdForChildren = currentTenant.is_partner
+        ? currentTenant.id
+        : (currentTenant.owner_partner_id ??
+           currentTenant.parent_tenant_id ??
+           ((request.impersonator_is_partner && request.impersonator_tenant_id) || currentTenant.id));
       interface ChildTenantRow {
         id: string;
         name: string;
@@ -278,9 +284,10 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         status: string;
         parent_tenant_id: string | null;
         owner_partner_id: string | null;
+        is_partner: boolean;
       }
       const childRows = await query<ChildTenantRow>(
-        `SELECT id, name, slug, plan, status, parent_tenant_id, owner_partner_id
+        `SELECT id, name, slug, plan, status, parent_tenant_id, owner_partner_id, is_partner
          FROM tenants
          WHERE (parent_tenant_id = $1 OR owner_partner_id = $1) AND id != $2
          ORDER BY name ASC`,
@@ -297,6 +304,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
           is_current: false,
           is_parent: false,
           role: "partner",
+          is_partner: Boolean(child.is_partner),
         });
       }
     }

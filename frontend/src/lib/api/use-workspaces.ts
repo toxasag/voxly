@@ -20,6 +20,7 @@ export interface WorkspaceDTO {
   is_current: boolean;
   is_parent: boolean;
   role: string;
+  is_partner?: boolean;
 }
 
 export const workspaceKeys = {
