@@ -401,6 +401,10 @@ export interface RepairNoteDTO {
   id: string;
   authorId: string;
   authorName: string;
+  userId?: string;
+  repairId?: string;
+  repairOrderId?: string;
+  dealId?: string | null;
   kind: string;
   content: string;
   fromStatus: string | null;
@@ -573,11 +577,17 @@ export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
   };
 }
 
-export function toRepairNoteDTO(row: RepairNoteRow): RepairNoteDTO {
+export function toRepairNoteDTO(
+  row: RepairNoteRow & { deal_id?: string | null },
+): RepairNoteDTO {
   return {
     id: row.id,
     authorId: row.author_id,
     authorName: row.author_name,
+    userId: row.author_id,
+    repairId: row.repair_order_id,
+    repairOrderId: row.repair_order_id,
+    dealId: row.deal_id ?? null,
     kind: row.kind,
     content: row.content,
     fromStatus: row.from_status,

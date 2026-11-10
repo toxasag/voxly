@@ -17,7 +17,7 @@ import {
   LlmGatewayExhaustedError,
 } from "./gateway.types.js";
 
-const DEFAULT_ATTEMPT_TIMEOUT_MS = 12_000;
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 4_000;
 
 export interface SmartModelRouterInput {
   model: string;
