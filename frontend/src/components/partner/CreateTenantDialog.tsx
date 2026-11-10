@@ -15,6 +15,7 @@ import {
   Globe,
   KeyRound,
   Lock,
+  LogIn,
   Mail,
   Phone,
   RefreshCw,
@@ -32,6 +33,11 @@ import {
   useCreatePartnerTenant,
   type CreatePartnerTenantResponse,
 } from "@/lib/api/use-partner";
+import { useAuth, type AuthTokensDTO } from "@/lib/auth/use-auth";
+import { writeImpersonationBackup } from "@/lib/auth/impersonation";
+import { readAccessToken, readRefreshToken, writeTokens } from "@/lib/auth/session";
+import { apiClient } from "@/lib/api/apiClient";
+import { tenantPortalUrl } from "@/lib/auth/tenant-host";
 
 const SLUG_REGEX = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
 
@@ -96,8 +102,10 @@ interface CreateTenantDialogProps {
 }
 
 export function CreateTenantDialog({ open, onClose }: CreateTenantDialogProps) {
+  const { user } = useAuth();
   const titleId = useId();
   const [showPassword, setShowPassword] = useState(false);
+  const [isEntering, setIsEntering] = useState(false);
   const [createdResult, setCreatedResult] = useState<{
     result: CreatePartnerTenantResponse;
     pass: string;
@@ -377,7 +385,7 @@ export function CreateTenantDialog({ open, onClose }: CreateTenantDialogProps) {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
                   onClick={handleClose}
@@ -385,14 +393,64 @@ export function CreateTenantDialog({ open, onClose }: CreateTenantDialogProps) {
                 >
                   Закрыть
                 </button>
+                <button
+                  type="button"
+                  disabled={isEntering}
+                  onClick={async () => {
+                    try {
+                      setIsEntering(true);
+                      const currentAccessToken = readAccessToken();
+                      const currentRefreshToken = readRefreshToken();
+                      const child = createdResult.result.tenant;
+                      if (currentAccessToken) {
+                        writeImpersonationBackup({
+                          accessToken: currentAccessToken,
+                          refreshToken: currentRefreshToken || currentAccessToken,
+                          adminUserEmail: user?.email ?? "",
+                          adminUserName: user?.name ?? "",
+                          adminOriginHost: typeof window !== "undefined" ? window.location.host : "",
+                          adminOriginPath: "/partner",
+                          isPartner: true,
+                          isPlatformOwner: user?.platform_role === "platform_owner",
+                          impersonatedTenantSlug: child.slug,
+                          impersonatedTenantName: child.name,
+                          impersonatedUserEmail: createdResult.result.admin.email,
+                          enteredAt: new Date().toISOString(),
+                        });
+                      }
+                      const res = await apiClient.post<AuthTokensDTO>("/api/v1/auth/impersonate", {
+                        slug: child.slug,
+                      });
+                      if (res.data) {
+                        const { access_token, refresh_token } = res.data;
+                        if (access_token && refresh_token) {
+                          writeTokens({ accessToken: access_token, refreshToken: refresh_token });
+                        }
+                        const targetUrl = tenantPortalUrl(child.slug, "/dashboard");
+                        window.location.href =
+                          targetUrl.includes("://") && access_token
+                            ? `${targetUrl}#tenant_token=${encodeURIComponent(access_token)}`
+                            : targetUrl;
+                      }
+                    } catch (err) {
+                      console.error("Ошибка входа в созданный портал:", err);
+                      toast.error("Не удалось войти в созданный портал");
+                      setIsEntering(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#3d2ee0] transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  <LogIn className="h-4 w-4" />
+                  <span>{isEntering ? "Вход..." : "Войти в созданный портал"}</span>
+                </button>
                 <a
                   href={`https://${createdResult.result.tenant.slug}.getvoxly.ru/login`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#3d2ee0] transition-colors shadow-xs"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 text-[13px] font-medium text-[#666666] hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors"
                 >
-                  <span>Открыть портал</span>
-                  <ExternalLink className="h-4 w-4" />
+                  <span>Ссылка на вход</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               </div>
             </div>

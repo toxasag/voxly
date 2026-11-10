@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Sparkles,
   GitMerge,
+  Boxes,
   type LucideIcon,
 } from "lucide-react";
 
@@ -73,14 +74,24 @@ export const MARKETING_NAV: NavItem[] = [
  * здесь: до этого связь «модуль ↔ пункт меню» жила только в сайдбаре, и пять
  * каналов в неё не попали — маркетплейс их продавал, а меню о них не знало.
  */
-export const MODULE_NAV: NavItem[] = CORE_MODULE_ENTRIES.map((entry) => ({
-  label: entry.label,
-  href: entry.href,
-  icon: entry.icon,
-  always: false,
-  moduleSlug: entry.slug,
-  permission: entry.permission,
-}));
+export const MODULE_NAV: NavItem[] = [
+  ...CORE_MODULE_ENTRIES.map((entry) => ({
+    label: entry.label,
+    href: entry.href,
+    icon: entry.icon,
+    always: false,
+    moduleSlug: entry.slug,
+    permission: entry.permission,
+  })),
+  {
+    label: "Склад",
+    href: "/warehouse",
+    icon: Boxes,
+    always: false,
+    moduleSlug: "service_center",
+    permission: "service_center:read",
+  },
+];
 
 /** Каналы связи — отдельный блок сайдбара, как «Управление платформой». */
 export const CHANNEL_NAV: NavItem[] = CHANNEL_ENTRIES.map((entry) => ({
