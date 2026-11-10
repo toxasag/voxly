@@ -41,6 +41,49 @@ export const createChannelAccountSchema = z.object({
 
 export type CreateChannelAccountPayload = z.infer<typeof createChannelAccountSchema>;
 
+/**
+ * Очищает и нормализует домен / URL сайта:
+ * удаляет протокол (http://, https://), порт, пути (/path) и концевые знаки.
+ */
+export function normalizeDomain(input: string): string {
+  if (!input) return "";
+  let cleaned = input.trim().toLowerCase();
+  cleaned = cleaned.replace(/^[a-z]+:\/\//i, "");
+  cleaned = cleaned.replace(/[/?#].*$/, "");
+  cleaned = cleaned.replace(/:\d+$/, "");
+  cleaned = cleaned.replace(/[./]+$/, "");
+  return cleaned;
+}
+
+export const DOMAIN_REGEX =
+  /^[a-z0-9а-яё]([a-z0-9а-яё-]{0,61}[a-z0-9а-яё])?(\.[a-z0-9а-яё]([a-z0-9а-яё-]{0,61}[a-z0-9а-яё])?)+$/i;
+
+export function isValidDomain(domain: string): boolean {
+  const norm = normalizeDomain(domain);
+  if (!norm) return false;
+  if (norm === "localhost") return true;
+  return DOMAIN_REGEX.test(norm);
+}
+
+/**
+ * Схема запроса клонирования (дублирования) виджета.
+ * Принимает новый домен/адрес сайта, опциональное имя и опционального агента.
+ */
+export const cloneChannelAccountSchema = z
+  .object({
+    label: z.string().trim().min(1, "Укажите название виджета").max(120).optional(),
+    external_id: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
+    site_url: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
+    domain: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
+    agent_id: z.string().uuid("agent_id должен быть валидным UUID").nullable().optional(),
+  })
+  .refine((data) => Boolean(data.external_id || data.site_url || data.domain), {
+    message: "Укажите адрес сайта или домен для нового виджета",
+    path: ["external_id"],
+  });
+
+export type CloneChannelAccountPayload = z.infer<typeof cloneChannelAccountSchema>;
+
 export const updateChannelAccountSchema = z
   .object({
     label: z.string().trim().min(1, "Укажите название подключения").max(120).optional(),
