@@ -54,11 +54,15 @@ export interface WorkItem {
   description: string;
   master_name: string;
   master_id: string;
+  quantity?: number;
+  unit_price?: number;
   cost: number;
 }
 
 export interface PartItem {
   id: string;
+  warehouse_item_id?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;

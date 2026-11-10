@@ -41,12 +41,16 @@ export interface RepairWorkDTO {
   description: string;
   masterId: string;
   masterName: string;
+  quantity?: number;
+  unitPrice?: number;
   cost: number;
   createdAt: string;
 }
 
 export interface RepairPartDTO {
   id: string;
+  warehouseItemId?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -371,17 +375,23 @@ export interface CreateWorkPayload {
   description: string;
   master_id: string;
   master_name: string;
-  cost: number;
+  quantity?: number;
+  unit_price?: number;
+  cost?: number;
 }
 
 export interface UpdateWorkPayload {
   description?: string;
   master_id?: string;
   master_name?: string;
+  quantity?: number;
+  unit_price?: number;
   cost?: number;
 }
 
 export interface CreatePartPayload {
+  warehouse_item_id?: string;
+  status?: string;
   name: string;
   article?: string;
   quantity?: number;

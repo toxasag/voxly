@@ -17,6 +17,7 @@ import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
 import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
 import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
+import { PrintDocumentModal } from "@/components/repairs/PrintDocumentModal";
 import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerModal";
 import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
@@ -109,6 +110,8 @@ export default function RepairDetailPage() {
 
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printModalSlug, setPrintModalSlug] = useState<"work_order" | "completion_act" | "warranty_ticket" | "receipt">("work_order");
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
@@ -439,7 +442,10 @@ export default function RepairDetailPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setReceiptOpen(true)}
+              onClick={() => {
+                setPrintModalSlug("receipt");
+                setPrintModalOpen(true);
+              }}
               className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
             >
               <Printer className="h-3.5 w-3.5 text-[#666666]" />
@@ -447,11 +453,26 @@ export default function RepairDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => setWorkOrderOpen(true)}
+              onClick={() => {
+                setPrintModalSlug("completion_act");
+                setPrintModalOpen(true);
+              }}
               className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
             >
               <Printer className="h-3.5 w-3.5 text-[#666666]" />
               Акт выполненных работ
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPrintModalSlug("work_order");
+                setPrintModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#4a38f5] shadow-2xs hover:bg-[#4a38f5]/5 transition-colors cursor-pointer"
+              title="Печать документов и выбор шаблона"
+            >
+              <Printer className="h-3.5 w-3.5 text-[#4a38f5]" />
+              Печать
             </button>
             {hasFinance && (
               <button
@@ -1252,7 +1273,7 @@ export default function RepairDetailPage() {
               {tab === "work_parts" && (
                 <div className="space-y-6">
                   <WorkItemsTable orderId={ticket.id} items={ticket.work_items} />
-                  <PartsTable items={ticket.parts_used} onChange={() => {}} />
+                  <PartsTable orderId={ticket.id} items={ticket.parts_used} onChange={() => {}} />
                 </div>
               )}
 
@@ -1447,6 +1468,13 @@ export default function RepairDetailPage() {
 
       <RepairReceiptModal open={receiptOpen} ticket={ticket} onClose={() => setReceiptOpen(false)} />
       <RepairWorkOrderModal open={workOrderOpen} ticket={ticket} onClose={() => setWorkOrderOpen(false)} />
+      <PrintDocumentModal
+        open={printModalOpen}
+        orderId={ticket.id}
+        orderNumber={ticket.ticket_number}
+        initialSlug={printModalSlug}
+        onClose={() => setPrintModalOpen(false)}
+      />
       <ContactPickerModal
         open={contactPickerOpen}
         onClose={() => setContactPickerOpen(false)}
