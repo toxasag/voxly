@@ -425,6 +425,13 @@ export class ConversionDispatcherService {
       (contactCustomFields.tmr_lvid as string) ||
       null;
 
+    const isLeadStage =
+      deal.stage_name.toLowerCase().includes("лид") ||
+      deal.stage_name.toLowerCase().includes("lead") ||
+      deal.stage_name.toLowerCase().includes("квалифиц");
+
+    const eventName = deal.is_won ? "Purchase" : isLeadStage ? "Lead" : "DealStageChanged";
+
     const eventPayload: ConversionEventPayload = {
       tenantId,
       dealId: deal.id,
@@ -444,7 +451,7 @@ export class ConversionDispatcherService {
       tmrLvid,
       email,
       phone,
-      eventName: deal.is_won ? "Purchase" : "DealStageChanged",
+      eventName,
     };
 
     await this.enqueueEvent(eventPayload);
@@ -487,6 +494,9 @@ export class ConversionDispatcherService {
 
     const rawConfig = integration.config || {};
     const decryptedConfig: Record<string, unknown> = { ...rawConfig };
+    if (!decryptedConfig.counterId && integration.counter_id) {
+      decryptedConfig.counterId = integration.counter_id;
+    }
     if (typeof decryptedConfig.oauthToken === "string") {
       decryptedConfig.oauthToken = safeDecrypt(decryptedConfig.oauthToken);
     }
@@ -613,6 +623,9 @@ export class ConversionDispatcherService {
         (payload.isWon ? "Purchase" : payload.eventName || "Lead");
 
       const decryptedConfig: Record<string, unknown> = { ...rawConfig };
+      if (!decryptedConfig.counterId && integration.counter_id) {
+        decryptedConfig.counterId = integration.counter_id;
+      }
       if (typeof decryptedConfig.oauthToken === "string") {
         decryptedConfig.oauthToken = safeDecrypt(decryptedConfig.oauthToken);
       }

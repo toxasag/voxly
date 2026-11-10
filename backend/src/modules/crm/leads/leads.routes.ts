@@ -5,6 +5,8 @@ import { authenticatePlugin } from "../../../plugins/authenticate.js";
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
 import { leadNotificationQueue } from "./lead-notification.queue.js";
 import { ensureTenantDefaults } from "../../tenant/tenant-defaults.js";
+import { notifyDealStageChanged } from "../deals/deals.service.js";
+import { ConversionDispatcherService } from "../../analytics/conversion-dispatcher.service.js";
 
 const leadParamsSchema = z.object({ id: z.string().uuid("id must be a UUID") });
 
@@ -280,6 +282,10 @@ export async function leadsRoutes(app: FastifyInstance): Promise<void> {
 
     // Асинхронная проверка условий нотификации через BullMQ очередь
     void leadNotificationQueue.checkAndTriggerNotification(tenantId, (result as { id: string }).id);
+    void ConversionDispatcherService.getInstance().handleDealCreated({
+      tenantId,
+      dealId: (result as { id: string }).id,
+    });
 
     return reply.status(201).send({ data: result });
   });
@@ -450,6 +456,10 @@ export async function leadsRoutes(app: FastifyInstance): Promise<void> {
 
     // Асинхронная проверка условий нотификации через BullMQ очередь
     void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
+
+    if (result.stage_id !== existing.stage_id) {
+      notifyDealStageChanged({ tenantId, dealId: id, stageId: result.stage_id });
+    }
 
     return reply.send({ data: result });
   });
