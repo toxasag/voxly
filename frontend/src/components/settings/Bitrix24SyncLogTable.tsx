@@ -31,7 +31,13 @@ export function Bitrix24SyncLogTable({ onSelectDeal }: Bitrix24SyncLogTableProps
   const { data, isLoading, isFetching, refetch } = useBitrix24Logs({ limit: 50 });
   const retryMutation = useRetryBitrix24Sync();
 
-  const logs = data?.logs || data?.data || [];
+  const logs: Bitrix24SyncLogDTO[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.logs)
+      ? data.logs
+      : Array.isArray(data?.data)
+        ? data.data
+        : [];
 
   const handleRetry = async (log: Bitrix24SyncLogDTO) => {
     setRetryingId(log.id);

@@ -1536,6 +1536,36 @@ CREATE POLICY tenant_isolation ON invoice_items
     )
   );
 
+-- Каналы уведомлений и передачи заявок (Email, Telegram, WhatsApp, Битрикс24)
+CREATE TABLE IF NOT EXISTS tenant_notification_channels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    channel_type VARCHAR(20) NOT NULL CHECK (channel_type IN ('email', 'telegram', 'whatsapp', 'bitrix24')),
+    destination TEXT NOT NULL,
+    extra_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    is_verified BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_notification_channels_direct
+    ON tenant_notification_channels (tenant_id, channel_type, destination)
+    WHERE channel_type IN ('email', 'telegram', 'whatsapp');
+
+CREATE INDEX IF NOT EXISTS idx_tenant_notification_channels_active
+    ON tenant_notification_channels (tenant_id, is_active)
+    WHERE is_active = TRUE;
+
+ALTER TABLE tenant_notification_channels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_notification_channels FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON tenant_notification_channels;
+CREATE POLICY tenant_isolation ON tenant_notification_channels
+    FOR ALL
+    USING (tenant_id = current_tenant_id() OR platform_scope())
+    WITH CHECK (tenant_id = current_tenant_id());
+
 -- Интеграция с Битрикс24 (входящий вебхук crm.lead.add)
 CREATE TABLE IF NOT EXISTS tenant_bitrix24_configs (
   tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
