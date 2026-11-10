@@ -88,6 +88,7 @@ export interface RepairTicket {
   additional_contacts?: { name: string; phone: string; role?: string }[];
   equipment: EquipmentInfo;
   defect_description: string;
+  malfunctions?: string[];
   defect_photos: string[];
   status: RepairStatus;
   payment_status: RepairPaymentStatus;
