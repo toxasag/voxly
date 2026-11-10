@@ -1,5 +1,5 @@
 import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
-import { DealsService } from "./deals/deals.service.js";
+import { DealsService, notifyDealStageChanged } from "./deals/deals.service.js";
 import { ContactsService } from "./contacts/contacts.service.js";
 import {
   contactChannelFor,
@@ -21,6 +21,7 @@ import { notificationQueue } from "../notifications/notification.queue.js";
 import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution.js";
 import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
+import { ConversionDispatcherService } from "../analytics/conversion-dispatcher.service.js";
 import type { VisitorGeoData } from "../../services/geo-enrichment.service.js";
 
 // Профиль и проверка бота объявлены в `channel-identity.ts` вместе с раскладкой по полям,
@@ -846,6 +847,12 @@ export class CrmPipelineService {
                 [input.tenantId, activeDeal.id, currentStage.id, newLeadStage.id],
               );
 
+              notifyDealStageChanged({
+                tenantId: input.tenantId,
+                dealId: activeDeal.id,
+                stageId: newLeadStage.id,
+              });
+
               const contactIdentifier =
                 effectiveSenderPhone ||
                 effectiveSenderEmail ||
@@ -1008,6 +1015,10 @@ export class CrmPipelineService {
       // Мгновенные Web Push & In-App уведомления
       if (result.isNewDeal) {
         void notificationQueue.dispatchLeadCreated({
+          tenantId: input.tenantId,
+          dealId: result.dealId,
+        });
+        void ConversionDispatcherService.getInstance().handleDealCreated({
           tenantId: input.tenantId,
           dealId: result.dealId,
         });

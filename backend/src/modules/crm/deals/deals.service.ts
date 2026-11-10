@@ -144,6 +144,24 @@ export function onDealStageChanged(handler: DealStageChangedHandler): () => void
   };
 }
 
+/**
+ * Оповещение слушателей о смене этапа сделки (StageRules, ConversionDispatcher и др.)
+ */
+export function notifyDealStageChanged(payload: { tenantId: string; dealId: string; stageId: string }): void {
+  for (const handler of dealStageChangedHandlers) {
+    Promise.resolve(handler(payload)).catch(() => undefined);
+  }
+}
+
+/**
+ * Оповещение слушателей о выигрыше сделки (SalesLearnService и др.)
+ */
+export function notifyDealWon(payload: { tenantId: string; dealId: string }): void {
+  for (const handler of dealWonHandlers) {
+    Promise.resolve(handler(payload)).catch(() => undefined);
+  }
+}
+
 /** Treats "" from form payloads as "no value". */
 function nullIfBlank(value: string | undefined): string | null {
   if (value === undefined || value === "") return null;
