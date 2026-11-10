@@ -110,3 +110,40 @@ export interface Bitrix24TestResult {
   message: string;
   error?: string;
 }
+
+export type Bitrix24SyncStatus = "success" | "error" | "skipped" | "pending";
+
+export interface Bitrix24SyncLogRow {
+  id: string;
+  tenant_id: string;
+  deal_id: string | null;
+  entity_type: string;
+  direction: string;
+  status: Bitrix24SyncStatus;
+  bitrix_lead_id: string | null;
+  webhook_url: string | null;
+  request_payload: Record<string, unknown> | null;
+  response_status: number | null;
+  response_body: Record<string, unknown> | null;
+  error_message: string | null;
+  lead_source: string | null;
+  widget_id: string | null;
+  created_at: Date | string;
+}
+
+export interface Bitrix24SyncLogDTO {
+  id: string;
+  deal_id: string | null;
+  deal_title: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  status: Bitrix24SyncStatus;
+  bitrix_lead_id: string | null;
+  response_status: number | null;
+  error_message: string | null;
+  lead_source: string | null;
+  widget_name: string | null;
+  request_payload: Record<string, unknown> | null;
+  response_body: Record<string, unknown> | null;
+  created_at: string;
+}
