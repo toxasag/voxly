@@ -399,6 +399,7 @@ export interface CreatePartPayload {
   quantity?: number;
   retail_price: number;
   cost_price?: number;
+  add_to_purchase_request?: boolean;
 }
 
 export interface UpdatePartPayload {

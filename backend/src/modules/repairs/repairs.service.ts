@@ -1561,7 +1561,32 @@ export class RepairsService {
     await this.assertEditable(tenantId, orderId);
 
     return withTenant(tenantId, async (tx) => {
-      const partStatus = payload.status ?? (payload.warehouse_item_id ? "reserved" : "used");
+      // Проверка остатка на складе, если отключена продажа в минус
+      if (payload.warehouse_item_id) {
+        const settings = await warehouseService.getSettings(tenantId);
+        if (!settings.allowNegativeStock) {
+          const stockRow = await tx.queryOne<{ available: string | number }>(
+            `SELECT (
+               COALESCE((SELECT SUM(remaining_quantity) FROM warehouse_batches WHERE tenant_id = $1 AND item_id = $2), 0)
+               - COALESCE((SELECT SUM(quantity) FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = $2 AND status = 'reserved'), 0)
+             ) AS available`,
+            [tenantId, payload.warehouse_item_id],
+          );
+          const available = Number(stockRow?.available ?? 0);
+          if (available < payload.quantity) {
+            throw new ValidationError("Недостаточно товара на складе. Продажа в минус отключена.", {});
+          }
+        }
+      }
+
+      const partStatus =
+        payload.status ??
+        (payload.add_to_purchase_request
+          ? "needs_purchase"
+          : payload.warehouse_item_id
+            ? "reserved"
+            : "used");
+
       const row = await tx.queryOneOrThrow<RepairPartRow>(
         `INSERT INTO repair_parts
            (tenant_id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price)
@@ -1602,6 +1627,20 @@ export class RepairsService {
             `Резерв под наряд №${orderId.slice(0, 8)} (${payload.name})`,
           ],
         );
+      }
+
+      // Если установлен флаг «Добавить в заявку на закупку»
+      if (payload.add_to_purchase_request) {
+        await warehouseService.createPurchaseRequest(tenantId, null, {
+          repair_order_id: orderId,
+          item_id: payload.warehouse_item_id ?? undefined,
+          item_name: payload.name,
+          sku: payload.article ?? "",
+          quantity: payload.quantity,
+          unit: "шт",
+          estimated_price: payload.cost_price ?? 0,
+          comment: `Автоматически из наряда №${orderId.slice(0, 8)}`,
+        });
       }
 
       const result = toRepairPartDTO(row);

@@ -251,6 +251,7 @@ export const createPartSchema = z.object({
   retail_price: z.number().nonnegative("Retail price cannot be negative"),
   cost_price: z.number().nonnegative("Cost price cannot be negative").default(0),
   status: z.enum(["used", "reserved", "needs_purchase"]).optional().default("used"),
+  add_to_purchase_request: z.boolean().optional().default(false),
 });
 
 export const updatePartSchema = createPartSchema.partial();
