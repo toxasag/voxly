@@ -10,6 +10,8 @@ import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service
 import { getEnv } from "../../config/env.js";
 import { AuthService } from "../auth/auth.service.js";
 import { setAuthCookies, parseCookies, REFRESH_COOKIE_NAME } from "../auth/auth-cookie.js";
+import { quotaService } from "../quotas/quota.service.js";
+import { updateTenantQuotasSchema } from "../quotas/quota.types.js";
 
 const tenantParams = z.object({ id: z.string().uuid() });
 
@@ -361,6 +363,22 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
         require_telegram_auth: Boolean(row.auth_settings?.require_telegram_auth),
       },
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Управление индивидуальными квотами тенанта (Feature Quotas & Entitlements)
+  // -------------------------------------------------------------------------
+  app.get("/tenants/:id/quotas", { onRequest: platformOwner }, async (request, reply) => {
+    const tenantId = tenantParams.parse(request.params).id;
+    const quotas = await quotaService.getTenantQuotas(tenantId);
+    return reply.send({ data: quotas });
+  });
+
+  app.put("/tenants/:id/quotas", { onRequest: platformOwner }, async (request, reply) => {
+    const tenantId = tenantParams.parse(request.params).id;
+    const body = updateTenantQuotasSchema.parse(request.body);
+    const updated = await quotaService.bulkUpdateTenantQuotas(tenantId, body.quotas);
+    return reply.send({ data: updated });
   });
 
   app.post("/tenants/:id/impersonate", async (request, reply) => {
