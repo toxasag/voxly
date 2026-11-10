@@ -24,6 +24,9 @@ export interface ImpersonationBackup {
   adminUserEmail?: string;
   adminUserName?: string;
   adminOriginHost?: string;
+  adminOriginPath?: string;
+  isPartner?: boolean;
+  isPlatformOwner?: boolean;
   impersonatedTenantSlug?: string;
   impersonatedTenantName?: string;
   impersonatedUserEmail?: string;
@@ -159,7 +162,13 @@ export function getPlatformAdminUrl(token?: string): string {
   const suffix = port ? `:${port}` : "";
   const backup = readImpersonationBackup();
   const platformPrefix = backup?.adminOriginHost?.split(".")[0]?.split(":")[0] || "voxly";
-  const base = `${protocol}//${platformPrefix}.${parent}${suffix}/admin/tenants`;
+
+  const targetPath =
+    backup?.isPartner && !backup?.isPlatformOwner
+      ? backup?.adminOriginPath || "/partner"
+      : "/admin/tenants";
+
+  const base = `${protocol}//${platformPrefix}.${parent}${suffix}${targetPath}`;
   if (token) {
     return `${base}#restore_token=${encodeURIComponent(token)}`;
   }
@@ -173,14 +182,14 @@ export interface RestoreSessionResult {
 }
 
 /**
- * Безопасно восстанавливает сессию владельца платформы:
- * 1. Отправляет запрос на бэкенд (/auth/exit-impersonation), чтобы сервер обновил
+ * Безопасно восстанавливает сессию владельца платформы или партнера:
+ * 1. Отправляет запрос на бэкенд (/api/v1/auth/revert-impersonation), чтобы сервер обновил
  *    долгоживущие HttpOnly cookies (getvoxly_refresh) на общем домене .getvoxly.ru.
  * 2. Записывает свежие токены в localStorage и cookie getvoxly_auth_token.
  * 3. Сохраняет свежие токены в бэкап (не уничтожает его раньше времени, чтобы при навигации
- *    на voxly.getvoxly.ru гейты гарантированно имели доступ к платформенным правам).
+ *    на исходный домен гейты гарантированно имели доступ к правам).
  * 4. Формирует целевой URL с handoff токена в hash fragment (#restore_token=...) для
- *    немедленного применения в origin storage домена voxly.getvoxly.ru.
+ *    немедленного применения в origin storage целевого домена.
  */
 export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResult> {
   if (!isBrowser()) return { success: false, targetUrl: "/admin/tenants" };
@@ -199,7 +208,7 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
       refresh_token?: string;
       accessToken?: string;
       refreshToken?: string;
-    }>("/auth/exit-impersonation", {
+    }>("/api/v1/auth/revert-impersonation", {
       admin_refresh_token: backup.refreshToken || undefined,
       admin_access_token: backup.accessToken || undefined,
     });
@@ -213,7 +222,7 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
         refreshToken: newRefreshToken,
       });
 
-      // Обновляем бэкап свежими токенами администратора (очистится уже на voxly.getvoxly.ru)
+      // Обновляем бэкап свежими токенами администратора или партнера
       writeImpersonationBackup({
         ...backup,
         accessToken: newAccessToken,

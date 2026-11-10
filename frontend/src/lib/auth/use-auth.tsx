@@ -42,6 +42,7 @@ export interface UserProfileDTO {
     phone: string;
     role: Role;
     platform_role: PlatformRole | null;
+    is_partner?: boolean;
     permissions: Permission[];
   };
   tenant: {
@@ -50,6 +51,9 @@ export interface UserProfileDTO {
     slug: string;
     plan: string;
     status: string;
+    is_partner?: boolean;
+    parent_tenant_id?: string | null;
+    owner_partner_id?: string | null;
   };
 }
 
@@ -168,6 +172,7 @@ function toCurrentUser(dto: AuthTokensDTO["user"]): CurrentUser {
     name: dto.name,
     role: dto.role,
     platform_role: dto.platform_role ?? null,
+    is_partner: Boolean(dto.is_partner || dto.role === "partner"),
     permissions: new Set<Permission>(dto.permissions),
   };
 }
@@ -180,6 +185,9 @@ function toTenant(dto: AuthTokensDTO["tenant"]): Tenant {
     // rendering instead of crashing on a missing field.
     slug: dto.slug ?? "",
     plan: dto.plan,
+    is_partner: Boolean(dto.is_partner),
+    parent_tenant_id: dto.parent_tenant_id ?? null,
+    owner_partner_id: dto.owner_partner_id ?? null,
     // Filled reactively from GET /api/v1/tenant/modules in AuthProvider.
     installedModules: [],
   };

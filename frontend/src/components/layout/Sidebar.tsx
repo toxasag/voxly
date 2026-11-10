@@ -19,6 +19,7 @@ import {
   PlusCircle,
   Check,
   Loader2,
+  Briefcase,
   type LucideIcon,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
@@ -150,6 +151,8 @@ export function Sidebar({
         displayTenant.slug,
         user?.email,
         user?.name,
+        Boolean(user?.is_partner || tenant?.is_partner),
+        isPlatformOwner,
       );
     } catch (err) {
       console.error("Не удалось переключить организацию", err);
@@ -171,12 +174,13 @@ export function Sidebar({
   const isProfileActive = pathname === "/settings/profile";
   const permissions = user?.permissions ?? null;
 
-  const canCreateTenant =
+  const isPartner =
+    user?.is_partner === true ||
+    tenant?.is_partner === true ||
     user?.role === "partner" ||
-    user?.role === "owner" ||
-    user?.role === "admin" ||
-    user?.platform_role === "platform_owner" ||
-    Boolean(user?.permissions?.has("tenant:admin"));
+    isPlatformOwner;
+
+  const canCreateTenant = isPartner;
 
   const backup = typeof window !== "undefined" ? readImpersonationBackup() : null;
   const isImpersonatingClient = Boolean(
@@ -219,6 +223,7 @@ export function Sidebar({
     { label: "Компании", href: "/crm/companies", icon: Building2, always: true },
     { label: "Задачи", href: "/crm/tasks", icon: ListChecks, always: true },
     { label: "Аналитика", href: "/analytics", icon: BarChart3, always: true },
+    ...(isPartner ? [{ label: "Партнёрам", href: "/partner", icon: Briefcase, always: true }] : []),
   ];
 
   return (
