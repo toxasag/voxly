@@ -10,6 +10,8 @@ import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service
 import { getEnv } from "../../config/env.js";
 import { AuthService } from "../auth/auth.service.js";
 import { setAuthCookies, parseCookies, REFRESH_COOKIE_NAME } from "../auth/auth-cookie.js";
+import { quotaService } from "../quotas/quota.service.js";
+import { updateTenantQuotasSchema } from "../quotas/quota.types.js";
 
 const tenantParams = z.object({ id: z.string().uuid() });
 
@@ -363,6 +365,22 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     });
   });
 
+  // -------------------------------------------------------------------------
+  // Управление индивидуальными квотами тенанта (Feature Quotas & Entitlements)
+  // -------------------------------------------------------------------------
+  app.get("/tenants/:id/quotas", { onRequest: platformOwner }, async (request, reply) => {
+    const tenantId = tenantParams.parse(request.params).id;
+    const quotas = await quotaService.getTenantQuotas(tenantId);
+    return reply.send({ data: quotas });
+  });
+
+  app.put("/tenants/:id/quotas", { onRequest: platformOwner }, async (request, reply) => {
+    const tenantId = tenantParams.parse(request.params).id;
+    const body = updateTenantQuotasSchema.parse(request.body);
+    const updated = await quotaService.bulkUpdateTenantQuotas(tenantId, body.quotas);
+    return reply.send({ data: updated });
+  });
+
   app.post("/tenants/:id/impersonate", async (request, reply) => {
     const tenantId = tenantParams.parse(request.params).id;
     const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null; owner_partner_id: string | null }>(
@@ -375,7 +393,9 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const isPlatformOwner =
       request.authUser?.platform_role === "platform_owner" ||
       Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
-    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const partnerTenantId = request.tenant_is_partner
+      ? request.tenant_id
+      : (request.impersonator_tenant_id || request.tenant_id);
     const isParentPartner =
       (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
       (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
@@ -424,7 +444,9 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const isPlatformOwner =
       request.authUser?.platform_role === "platform_owner" ||
       Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
-    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const partnerTenantId = request.tenant_is_partner
+      ? request.tenant_id
+      : (request.impersonator_tenant_id || request.tenant_id);
     const isParentPartner =
       (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
       (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);

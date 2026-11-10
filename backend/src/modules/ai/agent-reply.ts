@@ -100,6 +100,9 @@ export const SAFE_DEFAULTS: Record<string, string> = {
   "website_context": "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",
   "reviews_and_reputation": "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",
   "successful_crm_patterns": "Опирайся на примеры успешных ответов из блока <retrieved_facts>.",
+  "current_page.url": "",
+  "current_page.title": "",
+  "current_page.topic": "",
 };
 
 /**
@@ -356,6 +359,7 @@ export interface BuildSystemPromptInput {
   variables?: Record<string, string | undefined | null>;
   crmPatterns?: readonly { customerQuery: string; agentReply: string }[];
   contactProfile?: string;
+  currentPageContext?: string;
 }
 
 /**
@@ -399,6 +403,11 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
   // Сквозной контекст клиента из CRM (история по всем каналам, заметки, телефон)
   if (input.contactProfile && input.contactProfile.trim().length > 0) {
     parts.push(input.contactProfile.trim());
+  }
+
+  // Контекст текущей открытой страницы посетителя сайта (Grounding)
+  if (input.currentPageContext && input.currentPageContext.trim().length > 0) {
+    parts.push(input.currentPageContext.trim());
   }
 
   // Если в промпте нет описания формата ответа (MULTI_MESSAGE_INSTRUCTION или "message1") — добавляем

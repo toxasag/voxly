@@ -119,7 +119,7 @@ export function Sidebar({
   const { data: profile } = useProfile();
   const { data: workspacesData } = useWorkspaces();
 
-  const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", installedModules: [] };
+  const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", is_partner: false, installedModules: [] };
 
   const workspaces = useMemo(() => {
     if (workspacesData && workspacesData.length > 0) return workspacesData;
@@ -133,12 +133,26 @@ export function Sidebar({
           status: "active",
           is_current: true,
           is_parent: false,
+          is_partner: Boolean(displayTenant.is_partner || tenant?.is_partner),
           role: user?.role ?? "member",
         },
       ];
     }
     return [];
   }, [workspacesData, displayTenant, tenant, user]);
+
+  const currentWorkspace = useMemo(
+    () => workspaces.find((ws) => ws.is_current) ?? null,
+    [workspaces],
+  );
+  const parentWorkspace = useMemo(
+    () => workspaces.find((ws) => ws.is_parent) ?? null,
+    [workspaces],
+  );
+  const childWorkspaces = useMemo(
+    () => workspaces.filter((ws) => !ws.is_current && !ws.is_parent),
+    [workspaces],
+  );
 
   const handleSwitchWorkspace = async (targetSlug: string) => {
     if (targetSlug === displayTenant.slug) {
@@ -267,9 +281,16 @@ export function Sidebar({
           {!collapsed && (
             <>
               <div className="flex-1 text-left overflow-hidden">
-                <p className="truncate text-[13px] font-medium text-[#000000]">
-                  {displayTenant.tenantName || "Рабочее пространство"}
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate text-[13px] font-medium text-[#000000]">
+                    {displayTenant.tenantName || "Рабочее пространство"}
+                  </p>
+                  {(displayTenant.is_partner || tenant?.is_partner) && (
+                    <span className="shrink-0 rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1 py-0.2 text-[9px] font-semibold text-[#4a38f5]">
+                      Партнёр
+                    </span>
+                  )}
+                </div>
                 <p className="truncate text-[11px] text-[#888888]">
                   {displayTenant.slug.length > 0
                     ? `${displayTenant.slug}.getvoxly.ru`
@@ -295,63 +316,124 @@ export function Sidebar({
                 collapsed ? "left-full top-2 ml-2 w-64" : "left-2.5 right-2.5",
               )}
             >
-              <div className="border-b border-[#f0f0f0] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">
-                Организации
+              {/* Текущее пространство */}
+              <div className="border-b border-[#f0f0f0] bg-[#fafafa]/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888] flex items-center justify-between">
+                <span>
+                  {currentWorkspace?.is_partner || displayTenant.is_partner || tenant?.is_partner
+                    ? "Партнёрский кабинет"
+                    : "Текущая организация"}
+                </span>
+                {(currentWorkspace?.is_partner || displayTenant.is_partner || tenant?.is_partner) && (
+                  <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[9px] font-semibold text-[#4a38f5]">
+                    Партнёр
+                  </span>
+                )}
               </div>
-              <div className="max-h-52 overflow-y-auto divide-y divide-[#f7f7f7]">
-                {workspaces.map((ws) => (
+              {currentWorkspace && (
+                <div className="flex w-full items-center justify-between gap-2.5 bg-[#4a38f5]/[0.04] px-3 py-2 text-[13px]">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#4a38f5] text-[11px] font-semibold text-white">
+                      {currentWorkspace.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0 truncate">
+                      <span className="block truncate text-[13px] font-semibold text-[#111111]">
+                        {currentWorkspace.name}
+                      </span>
+                      <span className="block truncate text-[10px] text-[#888888]">
+                        {currentWorkspace.slug}.getvoxly.ru
+                      </span>
+                    </div>
+                  </div>
+                  <Check className="h-3.5 w-3.5 shrink-0 text-[#4a38f5]" />
+                </div>
+              )}
+
+              {/* Родительский управляющий партнёр (если мы находимся внутри клиентского портала) */}
+              {parentWorkspace && (
+                <div className="border-t border-[#f0f0f0]">
+                  <div className="bg-[#fafafa]/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888]">
+                    Управляющий партнёр
+                  </div>
                   <button
-                    key={ws.id}
                     type="button"
                     disabled={switchingSlug !== null}
-                    onClick={() => handleSwitchWorkspace(ws.slug)}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]",
-                      ws.is_current && "bg-[#4a38f5]/[0.04]",
-                    )}
+                    onClick={() => handleSwitchWorkspace(parentWorkspace.slug)}
+                    className="flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <div
-                        className={cn(
-                          "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold",
-                          ws.is_current
-                            ? "bg-[#4a38f5] text-white"
-                            : "bg-black/[0.07] text-[#111111]",
-                        )}
-                      >
-                        {ws.name.charAt(0)}
+                      <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black/[0.07] text-[11px] font-semibold text-[#111111]">
+                        {parentWorkspace.name.charAt(0)}
                       </div>
                       <div className="min-w-0 truncate">
-                        <span
-                          className={cn(
-                            "block truncate text-[13px]",
-                            ws.is_current
-                              ? "font-semibold text-[#111111]"
-                              : "font-medium text-[#333333]",
-                          )}
-                        >
-                          {ws.name}
+                        <span className="block truncate text-[13px] font-medium text-[#333333]">
+                          {parentWorkspace.name}
                         </span>
                         <span className="block truncate text-[10px] text-[#888888]">
-                          {ws.slug}.getvoxly.ru
+                          {parentWorkspace.slug}.getvoxly.ru
                         </span>
                       </div>
                     </div>
-
                     <div className="flex shrink-0 items-center gap-1.5">
-                      {switchingSlug === ws.slug ? (
+                      {switchingSlug === parentWorkspace.slug ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
-                      ) : ws.is_current ? (
-                        <Check className="h-3.5 w-3.5 text-[#4a38f5]" />
                       ) : (
-                        <span className="rounded-[4px] border border-emerald-200 bg-emerald-50 px-1.5 py-0.2 text-[10px] font-medium text-emerald-700">
-                          {ws.status === "active" ? "активен" : ws.status}
+                        <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+                          Партнёр
                         </span>
                       )}
                     </div>
                   </button>
-                ))}
-              </div>
+                </div>
+              )}
+
+              {/* Клиентские порталы партнера */}
+              {childWorkspaces.length > 0 && (
+                <div className="border-t border-[#f0f0f0]">
+                  <div className="flex items-center justify-between bg-[#fafafa]/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888]">
+                    <span>Клиентские порталы</span>
+                    <span className="font-mono text-[10px] text-[#888888]">{childWorkspaces.length}</span>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto divide-y divide-[#f7f7f7]">
+                    {childWorkspaces.map((ws) => (
+                      <button
+                        key={ws.id}
+                        type="button"
+                        disabled={switchingSlug !== null}
+                        onClick={() => handleSwitchWorkspace(ws.slug)}
+                        className="flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black/[0.07] text-[11px] font-semibold text-[#111111]">
+                            {ws.name.charAt(0)}
+                          </div>
+                          <div className="min-w-0 truncate">
+                            <span className="block truncate text-[13px] font-medium text-[#333333]">
+                              {ws.name}
+                            </span>
+                            <span className="block truncate text-[10px] text-[#888888]">
+                              {ws.slug}.getvoxly.ru
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {switchingSlug === ws.slug ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                          ) : ws.is_partner ? (
+                            <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+                              Партнёр
+                            </span>
+                          ) : (
+                            <span className="rounded-[4px] border border-emerald-200 bg-emerald-50 px-1.5 py-0.2 text-[10px] font-medium text-emerald-700">
+                              {ws.status === "active" ? "активен" : ws.status}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="border-t border-[#f0f0f0]">
                 <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">

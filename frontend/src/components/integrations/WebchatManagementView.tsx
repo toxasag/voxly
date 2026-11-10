@@ -26,6 +26,7 @@ import {
 import { useAiAgents } from "@/lib/api/use-ai-agents";
 import { WebchatAppearanceSettings } from "./WebchatAppearanceSettings";
 import { WebchatAnalyticsDrawer } from "./WebchatAnalyticsDrawer";
+import { CloneWidgetDrawer } from "./CloneWidgetDrawer";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
@@ -49,6 +50,9 @@ export function WebchatManagementView({
 
   // Выбранный сайт для просмотра воронки и аналитики
   const [analyticsAccount, setAnalyticsAccount] = useState<ChannelAccountDTO | null>(null);
+
+  // Выбранный сайт для клонирования под новый сайт
+  const [cloningAccount, setCloningAccount] = useState<ChannelAccountDTO | null>(null);
 
   // Модалка кода для вставки на сайт
   const [codeModalAccount, setCodeModalAccount] = useState<ChannelAccountDTO | null>(null);
@@ -120,13 +124,23 @@ export function WebchatManagementView({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold text-[#111111]">Онлайн-чат на сайт</h1>
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                1 сайт бесплатно в тарифе
-              </span>
+              {summary?.isUnlimited || summary?.is_unlimited ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
+                  Безлимитно
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                  {summary ? `${summary.quantity} ${summary.quantity === 1 ? "сайт" : "сайтов"} по тарифу` : "1 сайт в тарифе"}
+                </span>
+              )}
             </div>
             <p className="mt-1 text-sm text-[#666666]">
               {summary === undefined ? (
                 "Управление сайтами и кодами виджета онлайн-чата"
+              ) : summary.isUnlimited || summary.is_unlimited ? (
+                <>
+                  {summary.total} {summary.total === 1 ? "сайт подключен" : "сайтов подключено"} (Безлимитный тариф)
+                </>
               ) : (
                 <>
                   {summary.total} из {summary.quantity} сайтов подключено по тарифу
@@ -141,13 +155,16 @@ export function WebchatManagementView({
         </div>
 
         {limitReached ? (
-          <Link
-            href="/marketplace"
-            className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
-          >
-            <ShoppingBag className="h-4 w-4" />
-            Увеличить количество сайтов
-          </Link>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[#888888]">Лимит исчерпан ({summary?.quantity})</span>
+            <Link
+              href="/marketplace"
+              className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+            >
+              <ShoppingBag className="h-4 w-4" />
+              Увеличить количество сайтов
+            </Link>
+          </div>
         ) : (
           <button
             type="button"
@@ -281,6 +298,16 @@ export function WebchatManagementView({
 
                       <button
                         type="button"
+                        onClick={() => setCloningAccount(acc)}
+                        className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5]"
+                        title="Создать копию для другого сайта"
+                        aria-label={`Клонировать виджет: ${acc.label}`}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           if (confirm(`Удалить сайт «${acc.label}» из CRM?`)) {
                             deleteAccount.mutate({ id: acc.id });
@@ -359,6 +386,16 @@ export function WebchatManagementView({
                     >
                       <BarChart3 className="h-3.5 w-3.5 text-[#4a38f5]" />
                       Воронка
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCloningAccount(acc)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+                      title="Создать копию виджета для другого сайта"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Копировать
                     </button>
 
                     <button
@@ -525,6 +562,20 @@ export function WebchatManagementView({
         account={analyticsAccount}
         open={Boolean(analyticsAccount)}
         onClose={() => setAnalyticsAccount(null)}
+      />
+
+      {/* Шторка клонирования виджета для нового сайта */}
+      <CloneWidgetDrawer
+        sourceAccount={cloningAccount}
+        open={Boolean(cloningAccount)}
+        onClose={() => setCloningAccount(null)}
+        onSuccessCloned={(newAccount) => {
+          setCloningAccount(null);
+          toast.success("Виджет успешно скопирован под новый сайт");
+          // Автоматически открываем модалку с готовым HTML-кодом вставки нового виджета
+          setCodeModalAccount(newAccount);
+        }}
+        limitReached={limitReached}
       />
     </div>
   );

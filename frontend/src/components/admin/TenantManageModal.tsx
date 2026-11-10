@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   Check,
   Users,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import {
@@ -30,6 +31,7 @@ import {
   type AdminTenantDTO,
   renewSubscriptionDate,
 } from "@/lib/api/use-admin";
+import { useAdminTenantQuotas, useUpdateTenantQuotas } from "@/lib/api/use-tenant-quotas";
 import { cn } from "@/lib/utils";
 
 interface TenantManageModalProps {
@@ -104,6 +106,28 @@ export function TenantManageModal({
   const [subscriptionExpiresAt, setSubscriptionExpiresAt] = useState<string>("");
   const [requireTelegramAuth, setRequireTelegramAuth] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const { data: quotasData, isLoading: quotasLoading } = useAdminTenantQuotas(
+    open && tenant ? tenant.id : null,
+  );
+  const updateQuotas = useUpdateTenantQuotas();
+
+  const [quotasState, setQuotasState] = useState<
+    Record<string, { is_unlimited: boolean; max_limit: number }>
+  >({});
+
+  useEffect(() => {
+    if (quotasData && quotasData.length > 0) {
+      const initial: Record<string, { is_unlimited: boolean; max_limit: number }> = {};
+      for (const q of quotasData) {
+        initial[q.feature_key] = {
+          is_unlimited: q.is_unlimited,
+          max_limit: q.max_limit === -1 ? q.default_limit : q.max_limit,
+        };
+      }
+      setQuotasState(initial);
+    }
+  }, [quotasData]);
 
   const isPlatformRoot =
     tenant?.slug === "voxly" ||
@@ -220,6 +244,18 @@ export function TenantManageModal({
       }
 
       await update.mutateAsync(payload);
+
+      if (Object.keys(quotasState).length > 0) {
+        await updateQuotas.mutateAsync({
+          tenantId: tenant.id,
+          quotas: Object.entries(quotasState).map(([feature_key, val]) => ({
+            feature_key,
+            is_unlimited: val.is_unlimited,
+            max_limit: val.max_limit,
+          })),
+        });
+      }
+
       toast.success(`Настройки компании «${tenant.name}» успешно сохранены`);
       onSaved?.();
       onClose();
@@ -244,6 +280,8 @@ export function TenantManageModal({
     aiMarkupPercent,
     subscriptionExpiresAt,
     update,
+    updateQuotas,
+    quotasState,
     onSaved,
     onClose,
   ]);
@@ -764,6 +802,112 @@ export function TenantManageModal({
               </div>
             )}
           </div>
+        </div>
+
+        {/* Секция: Индивидуальные квоты и лимиты функций (Entitlements) */}
+        <div className="rounded-[10px] border border-[#e5e5e5] p-4 space-y-3 bg-white">
+          <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-2">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-[#4a38f5]" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-[#111111]">
+                Индивидуальные квоты и лимиты функций
+              </h3>
+            </div>
+            <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+              Entitlements
+            </span>
+          </div>
+          <p className="text-[11px] text-[#666666]">
+            Настройте персональные ограничения на количество онлайн-виджетов, AI-ботов и каналов для данного клиента (неограниченно или фиксированное число).
+          </p>
+
+          {quotasLoading ? (
+            <div className="flex items-center justify-center py-6 text-xs text-[#888888]">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#4a38f5]" />
+              Загрузка лимитов...
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {(quotasData ?? []).map((quota) => {
+                const currentSetting = quotasState[quota.feature_key] ?? {
+                  is_unlimited: quota.is_unlimited,
+                  max_limit: quota.max_limit === -1 ? quota.default_limit : quota.max_limit,
+                };
+
+                return (
+                  <div
+                    key={quota.feature_key}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-[#111111]">
+                          {quota.name}
+                        </span>
+                        <span
+                          className={cn(
+                            "rounded-[4px] px-1.5 py-0.2 text-[10px] font-medium border",
+                            quota.allowed
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-rose-200 bg-rose-50 text-rose-700",
+                          )}
+                        >
+                          Использовано: {quota.current_usage}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-[#666666] truncate">
+                        {quota.description}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-[#111111]">
+                        <input
+                          type="checkbox"
+                          checked={currentSetting.is_unlimited}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setQuotasState((prev) => ({
+                              ...prev,
+                              [quota.feature_key]: {
+                                is_unlimited: checked,
+                                max_limit: prev[quota.feature_key]?.max_limit ?? quota.default_limit,
+                              },
+                            }));
+                          }}
+                          className="h-4 w-4 rounded border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5]"
+                        />
+                        <span>Безлимитно</span>
+                      </label>
+
+                      {!currentSetting.is_unlimited && (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={1}
+                            max={10000}
+                            value={currentSetting.max_limit}
+                            onChange={(e) => {
+                              const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                              setQuotasState((prev) => ({
+                                ...prev,
+                                [quota.feature_key]: {
+                                  is_unlimited: false,
+                                  max_limit: val,
+                                },
+                              }));
+                            }}
+                            className="h-7 w-16 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-center text-xs font-mono font-medium text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                          />
+                          <span className="text-[11px] text-[#888888]">шт.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Секция 2: Ниша бизнеса (Сфера деятельности) */}
