@@ -101,7 +101,7 @@ export default function RepairDetailPage() {
   const hasFinance = isModuleInstalled(displayTenant.installedModules, "finance");
   const [tab, setTab] = useState<DetailTab>("details");
 
-  const { data: detail, isLoading, isError, error } = useRepair(params.id);
+  const { data: detail, isLoading, isError, error, refetch: refetchRepair } = useRepair(params.id);
   const { data: works = [] } = useRepairWorks(params.id);
   const { data: parts = [] } = useRepairParts(params.id);
   const { data: teamData } = useTeamMembers();
@@ -1435,12 +1435,17 @@ export default function RepairDetailPage() {
 
               {/* Вкладка 4: Финансы (агрегация работ/запчастей + создание счета) */}
               {tab === "finance" && (
-                <div className="space-y-6 max-w-2xl">
+                <div className="space-y-6 max-w-3xl">
                   <FinancialSummary
+                    repairOrderId={ticket.id}
                     workItems={ticket.work_items}
                     parts={ticket.parts_used}
                     hasFinanceModule={hasFinance}
-                    onGenerateInvoice={() => setInvoiceCreateOpen(true)}
+                    customerName={ticket.customer_name}
+                    customerPhone={ticket.customer_phone}
+                    dealId={ticket.deal_id}
+                    paymentStatus={ticket.payment_status}
+                    onRefresh={() => void refetchRepair()}
                   />
                 </div>
               )}

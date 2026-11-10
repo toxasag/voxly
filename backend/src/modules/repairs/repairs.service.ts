@@ -9,6 +9,7 @@ import type {
   CreateRepairPayload,
   CreateRepairServiceCatalogPayload,
   CreateWorkPayload,
+  DealActDTO,
   EquipmentHistoryItemDTO,
   EquipmentSearchSerialResultDTO,
   RepairNoteRow,
@@ -2685,6 +2686,111 @@ export class RepairsService {
         [tenantId, id],
       );
       return { success: true, id };
+    });
+  }
+
+  async getDealActs(tenantId: string, repairOrderId: string): Promise<DealActDTO[]> {
+    const currentOrder = await queryOne<{
+      id: string;
+      deal_id: string | null;
+    }>(
+      `SELECT id, deal_id FROM repair_orders WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, repairOrderId],
+    );
+
+    if (!currentOrder) {
+      throw new NotFoundError("Repair order not found");
+    }
+
+    let rows: {
+      id: string;
+      ticket_number: string;
+      deal_id: string | null;
+      customer_id: string;
+      customer_name: string;
+      customer_phone: string;
+      equipment_type: string;
+      equipment_brand: string;
+      equipment_model: string;
+      equipment_serial: string;
+      status: string;
+      payment_status: string;
+      estimated_cost: number | string;
+      final_cost: number | string | null;
+      created_at: Date | string;
+    }[];
+
+    if (currentOrder.deal_id) {
+      rows = await query(
+        `SELECT id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
+                equipment_type, equipment_brand, equipment_model, equipment_serial,
+                status, payment_status, estimated_cost, final_cost, created_at
+         FROM repair_orders
+         WHERE tenant_id = $1 AND deal_id = $2 AND deleted_at IS NULL
+         ORDER BY created_at ASC`,
+        [tenantId, currentOrder.deal_id],
+      );
+    } else {
+      rows = await query(
+        `SELECT id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
+                equipment_type, equipment_brand, equipment_model, equipment_serial,
+                status, payment_status, estimated_cost, final_cost, created_at
+         FROM repair_orders
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, repairOrderId],
+      );
+    }
+
+    const orderIds = rows.map((r) => r.id);
+    const worksTotals = await query<{ repair_order_id: string; total: string }>(
+      `SELECT repair_order_id, COALESCE(SUM(cost), 0)::text AS total
+       FROM repair_works
+       WHERE tenant_id = $1 AND repair_order_id = ANY($2)
+       GROUP BY repair_order_id`,
+      [tenantId, orderIds],
+    );
+    const partsTotals = await query<{ repair_order_id: string; total: string }>(
+      `SELECT repair_order_id, COALESCE(SUM(retail_price * quantity), 0)::text AS total
+       FROM repair_parts
+       WHERE tenant_id = $1 AND repair_order_id = ANY($2)
+       GROUP BY repair_order_id`,
+      [tenantId, orderIds],
+    );
+
+    const worksMap = new Map<string, number>();
+    for (const w of worksTotals) {
+      worksMap.set(w.repair_order_id, Number(w.total));
+    }
+    const partsMap = new Map<string, number>();
+    for (const p of partsTotals) {
+      partsMap.set(p.repair_order_id, Number(p.total));
+    }
+
+    return rows.map((r) => {
+      const worksTotal = worksMap.get(r.id) ?? 0;
+      const partsTotal = partsMap.get(r.id) ?? 0;
+      let totalAmount = worksTotal + partsTotal;
+      if (totalAmount === 0) {
+        totalAmount = Number(r.final_cost ?? r.estimated_cost ?? 0);
+      }
+      return {
+        id: r.id,
+        ticketNumber: r.ticket_number,
+        dealId: r.deal_id,
+        equipmentType: r.equipment_type,
+        equipmentBrand: r.equipment_brand,
+        equipmentModel: r.equipment_model,
+        equipmentSerial: r.equipment_serial,
+        customerName: r.customer_name,
+        customerPhone: r.customer_phone,
+        status: r.status,
+        paymentStatus: r.payment_status || "unpaid",
+        worksTotal,
+        partsTotal,
+        totalAmount,
+        isCurrent: r.id === repairOrderId,
+        createdAt: toIso(r.created_at),
+      };
     });
   }
 }

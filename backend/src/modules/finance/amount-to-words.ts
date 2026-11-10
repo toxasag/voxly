@@ -4,12 +4,12 @@ const TENS = ["", "", "двадцать ", "тридцать ", "сорок ", "
 const UNDER_20 = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"];
 const UNDER_20_FEM = ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"];
 
-const THOUSANDS = ["", "тысяча ", "тысячи ", "тысяч "];
-const MILLIONS = ["", "миллион ", "миллиона ", "миллионов "];
-const RUBLES = ["рубль", "рубля", "рублей"];
-const KOPECKS = ["копейка", "копейки", "копеек"];
+const THOUSANDS: [string, string, string] = ["тысяча ", "тысячи ", "тысяч "];
+const MILLIONS: [string, string, string] = ["миллион ", "миллиона ", "миллионов "];
+const RUBLES: [string, string, string] = ["рубль", "рубля", "рублей"];
+const KOPECKS: [string, string, string] = ["копейка", "копейки", "копеек"];
 
-function pluralForm(n: number, forms: string[]): string {
+function pluralForm(n: number, forms: [string, string, string]): string {
   const m = Math.abs(n) % 100;
   if (m > 10 && m < 20) return forms[2];
   const d = m % 10;
@@ -21,9 +21,9 @@ function pluralForm(n: number, forms: string[]): string {
 function numberToWords(n: number, feminine: boolean): string {
   if (n === 0) return "";
   let result = "";
-  if (n >= 100) { result += HUNDREDS[Math.floor(n / 100)]; n %= 100; }
-  if (n >= 20) { result += TENS[Math.floor(n / 10)]; n %= 10; }
-  if (n > 0) { result += (feminine ? UNDER_20_FEM : UNDER_20)[n] + " "; }
+  if (n >= 100) { result += (HUNDREDS[Math.floor(n / 100)] ?? ""); n %= 100; }
+  if (n >= 20) { result += (TENS[Math.floor(n / 10)] ?? ""); n %= 10; }
+  if (n > 0) { result += ((feminine ? UNDER_20_FEM : UNDER_20)[n] ?? "") + " "; }
   return result;
 }
 
