@@ -1,4 +1,4 @@
--- 0090_deal_tabs_compact_titles.sql
+-- 0091_deal_tabs_compact_titles.sql
 -- Рефакторинг названий вкладок карточки сделки в page_layout_tabs:
 -- «Сервисный центр» → «СЦ», «История контакта» → «История».
 

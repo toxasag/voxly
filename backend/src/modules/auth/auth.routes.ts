@@ -696,9 +696,9 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
         throw new UnauthorizedError("Missing bearer token");
       }
 
-      let payload: { sub: string; tenant_id: string; typ?: string };
+      let payload: { sub: string; tenant_id: string; typ?: string; impersonator_id?: string };
       try {
-        payload = app.jwt.verify(token) as { sub: string; tenant_id: string; typ?: string };
+        payload = app.jwt.verify(token) as { sub: string; tenant_id: string; typ?: string; impersonator_id?: string };
       } catch {
         throw new UnauthorizedError("Invalid or expired token");
       }
@@ -707,7 +707,7 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
         throw new UnauthorizedError("Invalid token type");
       }
 
-      const data = await service.getMe(payload.sub, payload.tenant_id);
+      const data = await service.getMe(payload.sub, payload.tenant_id, payload.impersonator_id);
       return reply.status(200).send({ data });
     },
   );
@@ -739,12 +739,29 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
         throw new UnauthorizedError("Refresh token is required");
       }
 
+      let impersonatorId: string | undefined;
+      const authHeader = request.headers.authorization;
+      const rawAccessToken =
+        authHeader && authHeader.startsWith("Bearer ")
+          ? authHeader.slice("Bearer ".length)
+          : cookies[AUTH_COOKIE_NAME];
+      if (rawAccessToken) {
+        try {
+          const decoded = app.jwt.decode<{ impersonator_id?: string }>(rawAccessToken);
+          if (decoded && typeof decoded.impersonator_id === "string") {
+            impersonatorId = decoded.impersonator_id;
+          }
+        } catch {
+          // ignore decode errors
+        }
+      }
+
       const meta = {
         userAgent: request.headers["user-agent"],
         ip: request.ip,
       };
       try {
-        const result = await service.refreshToken(refreshToken.trim(), meta);
+        const result = await service.refreshToken(refreshToken.trim(), meta, impersonatorId);
         setAuthCookies(request, reply, result);
         return reply.status(200).send({ data: result });
       } catch (err) {
@@ -773,7 +790,20 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
 
     const cookies = parseCookies(request.headers.cookie);
     const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
-    const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    const rawAccessToken =
+      (request.headers.authorization || "").replace(/^Bearer\s+/i, "") || cookies[AUTH_COOKIE_NAME];
+
+    let impersonatorIdFromToken: string | undefined;
+    if (rawAccessToken) {
+      try {
+        const decoded = app.jwt.decode<{ impersonator_id?: string }>(rawAccessToken);
+        if (decoded && typeof decoded.impersonator_id === "string") {
+          impersonatorIdFromToken = decoded.impersonator_id;
+        }
+      } catch {
+        // ignore
+      }
+    }
 
     const meta = {
       userAgent: request.headers["user-agent"],
@@ -783,8 +813,9 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     const tokens = await service.exitImpersonation(
       {
         adminRefreshToken: candidateRefresh,
-        adminAccessToken: candidateAccess || headerToken,
+        adminAccessToken: candidateAccess || rawAccessToken,
         cookieRefreshToken: cookieRefresh,
+        impersonatorId: impersonatorIdFromToken,
       },
       meta,
     );
