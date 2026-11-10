@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 import {
   Activity,
   Bot,
@@ -14,6 +15,7 @@ import {
   Compass,
   Copy,
   DollarSign,
+  ExternalLink,
   Globe,
   Handshake,
   History,
@@ -35,11 +37,15 @@ import {
   User,
   UserCircle2,
   UserRound,
+  Wrench,
 } from "lucide-react";
 import { TagPill } from "@/components/ui/tag";
+import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
+import { useRepairs } from "@/lib/api/use-repairs";
+import { getRepairStatusLabel, getRepairStatusColors } from "@/lib/repairs/repairs.types";
 import { useKanban, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
 import { useCompanies, useCompany, useUpdateCompany, useCompanyStats, type CompanyDTO } from "@/lib/api/use-companies";
 import { contactFullName, useContacts, useContact, useUpdateContact, useCreateContact, type ContactDTO } from "@/lib/api/use-contacts";
@@ -820,14 +826,6 @@ function HomeTab({
 
   return (
     <div className="py-2 text-[#111111]">
-      {deal.description !== "" && (
-        <div className="px-4 pb-3">
-          <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 text-[13px] text-[#333333]">
-            {deal.description}
-          </p>
-        </div>
-      )}
-
       {/* Accordion Group 1: Сделка */}
       <div className="mt-1">
         <button
@@ -2395,11 +2393,184 @@ function FilesTab() {
   );
 }
 
+function DealRepairsTab({ deal }: { deal: DealDTO }) {
+  const repairsQuery = useRepairs({ dealId: deal.id, limit: 50 });
+  const items = repairsQuery.data?.items ?? [];
+
+  const totalCost = useMemo(() => {
+    return items.reduce((sum, order) => {
+      const cost = order.finalCost !== null && order.finalCost !== undefined && order.finalCost > 0
+        ? order.finalCost
+        : (order.estimatedCost ?? 0);
+      return sum + cost;
+    }, 0);
+  }, [items]);
+
+  const moneyFormatter = useMemo(() => {
+    return new Intl.NumberFormat("ru-RU", {
+      style: "currency",
+      currency: "RUB",
+      maximumFractionDigits: 0,
+    });
+  }, []);
+
+  return (
+    <Guard
+      requiredModule="service_center"
+      requiredPermission="service_center:read"
+      fallback={
+        <div className="px-5 py-4 text-xs text-[#888888]">
+          Модуль «Сервисный центр» не активирован для данного тарифа
+        </div>
+      }
+    >
+      <div className="p-5 space-y-4">
+        {repairsQuery.isLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-14 w-full rounded-[8px]" />
+            <Skeleton className="h-32 w-full rounded-[8px]" />
+          </div>
+        ) : items.length === 0 ? (
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-8 text-center shadow-2xs space-y-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f5f5f5] text-[#888888] mx-auto">
+              <Wrench className="h-6 w-6" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-[#111111]">
+                Оборудование в ремонт не принято
+              </h3>
+              <p className="mt-1 text-xs text-[#666666] max-w-sm mx-auto">
+                К этой сделке пока не привязано ни одного наряда на ремонт или обслуживание.
+              </p>
+            </div>
+            <div>
+              <Link
+                href={`/repairs?action=intake&dealId=${deal.id}`}
+                className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Приемка оборудования
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Сводная плашка */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
+              <div className="flex items-center gap-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+                  <Wrench className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[#666666]">Принято единиц:</span>
+                    <span className="text-sm font-bold text-[#111111] font-mono tabular-nums">
+                      {items.length}
+                    </span>
+                    <span className="text-[#cccccc]">|</span>
+                    <span className="text-xs text-[#666666]">Стоимость ремонтов:</span>
+                    <span className="text-sm font-bold text-[#4a38f5] font-mono tabular-nums">
+                      {moneyFormatter.format(totalCost)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#888888] mt-0.5">
+                    Сумма нарядов автоматически синхронизирована с бюджетом сделки
+                  </p>
+                </div>
+              </div>
+
+              <Link
+                href={`/repairs?action=intake&dealId=${deal.id}`}
+                className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Приемка оборудования
+              </Link>
+            </div>
+
+            {/* Таблица оборудования по сделке */}
+            <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-[#fbfbfb] border-b border-[#e5e5e5] text-[#666666] font-semibold">
+                    <tr>
+                      <th className="py-2.5 px-3 w-28">№ наряда</th>
+                      <th className="py-2.5 px-3">Оборудование</th>
+                      <th className="py-2.5 px-3">Неисправность</th>
+                      <th className="py-2.5 px-3 w-32">Статус</th>
+                      <th className="py-2.5 px-3 w-36">Мастер</th>
+                      <th className="py-2.5 px-3 w-28 text-right">Стоимость</th>
+                      <th className="py-2.5 px-3 w-16 text-center"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#f0f0f0]">
+                    {items.map((order) => {
+                      const cost = order.finalCost !== null && order.finalCost !== undefined && order.finalCost > 0
+                        ? order.finalCost
+                        : (order.estimatedCost ?? 0);
+
+                      return (
+                        <tr key={order.id} className="hover:bg-[#fafafa] transition-colors">
+                          <td className="py-2.5 px-3 font-mono font-medium text-[#4a38f5]">
+                            <Link href={`/repairs/${order.id}`} className="hover:underline">
+                              {formatOrderNumber(order.ticketNumber)}
+                            </Link>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="font-medium text-[#111111]">
+                              {order.equipment.brand} {order.equipment.model}
+                            </div>
+                            <div className="text-[11px] font-mono text-[#888888]">
+                              S/N: {order.equipment.serialNumber || "—"}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 max-w-[200px] truncate text-[#444444]" title={order.defectDescription || ""}>
+                            {order.defectDescription || "—"}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={cn(
+                                "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                                getRepairStatusColors(order.status),
+                              )}
+                            >
+                              {getRepairStatusLabel(order.status)}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-[#666666]">
+                            {order.masterName || "—"}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums font-semibold text-[#111111]">
+                            {moneyFormatter.format(cost)}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <Link
+                              href={`/repairs/${order.id}`}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-[#666666] hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors"
+                              title="Открыть карточку наряда"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </Guard>
+  );
+}
 
 /** Идентификаторы вкладок — ключи реестра и строк `page_layout_tabs`. */
 export const DEAL_TAB_IDS = [
   "home",
   "chat",
+  "repairs",
   "timeline",
   "analytics",
   "source",
@@ -2440,6 +2611,7 @@ export function dealTabContents(
         <ChatTab dealId={deal.id} dealTitle={deal.title} />
       </Guard>
     ),
+    repairs: <DealRepairsTab deal={deal} />,
     timeline: <RecordTimelineTab recordType="deal" recordId={deal.id} />,
     analytics: <DealAnalyticsTab deal={deal} />,
     source: <SourceMetadataTab deal={deal} />,

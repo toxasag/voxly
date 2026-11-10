@@ -10,9 +10,15 @@ import {
 import {
   AlertCircle,
   Bot,
+  Check,
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
   Clock,
+  Copy,
   Download,
+  ExternalLink,
+  FileSpreadsheet,
   FileText,
   Loader2,
   MessageCircle,
@@ -27,6 +33,8 @@ import {
   UserX,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api/apiClient";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -39,8 +47,11 @@ import {
   type ChatMessageDTO,
   type CrmChatEntityType,
   type SendFromOptionDTO,
+  type AudioTranscriptMetadata,
+  type DocumentInfoMetadata,
 } from "@/lib/api/use-crm-chat";
 import { TelegramComposer, type AttachedFile } from "./TelegramComposer";
+import { DialogueFeedbackModal } from "@/components/ai-bots/DialogueFeedbackModal";
 
 export interface CrmChatViewProps {
   entityType: CrmChatEntityType;
@@ -151,48 +162,99 @@ function getChannelBadge(channel: string) {
   }
 }
 
-function resolveAttachmentUrl(attachment: string): string {
+function getAuthTokenForUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("getvoxly_access_token") || null;
+}
+
+function resolveAttachmentUrl(attachment: string, download = false): string {
+  const token = getAuthTokenForUrl();
+  const tokenPart = token ? `token=${encodeURIComponent(token)}` : "";
+  const downloadPart = download ? "download=1" : "";
+  const queryStr = [tokenPart, downloadPart].filter(Boolean).join("&");
+  const sep = (url: string) => (url.includes("?") ? "&" : "?");
+
   if (attachment.startsWith("http://") || attachment.startsWith("https://")) {
-    return attachment;
+    return queryStr ? `${attachment}${sep(attachment)}${queryStr}` : attachment;
   }
   const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://api.getvoxly.ru";
   const cleanBase = apiBase.replace(/\/+$/, "");
   const cleanPath = attachment.startsWith("/") ? attachment : `/${attachment}`;
-  return `${cleanBase}${cleanPath}`;
+  return queryStr ? `${cleanBase}${cleanPath}${sep(cleanPath)}${queryStr}` : `${cleanBase}${cleanPath}`;
 }
 
-function isImageAttachment(attachment: string, attachmentType?: string | null): boolean {
+function getMessageAttachmentUrl(messageId: string, download = false): string {
+  const token = getAuthTokenForUrl();
+  const tokenPart = token ? `token=${encodeURIComponent(token)}` : "";
+  const downloadPart = download ? "download=1" : "";
+  const queryStr = [tokenPart, downloadPart].filter(Boolean).join("&");
+  const sep = (url: string) => (url.includes("?") ? "&" : "?");
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://api.getvoxly.ru";
+  const cleanBase = apiBase.replace(/\/+$/, "");
+  const base = `${cleanBase}/api/v1/crm/messages/${messageId}/attachment`;
+  return queryStr ? `${base}${sep(base)}${queryStr}` : base;
+}
+
+function parseFilePlaceholder(content?: string): string | null {
+  if (!content) return null;
+  const match = content.match(/\[файл:\s*([^\]]+)\]/i);
+  return match && match[1] ? match[1].trim() : null;
+}
+
+function isImageAttachment(attachment?: string | null, attachmentType?: string | null, fileName?: string | null): boolean {
   if (attachmentType && attachmentType.startsWith("image/")) return true;
-  return /\.(jpe?g|png|webp|gif|svg)$/i.test(attachment);
+  if (attachment && /\.(jpe?g|png|webp|gif|svg)$/i.test(attachment.split("?")[0] || "")) return true;
+  if (fileName && /\.(jpe?g|png|webp|gif|svg)$/i.test(fileName)) return true;
+  return false;
 }
 
-function isVideoAttachment(attachment: string, attachmentType?: string | null): boolean {
+function isVideoAttachment(attachment?: string | null, attachmentType?: string | null, fileName?: string | null): boolean {
   if (attachmentType && attachmentType.startsWith("video/")) return true;
-  return /\.(mp4|mov|avi|mkv|webm)$/i.test(attachment);
+  if (attachment && /\.(mp4|mov|avi|mkv|webm)$/i.test(attachment.split("?")[0] || "")) return true;
+  if (fileName && /\.(mp4|mov|avi|mkv|webm)$/i.test(fileName)) return true;
+  return false;
 }
 
-function isAudioAttachment(attachment: string, attachmentType?: string | null): boolean {
+function isAudioAttachment(attachment?: string | null, attachmentType?: string | null, fileName?: string | null): boolean {
   if (attachmentType && attachmentType.startsWith("audio/")) return true;
-  return /\.(mp3|ogg|opus|wav|m4a|aac)$/i.test(attachment);
+  if (attachment && /\.(mp3|ogg|opus|wav|m4a|aac)$/i.test(attachment.split("?")[0] || "")) return true;
+  if (fileName && /\.(mp3|ogg|opus|wav|m4a|aac)$/i.test(fileName)) return true;
+  return false;
 }
 
-function getAttachmentInfo(attachment: string, attachmentType?: string | null, content?: string) {
-  const url = resolveAttachmentUrl(attachment);
-  const isImage = isImageAttachment(attachment, attachmentType);
-  const isVideo = isVideoAttachment(attachment, attachmentType);
-  const isAudio = isAudioAttachment(attachment, attachmentType);
-
-  const extMatch = attachment.match(/\.([a-zA-Z0-9]+)(?:\?|#|$)/) || (content ? content.match(/\.([a-zA-Z0-9]+)$/) : null);
-  const ext = extMatch ? extMatch[1].toUpperCase() : (attachmentType?.split("/")[1] || "FILE").toUpperCase();
-
+function getAttachmentInfo(
+  attachment?: string | null,
+  attachmentType?: string | null,
+  content?: string,
+  messageId?: string,
+) {
+  const placeholder = parseFilePlaceholder(content);
+  let resolvedUrl = "";
+  let downloadUrl = "";
   let fileName = "";
-  if (content && content.trim() !== "." && content.trim() !== "[документ]" && !content.startsWith("/uploads/")) {
-    fileName = content.trim();
-  } else {
-    const rawBase = attachment.split("/").pop() || "Документ";
-    const cleaned = rawBase.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "");
-    fileName = decodeURIComponent(cleaned || rawBase);
+
+  if (attachment) {
+    resolvedUrl = resolveAttachmentUrl(attachment, false);
+    downloadUrl = resolveAttachmentUrl(attachment, true);
+    if (content && content.trim() !== "." && content.trim() !== "[документ]" && !content.startsWith("/uploads/") && !content.startsWith("[файл:")) {
+      fileName = content.trim();
+    } else {
+      const rawBase = attachment.split("?")[0]?.split("/").pop() || "Документ";
+      const cleaned = rawBase.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "");
+      fileName = decodeURIComponent(cleaned || rawBase);
+    }
+  } else if (messageId) {
+    resolvedUrl = getMessageAttachmentUrl(messageId, false);
+    downloadUrl = getMessageAttachmentUrl(messageId, true);
+    fileName = placeholder || "Документ";
   }
+
+  const isAudio = isAudioAttachment(attachment, attachmentType, fileName);
+  const isImage = isImageAttachment(attachment, attachmentType, fileName);
+  const isVideo = isVideoAttachment(attachment, attachmentType, fileName);
+
+  const extMatch = (fileName || "").match(/\.([a-zA-Z0-9]+)$/) || (attachment ? attachment.split("?")[0]?.match(/\.([a-zA-Z0-9]+)$/) : null);
+  const ext = extMatch ? extMatch[1]?.toUpperCase() || "FILE" : (attachmentType?.split("/")[1] || "FILE").toUpperCase();
 
   let typeLabel = `${ext} документ`;
   if (["DOC", "DOCX"].includes(ext) || attachmentType?.includes("word")) {
@@ -208,14 +270,344 @@ function getAttachmentInfo(attachment: string, attachmentType?: string | null, c
   }
 
   return {
-    url,
+    url: resolvedUrl,
+    downloadUrl,
     isImage,
     isVideo,
     isAudio,
-    fileName,
+    fileName: fileName || "Документ",
     ext,
     typeLabel,
   };
+}
+
+function formatAudioTime(sec: number): string {
+  if (isNaN(sec) || !isFinite(sec)) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+function ChatAudioPlayer({
+  src,
+  fileName,
+  downloadUrl,
+}: {
+  src: string;
+  fileName: string;
+  downloadUrl?: string;
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [hasError, setHasError] = useState(false);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch(() => setHasError(true));
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (!audioRef.current) return;
+    setCurrentTime(audioRef.current.currentTime);
+  };
+
+  const handleLoadedMetadata = () => {
+    if (!audioRef.current) return;
+    setDuration(audioRef.current.duration || 0);
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = Number(e.target.value);
+    setCurrentTime(time);
+    if (audioRef.current) {
+      audioRef.current.currentTime = time;
+    }
+  };
+
+  return (
+    <div className="mt-2 flex w-full max-w-[340px] flex-col gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 shadow-2xs transition-colors hover:border-[#cccccc]">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onEnded={() => setIsPlaying(false)}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onError={() => setHasError(true)}
+        className="hidden"
+      />
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={togglePlay}
+            disabled={hasError}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#4a38f5] text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+            title={isPlaying ? "Пауза" : "Воспроизвести"}
+          >
+            {isPlaying ? (
+              <Pause className="h-4 w-4 fill-current" />
+            ) : (
+              <Play className="h-4 w-4 fill-current ml-0.5" />
+            )}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-medium text-[#111111]" title={fileName}>
+              {fileName}
+            </div>
+            <div className="text-[10px] text-[#666666] tabular-nums">
+              {formatAudioTime(currentTime)} / {formatAudioTime(duration)}
+            </div>
+          </div>
+        </div>
+        {downloadUrl && (
+          <a
+            href={downloadUrl}
+            download={fileName}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] shadow-2xs transition-colors hover:bg-[#f0f0f0] hover:text-[#111111]"
+            title="Скачать аудио"
+          >
+            <Download className="h-3.5 w-3.5" />
+          </a>
+        )}
+      </div>
+      <div className="px-1">
+        <input
+          type="range"
+          min="0"
+          max={duration || 100}
+          step="0.1"
+          value={currentTime}
+          onChange={handleSeek}
+          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[#e5e5e5] accent-[#4a38f5]"
+        />
+      </div>
+    </div>
+  );
+}
+
+function AudioTranscriptBadge({
+  transcript,
+  messageId,
+  onEnrich,
+}: {
+  transcript?: AudioTranscriptMetadata | null;
+  messageId: string;
+  onEnrich?: (messageId: string) => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleCopy = () => {
+    if (!transcript?.text) return;
+    navigator.clipboard.writeText(transcript.text).then(() => {
+      setCopied(true);
+      toast.success("Транскрипция скопирована");
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const handleTranscribe = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+    try {
+      if (onEnrich) {
+        onEnrich(messageId);
+      } else {
+        await apiClient.post(`/api/v1/crm/messages/${messageId}/transcribe`, {});
+      }
+    } catch {
+      toast.error("Не удалось запустить транскрибацию");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading || transcript?.status === "pending") {
+    return (
+      <div className="mt-1.5 flex w-full max-w-[340px] items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 text-xs text-[#666666] shadow-2xs">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+        <span>Распознавание речи...</span>
+      </div>
+    );
+  }
+
+  if (transcript && transcript.status === "completed" && transcript.text) {
+    const isLongText = transcript.text.length > 140;
+
+    return (
+      <div className="mt-1.5 w-full max-w-[340px] rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 text-xs shadow-2xs transition-colors hover:border-[#cccccc]">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-[#4a38f5]">
+            <Sparkles className="h-3 w-3" />
+            <span>Транскрипция</span>
+            {Boolean(transcript.duration) && (
+              <span className="text-[10px] text-[#888888] tabular-nums font-mono">
+                ({formatAudioTime(transcript.duration || 0)})
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleCopy}
+            title={copied ? "Скопировано" : "Скопировать текст"}
+            className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#f0f0f0] hover:text-[#111111] cursor-pointer"
+          >
+            {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+          </button>
+        </div>
+        <p className={cn("text-[12px] leading-relaxed text-[#222222]", !isExpanded && isLongText && "line-clamp-3")}>
+          {transcript.text}
+        </p>
+        {isLongText && (
+          <button
+            type="button"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="mt-1 flex items-center gap-0.5 text-[11px] font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors cursor-pointer"
+          >
+            {isExpanded ? (
+              <>
+                <span>Свернуть</span>
+                <ChevronUp className="h-3 w-3" />
+              </>
+            ) : (
+              <>
+                <span>Читать полностью</span>
+                <ChevronDown className="h-3 w-3" />
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (transcript && transcript.status === "failed") {
+    return (
+      <div className="mt-1.5 flex w-full max-w-[340px] items-center justify-between rounded-[8px] border border-[#f0f0f0] bg-[#fafafa] px-2.5 py-1.5 text-[11px] text-[#888888]">
+        <span>Не удалось расшифровать</span>
+        <button
+          type="button"
+          onClick={handleTranscribe}
+          className="font-medium text-[#4a38f5] hover:underline cursor-pointer"
+        >
+          Повторить
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleTranscribe}
+      className="mt-1 inline-flex items-center gap-1 rounded-[4px] px-1 py-0.5 text-[11px] font-medium text-[#666666] hover:bg-[#f0f0f0] hover:text-[#4a38f5] transition-colors cursor-pointer"
+    >
+      <Sparkles className="h-3 w-3 text-[#4a38f5]" />
+      <span>Расшифровать запись</span>
+    </button>
+  );
+}
+
+function DocumentSummaryCard({
+  documentInfo,
+  messageId,
+  onEnrich,
+}: {
+  documentInfo?: DocumentInfoMetadata | null;
+  messageId: string;
+  onEnrich?: (messageId: string) => void;
+}) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleEnrich = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+    try {
+      if (onEnrich) {
+        onEnrich(messageId);
+      } else {
+        await apiClient.post(`/api/v1/crm/messages/${messageId}/enrich`, {});
+      }
+    } catch {
+      toast.error("Не удалось проанализировать документ");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading || documentInfo?.status === "pending") {
+    return (
+      <div className="mt-1.5 flex w-full max-w-[360px] items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 text-xs text-[#666666] shadow-2xs">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+        <span>Анализ документа...</span>
+      </div>
+    );
+  }
+
+  if (documentInfo && documentInfo.status === "completed" && (documentInfo.summary || documentInfo.doc_type)) {
+    return (
+      <div className="mt-1.5 w-full max-w-[360px] rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 text-xs shadow-2xs transition-colors hover:border-[#cccccc]">
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#4a38f5] tracking-wide">
+            <FileText className="h-2.5 w-2.5" />
+            <span>{documentInfo.doc_type || "Документ"}</span>
+          </span>
+          <div className="flex items-center gap-1 text-[10px] text-[#888888] tabular-nums font-mono">
+            {Boolean(documentInfo.file_size) && <span>{formatFileSize(documentInfo.file_size)}</span>}
+            {Boolean(documentInfo.pages_count) && <span>· {documentInfo.pages_count} стр.</span>}
+          </div>
+        </div>
+        {documentInfo.summary && (
+          <p className="mt-1.5 text-[12px] leading-snug text-[#333333]">
+            {documentInfo.summary}
+          </p>
+        )}
+        {documentInfo.attributes && Object.keys(documentInfo.attributes).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {Object.entries(documentInfo.attributes).map(([key, val]) => (
+              <span
+                key={key}
+                className="inline-flex items-center rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[10px] text-[#555555]"
+              >
+                <span className="text-[#888888] mr-1">{key}:</span>
+                <span className="font-medium text-[#111111]">{val}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleEnrich}
+      className="mt-1 inline-flex items-center gap-1 rounded-[4px] px-1 py-0.5 text-[11px] font-medium text-[#666666] hover:bg-[#f0f0f0] hover:text-[#4a38f5] transition-colors cursor-pointer"
+    >
+      <Sparkles className="h-3 w-3 text-[#4a38f5]" />
+      <span>Определить тип документа</span>
+    </button>
+  );
 }
 
 export function stripTechnicalMessageMetadata(content: string): string {
@@ -462,9 +854,36 @@ export function CrmChatView({
   const hasUserSelectedTabRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const queryClient = useQueryClient();
+
+  const handleEnrichMessage = useCallback(
+    async (messageId: string) => {
+      try {
+        await apiClient.post(`/api/v1/crm/messages/${messageId}/enrich`, {});
+        queryClient.invalidateQueries({ queryKey: ["crm-chat", entityType, entityId] });
+      } catch (err) {
+        toast.error("Не удалось обогатить данные файла");
+      }
+    },
+    [queryClient, entityType, entityId],
+  );
+
   const messages = messagesQuery.data ?? [];
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
   const aiStatus = aiStatusQuery.data;
+
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+
+  // Поиск последних реплик клиента и ассистента для контекста обучения
+  const lastUserMessage = useMemo(() => {
+    const inbound = messages.filter((m) => m.direction === "inbound" || m.source === "client");
+    return inbound[inbound.length - 1]?.content || "";
+  }, [messages]);
+
+  const lastBotResponse = useMemo(() => {
+    const outbound = messages.filter((m) => m.direction === "outbound" || m.source === "ai" || m.source === "ai_bot");
+    return outbound[outbound.length - 1]?.content || "";
+  }, [messages]);
 
   // Список доступных каналов переписки (с подсчетом сообщений)
   const availableChannels = useMemo(() => {
@@ -578,10 +997,35 @@ export function CrmChatView({
     return sendFromOptions.find((o) => o.channelAccountId === selectedChannelAccountId);
   }, [sendFromOptions, selectedChannelAccountId]);
 
-  // Фильтрация сообщений по выбранному каналу
+  // Фильтрация и дедупликация сообщений по выбранному каналу
   const displayedMessages = useMemo(() => {
-    if (activeChannel === "all") return messages;
-    return messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
+    const filtered =
+      activeChannel === "all"
+        ? messages
+        : messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
+
+    // Дедупликация: исключаем одинаковые сообщения по ID и подряд идущие дубликаты (одинаковый текст, направление и интервал < 60 сек)
+    const seenIds = new Set<string>();
+    const deduplicated: typeof messages = [];
+
+    for (const msg of filtered) {
+      if (seenIds.has(msg.id)) continue;
+      seenIds.add(msg.id);
+
+      const prev = deduplicated[deduplicated.length - 1];
+      if (
+        prev &&
+        prev.direction === msg.direction &&
+        prev.content.trim() === msg.content.trim() &&
+        Math.abs(new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 60_000
+      ) {
+        continue;
+      }
+
+      deduplicated.push(msg);
+    }
+
+    return deduplicated;
   }, [messages, activeChannel]);
 
   // Автоскролл к низу переписки при открытии или получении сообщений
@@ -816,6 +1260,19 @@ export function CrmChatView({
               </button>
             )}
           </div>
+
+          <div className="h-4 w-px bg-[#e5e5e5]" />
+
+          {/* Кнопка оценки диалога и обучения бота */}
+          <button
+            type="button"
+            onClick={() => setShowFeedbackModal(true)}
+            title="Оценить качество ответов ИИ и обучить агента на этом диалоге"
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2.5 py-1 text-xs font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/10 cursor-pointer shadow-2xs"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+            <span>Обучить бота</span>
+          </button>
         </div>
       </div>
 
@@ -996,10 +1453,15 @@ export function CrmChatView({
                         </span>
                       </div>
 
-                      {/* Текст сообщения */}
+                      {/* Текст сообщения и Вложение */}
                       {(() => {
                         const trimmedContent = cleanedContent.trim();
-                        const info = message.attachment ? getAttachmentInfo(message.attachment, message.attachmentType, cleanedContent) : null;
+                        const placeholderName = parseFilePlaceholder(cleanedContent);
+                        const hasAttachment = Boolean(message.attachment || placeholderName);
+                        const info = hasAttachment
+                          ? getAttachmentInfo(message.attachment, message.attachmentType, cleanedContent, message.id)
+                          : null;
+
                         const isDummyContent =
                           trimmedContent === "." ||
                           trimmedContent === "[документ]" ||
@@ -1007,100 +1469,149 @@ export function CrmChatView({
                           trimmedContent === "Фотография" ||
                           trimmedContent === "Видео" ||
                           trimmedContent === "Аудио" ||
-                          (message.attachment && (
+                          /^\[(?:файл|документ|фото|видео|аудио|голосовое|стикер):?\s*[^\]]*\]$/i.test(trimmedContent) ||
+                          (hasAttachment && (
                             trimmedContent === message.attachment ||
-                            (info && (trimmedContent === info.fileName || trimmedContent.toLowerCase() === info.fileName.toLowerCase()))
+                            (info && (trimmedContent === info.fileName || trimmedContent.toLowerCase() === info.fileName.toLowerCase())) ||
+                            (placeholderName && (trimmedContent === `[файл: ${placeholderName}]` || trimmedContent === placeholderName))
                           ));
-                        if (!trimmedContent || (message.attachment && isDummyContent)) {
-                          return null;
-                        }
-                        return (
-                          <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
-                            {renderChatMessageContent(cleanedContent)}
-                          </div>
-                        );
-                      })()}
-
-                      {/* Вложение сообщения, если есть */}
-                      {message.attachment && (() => {
-                        const info = getAttachmentInfo(message.attachment, message.attachmentType, message.content);
-                        if (info.isImage) {
-                          return (
-                            <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
-                              <a
-                                href={info.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="group block overflow-hidden rounded-[8px]"
-                                title="Нажмите, чтобы открыть фото в полном размере"
-                              >
-                                <img
-                                  src={info.url}
-                                  alt="Фотография"
-                                  className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
-                                  loading="lazy"
-                                />
-                              </a>
-                            </div>
-                          );
-                        }
-
-                        if (info.isVideo) {
-                          return (
-                            <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-black shadow-2xs">
-                              <video
-                                src={info.url}
-                                controls
-                                preload="metadata"
-                                className="max-h-72 w-auto max-w-full rounded-[6px]"
-                              />
-                            </div>
-                          );
-                        }
-
-                        if (info.isAudio) {
-                          return (
-                            <div className="mt-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 shadow-2xs">
-                              <div className="mb-1 text-xs font-medium text-[#111111] truncate">{info.fileName}</div>
-                              <audio
-                                src={info.url}
-                                controls
-                                preload="metadata"
-                                className="w-full h-8"
-                              />
-                            </div>
-                          );
-                        }
 
                         return (
-                          <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 transition-colors hover:border-[#cccccc]">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-white border border-[#e5e5e5] text-[#4a38f5] shadow-2xs">
-                                <FileText className="h-5 w-5" />
+                          <>
+                            {!isDummyContent && trimmedContent && (
+                              <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
+                                {renderChatMessageContent(cleanedContent)}
                               </div>
-                              <div className="min-w-0">
-                                <div className="truncate text-[13px] font-medium text-[#111111]" title={info.fileName}>
-                                  {info.fileName}
+                            )}
+
+                            {info && (() => {
+                              if (info.isAudio) {
+                                return (
+                                  <div className="flex flex-col">
+                                    <ChatAudioPlayer
+                                      src={info.url}
+                                      fileName={info.fileName}
+                                      downloadUrl={info.downloadUrl}
+                                    />
+                                    <AudioTranscriptBadge
+                                      transcript={message.metadata?.transcript}
+                                      messageId={message.id}
+                                      onEnrich={handleEnrichMessage}
+                                    />
+                                  </div>
+                                );
+                              }
+
+                              if (info.isImage) {
+                                return (
+                                  <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs group relative max-w-[320px]">
+                                    <a
+                                      href={info.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="block overflow-hidden"
+                                      title="Открыть фото в полном размере"
+                                    >
+                                      <img
+                                        src={info.url}
+                                        alt={info.fileName || "Изображение"}
+                                        className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
+                                        loading="lazy"
+                                      />
+                                    </a>
+                                    <a
+                                      href={info.downloadUrl || info.url}
+                                      download={info.fileName}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80 shadow-xs"
+                                      title="Скачать изображение"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                    </a>
+                                  </div>
+                                );
+                              }
+
+                              if (info.isVideo) {
+                                return (
+                                  <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-black shadow-2xs max-w-[340px]">
+                                    <video
+                                      src={info.url}
+                                      controls
+                                      preload="metadata"
+                                      className="max-h-72 w-auto max-w-full rounded-[6px]"
+                                    />
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div className="flex flex-col">
+                                  <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 shadow-2xs transition-colors hover:border-[#cccccc] max-w-[360px]">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div
+                                        className={cn(
+                                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] border shadow-2xs",
+                                          info.ext === "PDF"
+                                            ? "bg-rose-50 border-rose-200 text-rose-600"
+                                            : ["DOC", "DOCX"].includes(info.ext)
+                                            ? "bg-blue-50 border-blue-200 text-blue-600"
+                                            : ["XLS", "XLSX"].includes(info.ext)
+                                            ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                            : "bg-white border-[#e5e5e5] text-[#4a38f5]",
+                                        )}
+                                      >
+                                        {["XLS", "XLSX"].includes(info.ext) ? (
+                                          <FileSpreadsheet className="h-5 w-5" />
+                                        ) : (
+                                          <FileText className="h-5 w-5" />
+                                        )}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="truncate text-[13px] font-medium text-[#111111]" title={info.fileName}>
+                                          {info.fileName}
+                                        </div>
+                                        <div className="text-[11px] text-[#666666]">
+                                          {info.typeLabel}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                      {info.ext === "PDF" && (
+                                        <a
+                                          href={info.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
+                                          title="Открыть документ"
+                                        >
+                                          <ExternalLink className="h-3 w-3 text-[#666666]" />
+                                          <span>Открыть</span>
+                                        </a>
+                                      )}
+                                      <a
+                                        href={info.downloadUrl || info.url}
+                                        download={info.fileName}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
+                                        title="Скачать файл"
+                                      >
+                                        <Download className="h-3 w-3 text-[#666666]" />
+                                        <span>Скачать</span>
+                                      </a>
+                                    </div>
+                                  </div>
+                                  <DocumentSummaryCard
+                                    documentInfo={message.metadata?.document_info}
+                                    messageId={message.id}
+                                    onEnrich={handleEnrichMessage}
+                                  />
                                 </div>
-                                <div className="text-[11px] text-[#666666]">
-                                  {info.typeLabel}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1">
-                              <a
-                                href={info.url}
-                                download={info.fileName}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2.5 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
-                                title="Скачать файл"
-                              >
-                                <Download className="h-3 w-3 text-[#666666]" />
-                                <span>Скачать</span>
-                              </a>
-                            </div>
-                          </div>
+                              );
+                            })()}
+                          </>
                         );
                       })()}
 
@@ -1216,6 +1727,17 @@ export function CrmChatView({
         cancelLabel="Отмена"
         variant="destructive"
         isPending={isTogglingPersonal}
+      />
+
+      <DialogueFeedbackModal
+        open={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+        dealId={isDeal ? entityId : undefined}
+        dealTitle={isDeal ? entityName : undefined}
+        contactName={!isDeal ? entityName : undefined}
+        messages={messages}
+        lastUserMessage={lastUserMessage}
+        lastBotResponse={lastBotResponse}
       />
     </div>
   );

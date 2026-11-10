@@ -100,17 +100,43 @@ function writeCookie(name: string, value: string): void {
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   const domain = cookieDomainAttribute();
+  const expires = new Date(Date.now() + AUTH_COOKIE_MAX_AGE_SECONDS * 1000).toUTCString();
 
   document.cookie =
     `${name}=${encodeURIComponent(value)}` +
-    `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax` +
+    `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; Expires=${expires}; SameSite=Lax` +
     `${domain}${secure}`;
 
+  // If a domain attribute is used, ensure no host-only cookie shadows it on the current origin
   if (domain) {
-    document.cookie =
-      `${name}=${encodeURIComponent(value)}` +
-      `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
+    const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
   }
+}
+
+/** Clears any host-only cookie for `name` on the current origin without touching the domain cookie. */
+function clearHostOnlyCookie(name: string): void {
+  if (!isBrowser()) return;
+  const domain = cookieDomainAttribute();
+  if (!domain) return;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
+}
+
+/** Extracts a handoff access token from the URL hash fragment (#restore_token=... or #tenant_token=...) */
+function consumeHashToken(): string | null {
+  if (!isBrowser()) return null;
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const match = hash.match(/(?:^#|[&#])(?:restore_token|tenant_token|admin_token)=([^&]+)/);
+  if (!match || !match[1]) return null;
+  const token = decodeURIComponent(match[1]);
+  // Clean hash from browser address bar without reload
+  const cleanHash = hash.replace(/[&#]?(?:restore_token|tenant_token|admin_token)=[^&]+/, "").replace(/^#$/, "");
+  const newUrl = window.location.pathname + window.location.search + (cleanHash ? `#${cleanHash}` : "");
+  window.history.replaceState(null, "", newUrl);
+  return token;
 }
 
 function clearCookie(name: string): void {
@@ -118,15 +144,16 @@ function clearCookie(name: string): void {
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   const domain = cookieDomainAttribute();
+  const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
 
   if (domain) {
-    document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${domain}${secure}`;
+    document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${domain}${secure}`;
     const rawDomain = domain.replace(/^;\s*Domain=\./i, "; Domain=");
-    document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${rawDomain}${secure}`;
+    document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${rawDomain}${secure}`;
   }
 
   // Also drop a host-only cookie
-  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
 }
 
 function readCookie(name: string): string | null {
@@ -149,7 +176,19 @@ function readCookie(name: string): string | null {
 
 export function readAccessToken(): string | null {
   if (!isBrowser()) return null;
-  // Cookie is domain-scoped (.getvoxly.ru) and travels across subdomains,
+
+  // 1. Check if a token was handed off via URL hash fragment (cross-subdomain redirect)
+  const handedOffToken = consumeHashToken();
+  if (handedOffToken) {
+    writeTokens({ accessToken: handedOffToken, refreshToken: "" });
+    return handedOffToken;
+  }
+
+  // 2. Clear any stale host-only cookies that might shadow the domain cookie
+  clearHostOnlyCookie(AUTH_COOKIE_NAME);
+  clearHostOnlyCookie("getvoxly_session");
+
+  // 3. Cookie is domain-scoped (.getvoxly.ru) and travels across subdomains,
   // making it the authoritative cross-subdomain source of truth.
   const cookieToken = readCookie(AUTH_COOKIE_NAME);
   if (cookieToken) {
@@ -166,31 +205,24 @@ export function readAccessToken(): string | null {
 }
 
 export function readRefreshToken(): string | null {
-  if (!isBrowser()) return null;
-  const cookieRefresh = readCookie(REFRESH_COOKIE_NAME);
-  if (cookieRefresh) {
-    try {
-      if (localStorage.getItem(REFRESH_TOKEN_KEY) !== cookieRefresh) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, cookieRefresh);
-      }
-    } catch {
-      // Ignore localStorage write failures
-    }
-    return cookieRefresh;
-  }
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+  // Долгоживущий refresh-токен хранится исключительно в безопасной HttpOnly cookie,
+  // недоступной для JavaScript (защита от XSS). Браузер передает её автоматически
+  // с credentials: "include".
+  return null;
 }
 
-export function writeTokens({ accessToken, refreshToken }: SessionTokens): void {
+export function writeTokens({ accessToken }: SessionTokens): void {
   if (!isBrowser()) return;
 
   localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  // Запрещено хранить refresh-токены в localStorage (XSS-изоляция).
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
 
-  // Both tokens are mirrored into domain-scoped cookies so the session survives
-  // a hop to another subdomain, where localStorage starts empty.
+  // Выставляем cookies сессии с Max-Age 60d и Expires для Edge Middleware и клиентских проверок
   writeCookie(AUTH_COOKIE_NAME, accessToken);
-  writeCookie(REFRESH_COOKIE_NAME, refreshToken);
+  writeCookie("getvoxly_session", "active");
+  // Удаляем устаревшую не-HttpOnly cookie, если она присутствовала
+  clearCookie(REFRESH_COOKIE_NAME);
 }
 
 export function clearSession(): void {
@@ -200,6 +232,7 @@ export function clearSession(): void {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   clearCookie(AUTH_COOKIE_NAME);
   clearCookie(REFRESH_COOKIE_NAME);
+  clearCookie("getvoxly_session");
 }
 
 export function getTokenRemainingSeconds(token: string | null): number {
@@ -227,5 +260,9 @@ export function getTokenRemainingSeconds(token: string | null): number {
 }
 
 export function hasSession(): boolean {
-  return readAccessToken() !== null || readRefreshToken() !== null;
+  return (
+    readAccessToken() !== null ||
+    readCookie("getvoxly_session") !== null ||
+    readCookie(AUTH_COOKIE_NAME) !== null
+  );
 }

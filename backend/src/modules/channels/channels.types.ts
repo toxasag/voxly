@@ -41,6 +41,49 @@ export const createChannelAccountSchema = z.object({
 
 export type CreateChannelAccountPayload = z.infer<typeof createChannelAccountSchema>;
 
+/**
+ * Очищает и нормализует домен / URL сайта:
+ * удаляет протокол (http://, https://), порт, пути (/path) и концевые знаки.
+ */
+export function normalizeDomain(input: string): string {
+  if (!input) return "";
+  let cleaned = input.trim().toLowerCase();
+  cleaned = cleaned.replace(/^[a-z]+:\/\//i, "");
+  cleaned = cleaned.replace(/[/?#].*$/, "");
+  cleaned = cleaned.replace(/:\d+$/, "");
+  cleaned = cleaned.replace(/[./]+$/, "");
+  return cleaned;
+}
+
+export const DOMAIN_REGEX =
+  /^[a-z0-9а-яё]([a-z0-9а-яё-]{0,61}[a-z0-9а-яё])?(\.[a-z0-9а-яё]([a-z0-9а-яё-]{0,61}[a-z0-9а-яё])?)+$/i;
+
+export function isValidDomain(domain: string): boolean {
+  const norm = normalizeDomain(domain);
+  if (!norm) return false;
+  if (norm === "localhost") return true;
+  return DOMAIN_REGEX.test(norm);
+}
+
+/**
+ * Схема запроса клонирования (дублирования) виджета.
+ * Принимает новый домен/адрес сайта, опциональное имя и опционального агента.
+ */
+export const cloneChannelAccountSchema = z
+  .object({
+    label: z.string().trim().min(1, "Укажите название виджета").max(120).optional(),
+    external_id: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
+    site_url: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
+    domain: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
+    agent_id: z.string().uuid("agent_id должен быть валидным UUID").nullable().optional(),
+  })
+  .refine((data) => Boolean(data.external_id || data.site_url || data.domain), {
+    message: "Укажите адрес сайта или домен для нового виджета",
+    path: ["external_id"],
+  });
+
+export type CloneChannelAccountPayload = z.infer<typeof cloneChannelAccountSchema>;
+
 export const updateChannelAccountSchema = z
   .object({
     label: z.string().trim().min(1, "Укажите название подключения").max(120).optional(),
@@ -48,12 +91,44 @@ export const updateChannelAccountSchema = z
     status_message: z.string().max(500).optional(),
     credentials: z.record(z.unknown()).optional(),
     agent_id: z.string().uuid().nullable().optional(),
+    is_enabled: z.boolean().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нечего обновлять: не передано ни одного поля",
   });
 
 export type UpdateChannelAccountPayload = z.infer<typeof updateChannelAccountSchema>;
+
+/**
+ * Схема запроса настройки и кастомизации ссылок подключения (Direct / Tracking Links).
+ */
+export const customizeAccountLinksSchema = z.object({
+  text: z.string().max(1000).optional(),
+  startTag: z.string().max(64).optional(),
+  btn: z.string().max(100).optional(),
+});
+
+export type CustomizeAccountLinksQuery = z.infer<typeof customizeAccountLinksSchema>;
+
+/**
+ * Прямые ссылки и умный редиректор сквозной аналитики для аккаунта канала.
+ */
+export interface ChannelAccountLinksDTO {
+  /** Прямая ссылка на мессенджер (t.me/..., wa.me/..., max.ru/...) */
+  directUrl: string;
+  /** Умный редиректор сквозной аналитики с фиксацией UTM, ClientID и кода лида */
+  trackingUrl: string;
+  /** Тип подключённого аккаунта: бот компании, личный профиль (MTProto) или WABA */
+  accountType: "bot" | "user_api" | "whatsapp" | "max" | "default";
+  /** Очищенный логин или номер телефона для отображения */
+  cleanIdentifier: string;
+  /** Текст первого сообщения по умолчанию (для WhatsApp и Telegram User API) */
+  defaultText?: string;
+  /** Стартовый тег для ботов компании */
+  startTag?: string;
+  /** Идентификатор кнопки или виджета для сквозной аналитики */
+  btnTag?: string;
+}
 
 /**
  * DTO подключения.
@@ -68,6 +143,8 @@ export interface ChannelAccountDTO {
   externalId: string;
   status: ChannelStatus;
   statusMessage: string;
+  is_enabled?: boolean;
+  isEnabled?: boolean;
   hasCredentials: boolean;
   credentials?: Record<string, unknown>;
   /** Числовой id пользователя на стороне канала; у Telegram — tgUserId. */
@@ -77,6 +154,8 @@ export interface ChannelAccountDTO {
   createdAt: string;
   boundAgentId?: string | null;
   boundAgentName?: string | null;
+  /** Прямые ссылки и ссылки трекинга для кнопок на сайте */
+  links?: ChannelAccountLinksDTO;
 }
 
 /** Сводка по каналу для шапки страницы. */
@@ -89,4 +168,6 @@ export interface ChannelSummaryDTO {
   total: number;
   trialEndsAt: string | null;
   trialActive: boolean;
+  is_unlimited?: boolean;
+  isUnlimited?: boolean;
 }

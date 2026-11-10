@@ -13,14 +13,14 @@ import {
 import { cn } from "@/lib/utils";
 
 interface KpiCardsProps {
-  revenue: number;
-  revenueChange: number;
-  netProfit: number;
-  profitChange: number;
-  closedRepairs: number;
-  repairsChange: number;
-  avgTicket: number;
-  ticketChange: number;
+  revenue?: number;
+  revenueChange?: number;
+  netProfit?: number;
+  profitChange?: number;
+  closedRepairs?: number;
+  repairsChange?: number;
+  avgTicket?: number;
+  ticketChange?: number;
 }
 
 interface KpiCard {
@@ -31,27 +31,29 @@ interface KpiCard {
   color: string;
 }
 
-function formatKpi(amount: number): string {
+function formatKpi(amount?: number): string {
+  const safe = typeof amount === "number" && Number.isFinite(amount) ? amount : 0;
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
     currency: "RUB",
     maximumFractionDigits: 0,
-  }).format(amount);
+  }).format(safe);
 }
 
-function formatNumber(n: number): string {
-  return new Intl.NumberFormat("ru-RU").format(n);
+function formatNumber(n?: number): string {
+  const safe = typeof n === "number" && Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat("ru-RU").format(safe);
 }
 
 export const KpiCards = memo(function KpiCards({
-  revenue,
-  revenueChange,
-  netProfit,
-  profitChange,
-  closedRepairs,
-  repairsChange,
-  avgTicket,
-  ticketChange,
+  revenue = 0,
+  revenueChange = 0,
+  netProfit = 0,
+  profitChange = 0,
+  closedRepairs = 0,
+  repairsChange = 0,
+  avgTicket = 0,
+  ticketChange = 0,
 }: KpiCardsProps) {
   const cards: KpiCard[] = [
     {
@@ -88,7 +90,8 @@ export const KpiCards = memo(function KpiCards({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {cards.map((card) => {
         const Icon = card.icon;
-        const isPositive = card.change >= 0;
+        const change = typeof card.change === "number" && Number.isFinite(card.change) ? card.change : 0;
+        const isPositive = change >= 0;
         const ChangeIcon = isPositive ? TrendingUp : TrendingDown;
 
         return (
@@ -121,7 +124,7 @@ export const KpiCards = memo(function KpiCards({
                 )}
               >
                 {isPositive ? "+" : ""}
-                {card.change}%
+                {change}%
               </span>
               <span className="text-xs text-[#888888]">к прошлому месяцу</span>
             </div>

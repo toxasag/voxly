@@ -298,10 +298,12 @@ export const CHUNK_OVERLAP_CHARS = 200;
  * пробел, и только если ничего не нашлось — режем по символу.
  */
 const BOUNDARY_PATTERNS: readonly RegExp[] = [
+  /\n\n(?=[#])/g,
   /\n\n/g,
-  /(?<=[.!?…])\s/g,
-  /(?<=[,;:])\s/g,
-  /\s/g,
+  /\n(?=[*\-•\d+.\s])/g,
+  /(?<=[.!?…])\s+/g,
+  /(?<=[,;:])\s+/g,
+  /\s+/g,
 ];
 
 /** Последняя позиция границы в интервале `[from, to)` либо −1. */
@@ -326,53 +328,189 @@ function findBoundary(text: string, from: number, to: number): number {
   return -1;
 }
 
+/**
+ * Находит аккуратное начало для перекрытия (overlap), чтобы не резать слова посредине.
+ * Ищет начало новой строки, предложения или слова в окрестности rawTarget, гарантируя продвижение вперёд.
+ */
+function alignOverlapStart(text: string, rawTarget: number, prevStart: number, end: number): number {
+  if (rawTarget <= prevStart) {
+    return Math.min(end, prevStart + 1);
+  }
+
+  // 1. Ищем начало новой строки (\n) или предложения в окне [rawTarget - 100, end - 30]
+  // В markdown это сохраняет целые пункты списков и строки таблиц.
+  const windowStart = Math.max(prevStart + 1, rawTarget - 100);
+  const windowEnd = Math.min(end, rawTarget + 60);
+  if (windowEnd > windowStart) {
+    const window = text.slice(windowStart, windowEnd);
+    let lastNewline = -1;
+    for (let i = 0; i < window.length; i++) {
+      if (window[i] === "\n") {
+        const candidate = windowStart + i + 1;
+        if (candidate > prevStart && candidate < end) {
+          lastNewline = candidate;
+        }
+      }
+    }
+    if (lastNewline > 0) {
+      return lastNewline;
+    }
+
+    const sentenceMatch = window.match(/(?<=[.!?…])\s+(?=[A-Za-zА-Яа-я0-9«"])/);
+    if (sentenceMatch && sentenceMatch.index !== undefined) {
+      const pos = windowStart + sentenceMatch.index + sentenceMatch[0].length;
+      if (pos > prevStart && pos < end) {
+        return pos;
+      }
+    }
+  }
+
+  // 2. Ищем границу слова (пробел) назад от rawTarget
+  const wordLimit = Math.max(prevStart + 1, rawTarget - 50);
+  for (let i = rawTarget; i >= wordLimit; i--) {
+    if (/\s/.test(text[i] ?? "")) {
+      let nextChar = i + 1;
+      while (nextChar < end && /\s/.test(text[nextChar] ?? "")) {
+        nextChar++;
+      }
+      if (nextChar > prevStart && nextChar < end) {
+        return nextChar;
+      }
+    }
+  }
+
+  // Вперёд на случай длинного слова
+  const forwardLimit = Math.min(end - 1, rawTarget + 50);
+  for (let i = rawTarget; i <= forwardLimit; i++) {
+    if (/\s/.test(text[i] ?? "")) {
+      let nextChar = i + 1;
+      while (nextChar < end && /\s/.test(text[nextChar] ?? "")) {
+        nextChar++;
+      }
+      if (nextChar > prevStart && nextChar < end) {
+        return nextChar;
+      }
+    }
+  }
+
+  return Math.max(prevStart + 1, rawTarget);
+}
+
+interface HeadingEntry {
+  pos: number;
+  level: number;
+  title: string;
+}
+
+function indexHeadings(text: string): HeadingEntry[] {
+  const headings: HeadingEntry[] = [];
+  const regex = /^[ \t]*(#{1,4})\s+([^\n]+)/gm;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const level = match[1]?.length ?? 1;
+    const title = (match[2] ?? "").trim();
+    if (title) {
+      headings.push({ pos: match.index, level, title });
+    }
+  }
+  return headings;
+}
+
+function getContextHeading(headings: HeadingEntry[], charPos: number): string | null {
+  if (headings.length === 0) return null;
+  let topSection: string | null = null;
+  let subSection: string | null = null;
+
+  for (const h of headings) {
+    if (h.pos > charPos) break;
+    if (h.level <= 2) {
+      topSection = h.title;
+      subSection = null;
+    } else if (h.level >= 3) {
+      subSection = h.title;
+    }
+  }
+
+  if (topSection && subSection && topSection !== subSection) {
+    return `${topSection} > ${subSection}`;
+  }
+  return subSection ?? topSection;
+}
+
 export interface TextChunk {
   index: number;
   content: string;
 }
 
 /**
- * Режет текст на перекрывающиеся фрагменты.
- *
- * Перекрытие нужно потому, что ответ на вопрос может лежать на стыке: без него
- * фраза, начатая в конце одного фрагмента и завершённая в начале следующего, не
- * найдётся ни по одному из них.
- *
- * Возвращает пустой массив на пустом тексте — вызывающий трактует это как
- * документ без текстового слоя и отвечает `EMPTY_DOCUMENT`.
+ * Режет текст на перекрывающиеся фрагменты с сохранением контекста разделов
+ * и выравниванием по границам предложений/слов без обрезки букв.
  */
 export function chunkText(raw: string): TextChunk[] {
   const text = normaliseText(raw);
   if (text.length === 0) return [];
 
+  const headings = indexHeadings(text);
   const chunks: TextChunk[] = [];
   let start = 0;
 
   while (start < text.length) {
     const remaining = text.length - start;
 
-    // Хвост целиком: отдельный фрагмент на 50 символов после разреза не несёт
-    // самостоятельного смысла и только расходует вызовы эмбеддингов.
     if (remaining <= CHUNK_MAX_CHARS) {
-      chunks.push({ index: chunks.length, content: text.slice(start).trim() });
+      const heading = getContextHeading(headings, start);
+      const leadingSlice = text.slice(start, start + 120);
+      const prefix =
+        heading && !leadingSlice.includes(heading)
+          ? `[Раздел: ${heading}]\n\n`
+          : "";
+
+      let slice = text.slice(start).trim();
+      if (prefix.length + slice.length > CHUNK_MAX_CHARS) {
+        const maxContent = Math.max(CHUNK_MIN_CHARS, CHUNK_MAX_CHARS - prefix.length);
+        const hardEnd = Math.min(text.length, start + maxContent);
+        const boundary = findBoundary(text, start + Math.min(CHUNK_MIN_CHARS, maxContent - 100), hardEnd);
+        const end = boundary > 0 ? boundary : hardEnd;
+        slice = text.slice(start, end).trim();
+        if (slice.length > 0) {
+          chunks.push({ index: chunks.length, content: `${prefix}${slice}`.trim() });
+        }
+        const rawTarget = Math.max(start + 1, end - CHUNK_OVERLAP_CHARS);
+        start = alignOverlapStart(text, rawTarget, start, end);
+        if (start <= 0 || start >= end) start = end;
+        continue;
+      }
+
+      if (slice.length > 0) {
+        chunks.push({ index: chunks.length, content: `${prefix}${slice}`.trim() });
+      }
       break;
     }
 
-    const hardEnd = start + CHUNK_MAX_CHARS;
-    const searchFrom = start + CHUNK_MIN_CHARS;
+    const heading = getContextHeading(headings, start);
+    const leadingSlice = text.slice(start, start + 120);
+    const prefix =
+      heading && !leadingSlice.includes(heading)
+        ? `[Раздел: ${heading}]\n\n`
+        : "";
+
+    const maxContentChars = Math.max(CHUNK_MIN_CHARS, CHUNK_MAX_CHARS - prefix.length);
+    const hardEnd = Math.min(text.length, start + maxContentChars);
+    const searchFrom = Math.min(hardEnd, start + Math.min(CHUNK_MIN_CHARS, maxContentChars - 100));
     const boundary = findBoundary(text, searchFrom, hardEnd);
     const end = boundary > 0 ? boundary : hardEnd;
 
-    const content = text.slice(start, end).trim();
-    if (content.length > 0) chunks.push({ index: chunks.length, content });
+    const slice = text.slice(start, end).trim();
+    if (slice.length > 0) {
+      chunks.push({ index: chunks.length, content: `${prefix}${slice}`.trim() });
+    }
 
-    // Следующий фрагмент начинается с перекрытием. `Math.max(..., start + 1)`
-    // страхует от неподвижности курсора: при `end - overlap <= start` цикл стал
-    // бы бесконечным и съел бы память процесса.
-    start = Math.max(end - CHUNK_OVERLAP_CHARS, start + 1);
+    const rawTarget = Math.max(start + 1, end - CHUNK_OVERLAP_CHARS);
+    start = alignOverlapStart(text, rawTarget, start, end);
+    if (start <= 0 || start >= end) {
+      start = end;
+    }
   }
 
-  // Переиндексация: пустые фрагменты выше не добавлялись, поэтому исходный
-  // счётчик мог оставить пропуски, а `chunk_index` участвует в UNIQUE-ограничении.
   return chunks.map((chunk, index) => ({ index, content: chunk.content }));
 }

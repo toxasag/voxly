@@ -329,7 +329,10 @@ export async function transaction<T>(
     // statement, including those issued by callers that never used withTenant.
     await applyTenantGuc(client);
     const result = await handler(wrapClient(client));
-    await client.query("COMMIT");
+    const commitResult = await client.query("COMMIT");
+    if (commitResult && commitResult.command === "ROLLBACK") {
+      throw new Error("Transaction was aborted and rolled back by PostgreSQL");
+    }
     return result;
   } catch (error) {
     try {

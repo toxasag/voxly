@@ -33,6 +33,7 @@ export interface SalesExampleDTO {
 interface MessageRow {
   id?: string;
   source: string;
+  direction?: string;
   sender_name?: string;
   content: string;
   created_at: Date | string;
@@ -54,8 +55,18 @@ export function extractOperatorPairs(messages: MessageRow[]): OperatorPair[] {
   let lastUser: { text: string } | null = null;
 
   for (const m of messages) {
-    const isCustomer = m.source === "customer" || m.source === "user";
-    const isOperator = m.source === "manager" || m.source === "operator" || m.source === "assistant";
+    const isCustomer =
+      m.source === "client" ||
+      m.source === "customer" ||
+      m.source === "user" ||
+      m.direction === "inbound";
+    const isOperator =
+      m.source === "manager" ||
+      m.source === "operator" ||
+      m.source === "assistant" ||
+      m.source === "ai" ||
+      m.source === "ai_bot" ||
+      m.direction === "outbound";
 
     if (isCustomer) {
       if (m.content.trim().length > 0) {
@@ -110,7 +121,7 @@ export class SalesLearnService {
       }
 
       const messages = await query<MessageRow>(
-        `SELECT id::text, source, sender_name, content, created_at
+        `SELECT id::text, source, direction, sender_name, content, created_at
          FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
          ORDER BY created_at ASC`,

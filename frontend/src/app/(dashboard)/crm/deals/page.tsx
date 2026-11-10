@@ -13,6 +13,7 @@ import {
   type KanbanStageOps,
 } from "@/components/crm/deals/DealKanban";
 import { DealListView } from "@/components/crm/deals/DealListView";
+import { DealsCalendarView } from "@/components/crm/deals/DealsCalendarView";
 import { useDealsViewMode } from "@/components/crm/deals/use-deals-view-mode";
 import { CreateDealModal } from "@/components/crm/deals/CreateDealModal";
 import { DealDrawer } from "@/components/crm/deals/DealDrawer";
@@ -227,6 +228,24 @@ function DealsContent() {
         );
       }
 
+      if (deals.length > 1) {
+        deals = [...deals].sort((a, b) => {
+          switch (sortBy) {
+            case "last_message":
+            case "last_event":
+              return b.updatedAt.localeCompare(a.updatedAt);
+            case "created":
+              return b.createdAt.localeCompare(a.createdAt);
+            case "title":
+              return a.title.localeCompare(b.title, "ru");
+            case "budget":
+              return b.budget - a.budget;
+            default:
+              return (a.position ?? 0) - (b.position ?? 0);
+          }
+        });
+      }
+
       return {
         ...column,
         deals,
@@ -234,7 +253,7 @@ function DealsContent() {
         budgetTotal: deals.reduce((total, deal) => total + deal.budget, 0),
       };
     });
-  }, [columns, presetView, search]);
+  }, [columns, presetView, search, sortBy]);
 
   const sortedDeals = useMemo(() => {
     const deals = [...filteredDeals];
@@ -412,42 +431,59 @@ function DealsContent() {
         onCreateDeal={() => setCreateOpen(true)}
       />
 
-      {/* Сохранённые срезы (Saved Views) в стиле Twenty CRM */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
-        <span className="text-[#888888] text-[11px] font-medium mr-1 uppercase tracking-wider">Срез:</span>
-        {(
-          [
-            { id: "all", label: "Все сделки", count: presetCounts.all },
-            { id: "active", label: "В работе", count: presetCounts.active },
-            { id: "high_value", label: "Крупные (> 100к)", count: presetCounts.high_value },
-            { id: "won", label: "Успешные", count: presetCounts.won },
-          ] as const
-        ).map((tab) => {
-          const active = presetView === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setPresetView(tab.id)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
-                active
-                  ? "bg-white border border-[#e5e5e5] text-[#111111] shadow-2xs"
-                  : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
-              )}
-            >
-              <span>{tab.label}</span>
-              <span
+      {/* Сохранённые срезы (Saved Views) в стиле Twenty CRM — строго single-line touch скролл */}
+      <div className="relative w-full min-w-0">
+        <div
+          role="tablist"
+          aria-label="Срезы сделок"
+          className="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth touch-pan-x overscroll-x-contain py-1 -my-1 text-xs select-none pr-6 md:pr-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+        >
+          <span className="shrink-0 whitespace-nowrap text-[#888888] text-[11px] font-medium mr-1 uppercase tracking-wider select-none">
+            Срез:
+          </span>
+          {(
+            [
+              { id: "all", label: "Все сделки", count: presetCounts.all },
+              { id: "active", label: "В работе", count: presetCounts.active },
+              { id: "high_value", label: "Крупные (> 100к)", count: presetCounts.high_value },
+              { id: "won", label: "Успешные", count: presetCounts.won },
+            ] as const
+          ).map((tab) => {
+            const active = presetView === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setPresetView(tab.id)}
                 className={cn(
-                  "rounded-full px-1.5 py-0.2 text-[10px] tabular-nums font-mono",
-                  active ? "bg-[#f5f5f5] text-[#111111]" : "text-[#888888]",
+                  "shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 min-h-[32px] rounded-[6px] px-3 text-xs font-medium transition-colors cursor-pointer select-none border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#4a38f5]",
+                  active
+                    ? "bg-white border-[#e5e5e5] text-[#111111] shadow-2xs font-semibold"
+                    : "bg-transparent border-transparent text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
                 )}
               >
-                {tab.count}
-              </span>
-            </button>
-          );
-        })}
+                <span className="shrink-0 whitespace-nowrap">{tab.label}</span>
+                <span
+                  className={cn(
+                    "shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-mono tabular-nums leading-none transition-colors",
+                    active
+                      ? "bg-[#f5f5f5] text-[#111111] font-semibold"
+                      : "bg-black/[0.04] text-[#888888]",
+                  )}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {/* Градиентное затухание справа на мобильных экранах как визуальный хинт о наличии скролла */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-white to-transparent md:hidden"
+        />
       </div>
 
       {configureMode && (
@@ -466,6 +502,13 @@ function DealsContent() {
             configure={configureMode}
             stageOps={stageOps}
             cardOptions={appearance}
+          />
+        ) : view === "calendar" ? (
+          <DealsCalendarView
+            deals={sortedDeals}
+            stagesById={stagesById}
+            usersById={usersById}
+            onOpenDeal={configureMode ? undefined : handleOpenDeal}
           />
         ) : (
           <DealListView

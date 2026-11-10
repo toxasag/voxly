@@ -44,6 +44,18 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+   Utility: No scrollbar
+   Hides native scrollbar while preserving touch & trackpad scrollability.
+   --------------------------------------------------------------------------- */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ---------------------------------------------------------------------------
    Webchat Launcher Attention-Grabber Animations (Zero-Slop Pure CSS Engine)
    60+ FPS GPU-accelerated: Shimmer, Pulse Wave, Glow Breathe, Float/Bounce
    --------------------------------------------------------------------------- */

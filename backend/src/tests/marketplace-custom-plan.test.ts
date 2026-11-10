@@ -99,4 +99,70 @@ describe("Marketplace & Tariff Unification (Custom Plan & Zero Cost)", () => {
     assert.equal(regularClient.isFreeCustomPlan, false);
     assert.equal(regularClient.customPrice, null);
   });
+
+  it("Test 5: Partner and 0 ₽ custom plan suppresses trialActive and defaults to 'Партнёрский тариф'", () => {
+    function resolveTenantInfo(tenant: {
+      plan: string;
+      status: string;
+      custom_price_rubles: number | null;
+      custom_plan_name: string | null;
+      trial_ends_at: string | null;
+    }) {
+      const hasCustomPrice = tenant.custom_price_rubles !== null && tenant.custom_price_rubles !== undefined;
+      const isFreeCustomPlan = (hasCustomPrice && Number(tenant.custom_price_rubles) === 0) || tenant.plan === "custom_free";
+      const isPartner = isFreeCustomPlan || tenant.plan === "partner" || tenant.plan === "custom_free";
+      const isTrialAccount = (tenant.plan === "trial" || tenant.status === "trial") && !isFreeCustomPlan && !isPartner;
+
+      const rawTrialDaysLeft =
+        tenant.trial_ends_at === null
+          ? 0
+          : Math.max(0, Math.ceil((new Date(tenant.trial_ends_at).getTime() - Date.now()) / 86_400_000));
+
+      const trialActive = isTrialAccount && rawTrialDaysLeft > 0;
+      const trialDaysLeft = trialActive ? rawTrialDaysLeft : 0;
+      const trialEndsAt = trialActive ? tenant.trial_ends_at : null;
+
+      let customPlanName: string | null = null;
+      if (hasCustomPrice || isPartner) {
+        if (tenant.custom_plan_name && tenant.custom_plan_name !== "Индивидуальный") {
+          customPlanName = tenant.custom_plan_name;
+        } else {
+          customPlanName = isPartner ? "Партнёрский тариф" : "Индивидуальный";
+        }
+      }
+
+      return { isPartner, isFreeCustomPlan, trialActive, trialDaysLeft, trialEndsAt, customPlanName };
+    }
+
+    // valera exact case: plan enterprise, status active, custom_price_rubles 0, old trial_ends_at
+    const valera = resolveTenantInfo({
+      plan: "enterprise",
+      status: "active",
+      custom_price_rubles: 0,
+      custom_plan_name: "Индивидуальный",
+      trial_ends_at: new Date(Date.now() + 9 * 86_400_000).toISOString(),
+    });
+
+    assert.equal(valera.isPartner, true);
+    assert.equal(valera.isFreeCustomPlan, true);
+    assert.equal(valera.trialActive, false);
+    assert.equal(valera.trialDaysLeft, 0);
+    assert.equal(valera.trialEndsAt, null);
+    assert.equal(valera.customPlanName, "Партнёрский тариф");
+
+    // Standard new trial account: plan trial, status trial, no custom price
+    const newTrial = resolveTenantInfo({
+      plan: "trial",
+      status: "trial",
+      custom_price_rubles: null,
+      custom_plan_name: null,
+      trial_ends_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    });
+
+    assert.equal(newTrial.isPartner, false);
+    assert.equal(newTrial.isFreeCustomPlan, false);
+    assert.equal(newTrial.trialActive, true);
+    assert.ok(newTrial.trialDaysLeft > 0);
+    assert.ok(newTrial.trialEndsAt !== null);
+  });
 });

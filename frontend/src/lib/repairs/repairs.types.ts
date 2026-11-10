@@ -1,13 +1,36 @@
 export type RepairStatus =
   | "intake"
+  | "waiting_parts"
+  | "ready"
+  | "issued"
   | "diagnostics"
   | "approval"
   | "in_progress"
-  | "ready"
-  | "issued"
   | "rejected";
 
 export type RepairPriority = "low" | "normal" | "high" | "urgent";
+
+export type RepairPaymentStatus = "unpaid" | "invoiced" | "paid";
+
+export const PAYMENT_STATUS_LABELS: Record<RepairPaymentStatus, string> = {
+  unpaid: "Не оплачен",
+  invoiced: "Счет выставлен",
+  paid: "Оплачен",
+};
+
+export const PAYMENT_STATUS_COLORS: Record<RepairPaymentStatus, string> = {
+  unpaid: "bg-[#f5f5f5] text-[#666666] border-[#e5e5e5]",
+  invoiced: "bg-sky-50 text-sky-700 border-sky-200",
+  paid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+};
+
+export function getRepairPaymentStatusLabel(status: RepairPaymentStatus): string {
+  return PAYMENT_STATUS_LABELS[status] ?? "Не оплачен";
+}
+
+export function getRepairPaymentStatusColors(status: RepairPaymentStatus): string {
+  return PAYMENT_STATUS_COLORS[status] ?? PAYMENT_STATUS_COLORS.unpaid;
+}
 
 export interface EquipmentInfo {
   type: string;
@@ -31,11 +54,15 @@ export interface WorkItem {
   description: string;
   master_name: string;
   master_id: string;
+  quantity?: number;
+  unit_price?: number;
   cost: number;
 }
 
 export interface PartItem {
   id: string;
+  warehouse_item_id?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -46,13 +73,25 @@ export interface PartItem {
 export interface RepairTicket {
   id: string;
   ticket_number: string;
+  deal_id?: string | null;
+  deal_title?: string | null;
+  deal_note?: string | null;
+  deal_budget?: number | null;
+  deal_stage_name?: string | null;
+  company_id?: string | null;
+  company_name?: string | null;
+  company_inn?: string | null;
   customer_name: string;
   customer_phone: string;
+  customer_email?: string | null;
   customer_id: string;
+  additional_contacts?: { name: string; phone: string; role?: string }[];
   equipment: EquipmentInfo;
   defect_description: string;
+  malfunctions?: string[];
   defect_photos: string[];
   status: RepairStatus;
+  payment_status: RepairPaymentStatus;
   priority: RepairPriority;
   master_name: string;
   master_id: string;
@@ -125,30 +164,30 @@ export const EQUIPMENT_TYPES = [
 export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
 
 const STATUS_LABELS: Record<RepairStatus, string> = {
-  intake: "Приёмка",
+  intake: "Принят",
+  waiting_parts: "Заказ запчастей",
+  ready: "Готов",
+  issued: "Выдан",
   diagnostics: "Диагностика",
   approval: "Согласование",
   in_progress: "В работе",
-  ready: "Готов к выдаче",
-  issued: "Выдан",
   rejected: "Отказ",
 };
 
 const STATUS_COLORS: Record<RepairStatus, string> = {
-  intake: "bg-slate-50 text-slate-700 border-slate-200",
+  intake: "bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd]", // Голубой (скриншот 1)
+  waiting_parts: "bg-[#fef3c7] text-[#92400e] border-[#fde68a]", // Янтарный
+  ready: "bg-[#dcfce7] text-[#15803d] border-[#bbf7d0]", // Изумрудно-зеленый
+  issued: "bg-[#f0fdf4] text-[#166534] border-[#bbf7d0]", // Зеленый (скриншот 1)
   diagnostics: "bg-sky-50 text-sky-700 border-sky-200",
   approval: "bg-indigo-50 text-[#4a38f5] border-indigo-200",
   in_progress: "bg-indigo-50 text-[#4a38f5] border-indigo-200",
-  ready: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  issued: "bg-emerald-50 text-emerald-700 border-emerald-200",
   rejected: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 export const STATUS_ORDER: RepairStatus[] = [
   "intake",
-  "diagnostics",
-  "approval",
-  "in_progress",
+  "waiting_parts",
   "ready",
   "issued",
 ];

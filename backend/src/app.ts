@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { query, queryOne } from "./db/client.js";
 import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
@@ -14,16 +15,19 @@ import { authorizePlugin } from "./plugins/authorize.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import crmRoutes from "./modules/crm/crm.routes.js";
 import repairsRoutes from "./modules/repairs/repairs.routes.js";
+import dictionariesRoutes from "./modules/dictionaries/dictionaries.routes.js";
 import financeRoutes from "./modules/finance/finance.routes.js";
 import invoiceRoutes from "./modules/finance/invoices.routes.js";
 import billingRoutes from "./modules/finance/billing/billing.routes.js";
 import storiesRoutes from "./modules/stories/stories.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
+import trackingRedirectRoutes from "./modules/channels/tracking-redirect.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
 import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/channels/whatsapp-integration.routes.js";
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
+import { widgetsRoutes } from "./modules/channels/widgets.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import botAliasRoutes from "./modules/ai/bot-alias.routes.js";
@@ -34,7 +38,11 @@ import geminiIntegrationRoutes from "./modules/ai/gemini-integration.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import partnerRoutes from "./modules/partner/partner.routes.js";
+import { warehouseRoutes } from "./modules/warehouse/warehouse.routes.js";
+import { printTemplatesRoutes } from "./modules/print-templates/print-templates.routes.js";
 import notificationChannelsRoutes from "./modules/notifications/notification-channels.routes.js";
+import bitrix24Routes from "./modules/integrations/bitrix24/bitrix24.routes.js";
+import { pushNotificationRoutes } from "./modules/notifications/push-notification.routes.js";
 import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
 import { conversionDispatcher } from "./modules/analytics/conversion-dispatcher.service.js";
 import { onDealWon, onDealStageChanged } from "./modules/crm/deals/deals.service.js";
@@ -92,7 +100,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Публичный виджет и чат для внешних сайтов клиентов (WordPress, Tilda и др.)
       const isPublicRoute =
         url === "/widget.js" ||
+        url.startsWith("/to/") ||
+        url === "/to" ||
+        url.startsWith("/api/v1/public/track/") ||
         url.startsWith("/api/v1/public/chat/") ||
+        url.startsWith("/api/v1/analytics/pre-chat-telemetry") ||
         url.startsWith("/mascots/");
 
       if (isPublicRoute) {
@@ -122,7 +134,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(sensible);
 
   await app.register(rateLimit, {
-    max: 300,
+    max: 600,
     timeWindow: "1 minute",
     keyGenerator: (request) => request.ip,
     /**
@@ -215,7 +227,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Service Center — additionally gated on the `service_center` module being
   // installed for the tenant (403 MODULE_NOT_INSTALLED otherwise).
   await app.register(repairsRoutes, { prefix: "/api/v1/repairs" });
+  await app.register(repairsRoutes, { prefix: "/api/v1/service" });
+  await app.register(dictionariesRoutes, { prefix: "/api/v1/dictionaries" });
+  await app.register(dictionariesRoutes, { prefix: "/api/dictionaries" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
+  await app.register(warehouseRoutes, { prefix: "/api/v1/warehouse" });
+  await app.register(printTemplatesRoutes, { prefix: "/api/v1/print-templates" });
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
@@ -226,6 +243,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.
   await app.register(channelsRoutes, { prefix: "/api/v1/channels" });
+
+  // Выделенный API для управления и bootstrap онлайн-виджетов
+  await app.register(widgetsRoutes, { prefix: "/api/v1/widgets" });
+  await app.register(widgetsRoutes, { prefix: "/api/widgets" });
+
+  // Публичный умный редиректор сквозной аналитики (Direct & Deep Links)
+  await app.register(trackingRedirectRoutes, { prefix: "/to" });
+  await app.register(trackingRedirectRoutes, { prefix: "/api/v1/public/track/m" });
 
   // Авторизация аккаунтов Telegram через MTProto. Отдельная группа: у остальных
   // каналов нет двухшагового входа с кодом и облачным паролем.
@@ -262,17 +287,162 @@ export async function buildApp(): Promise<FastifyInstance> {
       .send(WIDGET_SCRIPT);
   });
 
+  // Публичная раздача статических ассетов маскотов виджета с поддержкой CORS для внешних сайтов
+  app.get("/mascots/:filename", async (request, reply) => {
+    const { filename } = request.params as { filename: string };
+    const safeFilename = path.basename(filename);
+    const candidatePaths = [
+      path.resolve(process.cwd(), "public/mascots", safeFilename),
+      path.resolve(process.cwd(), "../frontend/public/mascots", safeFilename),
+      path.resolve("/app/public/mascots", safeFilename),
+      path.resolve("/opt/getvoxly/frontend/public/mascots", safeFilename),
+    ];
+    let filePath: string | null = null;
+    for (const p of candidatePaths) {
+      if (existsSync(p)) {
+        filePath = p;
+        break;
+      }
+    }
+    if (filePath) {
+      const ext = path.extname(safeFilename).toLowerCase();
+      const contentType = ext === ".webp" ? "image/webp" : ext === ".png" ? "image/png" : "application/octet-stream";
+      return reply
+        .type(contentType)
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .send(createReadStream(filePath));
+    }
+    // Fallback: проксирование из frontend контейнера по внутренней сети
+    try {
+      const upstream = await fetch(`http://frontend:3000/mascots/${encodeURIComponent(safeFilename)}`);
+      if (upstream.ok) {
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        const cType = upstream.headers.get("content-type") || "image/webp";
+        return reply
+          .type(cType)
+          .header("Cache-Control", "public, max-age=31536000, immutable")
+          .header("Access-Control-Allow-Origin", "*")
+          .header("Cross-Origin-Resource-Policy", "cross-origin")
+          .send(buffer);
+      }
+    } catch {}
+    return reply.status(404).send({ error: "Mascot asset not found" });
+  });
+
+  app.get("/miroslava.png", async (_request, reply) => {
+    const candidatePaths = [
+      path.resolve(process.cwd(), "public/miroslava.png"),
+      path.resolve(process.cwd(), "../frontend/public/miroslava.png"),
+      path.resolve("/opt/getvoxly/frontend/public/miroslava.png"),
+    ];
+    for (const p of candidatePaths) {
+      if (existsSync(p)) {
+        return reply
+          .type("image/png")
+          .header("Cache-Control", "public, max-age=86400")
+          .header("Access-Control-Allow-Origin", "*")
+          .header("Cross-Origin-Resource-Policy", "cross-origin")
+          .send(createReadStream(p));
+      }
+    }
+    try {
+      const upstream = await fetch("http://frontend:3000/miroslava.png");
+      if (upstream.ok) {
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        return reply
+          .type("image/png")
+          .header("Cache-Control", "public, max-age=86400")
+          .header("Access-Control-Allow-Origin", "*")
+          .header("Cross-Origin-Resource-Policy", "cross-origin")
+          .send(buffer);
+      }
+    } catch {}
+    return reply.status(404).send({ error: "Avatar not found" });
+  });
+
   // Медиа CRM доступны только авторизованному пользователю своего арендатора.
   // Имя файла содержит tenant UUID, поэтому проверяем принадлежность до открытия
   // потока; публичная кэшируемость отключена, чтобы URL не превращался в
-  // бессрочную ссылку на вложение.
+  // бессрочную ссылку на вложение. Поддерживает HTTP Range requests (206) для перемотки аудио/видео.
   await app.register(async (mediaApp) => {
     await mediaApp.register(authenticatePlugin);
+
+    function streamFileWithRange(
+      filePath: string,
+      stat: { size: number },
+      contentType: string,
+      disposition: string,
+      request: FastifyRequest,
+      reply: FastifyReply,
+    ) {
+      const rangeHeader = request.headers.range;
+      if (rangeHeader && stat.size > 0) {
+        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+        if (match && match[1] !== undefined) {
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
+          if (start < stat.size && end >= start) {
+            const boundedEnd = Math.min(end, stat.size - 1);
+            const chunkSize = boundedEnd - start + 1;
+            const stream = createReadStream(filePath, { start, end: boundedEnd });
+
+            return reply
+              .status(206)
+              .type(contentType)
+              .header("Content-Range", `bytes ${start}-${boundedEnd}/${stat.size}`)
+              .header("Accept-Ranges", "bytes")
+              .header("Content-Length", chunkSize)
+              .header("Content-Disposition", disposition)
+              .header("Cache-Control", "private, no-store")
+              .header("Cross-Origin-Resource-Policy", "cross-origin")
+              .send(stream);
+          }
+        }
+      }
+
+      return reply
+        .status(200)
+        .type(contentType)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", stat.size)
+        .header("Content-Disposition", disposition)
+        .header("Cache-Control", "private, no-store")
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .send(createReadStream(filePath));
+    }
+
+    const mimeMap: Record<string, string> = {
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+      ".svg": "image/svg+xml",
+      ".mp3": "audio/mpeg",
+      ".ogg": "audio/ogg",
+      ".opus": "audio/ogg",
+      ".m4a": "audio/mp4",
+      ".wav": "audio/wav",
+      ".mp4": "video/mp4",
+      ".mov": "video/quicktime",
+      ".webm": "video/webm",
+      ".pdf": "application/pdf",
+      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".doc": "application/msword",
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".xls": "application/vnd.ms-excel",
+      ".txt": "text/plain",
+      ".zip": "application/zip",
+    };
+
     mediaApp.get("/uploads/:filename", async (request, reply) => {
       const { filename } = request.params as { filename: string };
       const safeFilename = path.basename(filename);
       const tenantPrefix = `${request.tenant_id}_`;
-      if (!safeFilename.startsWith(tenantPrefix)) {
+      const isOwner = request.authUser?.platform_role === "platform_owner";
+      if (!safeFilename.startsWith(tenantPrefix) && !isOwner) {
         return reply.status(404).send({ error: "File not found" });
       }
       const filePath = path.join(process.cwd(), "uploads", safeFilename);
@@ -284,51 +454,163 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
 
         const ext = path.extname(safeFilename).toLowerCase();
-        const mimeMap: Record<string, string> = {
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".png": "image/png",
-          ".webp": "image/webp",
-          ".gif": "image/gif",
-          ".svg": "image/svg+xml",
-          ".mp3": "audio/mpeg",
-          ".ogg": "audio/ogg",
-          ".opus": "audio/ogg",
-          ".m4a": "audio/mp4",
-          ".wav": "audio/wav",
-          ".mp4": "video/mp4",
-          ".mov": "video/quicktime",
-          ".webm": "video/webm",
-          ".pdf": "application/pdf",
-          ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          ".doc": "application/msword",
-          ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          ".xls": "application/vnd.ms-excel",
-          ".txt": "text/plain",
-          ".zip": "application/zip",
-        };
         const contentType = mimeMap[ext] ?? "application/octet-stream";
 
         const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
-        const isInline = contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/");
+        const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
+        const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
         const disposition = isInline
           ? "inline"
           : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
 
-        return reply
-          .type(contentType)
-          .header("Content-Disposition", disposition)
-          .header("Cache-Control", "private, no-store")
-          .header("Cross-Origin-Resource-Policy", "cross-origin")
-          .send(createReadStream(filePath));
+        return streamFileWithRange(filePath, stat, contentType, disposition, request, reply);
       } catch {
         return reply.status(404).send({ error: "File not found" });
       }
+    });
+
+    // Защищенный эндпоинт получения вложения сообщения по ID сообщения
+    mediaApp.get("/api/v1/crm/messages/:id/attachment", async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const message = await queryOne<{
+        id: string;
+        deal_id: string;
+        channel: string;
+        channel_account_id: string | null;
+        content: string;
+        attachment: string | null;
+        attachment_type: string | null;
+        direction: string;
+        created_at: Date;
+      }>(
+        `SELECT id, deal_id, channel, channel_account_id, content, attachment, attachment_type, direction, created_at
+         FROM deal_messages
+         WHERE id = $1 AND tenant_id = $2`,
+        [id, request.tenant_id],
+      );
+
+      if (!message) {
+        return reply.status(404).send({ error: "Message not found" });
+      }
+
+      const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
+
+      // 1. Если вложение уже привязано и является URL
+      if (message.attachment) {
+        if (message.attachment.startsWith("http://") || message.attachment.startsWith("https://")) {
+          return reply.redirect(message.attachment, 302);
+        }
+
+        const safeFilename = path.basename(message.attachment.split("?")[0] || "");
+        const filePath = path.join(process.cwd(), "uploads", safeFilename);
+
+        try {
+          const stat = await fs.stat(filePath);
+          if (stat.isFile()) {
+            const ext = path.extname(safeFilename).toLowerCase();
+            const contentType = message.attachment_type || mimeMap[ext] || "application/octet-stream";
+            const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+            const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
+            const disposition = isInline
+              ? "inline"
+              : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
+
+            return streamFileWithRange(filePath, stat, contentType, disposition, request, reply);
+          }
+        } catch {
+          // Файл не найден на диске, пробуем восстановить
+        }
+      }
+
+      // 2. Если вложение отсутствует или не найдено, но канал MAX — пробуем динамически восстановить из max-bridge
+      if (message.channel === "max" && message.channel_account_id) {
+        try {
+          const { MaxBridgeService } = await import("./modules/channels/max-bridge.service.js");
+          const { ChatMediaService } = await import("./modules/crm/chat/media.service.js");
+          const bridge = new MaxBridgeService();
+
+          const resp = await bridge.getPrivateDialogs({
+            botId: message.channel_account_id,
+            dialogLimit: 25,
+            messageLimit: 50,
+          });
+
+          if (resp.ok && Array.isArray(resp.dialogs)) {
+            // Ищем диалог
+            let matchingAttach: { fileId?: string; fileName?: string; mimeType?: string } | null = null;
+            const fileMatch = message.content.match(/\[файл:\s*([^\]]+)\]/i);
+            const expectedFileName = fileMatch && fileMatch[1] ? fileMatch[1].trim() : null;
+
+            for (const d of resp.dialogs) {
+              for (const m of d.messages) {
+                if (Array.isArray(m.attachments) && m.attachments.length > 0) {
+                  for (const att of m.attachments) {
+                    if (expectedFileName && att.fileName && att.fileName.trim().toLowerCase() === expectedFileName.toLowerCase()) {
+                      matchingAttach = att;
+                      break;
+                    }
+                    if (m.text && m.text.trim() === message.content.trim()) {
+                      matchingAttach = att;
+                      break;
+                    }
+                  }
+                }
+                if (matchingAttach) break;
+              }
+              if (matchingAttach) break;
+            }
+
+            if (matchingAttach && matchingAttach.fileId) {
+              const downloaded = await bridge.downloadMedia({
+                botId: message.channel_account_id,
+                fileId: matchingAttach.fileId,
+              });
+
+              if (downloaded.ok && downloaded.buffer) {
+                const cleanName = matchingAttach.fileName || expectedFileName || "file.bin";
+                const ext = path.extname(cleanName).toLowerCase();
+                const realMime = downloaded.mimeType || mimeMap[ext] || "application/octet-stream";
+
+                const mediaService = new ChatMediaService();
+                const stored = await mediaService.storeBuffer({
+                  buffer: downloaded.buffer,
+                  originalName: cleanName,
+                  mimeType: realMime,
+                  tenantId: request.tenant_id,
+                });
+
+                // Обновляем запись в базе
+                await query(
+                  `UPDATE deal_messages
+                   SET attachment = $1, attachment_type = $2
+                   WHERE id = $3 AND tenant_id = $4`,
+                  [stored.url, stored.mimeType, message.id, request.tenant_id],
+                );
+
+                const safeFilename = path.basename(stored.url);
+                const filePath = path.join(process.cwd(), "uploads", safeFilename);
+                const stat = await fs.stat(filePath);
+                const isInline = !isDownload && (realMime.startsWith("image/") || realMime.startsWith("audio/") || realMime.startsWith("video/") || realMime === "application/pdf");
+                const disposition = isInline
+                  ? "inline"
+                  : `attachment; filename="${encodeURIComponent(cleanName)}"; filename*=UTF-8''${encodeURIComponent(cleanName)}`;
+
+                return streamFileWithRange(filePath, stat, realMime, disposition, request, reply);
+              }
+            }
+          }
+        } catch (err) {
+          request.log.warn({ err, messageId: message.id }, "Failed to auto-resolve MAX attachment on demand");
+        }
+      }
+
+      return reply.status(404).send({ error: "Attachment not found" });
     });
   });
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });
+  await app.register(webchatRoutes, { prefix: "/api/v1/public/widget" });
 
   // Внутренний чат CRM в реальном времени (SSE стрим и дельта-поллинг)
   await app.register(chatStreamRoutes, { prefix: "/api/v1" });
@@ -338,6 +620,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(aiRoutes, { prefix: "/api/ai" });
   await app.register(botAliasRoutes, { prefix: "/api/bots" });
   await app.register(botAliasRoutes, { prefix: "/api/v1/bots" });
+  await app.register(botAliasRoutes, { prefix: "/api/ai-bots" });
+  await app.register(botAliasRoutes, { prefix: "/api/v1/ai-bots" });
   await app.register(adminTenantRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminMetricsRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });
@@ -345,6 +629,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/v1/settings/notifications" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/settings/notifications" });
+  await app.register(bitrix24Routes, { prefix: "/api/v1/settings/integrations/bitrix24" });
+  await app.register(bitrix24Routes, { prefix: "/api/settings/integrations/bitrix24" });
+  await app.register(pushNotificationRoutes, { prefix: "/api/v1" });
+  await app.register(pushNotificationRoutes, { prefix: "/api" });
   await app.register(partnerRoutes, { prefix: "/api/v1/partner" });
   await app.register(partnerRoutes, { prefix: "/api/partner" });
 

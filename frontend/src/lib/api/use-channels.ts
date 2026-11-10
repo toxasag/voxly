@@ -14,6 +14,16 @@ import type { ChannelSlug } from "@/types";
 
 // Зеркалит backend/src/modules/channels/channels.types.ts.
 
+export interface ChannelAccountLinksDTO {
+  directUrl: string;
+  trackingUrl: string;
+  accountType: "bot" | "user_api" | "whatsapp" | "max" | "default";
+  cleanIdentifier: string;
+  defaultText?: string;
+  startTag?: string;
+  btnTag?: string;
+}
+
 export interface ChannelAccountDTO {
   id: string;
   channel: ChannelSlug;
@@ -21,6 +31,8 @@ export interface ChannelAccountDTO {
   externalId: string;
   status: ChannelStatus;
   statusMessage: string;
+  is_enabled?: boolean;
+  isEnabled?: boolean;
   /** Признак заполненности авторизации: сами токены сервер не отдаёт. */
   hasCredentials: boolean;
   credentials?: Record<string, unknown>;
@@ -31,6 +43,8 @@ export interface ChannelAccountDTO {
   createdAt: string;
   boundAgentId?: string | null;
   boundAgentName?: string | null;
+  /** Сгенерированные прямые ссылки и трекинг сквозной аналитики */
+  links?: ChannelAccountLinksDTO;
 }
 
 export interface ChannelSummaryDTO {
@@ -41,6 +55,8 @@ export interface ChannelSummaryDTO {
   total: number;
   trialEndsAt: string | null;
   trialActive: boolean;
+  is_unlimited?: boolean;
+  isUnlimited?: boolean;
 }
 
 export interface ChannelAccountsResult {
@@ -53,6 +69,7 @@ const BASE_PATH = "/api/v1/channels";
 export const channelKeys = {
   all: ["channels"] as const,
   accounts: (channel: ChannelSlug) => ["channels", channel, "accounts"] as const,
+  summary: (channel: ChannelSlug) => ["channels", channel, "summary"] as const,
 };
 
 /**
@@ -106,6 +123,38 @@ export function useCreateChannelAccount(
       (await apiClient.post<ChannelAccountDTO>(`${BASE_PATH}/${channel}/accounts`, payload)).data,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      void queryClient.invalidateQueries({ queryKey: ["widgets"] });
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
+      void queryClient.invalidateQueries({ queryKey: ["quotas"] });
+    },
+  });
+}
+
+export interface CloneChannelAccountPayload {
+  id: string;
+  external_id: string;
+  label?: string;
+  agent_id?: string | null;
+}
+
+export function useCloneChannelAccount(
+  channel: ChannelSlug = "webchat",
+): UseMutationResult<ChannelAccountDTO, ApiClientError, CloneChannelAccountPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...body }) =>
+      (
+        await apiClient.post<ChannelAccountDTO>(
+          `${BASE_PATH}/${channel}/accounts/${id}/clone`,
+          body,
+        )
+      ).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      void queryClient.invalidateQueries({ queryKey: ["widgets"] });
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
+      void queryClient.invalidateQueries({ queryKey: ["quotas"] });
     },
   });
 }
@@ -117,6 +166,7 @@ export interface UpdateChannelAccountPayload {
   status_message?: string;
   credentials?: Record<string, unknown>;
   agent_id?: string | null;
+  is_enabled?: boolean;
 }
 
 export function useUpdateChannelAccount(
@@ -132,6 +182,31 @@ export function useUpdateChannelAccount(
     mutationFn: async ({ id, ...body }) =>
       (await apiClient.patch<ChannelAccountDTO>(`${BASE_PATH}/${channel}/accounts/${id}`, body))
         .data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+    },
+  });
+}
+
+export function useToggleChannelAccount(
+  channel: ChannelSlug,
+): UseMutationResult<
+  ChannelAccountDTO,
+  ApiClientError,
+  { id: string; currentStatus: ChannelStatus }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, currentStatus }) => {
+      const nextStatus: ChannelStatus = currentStatus === "disabled" ? "connected" : "disabled";
+      return (
+        await apiClient.patch<ChannelAccountDTO>(`${BASE_PATH}/${channel}/accounts/${id}`, {
+          status: nextStatus,
+          is_enabled: nextStatus === "connected",
+        })
+      ).data;
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
     },
@@ -168,4 +243,29 @@ export function pluralAccounts(count: number): string {
   if (mod10 === 1 && mod100 !== 11) return "аккаунт";
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "аккаунта";
   return "аккаунтов";
+}
+
+/**
+ * Хук получения и кастомизации ссылок подключения (Direct / Smart Tracking Links).
+ */
+export function useChannelAccountCustomLinks(
+  channel: ChannelSlug,
+  accountId: string | null,
+  options?: { text?: string; startTag?: string; btn?: string },
+): UseQueryResult<ChannelAccountLinksDTO, ApiClientError> {
+  const queryParams = new URLSearchParams();
+  if (options?.text) queryParams.set("text", options.text);
+  if (options?.startTag) queryParams.set("startTag", options.startTag);
+  if (options?.btn) queryParams.set("btn", options.btn);
+  const qs = queryParams.toString();
+
+  return useQuery({
+    queryKey: ["channels", channel, "accounts", accountId, "links", qs],
+    queryFn: async () => {
+      const url = `${BASE_PATH}/${channel}/accounts/${accountId}/links${qs ? `?${qs}` : ""}`;
+      const res = await apiClient.get<ChannelAccountLinksDTO>(url);
+      return res.data;
+    },
+    enabled: Boolean(accountId),
+  });
 }

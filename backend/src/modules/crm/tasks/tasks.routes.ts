@@ -13,6 +13,7 @@ import {
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { queueManager } from "../../../infrastructure/queue.js";
 import type { TaskAssignmentNotificationJob } from "./task-notification.service.js";
+import { notificationQueue } from "../../notifications/notification.queue.js";
 
 const listQuerySchema = z
   .object({
@@ -93,6 +94,12 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const task = await service.create(request.tenant_id, body);
 
     if (task.assigneeId !== null) {
+      void notificationQueue.dispatchTaskAssigned({
+        tenantId: request.tenant_id,
+        taskId: task.id,
+        assigneeId: task.assigneeId,
+      });
+
       const job: TaskAssignmentNotificationJob = {
         tenantId: request.tenant_id,
         taskId: task.id,
@@ -116,6 +123,14 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
 
     if (task === null) throw new NotFoundError("Task not found");
 
+    if (body.status) {
+      void notificationQueue.dispatchTaskStatusChanged({
+        tenantId: request.tenant_id,
+        taskId: task.id,
+        newStatus: body.status,
+      });
+    }
+
     return reply.send({ data: task });
   });
 
@@ -125,6 +140,12 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const task = await service.setStatus(request.tenant_id, id, status);
 
     if (task === null) throw new NotFoundError("Task not found");
+
+    void notificationQueue.dispatchTaskStatusChanged({
+      tenantId: request.tenant_id,
+      taskId: task.id,
+      newStatus: status,
+    });
 
     return reply.send({ data: task });
   });

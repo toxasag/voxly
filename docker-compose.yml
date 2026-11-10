@@ -176,6 +176,7 @@ services:
       SMTP_FROM: '"Voxly" <admin@getvoxly.ru>'
     volumes:
       - uploads-data:/app/uploads
+      - /tmp:/tmp
     depends_on:
       db:
         condition: service_healthy

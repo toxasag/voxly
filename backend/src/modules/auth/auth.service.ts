@@ -24,6 +24,7 @@ export interface AuthTokens {
     phone: string;
     role: Role;
     platform_role: PlatformRole | null;
+    is_partner?: boolean;
     permissions: Permission[];
   };
   tenant: {
@@ -33,12 +34,26 @@ export interface AuthTokens {
     slug: string;
     plan: string;
     status: string;
+    is_partner?: boolean;
+    parent_tenant_id?: string | null;
+    owner_partner_id?: string | null;
     custom_price_rubles?: number | null;
     custom_plan_name?: string | null;
   };
+  impersonator?: {
+    id: string;
+    email: string;
+    name: string;
+    role: Role;
+    platform_role: PlatformRole | null;
+    is_partner?: boolean;
+    tenant_id: string;
+    tenant_slug: string;
+    tenant_name: string;
+  } | null;
 }
 
-interface AuthUserRow {
+export interface AuthUserRow {
   id: string;
   tenant_id: string;
   email: string;
@@ -47,6 +62,9 @@ interface AuthUserRow {
   role: Role;
   platform_role: PlatformRole | null;
   permissions: string[] | null;
+  is_partner?: boolean;
+  tenant_is_partner?: boolean;
+  tenant_owner_partner_id?: string | null;
   password_hash: string;
   tenant_name: string;
   tenant_slug: string;
@@ -72,6 +90,7 @@ interface RefreshRow {
   tenant_id: string;
   revoked_at: Date | string | null;
   expires_at: Date | string;
+  replaced_by?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +141,8 @@ type RefreshOutcome =
 // Helpers
 // ---------------------------------------------------------------------------
 
-const USER_COLUMNS = `u.id, u.tenant_id, u.email, u.phone, u.name, u.role, u.platform_role, u.permissions,
+export const USER_COLUMNS = `u.id, u.tenant_id, u.email, u.phone, u.name, u.role, u.platform_role, u.permissions,
+    u.is_partner, t.is_partner AS tenant_is_partner, t.owner_partner_id AS tenant_owner_partner_id,
     u.password_hash, t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan,
     t.status AS tenant_status, t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name,
     t.auth_settings AS tenant_auth_settings, t.parent_tenant_id AS tenant_parent_id, t.custom_pricing AS tenant_custom_pricing`;
@@ -246,11 +266,12 @@ export class AuthService {
    * rotated refresh token. `typ` lets authenticate.ts reject a refresh token
    * presented as a bearer credential.
    */
-  private async issueTokens(
+  public async issueTokens(
     user: AuthUserRow,
     tx?: TransactionClient,
     replacesId?: string,
     metadata?: { userAgent?: string; ip?: string },
+    impersonatorId?: string,
   ): Promise<AuthTokens> {
     const env = getEnv();
 
@@ -259,6 +280,7 @@ export class AuthService {
       tenant_id: user.tenant_id,
       role: user.role,
       typ: "access",
+      ...(impersonatorId ? { impersonator_id: impersonatorId } : {}),
     });
 
     const refresh_token = randomBytes(48).toString("base64url");
@@ -322,6 +344,7 @@ export class AuthService {
         phone: user.phone,
         role: user.role,
         platform_role: user.platform_role,
+        is_partner: Boolean(user.is_partner || user.role === "partner" || user.tenant_is_partner),
         permissions: toPermissions(user.permissions),
       },
       tenant: {
@@ -330,6 +353,9 @@ export class AuthService {
         slug: user.tenant_slug,
         plan: user.tenant_plan,
         status: user.tenant_status,
+        is_partner: Boolean(user.tenant_is_partner),
+        parent_tenant_id: user.tenant_parent_id ?? null,
+        owner_partner_id: user.tenant_owner_partner_id ?? user.tenant_parent_id ?? null,
         custom_price_rubles:
           user.tenant_custom_price_rubles !== null && user.tenant_custom_price_rubles !== undefined
             ? Number(user.tenant_custom_price_rubles)
@@ -571,10 +597,11 @@ export class AuthService {
   async refreshToken(
     refreshToken: string,
     metadata?: { userAgent?: string; ip?: string },
+    impersonatorId?: string,
   ): Promise<AuthTokens> {
     const outcome = await transaction<RefreshOutcome>(async (tx) => {
       const row = await tx.queryOne<RefreshRow>(
-        `SELECT id, user_id, tenant_id, revoked_at, expires_at
+        `SELECT id, user_id, tenant_id, revoked_at, expires_at, replaced_by
          FROM refresh_tokens
          WHERE token_hash = $1
          FOR UPDATE`,
@@ -584,11 +611,33 @@ export class AuthService {
       if (row === null) return { kind: "unknown" };
 
       if (row.revoked_at !== null) {
-        // Family-wide revocation must commit. Throwing here rolled it back
-        // together with the transaction, so a leaked token produced a plain
-        // "already used" error while every other session of that user stayed
-        // valid — exactly the outcome this branch exists to prevent. Caught by
-        // the "reuse revokes the whole family" test.
+        // Concurrency Grace Period (RFC 6819 / OAuth 2.0 Best Practices):
+        // Если токен был отозван недавно (в пределах 30 секунд) и имеет ссылку replaced_by,
+        // это вызвано параллельными запросами из нескольких вкладок или повторной отправкой
+        // из-за задержки сети во время ротации.
+        // Вместо сброса всех сессий пользователя находим преемника и выдаём актуальную пару токенов.
+        const revokedAtMs = toDate(row.revoked_at).getTime();
+        const elapsedSinceRevocation = Date.now() - revokedAtMs;
+
+        if (elapsedSinceRevocation <= 30_000 && row.replaced_by) {
+          const successor = await tx.queryOne<RefreshRow>(
+            `SELECT id, user_id, tenant_id, revoked_at, expires_at, replaced_by
+             FROM refresh_tokens
+             WHERE id = $1`,
+            [row.replaced_by],
+          );
+          if (successor !== null && toDate(successor.expires_at).getTime() > Date.now()) {
+            const user = await this.findById(row.user_id, row.tenant_id);
+            if (user === null) return { kind: "user_gone" };
+            if (user.tenant_status === "suspended" || user.tenant_status === "past_due") {
+              return { kind: "tenant_inactive", status: user.tenant_status };
+            }
+            return { kind: "ok", tokens: await this.issueTokens(user, tx, successor.id, metadata, impersonatorId) };
+          }
+        }
+
+        // За пределами grace-периода: реальная утечка или атака повторного использования.
+        // Family-wide revocation must commit.
         await tx.query(
           `UPDATE refresh_tokens SET revoked_at = now()
            WHERE user_id = $1 AND revoked_at IS NULL`,
@@ -610,12 +659,49 @@ export class AuthService {
 
       await tx.query(`UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1`, [row.id]);
 
-      return { kind: "ok", tokens: await this.issueTokens(user, tx, row.id, metadata) };
+      return { kind: "ok", tokens: await this.issueTokens(user, tx, row.id, metadata, impersonatorId) };
     });
 
     switch (outcome.kind) {
-      case "ok":
-        return outcome.tokens;
+      case "ok": {
+        const tokens = outcome.tokens;
+        if (impersonatorId) {
+          const actor = await queryOne<{
+            id: string;
+            email: string;
+            name: string;
+            role: Role;
+            platform_role: PlatformRole | null;
+            is_partner: boolean;
+            tenant_id: string;
+            tenant_slug: string;
+            tenant_name: string;
+            tenant_is_partner: boolean;
+          }>(
+            `SELECT u.id, u.email, u.name, u.role, u.platform_role, u.is_partner,
+                    t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,
+                    t.is_partner AS tenant_is_partner
+             FROM users u
+             JOIN tenants t ON t.id = u.tenant_id
+             WHERE u.id = $1 AND u.deleted_at IS NULL`,
+            [impersonatorId],
+          );
+          if (actor) {
+            tokens.impersonator = {
+              id: actor.id,
+              email: actor.email,
+              name: actor.name,
+              role: actor.role,
+              platform_role: actor.platform_role,
+              is_partner: Boolean(actor.is_partner || actor.role === "partner" || actor.tenant_is_partner),
+              tenant_id: actor.tenant_id,
+              tenant_slug: actor.tenant_slug,
+              tenant_name: actor.tenant_name,
+            };
+          }
+        }
+        return tokens;
+      }
       case "unknown":
         throw new UnauthorizedError("Invalid refresh token");
       case "reused":
@@ -642,7 +728,7 @@ export class AuthService {
    * для него полноценный JWT-токен, записывая действие в аудит-лог платформы.
    */
   async impersonateTenant(tenantId: string, actorUserId: string): Promise<AuthTokens> {
-    const user = await queryOne<AuthUserRow>(
+    let user = await queryOne<AuthUserRow>(
       `SELECT u.id, u.tenant_id, u.role, u.platform_role, u.name, u.email, u.phone,
               u.password_hash, u.permissions,
               t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan, t.status AS tenant_status,
@@ -656,10 +742,90 @@ export class AuthService {
     );
 
     if (user === null) {
-      throw new AppError(404, "USER_NOT_FOUND", "В компании нет активных пользователей для входа");
+      const tenant = await queryOne<{
+        id: string;
+        name: string;
+        slug: string;
+        plan: string;
+        status: string;
+        custom_price_rubles: number | null;
+        custom_plan_name: string | null;
+      }>(
+        `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+
+      if (tenant === null) {
+        throw new AppError(404, "TENANT_NOT_FOUND", "Компания не найдена");
+      }
+
+      const defaultEmail = `admin@${tenant.slug}.local`;
+      const defaultName = `${tenant.name} Owner`;
+      const placeholderPasswordHash = await argon2.hash(randomBytes(16).toString("hex"));
+
+      const createdUser = await queryOne<{ id: string }>(
+        `INSERT INTO users (tenant_id, email, phone, name, role, password_hash, permissions, activated_at)
+         VALUES ($1, $2, null, $3, 'owner', $4, $5, now())
+         RETURNING id`,
+        [tenant.id, defaultEmail, defaultName, placeholderPasswordHash, [...OWNER_PERMISSIONS]],
+      );
+
+      if (createdUser === null) {
+        throw new AppError(500, "CREATE_USER_FAILED", "Не удалось создать владельца компании");
+      }
+
+      user = await queryOne<AuthUserRow>(
+        `SELECT u.id, u.tenant_id, u.role, u.platform_role, u.name, u.email, u.phone,
+                u.password_hash, u.permissions,
+                t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan, t.status AS tenant_status,
+                t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1`,
+        [createdUser.id],
+      );
+
+      if (user === null) {
+        throw new AppError(500, "LOAD_USER_FAILED", "Не удалось загрузить созданного владельца компании");
+      }
     }
 
-    const tokens = await this.issueTokens(user);
+    const tokens = await this.issueTokens(user, undefined, undefined, undefined, actorUserId);
+
+    const actor = await queryOne<{
+      id: string;
+      email: string;
+      name: string;
+      role: Role;
+      platform_role: PlatformRole | null;
+      is_partner: boolean;
+      tenant_id: string;
+      tenant_slug: string;
+      tenant_name: string;
+      tenant_is_partner: boolean;
+    }>(
+      `SELECT u.id, u.email, u.name, u.role, u.platform_role, u.is_partner,
+              t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,
+              t.is_partner AS tenant_is_partner
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.id = $1 AND u.deleted_at IS NULL`,
+      [actorUserId],
+    );
+
+    if (actor) {
+      tokens.impersonator = {
+        id: actor.id,
+        email: actor.email,
+        name: actor.name,
+        role: actor.role,
+        platform_role: actor.platform_role,
+        is_partner: Boolean(actor.is_partner || actor.role === "partner" || actor.tenant_is_partner),
+        tenant_id: actor.tenant_id,
+        tenant_slug: actor.tenant_slug,
+        tenant_name: actor.tenant_name,
+      };
+    }
 
     await query(
       `INSERT INTO tenant_audit_log
@@ -678,6 +844,116 @@ export class AuthService {
     );
 
     return tokens;
+  }
+
+  /**
+   * Безопасный выход из режима имперсонации с полным восстановлением сессии
+   * владельца платформы или партнера.
+   */
+  async exitImpersonation(
+    tokens: {
+      adminRefreshToken?: string;
+      adminAccessToken?: string;
+      cookieRefreshToken?: string;
+      impersonatorId?: string;
+    },
+    meta?: { userAgent?: string; ip?: string },
+  ): Promise<AuthTokens> {
+    const candidateRefresh = tokens.adminRefreshToken || tokens.cookieRefreshToken;
+
+    // 1. Попытка восстановить через refresh token
+    if (candidateRefresh && typeof candidateRefresh === "string" && candidateRefresh.trim().length > 0) {
+      try {
+        const refreshed = await this.refreshToken(candidateRefresh.trim(), meta);
+        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; role: string }>(
+          refreshed.access_token,
+        );
+        if (payload?.sub) {
+          const adminUser = await queryOne<{
+            id: string;
+            platform_role: string | null;
+            is_partner: boolean;
+            role: string;
+            tenant_is_partner: boolean;
+          }>(
+            `SELECT u.id, u.platform_role, u.is_partner, u.role, t.is_partner AS tenant_is_partner
+             FROM users u
+             JOIN tenants t ON t.id = u.tenant_id
+             WHERE u.id = $1 AND u.deleted_at IS NULL`,
+            [payload.sub],
+          );
+          if (
+            adminUser &&
+            (adminUser.platform_role === "platform_owner" ||
+              adminUser.is_partner === true ||
+              adminUser.role === "partner" ||
+              adminUser.tenant_is_partner === true)
+          ) {
+            return refreshed;
+          }
+        }
+      } catch {
+        // Fallback к проверке access token
+      }
+    }
+
+    // 2. Попытка восстановить через access token
+    if (
+      tokens.adminAccessToken &&
+      typeof tokens.adminAccessToken === "string" &&
+      tokens.adminAccessToken.trim().length > 0
+    ) {
+      try {
+        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; impersonator_id?: string }>(
+          tokens.adminAccessToken.trim(),
+        );
+        const targetUserId = payload?.impersonator_id || payload?.sub;
+        if (targetUserId) {
+          const adminUser = await queryOne<AuthUserRow>(
+            `SELECT ${USER_COLUMNS}
+             FROM users u
+             JOIN tenants t ON t.id = u.tenant_id
+             WHERE u.id = $1 AND u.deleted_at IS NULL`,
+            [targetUserId],
+          );
+
+          if (
+            adminUser &&
+            (adminUser.platform_role === "platform_owner" ||
+              adminUser.is_partner === true ||
+              adminUser.role === "partner" ||
+              adminUser.tenant_is_partner === true)
+          ) {
+            return await this.issueTokens(adminUser, undefined, undefined, meta);
+          }
+        }
+      } catch {
+        // Ошибка декодирования
+      }
+    }
+
+    // 3. Прямое восстановление по переданному impersonatorId
+    if (tokens.impersonatorId) {
+      const adminUser = await queryOne<AuthUserRow>(
+        `SELECT ${USER_COLUMNS}
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [tokens.impersonatorId],
+      );
+
+      if (
+        adminUser &&
+        (adminUser.platform_role === "platform_owner" ||
+          adminUser.is_partner === true ||
+          adminUser.role === "partner" ||
+          adminUser.tenant_is_partner === true)
+      ) {
+        return await this.issueTokens(adminUser, undefined, undefined, meta);
+      }
+    }
+
+    throw new UnauthorizedError("Не удалось восстановить сессию администратора или партнёра платформы");
   }
 
   // -- registration ---------------------------------------------------------
@@ -790,12 +1066,19 @@ export class AuthService {
         // Пробный период аккаунта фиксируется при создании: без него страница
         // биллинга показывала бы «осталось 0 дней» новой компании.
         const tenant = await tx.queryOne<{ id: string }>(
-          `INSERT INTO tenants (name, slug, plan, status, trial_ends_at)
-           VALUES ($1, $2, 'trial', 'trial', now() + ($3::int * INTERVAL '1 day'))
+          `INSERT INTO tenants (name, slug, plan, status, trial_ends_at, ai_balance_kopecks)
+           VALUES ($1, $2, 'trial', 'trial', now() + ($3::int * INTERVAL '1 day'), 50000)
            RETURNING id`,
           [companyName, slug, TRIAL_DAYS],
         );
         if (tenant === null) throw new Error("Failed to create tenant");
+
+        // Стартовый баланс для AI-ботов (500 руб = 50 000 коп)
+        await tx.query(
+          `INSERT INTO ai_balance_topups (tenant_id, amount_kopecks, source, comment)
+           VALUES ($1, 50000, 'bonus', 'Стартовый баланс для AI-ботов на пробный период')`,
+          [tenant.id],
+        );
 
         // `activated_at = now()`: владелец задаёт пароль здесь же, поэтому он
         // активен сразу. Без этого он не прошёл бы выборки входа, которые
@@ -818,6 +1101,26 @@ export class AuthService {
           ],
         );
         if (user === null) throw new Error("Failed to create owner");
+
+        if (input.telegram_chat_id) {
+          await tx.query(
+            `INSERT INTO tenant_notification_channels (
+               tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+             )
+             VALUES ($1, 'telegram', $2, $3, true, true)
+             ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+             SET is_active = true, is_verified = true, updated_at = now()`,
+            [
+              tenant.id,
+              String(input.telegram_chat_id),
+              JSON.stringify({
+                source: "telegram_register",
+                auto_linked: true,
+                name: ownerName,
+              }),
+            ],
+          );
+        }
 
         const created = await tx.queryOne<AuthUserRow>(
           `SELECT ${USER_COLUMNS}
@@ -865,15 +1168,54 @@ export class AuthService {
    * Позволяет восстанавливать сессию при открытии вкладки или перезагрузке без лишней
    * ротации и race conditions между вкладками.
    */
-  async getMe(userId: string, tenantId: string): Promise<{
+  async getMe(userId: string, tenantId: string, impersonatorId?: string): Promise<{
     user: AuthTokens["user"];
     tenant: AuthTokens["tenant"];
+    impersonator?: AuthTokens["impersonator"];
   }> {
     const user = await this.findById(userId, tenantId);
     if (user === null) {
       throw new UnauthorizedError("User not found");
     }
     assertTenantActive(user.tenant_status);
+
+    let impersonator: AuthTokens["impersonator"] = null;
+    if (impersonatorId) {
+      const imp = await queryOne<{
+        id: string;
+        email: string;
+        name: string;
+        role: Role;
+        platform_role: PlatformRole | null;
+        is_partner: boolean;
+        tenant_id: string;
+        tenant_slug: string;
+        tenant_name: string;
+        tenant_is_partner: boolean;
+      }>(
+        `SELECT u.id, u.email, u.name, u.role, u.platform_role, u.is_partner,
+                t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,
+                t.is_partner AS tenant_is_partner
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [impersonatorId],
+      );
+      if (imp) {
+        impersonator = {
+          id: imp.id,
+          email: imp.email,
+          name: imp.name,
+          role: imp.role,
+          platform_role: imp.platform_role,
+          is_partner: Boolean(imp.is_partner || imp.role === "partner" || imp.tenant_is_partner),
+          tenant_id: imp.tenant_id,
+          tenant_slug: imp.tenant_slug,
+          tenant_name: imp.tenant_name,
+        };
+      }
+    }
+
     return {
       user: {
         id: user.id,
@@ -882,6 +1224,7 @@ export class AuthService {
         phone: user.phone,
         role: user.role,
         platform_role: user.platform_role,
+        is_partner: Boolean(user.is_partner || user.role === "partner" || user.tenant_is_partner),
         permissions: toPermissions(user.permissions),
       },
       tenant: {
@@ -890,12 +1233,16 @@ export class AuthService {
         slug: user.tenant_slug,
         plan: user.tenant_plan,
         status: user.tenant_status,
+        is_partner: Boolean(user.tenant_is_partner),
+        parent_tenant_id: user.tenant_parent_id ?? null,
+        owner_partner_id: user.tenant_owner_partner_id ?? user.tenant_parent_id ?? null,
         custom_price_rubles:
           user.tenant_custom_price_rubles !== null && user.tenant_custom_price_rubles !== undefined
             ? Number(user.tenant_custom_price_rubles)
             : null,
         custom_plan_name: user.tenant_custom_plan_name ?? null,
       },
+      ...(impersonator ? { impersonator } : {}),
     };
   }
 

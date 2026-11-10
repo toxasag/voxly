@@ -298,15 +298,6 @@ export const DealCard = memo(function DealCard({
           </div>
         )}
 
-        {/* Описание */}
-        {Boolean(options.description) && (
-          deal.description ? (
-            <p className="line-clamp-2 text-xs text-[#888888] pt-0.5">{deal.description}</p>
-          ) : (
-            <p className="text-xs text-[#888888] pt-0.5">Описание: —</p>
-          )
-        )}
-
         {/* Заметка */}
         {Boolean(options.latestNote) && (
           deal.latestNote ? (

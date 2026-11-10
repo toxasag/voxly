@@ -3,13 +3,17 @@ import { registerBullQueue } from "../../infrastructure/queue-metrics.js";
 import { createHash } from "node:crypto";
 import { getEnv } from "../../config/env.js";
 import { requireDurableQueue } from "../../infrastructure/redis.js";
-import { query } from "../../db/client.js";
+import { query, queryOne } from "../../db/client.js";
 import { decryptSecret } from "../../services/credentials-cipher.js";
-import type {
-  AnalyticsIntegrationRow,
-  AnalyticsProvider,
-  ConversionEventPayload,
-  ConversionResult,
+import {
+  normalizeAnalyticsProvider,
+  type AnalyticsIntegrationRow,
+  type AnalyticsProvider,
+  type ConversionDeliveryAttemptRow,
+  type ConversionEventPayload,
+  type ConversionResult,
+  type TestQueueResult,
+  type TestQueueStatus,
 } from "./analytics.types.js";
 import type { IConversionProvider } from "./conversion-provider.interface.js";
 import { YandexConversionProvider } from "./providers/yandex-conversion.provider.js";
@@ -49,7 +53,9 @@ export function maskToken(val: unknown): string {
 
 function conversionEventKey(payload: ConversionEventPayload, provider: AnalyticsProvider): string {
   return createHash("sha256")
-    .update(`${payload.tenantId}:${payload.dealId}:${provider}:${payload.stageId}:${payload.eventName}`)
+    .update(
+      `${payload.tenantId}:${payload.dealId || payload.jobId || "test"}:${provider}:${payload.stageId || "test"}:${payload.eventName}`,
+    )
     .digest("hex");
 }
 
@@ -97,32 +103,33 @@ export class ConversionDispatcherService {
       };
 
       this.bullQueue = new Queue<ConversionEventPayload>(QUEUE_NAME, {
-          connection,
-          defaultJobOptions: {
-            attempts: 5,
-            backoff: {
-              type: "exponential",
-              delay: 3000,
-            },
-            removeOnComplete: true,
+        connection,
+        defaultJobOptions: {
+          attempts: 5,
+          backoff: {
+            type: "exponential",
+            delay: 3000,
           },
+          removeOnComplete: true,
+        },
       });
       registerBullQueue(QUEUE_NAME, this.bullQueue as Queue<unknown>);
 
-        this.bullWorker = new Worker<ConversionEventPayload>(
-          QUEUE_NAME,
-          async (job: { data: ConversionEventPayload }) => {
-            await this.processEvent(job.data);
-          },
-          { connection, concurrency: 5 },
-        );
+      this.bullWorker = new Worker<ConversionEventPayload>(
+        QUEUE_NAME,
+        async (job: { data: ConversionEventPayload }) => {
+          await this.processEvent(job.data);
+        },
+        { connection, concurrency: 5 },
+      );
 
-        this.bullWorker.on("failed", (job: { id?: string } | undefined, err: Error) => {
-          // Логгер сбоев при отправке конверсий
-          console.warn(`[ConversionDispatcher] Job ${job?.id} failed:`, err.message);
-        });
+      this.bullWorker.on("failed", (job: { id?: string } | undefined, err: Error) => {
+        console.error(
+          `[ConversionDispatcher] Job ${job?.id ?? "unknown"} failed permanently:`,
+          err.message,
+        );
+      });
     } catch (err) {
-      requireDurableQueue(QUEUE_NAME);
       console.warn("[ConversionDispatcher] Failed to connect BullMQ to Redis:", err);
     }
   }
@@ -133,10 +140,195 @@ export class ConversionDispatcherService {
       return;
     }
 
-    // In-memory fallback is intentionally limited to development and tests.
     requireDurableQueue(QUEUE_NAME);
     this.inMemoryQueue.push(payload);
-    void this.processNextInMemory();
+    void this.drainInMemoryQueue();
+  }
+
+  /**
+   * Постановка тестовой задачи в очередь BullMQ для проверки отредактированных настроек.
+   */
+  async enqueueTestEvent(
+    tenantId: string,
+    provider: AnalyticsProvider,
+  ): Promise<TestQueueResult> {
+    const jobId = `test_${provider}_${Date.now()}`;
+    const testPayload: ConversionEventPayload = {
+      tenantId,
+      dealId: null,
+      dealTitle: "Тестовая проверка настроек",
+      stageId: "test-stage-id",
+      stageName: "Тест",
+      isWon: true,
+      isLost: false,
+      budget: 1000,
+      currency: "RUB",
+      email: "test@example.com",
+      phone: "+79991234567",
+      eventName: "TestConversion",
+      isTest: true,
+      jobId,
+    };
+
+    if (this.bullQueue) {
+      const job = await this.bullQueue.add("test-conversion", testPayload, {
+        jobId,
+        attempts: 1,
+        removeOnComplete: false,
+      });
+      return {
+        jobId: job.id || jobId,
+        provider,
+        status: "enqueued",
+        message: "Тестовая задача поставлена в очередь BullMQ",
+      };
+    }
+
+    // In-memory обработка при отсутствии Redis
+    void this.processEvent(testPayload);
+    return {
+      jobId,
+      provider,
+      status: "enqueued",
+      message: "Тестовая задача поставлена на локальное выполнение",
+    };
+  }
+
+  /**
+   * Получение статуса выполнения тестовой задачи из базы попыток
+   */
+  async getJobStatus(tenantId: string, jobId: string): Promise<TestQueueStatus | null> {
+    const row = await queryOne<ConversionDeliveryAttemptRow>(
+      `SELECT status, attempts, last_status, last_error, response_snippet, delivered_at
+       FROM conversion_delivery_attempts
+       WHERE tenant_id = $1 AND job_id = $2
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [tenantId, jobId],
+    );
+
+    if (!row) return null;
+
+    return {
+      jobId,
+      status: row.status,
+      attempts: row.attempts,
+      lastStatus: row.last_status,
+      lastError: row.last_error,
+      responseSnippet: row.response_snippet,
+      deliveredAt: row.delivered_at ? new Date(row.delivered_at).toISOString() : null,
+    };
+  }
+
+  /**
+   * Отправка серверной конверсии «Лид» при создании новой сделки
+   */
+  async handleDealCreated(payload: { tenantId: string; dealId: string }): Promise<void> {
+    const { tenantId, dealId } = payload;
+
+    const dealRows = await query<{
+      id: string;
+      title: string;
+      budget: string;
+      currency: string;
+      contact_id: string | null;
+      custom_fields: Record<string, unknown> | null;
+      source_metadata: Record<string, unknown> | null;
+      stage_name: string;
+      stage_id: string;
+      is_won: boolean;
+      is_lost: boolean;
+    }>(
+      `SELECT d.id, d.title, d.budget::text, d.currency, d.contact_id, d.custom_fields, d.source_metadata,
+              d.stage_id, s.name AS stage_name, s.is_won, s.is_lost
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+
+    const deal = dealRows[0];
+    if (!deal) return;
+
+    let email: string | null = null;
+    let phone: string | null = null;
+    let contactCustomFields: Record<string, unknown> = {};
+
+    if (deal.contact_id) {
+      const contactRows = await query<{
+        email: string | null;
+        phone: string | null;
+        custom_fields: Record<string, unknown> | null;
+      }>(
+        `SELECT email, phone, custom_fields
+         FROM contacts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, deal.contact_id],
+      );
+      const contact = contactRows[0];
+      if (contact) {
+        email = contact.email;
+        phone = contact.phone;
+        if (contact.custom_fields && typeof contact.custom_fields === "object") {
+          contactCustomFields = contact.custom_fields;
+        }
+      }
+    }
+
+    const dealCustomFields =
+      deal.custom_fields && typeof deal.custom_fields === "object" ? deal.custom_fields : {};
+    const sourceMetadata =
+      deal.source_metadata && typeof deal.source_metadata === "object" ? deal.source_metadata : {};
+
+    const clientId =
+      (dealCustomFields.client_id as string) ||
+      (dealCustomFields.ga_client_id as string) ||
+      (contactCustomFields.client_id as string) ||
+      (contactCustomFields.ga_client_id as string) ||
+      (sourceMetadata.ga_client_id as string) ||
+      null;
+
+    const ymUid =
+      (dealCustomFields.ym_uid as string) ||
+      (dealCustomFields.yandex_client_id as string) ||
+      (contactCustomFields.ym_uid as string) ||
+      (contactCustomFields.yandex_client_id as string) ||
+      (sourceMetadata.ym_client_id as string) ||
+      null;
+
+    const yandexuid =
+      (dealCustomFields.yandexuid as string) ||
+      (contactCustomFields.yandexuid as string) ||
+      (sourceMetadata.yandexuid as string) ||
+      null;
+
+    const sourceUrl =
+      (sourceMetadata.url as string) ||
+      (sourceMetadata.site_url as string) ||
+      (sourceMetadata.page_url as string) ||
+      null;
+
+    const eventPayload: ConversionEventPayload = {
+      tenantId,
+      dealId: deal.id,
+      dealTitle: deal.title,
+      stageId: deal.stage_id,
+      stageName: deal.stage_name,
+      isWon: deal.is_won,
+      isLost: deal.is_lost,
+      budget: parseFloat(deal.budget) || 0,
+      currency: deal.currency || "RUB",
+      contactId: deal.contact_id,
+      clientId,
+      ymUid,
+      yandexuid,
+      email,
+      phone,
+      eventName: "Lead",
+      sourceUrl,
+    };
+
+    await this.enqueueEvent(eventPayload);
   }
 
   async handleDealStageChanged(payload: {
@@ -213,6 +405,33 @@ export class ConversionDispatcherService {
       (contactCustomFields.yandex_client_id as string) ||
       null;
 
+    const yandexuid =
+      (dealCustomFields.yandexuid as string) ||
+      (contactCustomFields.yandexuid as string) ||
+      null;
+
+    const gaId =
+      (dealCustomFields.ga_id as string) ||
+      (contactCustomFields.ga_id as string) ||
+      null;
+
+    const fbId =
+      (dealCustomFields.fb_id as string) ||
+      (contactCustomFields.fb_id as string) ||
+      null;
+
+    const tmrLvid =
+      (dealCustomFields.tmr_lvid as string) ||
+      (contactCustomFields.tmr_lvid as string) ||
+      null;
+
+    const isLeadStage =
+      deal.stage_name.toLowerCase().includes("лид") ||
+      deal.stage_name.toLowerCase().includes("lead") ||
+      deal.stage_name.toLowerCase().includes("квалифиц");
+
+    const eventName = deal.is_won ? "Purchase" : isLeadStage ? "Lead" : "DealStageChanged";
+
     const eventPayload: ConversionEventPayload = {
       tenantId,
       dealId: deal.id,
@@ -221,24 +440,27 @@ export class ConversionDispatcherService {
       stageName: deal.stage_name,
       isWon: deal.is_won,
       isLost: deal.is_lost,
-      budget: Number(deal.budget || 0),
+      budget: parseFloat(deal.budget) || 0,
       currency: deal.currency || "RUB",
       contactId: deal.contact_id,
       clientId,
       ymUid,
-      gaId: clientId,
+      yandexuid,
+      gaId,
+      fbId,
+      tmrLvid,
       email,
       phone,
-      eventName: deal.is_won ? "Purchase" : "Lead",
-      timestamp: new Date().toISOString(),
+      eventName,
     };
 
     await this.enqueueEvent(eventPayload);
   }
 
-  private async processNextInMemory(): Promise<void> {
-    if (this.isProcessingInMemory || this.inMemoryQueue.length === 0) return;
+  private async drainInMemoryQueue(): Promise<void> {
+    if (this.isProcessingInMemory) return;
     this.isProcessingInMemory = true;
+
     try {
       while (this.inMemoryQueue.length > 0) {
         const item = this.inMemoryQueue.shift();
@@ -251,10 +473,103 @@ export class ConversionDispatcherService {
     }
   }
 
+  /**
+   * Прямая синхронная проверка одного конкретного счетчика по его ID
+   */
+  async testSingleIntegration(
+    tenantId: string,
+    integration: AnalyticsIntegrationRow,
+  ): Promise<ConversionResult> {
+    const canonical = normalizeAnalyticsProvider(integration.provider);
+    const provider = this.providers.get(canonical);
+    if (!provider) {
+      return {
+        provider: integration.provider,
+        success: false,
+        eventName: "TestConversion",
+        status: 400,
+        error: `Провайдер ${integration.provider} не поддерживается`,
+      };
+    }
+
+    const rawConfig = integration.config || {};
+    const decryptedConfig: Record<string, unknown> = { ...rawConfig };
+    if (!decryptedConfig.counterId && integration.counter_id) {
+      decryptedConfig.counterId = integration.counter_id;
+    }
+    if (typeof decryptedConfig.oauthToken === "string") {
+      decryptedConfig.oauthToken = safeDecrypt(decryptedConfig.oauthToken);
+    }
+    if (typeof decryptedConfig.apiSecret === "string") {
+      decryptedConfig.apiSecret = safeDecrypt(decryptedConfig.apiSecret);
+    }
+    if (typeof decryptedConfig.accessToken === "string") {
+      decryptedConfig.accessToken = safeDecrypt(decryptedConfig.accessToken);
+    }
+
+    const testPayload: ConversionEventPayload = {
+      tenantId,
+      dealId: null,
+      dealTitle: `Тестовая конверсия (${integration.site_name || "Сайт"})`,
+      stageId: "test-stage-id",
+      stageName: "Тестовый этап",
+      isWon: true,
+      isLost: false,
+      budget: 1000,
+      currency: "RUB",
+      email: "test@example.com",
+      phone: "+79991234567",
+      eventName: "TestConversion",
+      isTest: true,
+      jobId: `test-${integration.id}`,
+    };
+
+    let result: ConversionResult;
+    try {
+      result = await provider.sendEvent(testPayload, decryptedConfig);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result = {
+        provider: integration.provider,
+        success: false,
+        eventName: "TestConversion",
+        status: 500,
+        error: message,
+      };
+    }
+
+    // Записываем результат проверки в conversion_delivery_attempts
+    try {
+      const eventKey = conversionEventKey(testPayload, integration.provider);
+      await query(
+        `INSERT INTO conversion_delivery_attempts
+           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, last_status, last_error, response_snippet, is_test, job_id, delivered_at)
+         VALUES ($1, NULL, $2, $3, 'TestConversion', $4, 1, $5, $6, $7, true, $8, CASE WHEN $4 = 'sent' THEN now() ELSE NULL END)
+         ON CONFLICT (tenant_id, provider, event_key) DO UPDATE
+         SET status = EXCLUDED.status, last_status = EXCLUDED.last_status, last_error = EXCLUDED.last_error,
+             response_snippet = EXCLUDED.response_snippet, delivered_at = EXCLUDED.delivered_at, updated_at = now()`,
+        [
+          tenantId,
+          integration.provider,
+          eventKey,
+          result.success ? "sent" : "failed",
+          result.status,
+          result.error ?? null,
+          result.responseSnippet ? result.responseSnippet.slice(0, 500) : null,
+          testPayload.jobId ?? null,
+        ],
+      );
+    } catch {
+      // Игнорируем ошибку логирования в базу
+    }
+
+    return result;
+  }
+
   async processEvent(payload: ConversionEventPayload): Promise<ConversionResult[]> {
-    // 1. Получаем активные интеграции для тенанта
+    // Получаем активные интеграции для тенанта
     const integrations = await query<AnalyticsIntegrationRow>(
-      `SELECT id, tenant_id, provider, config, is_active, created_at, updated_at
+      `SELECT id, tenant_id, provider, site_name, site_url, counter_id, channel_account_id, is_default, config, event_rules, is_active, created_at, updated_at
        FROM analytics_integrations
        WHERE tenant_id = $1 AND is_active = true`,
       [payload.tenantId],
@@ -266,21 +581,51 @@ export class ConversionDispatcherService {
 
     const results: ConversionResult[] = [];
 
-    // 2. Рассылаем событие параллельно во все подключенные счетчики
     for (const integration of integrations) {
-      const provider = this.providers.get(integration.provider);
+      const canonical = normalizeAnalyticsProvider(integration.provider);
+      const provider = this.providers.get(canonical);
       if (!provider) continue;
+
+      // 1. Проверяем правила событий
+      const eventRules = integration.event_rules || {};
+      if (payload.isWon && eventRules.onDealWon === false) {
+        continue;
+      }
+      if (payload.eventName === "Lead" && eventRules.onLeadCreated === false) {
+        continue;
+      }
+      if (payload.eventName === "Chat" && eventRules.onFirstMessage === false) {
+        continue;
+      }
+
+      // 2. Если у события указан домен/URL источника, а у интеграции задан site_url
+      if (payload.sourceUrl && integration.site_url) {
+        try {
+          const payloadHost = new URL(
+            payload.sourceUrl.startsWith("http") ? payload.sourceUrl : `https://${payload.sourceUrl}`,
+          ).hostname.replace(/^www\./, "");
+          const intHost = new URL(
+            integration.site_url.startsWith("http") ? integration.site_url : `https://${integration.site_url}`,
+          ).hostname.replace(/^www\./, "");
+          if (payloadHost !== intHost && !integration.is_default) {
+            continue;
+          }
+        } catch {
+          // ignore url parse error
+        }
+      }
 
       const rawConfig = integration.config || {};
       const stageEvents = (rawConfig.stageEvents as Record<string, string>) || {};
 
-      // Определяем имя события: маппинг из стадии -> дефолт по статусу (Purchase / QualifiedLead / Lead)
       const mappedEventName =
-        stageEvents[payload.stageId] ||
+        stageEvents[payload.stageId || ""] ||
         (payload.isWon ? "Purchase" : payload.eventName || "Lead");
 
-      // Расшифровываем токены для сетевого вызова
       const decryptedConfig: Record<string, unknown> = { ...rawConfig };
+      if (!decryptedConfig.counterId && integration.counter_id) {
+        decryptedConfig.counterId = integration.counter_id;
+      }
       if (typeof decryptedConfig.oauthToken === "string") {
         decryptedConfig.oauthToken = safeDecrypt(decryptedConfig.oauthToken);
       }
@@ -299,16 +644,26 @@ export class ConversionDispatcherService {
       const eventKey = conversionEventKey(eventPayloadWithMappedName, integration.provider);
       const claimed = await query<{ id: string }>(
         `INSERT INTO conversion_delivery_attempts
-           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, locked_until, payload)
-         VALUES ($1, $2, $3, $4, $5, 'pending', 1, now() + interval '5 minutes', $6::jsonb)
+           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, locked_until, payload, is_test, job_id)
+         VALUES ($1, $2, $3, $4, $5, 'pending', 1, now() + interval '5 minutes', $6::jsonb, $7, $8)
          ON CONFLICT (tenant_id, provider, event_key) DO UPDATE
          SET status = 'pending', attempts = conversion_delivery_attempts.attempts + 1,
              locked_until = now() + interval '5 minutes', last_error = NULL,
-             updated_at = now(), payload = EXCLUDED.payload, event_name = EXCLUDED.event_name
+             updated_at = now(), payload = EXCLUDED.payload, event_name = EXCLUDED.event_name,
+             is_test = EXCLUDED.is_test, job_id = EXCLUDED.job_id
          WHERE conversion_delivery_attempts.status <> 'sent'
            AND (conversion_delivery_attempts.locked_until IS NULL OR conversion_delivery_attempts.locked_until < now())
          RETURNING id`,
-        [payload.tenantId, payload.dealId, integration.provider, eventKey, mappedEventName, JSON.stringify(eventPayloadWithMappedName)],
+        [
+          payload.tenantId,
+          payload.dealId ?? null,
+          integration.provider,
+          eventKey,
+          mappedEventName,
+          JSON.stringify(eventPayloadWithMappedName),
+          Boolean(payload.isTest),
+          payload.jobId ?? null,
+        ],
       );
       if (claimed.length === 0) continue;
 
@@ -331,10 +686,10 @@ export class ConversionDispatcherService {
          SET status = $3, last_status = $4, last_error = $5, response_snippet = $6,
              delivered_at = CASE WHEN $3 = 'sent' THEN now() ELSE NULL END,
              locked_until = NULL, updated_at = now()
-         WHERE tenant_id = $1 AND deal_id = $2 AND provider = $7 AND event_key = $8`,
+         WHERE tenant_id = $1 AND provider = $7 AND event_key = $8`,
         [
           payload.tenantId,
-          payload.dealId,
+          payload.dealId ?? null,
           result.success ? "sent" : "failed",
           result.status,
           result.error ?? null,

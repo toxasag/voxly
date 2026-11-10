@@ -19,6 +19,7 @@ import {
   getTokenRemainingSeconds,
   hasSession,
 } from "@/lib/auth/session";
+import { readImpersonationBackup, writeImpersonationBackup } from "@/lib/auth/impersonation";
 import { isModuleSlug } from "@/types";
 import type {
   CurrentUser,
@@ -34,6 +35,18 @@ import type {
 // Backend contract (docs/03_API_CONTRACTS/03_01_AUTH_API.md §4)
 // ---------------------------------------------------------------------------
 
+export interface ImpersonatorInfo {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  platform_role: PlatformRole | null;
+  is_partner?: boolean;
+  tenant_id: string;
+  tenant_slug: string;
+  tenant_name: string;
+}
+
 export interface UserProfileDTO {
   user: {
     id: string;
@@ -42,6 +55,7 @@ export interface UserProfileDTO {
     phone: string;
     role: Role;
     platform_role: PlatformRole | null;
+    is_partner?: boolean;
     permissions: Permission[];
   };
   tenant: {
@@ -50,7 +64,12 @@ export interface UserProfileDTO {
     slug: string;
     plan: string;
     status: string;
+    is_partner?: boolean;
+    tenant_type?: "partner" | "client";
+    parent_tenant_id?: string | null;
+    owner_partner_id?: string | null;
   };
+  impersonator?: ImpersonatorInfo | null;
 }
 
 export interface AuthTokensDTO extends UserProfileDTO {
@@ -85,6 +104,7 @@ export interface MessageDTO {
 interface AuthState {
   user: CurrentUser | null;
   tenant: Tenant | null;
+  impersonator: ImpersonatorInfo | null;
   isAuthenticated: boolean;
   isLoading: boolean;
 }
@@ -168,6 +188,7 @@ function toCurrentUser(dto: AuthTokensDTO["user"]): CurrentUser {
     name: dto.name,
     role: dto.role,
     platform_role: dto.platform_role ?? null,
+    is_partner: Boolean(dto.is_partner || dto.role === "partner"),
     permissions: new Set<Permission>(dto.permissions),
   };
 }
@@ -180,6 +201,10 @@ function toTenant(dto: AuthTokensDTO["tenant"]): Tenant {
     // rendering instead of crashing on a missing field.
     slug: dto.slug ?? "",
     plan: dto.plan,
+    is_partner: Boolean(dto.is_partner),
+    tenant_type: dto.tenant_type ?? (dto.is_partner ? "partner" : "client"),
+    parent_tenant_id: dto.parent_tenant_id ?? null,
+    owner_partner_id: dto.owner_partner_id ?? null,
     // Filled reactively from GET /api/v1/tenant/modules in AuthProvider.
     installedModules: [],
   };
@@ -195,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
     tenant: null,
+    impersonator: null,
     isAuthenticated: false,
     isLoading: true,
   });
@@ -245,9 +271,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       writeTokens({ accessToken: dto.access_token, refreshToken: dto.refresh_token });
     }
 
+    if (dto.impersonator) {
+      const existing = readImpersonationBackup();
+      if (!existing) {
+        writeImpersonationBackup({
+          accessToken: readAccessToken() || "",
+          adminUserEmail: dto.impersonator.email,
+          adminUserName: dto.impersonator.name,
+          adminOriginHost: `${dto.impersonator.tenant_slug}.getvoxly.ru`,
+          adminOriginPath: dto.impersonator.platform_role === "platform_owner" ? "/admin/tenants" : "/partner",
+          isPartner: Boolean(dto.impersonator.is_partner || dto.impersonator.role === "partner"),
+          isPlatformOwner: dto.impersonator.platform_role === "platform_owner",
+          impersonatedTenantSlug: dto.tenant.slug,
+          impersonatedTenantName: dto.tenant.name,
+          impersonatedUserEmail: dto.user.email,
+          enteredAt: new Date().toISOString(),
+        });
+      }
+    }
+
     setState({
       user: toCurrentUser(dto.user),
       tenant: toTenant(dto.tenant),
+      impersonator: dto.impersonator ?? null,
       isAuthenticated: true,
       isLoading: false,
     });
@@ -255,7 +301,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resetSession = useCallback(() => {
     clearSession();
-    setState({ user: null, tenant: null, isAuthenticated: false, isLoading: false });
+    setState({ user: null, tenant: null, impersonator: null, isAuthenticated: false, isLoading: false });
   }, []);
 
   /**
@@ -281,7 +327,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             applySession(res.data);
             return;
           }
-        } catch {
+        } catch (err) {
+          // Если сервер вернул 429 (Rate Limit) или 5xx (сбой сети), НЕ сбрасываем сессию!
+          if (err instanceof ApiClientError && (err.status === 429 || err.status >= 500)) {
+            if (!cancelled) {
+              setState((prev) => ({ ...prev, isLoading: false }));
+              return;
+            }
+          }
           // Если токен не принят сервером, пробуем обновить через refresh
         }
       }
@@ -289,7 +342,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 2. Access-токен истёк или отсутствует: пробуем silent refresh
       if (hasSession()) {
         try {
-          const refreshedToken = await refreshAccessToken();
+          const refreshedToken = await refreshAccessToken(accessToken);
           if (refreshedToken && !cancelled) {
             const res = await apiClient.get<UserProfileDTO>("/auth/me", { retrying: true });
             if (!cancelled) {
@@ -297,8 +350,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               return;
             }
           }
-        } catch {
-          // Ошибка обновления
+        } catch (err) {
+          // Если при refresh возникла ошибка 429 (Rate Limit) или сбой сервера, не сбрасываем сессию
+          if (err instanceof ApiClientError && (err.status === 429 || err.status >= 500)) {
+            if (!cancelled) {
+              setState((prev) => ({ ...prev, isLoading: false }));
+              return;
+            }
+          }
         }
       }
 
@@ -336,16 +395,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const remaining = getTokenRemainingSeconds(token);
 
       if (remaining <= 0) {
-        void refreshAccessToken();
+        void refreshAccessToken(token)
+          .then((refreshed) => {
+            if (refreshed) scheduleRefresh();
+          })
+          .catch(() => {});
         return;
       }
 
       // Обновляем за 120 секунд до истечения срока или минимум через 10 секунд
       const delayMs = Math.max(10, remaining - 120) * 1000;
       timer = setTimeout(async () => {
-        const refreshed = await refreshAccessToken();
-        if (refreshed) {
-          scheduleRefresh();
+        try {
+          const refreshed = await refreshAccessToken(token);
+          if (refreshed) {
+            scheduleRefresh();
+          }
+        } catch {
+          // Игнорируем сетевой сбой при фоновом обновлении
         }
       }, delayMs);
     };
@@ -357,9 +424,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = readAccessToken();
         const remaining = getTokenRemainingSeconds(token);
         if (remaining < 120) {
-          void refreshAccessToken().then((refreshed) => {
-            if (refreshed) scheduleRefresh();
-          });
+          void refreshAccessToken(token)
+            .then((refreshed) => {
+              if (refreshed) scheduleRefresh();
+            })
+            .catch(() => {});
         }
       }
     };
@@ -481,15 +550,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    const refreshToken = readRefreshToken();
-
-    if (refreshToken !== null) {
-      try {
-        await apiClient.post("/auth/logout", { refresh_token: refreshToken });
-      } catch {
-        // Server-side revocation failed; the local session is cleared either
-        // way so the user is not left appearing signed in.
-      }
+    try {
+      await apiClient.post("/auth/logout", {});
+    } catch {
+      // Server-side revocation failed; the local session is cleared either
+      // way so the user is not left appearing signed in.
     }
 
     resetSession();

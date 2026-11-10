@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  BarChart3,
   Bot,
   Check,
   Code2,
@@ -24,7 +25,12 @@ import {
 } from "@/lib/api/use-channels";
 import { useAiAgents } from "@/lib/api/use-ai-agents";
 import { WebchatAppearanceSettings } from "./WebchatAppearanceSettings";
+import { WebchatAnalyticsDrawer } from "./WebchatAnalyticsDrawer";
+import { CloneWidgetDrawer } from "./CloneWidgetDrawer";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { Switch } from "@/components/ui/switch";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface WebchatManagementViewProps {
   accounts: ChannelAccountDTO[];
@@ -41,6 +47,12 @@ export function WebchatManagementView({
 }: WebchatManagementViewProps) {
   // Выбранный сайт для настройки внешнего вида
   const [editingAppearanceId, setEditingAppearanceId] = useState<string | null>(null);
+
+  // Выбранный сайт для просмотра воронки и аналитики
+  const [analyticsAccount, setAnalyticsAccount] = useState<ChannelAccountDTO | null>(null);
+
+  // Выбранный сайт для клонирования под новый сайт
+  const [cloningAccount, setCloningAccount] = useState<ChannelAccountDTO | null>(null);
 
   // Модалка кода для вставки на сайт
   const [codeModalAccount, setCodeModalAccount] = useState<ChannelAccountDTO | null>(null);
@@ -112,13 +124,23 @@ export function WebchatManagementView({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold text-[#111111]">Онлайн-чат на сайт</h1>
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                1 сайт бесплатно в тарифе
-              </span>
+              {summary?.isUnlimited || summary?.is_unlimited ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
+                  Безлимитно
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                  {summary ? `${summary.quantity} ${summary.quantity === 1 ? "сайт" : "сайтов"} по тарифу` : "1 сайт в тарифе"}
+                </span>
+              )}
             </div>
             <p className="mt-1 text-sm text-[#666666]">
               {summary === undefined ? (
                 "Управление сайтами и кодами виджета онлайн-чата"
+              ) : summary.isUnlimited || summary.is_unlimited ? (
+                <>
+                  {summary.total} {summary.total === 1 ? "сайт подключен" : "сайтов подключено"} (Безлимитный тариф)
+                </>
               ) : (
                 <>
                   {summary.total} из {summary.quantity} сайтов подключено по тарифу
@@ -133,13 +155,16 @@ export function WebchatManagementView({
         </div>
 
         {limitReached ? (
-          <Link
-            href="/marketplace"
-            className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
-          >
-            <ShoppingBag className="h-4 w-4" />
-            Увеличить количество сайтов
-          </Link>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[#888888]">Лимит исчерпан ({summary?.quantity})</span>
+            <Link
+              href="/marketplace"
+              className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+            >
+              <ShoppingBag className="h-4 w-4" />
+              Увеличить количество сайтов
+            </Link>
+          </div>
         ) : (
           <button
             type="button"
@@ -150,6 +175,23 @@ export function WebchatManagementView({
             Добавить сайт
           </button>
         )}
+      </div>
+
+      {/* Подсказка о настройке внешнего вида и капсулы */}
+      <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-[#111111]">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#4a38f5] text-white">
+            <Palette className="h-4 w-4" />
+          </div>
+          <div>
+            <span className="font-semibold text-[#111111]">
+              Оформление виджета: информативная капсула и фото консультанта
+            </span>
+            <p className="text-[#666666] mt-0.5">
+              Включите отображение виджета в виде плашки «Имя + Онлайн» (как на скриншоте) в меню «Настроить виджет» нужного сайта.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Список подключенных сайтов */}
@@ -198,24 +240,85 @@ export function WebchatManagementView({
                         <h3 className="font-semibold text-[#111111]">{acc.label}</h3>
                         <p className="flex items-center gap-1.5 text-xs text-[#666666]">
                           <span>{acc.externalId}</span>
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                          <span className="text-emerald-700 font-medium">Активен</span>
+                          <span
+                            className={cn(
+                              "inline-block h-1.5 w-1.5 rounded-full",
+                              acc.status === "disabled" ? "bg-slate-400" : "bg-emerald-500",
+                            )}
+                          />
+                          <span
+                            className={cn(
+                              "font-medium",
+                              acc.status === "disabled" ? "text-[#888888]" : "text-emerald-700",
+                            )}
+                          >
+                            {acc.status === "disabled" ? "Отключен" : "Активен"}
+                          </span>
                         </p>
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (confirm(`Удалить сайт «${acc.label}» из CRM?`)) {
-                          deleteAccount.mutate({ id: acc.id });
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="flex items-center"
+                        title={
+                          acc.status === "disabled"
+                            ? "Виджет отключен и не отображается на сайте"
+                            : "Виджет активен и отображается на сайте"
                         }
-                      }}
-                      className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-rose-600"
-                      title="Удалить сайт"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                      >
+                        <Switch
+                          checked={acc.status !== "disabled"}
+                          disabled={updateAccount.isPending}
+                          onCheckedChange={(checked) => {
+                            const newStatus = checked ? "connected" : "disabled";
+                            updateAccount.mutate(
+                              { id: acc.id, status: newStatus, is_enabled: checked },
+                              {
+                                onSuccess: () => {
+                                  toast.success(
+                                    checked
+                                      ? `Виджет «${acc.label}» включен`
+                                      : `Виджет «${acc.label}» отключен`,
+                                  );
+                                },
+                                onError: () => {
+                                  toast.error("Не удалось изменить статус виджета");
+                                },
+                              },
+                            );
+                          }}
+                          aria-label={
+                            acc.status === "disabled"
+                              ? `Включить виджет: ${acc.label}`
+                              : `Отключить виджет: ${acc.label}`
+                          }
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setCloningAccount(acc)}
+                        className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5]"
+                        title="Создать копию для другого сайта"
+                        aria-label={`Клонировать виджет: ${acc.label}`}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm(`Удалить сайт «${acc.label}» из CRM?`)) {
+                            deleteAccount.mutate({ id: acc.id });
+                          }
+                        }}
+                        className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-rose-600"
+                        title="Удалить сайт"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Привязанный AI-агент */}
@@ -247,10 +350,24 @@ export function WebchatManagementView({
                       </select>
                     </div>
                   </div>
+
+                  {/* Стиль кнопки виджета на сайте */}
+                  <div className="mt-3 flex items-center justify-between text-xs text-[#666666] border-t border-[#f0f0f0] pt-2.5">
+                    <span>Стиль кнопки:</span>
+                    {creds.launcherStyle === "pill" ? (
+                      <span className="inline-flex items-center gap-1 font-medium text-[#4a38f5] bg-[#4a38f5]/10 px-2 py-0.5 rounded-full text-[11px]">
+                        Капсула ({String(creds.consultantName || "Консультант")}, {String(creds.statusText || "Онлайн")})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 font-medium text-[#666666] bg-[#f0f0f0] px-2 py-0.5 rounded-full text-[11px]">
+                        Круглая кнопка
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Действия карточки */}
-                <div className="mt-5 flex items-center justify-between border-t border-[#e5e5e5] pt-4">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[#e5e5e5] pt-4">
                   <button
                     type="button"
                     onClick={() => setCodeModalAccount(acc)}
@@ -260,14 +377,36 @@ export function WebchatManagementView({
                     Код для сайта
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setEditingAppearanceId(acc.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
-                  >
-                    <Palette className="h-3.5 w-3.5 text-[#4a38f5]" />
-                    Настроить виджет
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAnalyticsAccount(acc)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+                      title="Воронка и конверсии виджета"
+                    >
+                      <BarChart3 className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Воронка
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCloningAccount(acc)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+                      title="Создать копию виджета для другого сайта"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Копировать
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingAppearanceId(acc.id)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+                    >
+                      <Palette className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Настроить
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -417,6 +556,27 @@ export function WebchatManagementView({
           </div>
         </div>
       )}
+
+      {/* Шторка воронки конверсий и аналитики виджета */}
+      <WebchatAnalyticsDrawer
+        account={analyticsAccount}
+        open={Boolean(analyticsAccount)}
+        onClose={() => setAnalyticsAccount(null)}
+      />
+
+      {/* Шторка клонирования виджета для нового сайта */}
+      <CloneWidgetDrawer
+        sourceAccount={cloningAccount}
+        open={Boolean(cloningAccount)}
+        onClose={() => setCloningAccount(null)}
+        onSuccessCloned={(newAccount) => {
+          setCloningAccount(null);
+          toast.success("Виджет успешно скопирован под новый сайт");
+          // Автоматически открываем модалку с готовым HTML-кодом вставки нового виджета
+          setCodeModalAccount(newAccount);
+        }}
+        limitReached={limitReached}
+      />
     </div>
   );
 }

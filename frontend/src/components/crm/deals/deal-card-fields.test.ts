@@ -53,7 +53,6 @@ describe("Поля карточки сделки", () => {
     const defaults = defaultDealCardFields();
 
     expect(defaults.budget).toBe(true);
-    expect(defaults.description).toBe(true);
     expect(defaults.tasks).toBe(true);
     expect(defaults.closedAt).toBe(false);
     expect(defaults.companyFields?.name).toBe(true);
@@ -64,7 +63,7 @@ describe("Поля карточки сделки", () => {
 
   it("новое поле кода получает своё умолчание, а не «скрыто»", () => {
     // В записи только два ключа: остальные добавились в код позже.
-    const normalized = normalizeDealCardFields({ budget: false, description: false });
+    const normalized = normalizeDealCardFields({ budget: false });
 
     expect(normalized.budget).toBe(false);
     expect(normalized.company).toBe(true);
@@ -85,7 +84,6 @@ describe("Поля карточки сделки", () => {
     expect(hasDealFieldValue(empty, "company")).toBe(false);
     expect(hasDealFieldValue(empty, "tasks")).toBe(false);
     expect(hasDealFieldValue(empty, "budget")).toBe(false);
-    expect(hasDealFieldValue(empty, "description")).toBe(false);
     expect(hasDealFieldValue(empty, "closeDate")).toBe(false);
     expect(hasDealFieldValue(empty, "latestNote")).toBe(false);
   });
@@ -101,7 +99,7 @@ describe("Поля карточки сделки", () => {
       latestNote: "Договорились о встрече",
     });
 
-    for (const field of ["company", "contact", "budget", "description", "owner", "closeDate", "latestNote"] as const) {
+    for (const field of ["company", "contact", "budget", "owner", "closeDate", "latestNote"] as const) {
       expect(hasDealFieldValue(filled, field)).toBe(true);
     }
   });

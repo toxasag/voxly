@@ -26,7 +26,7 @@ const uniqueColumnIds = (value: string[], ctx: z.RefinementCtx): void => {
  * `.strict()` отклонил бы их, будь поле обязательным, и пользователь потерял бы
  * настроенные колонки.
  */
-export const recordViewModeSchema = z.enum(["kanban", "table"]);
+export const recordViewModeSchema = z.enum(["kanban", "table", "calendar"]);
 
 export const recordTableLayoutSchema = z
   .object({

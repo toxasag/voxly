@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { DealsService } from "./deals.service.js";
 import { DealMessagingService } from "./deal-messaging.service.js";
+import { mediaEnrichmentService } from "../media/media-enrichment.service.js";
 import {
   createDealMessageSchema,
   createDealSchema,
@@ -12,10 +13,14 @@ import {
 } from "./deals.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { ensureTenantDefaults } from "../../tenant/tenant-defaults.js";
+import { queryOne } from "../../../db/client.js";
+import { AiService } from "../../ai/ai.service.js";
+import { createDialogueFeedbackSchema } from "../../ai/ai.types.js";
 
 const listQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
   stage_id: z.string().uuid().optional(),
+  status: z.enum(["active", "won", "lost", "all"]).optional(),
   search: z.string().max(200).optional(),
   /** Фильтры для секций «Сделки» на карточках контакта и компании. */
   contact_id: z.string().uuid().optional(),
@@ -42,18 +47,20 @@ const stageParamsSchema = z.object({
 export async function dealsRoutes(app: FastifyInstance): Promise<void> {
   const service = new DealsService();
   const messaging = new DealMessagingService(service, app.log);
+  const aiService = new AiService();
 
   const canRead = app.requirePermission("deals:read");
   const canWrite = app.requirePermission("deals:write");
 
   // GET /deals — paginated list
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { pipeline_id, stage_id, search, contact_id, company_id, limit, offset } =
+    const { pipeline_id, stage_id, status, search, contact_id, company_id, limit, offset } =
       listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       pipelineId: pipeline_id,
       stageId: stage_id,
+      status,
       search,
       contactId: contact_id,
       companyId: company_id,
@@ -213,6 +220,28 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ data: messages, meta: { total: messages.length } });
   });
 
+  // Пакетное обогащение всех медиа-вложений в переписке сделки
+  app.post("/:id/enrich-media", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const count = await mediaEnrichmentService.batchEnrichDealMessages(request.tenant_id, id);
+    const messages = await service.listMessages(request.tenant_id, id);
+    return reply.send({ data: { enrichedCount: count, messages } });
+  });
+
+  // Обогащение конкретного сообщения в сделке
+  app.post("/:id/messages/:messageId/enrich", { onRequest: canWrite }, async (request, reply) => {
+    const { messageId } = request.params as { messageId: string };
+    const updated = await mediaEnrichmentService.enrichMessageMedia(request.tenant_id, messageId);
+    return reply.send({ data: updated });
+  });
+
+  // Транскрибация аудиосообщения в сделке
+  app.post("/:id/messages/:messageId/transcribe", { onRequest: canWrite }, async (request, reply) => {
+    const { messageId } = request.params as { messageId: string };
+    const transcript = await mediaEnrichmentService.transcribeAudioMessage(request.tenant_id, messageId);
+    return reply.send({ data: transcript });
+  });
+
   // GET /deals/:id/contact-history — сквозная история контакта и LTV для карточки сделки
   app.get("/:id/contact-history", { onRequest: canRead }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
@@ -290,5 +319,39 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const { id } = idParamsSchema.parse(request.params);
     const result = await messaging.syncDealChatHistory(request.tenant_id, id);
     return reply.send({ data: result });
+  });
+
+  /**
+   * Оценка качества диалога и обратная связь оператора для обучения ИИ-агента (RLHF feedback).
+   */
+  app.post("/:id/feedback", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = createDialogueFeedbackSchema.parse(request.body);
+
+    let targetAgentId = body.agent_id ?? body.agentId;
+    if (!targetAgentId) {
+      const activeBot = await queryOne<{ id: string }>(
+        `SELECT id FROM ai_agents WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1`,
+        [request.tenant_id],
+      );
+      targetAgentId = activeBot?.id;
+    }
+    if (!targetAgentId) {
+      const anyBot = await queryOne<{ id: string }>(
+        `SELECT id FROM ai_agents WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1`,
+        [request.tenant_id],
+      );
+      targetAgentId = anyBot?.id;
+    }
+    if (!targetAgentId) {
+      throw new NotFoundError("В системе нет созданных AI-агентов для привязки обучения");
+    }
+
+    const feedback = await aiService.createFeedback(request.tenant_id, targetAgentId, {
+      ...body,
+      deal_id: id,
+    });
+
+    return reply.status(201).send({ data: feedback });
   });
 }

@@ -19,6 +19,7 @@ import {
   PlusCircle,
   Check,
   Loader2,
+  Briefcase,
   type LucideIcon,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
@@ -31,6 +32,11 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { CreateTenantDialog } from "@/components/partner/CreateTenantDialog";
 import { Logo } from "@/components/brand";
 import { useWorkspaces, switchWorkspace } from "@/lib/api/use-workspaces";
+import {
+  readImpersonationBackup,
+  restoreAdminSessionDetailed,
+  getPlatformAdminUrl,
+} from "@/lib/auth/impersonation";
 import {
   MARKETPLACE_NAV,
   PLATFORM_NAV,
@@ -53,6 +59,7 @@ const ENTITY_ICONS: Record<string, string> = {
   "/marketing/funnels": "text-[#4a38f5]",
   "/modules/ai-bots": "text-indigo-600",
   "/repairs": "text-cyan-600",
+  "/warehouse": "text-amber-600",
   "/finance": "text-emerald-600",
   "/marketplace": "text-blue-500",
 };
@@ -101,7 +108,7 @@ export function Sidebar({
   onToggle: () => void;
 }) {
   const pathname = usePathname();
-  const { tenant, user, logout } = useAuth();
+  const { tenant, user, logout, impersonator } = useAuth();
   const { data: liveModules } = useTenantModules(tenant?.tenantId ?? null);
   const [tenantMenuOpen, setTenantMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
@@ -112,7 +119,7 @@ export function Sidebar({
   const { data: profile } = useProfile();
   const { data: workspacesData } = useWorkspaces();
 
-  const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", installedModules: [] };
+  const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", is_partner: false, installedModules: [] };
 
   const workspaces = useMemo(() => {
     if (workspacesData && workspacesData.length > 0) return workspacesData;
@@ -126,12 +133,26 @@ export function Sidebar({
           status: "active",
           is_current: true,
           is_parent: false,
+          is_partner: Boolean(displayTenant.is_partner || tenant?.is_partner),
           role: user?.role ?? "member",
         },
       ];
     }
     return [];
   }, [workspacesData, displayTenant, tenant, user]);
+
+  const currentWorkspace = useMemo(
+    () => workspaces.find((ws) => ws.is_current) ?? null,
+    [workspaces],
+  );
+  const parentWorkspace = useMemo(
+    () => workspaces.find((ws) => ws.is_parent) ?? null,
+    [workspaces],
+  );
+  const childWorkspaces = useMemo(
+    () => workspaces.filter((ws) => !ws.is_current && !ws.is_parent),
+    [workspaces],
+  );
 
   const handleSwitchWorkspace = async (targetSlug: string) => {
     if (targetSlug === displayTenant.slug) {
@@ -145,6 +166,8 @@ export function Sidebar({
         displayTenant.slug,
         user?.email,
         user?.name,
+        Boolean(user?.is_partner || tenant?.is_partner),
+        isPlatformOwner,
       );
     } catch (err) {
       console.error("Не удалось переключить организацию", err);
@@ -166,21 +189,41 @@ export function Sidebar({
   const isProfileActive = pathname === "/settings/profile";
   const permissions = user?.permissions ?? null;
 
-  const canCreateTenant =
+  const isPartner =
+    user?.is_partner === true ||
+    tenant?.is_partner === true ||
     user?.role === "partner" ||
-    user?.role === "owner" ||
-    user?.role === "admin" ||
-    user?.platform_role === "platform_owner" ||
-    Boolean(user?.permissions?.has("tenant:admin"));
+    isPlatformOwner;
+
+  const canCreateTenant = isPartner;
+
+  const backup = typeof window !== "undefined" ? readImpersonationBackup() : null;
+  const isImpersonatingClient = Boolean(
+    impersonator ||
+      (backup && (!isPlatformOwner || (tenant?.slug !== "voxly" && Boolean(tenant?.slug)))),
+  );
 
   const toggleCollapsed = onToggle;
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
+
+    if (isImpersonatingClient) {
+      try {
+        const res = await restoreAdminSessionDetailed();
+        window.location.href = res.targetUrl || getPlatformAdminUrl(undefined, backup);
+        return;
+      } catch (err) {
+        console.error("Ошибка выхода из аккаунта клиента:", err);
+        window.location.href = getPlatformAdminUrl(undefined, backup);
+        return;
+      }
+    }
+
     await logout().finally(() => {
       window.location.href = "/login";
     });
-  }, [logout]);
+  }, [isImpersonatingClient, logout, backup]);
 
   const visibleNav = visibleMainNav(installedSlugs, permissions);
   const visibleChannels = visibleChannelNav(installedSlugs, permissions);
@@ -196,6 +239,7 @@ export function Sidebar({
     { label: "Компании", href: "/crm/companies", icon: Building2, always: true },
     { label: "Задачи", href: "/crm/tasks", icon: ListChecks, always: true },
     { label: "Аналитика", href: "/analytics", icon: BarChart3, always: true },
+    ...(isPartner ? [{ label: "Партнёрам", href: "/partner", icon: Briefcase, always: true }] : []),
   ];
 
   return (
@@ -237,9 +281,16 @@ export function Sidebar({
           {!collapsed && (
             <>
               <div className="flex-1 text-left overflow-hidden">
-                <p className="truncate text-[13px] font-medium text-[#000000]">
-                  {displayTenant.tenantName || "Рабочее пространство"}
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate text-[13px] font-medium text-[#000000]">
+                    {displayTenant.tenantName || "Рабочее пространство"}
+                  </p>
+                  {(displayTenant.is_partner || tenant?.is_partner) && (
+                    <span className="shrink-0 rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1 py-0.2 text-[9px] font-semibold text-[#4a38f5]">
+                      Партнёр
+                    </span>
+                  )}
+                </div>
                 <p className="truncate text-[11px] text-[#888888]">
                   {displayTenant.slug.length > 0
                     ? `${displayTenant.slug}.getvoxly.ru`
@@ -265,63 +316,124 @@ export function Sidebar({
                 collapsed ? "left-full top-2 ml-2 w-64" : "left-2.5 right-2.5",
               )}
             >
-              <div className="border-b border-[#f0f0f0] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">
-                Организации
+              {/* Текущее пространство */}
+              <div className="border-b border-[#f0f0f0] bg-[#fafafa]/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888] flex items-center justify-between">
+                <span>
+                  {currentWorkspace?.is_partner || displayTenant.is_partner || tenant?.is_partner
+                    ? "Партнёрский кабинет"
+                    : "Текущая организация"}
+                </span>
+                {(currentWorkspace?.is_partner || displayTenant.is_partner || tenant?.is_partner) && (
+                  <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[9px] font-semibold text-[#4a38f5]">
+                    Партнёр
+                  </span>
+                )}
               </div>
-              <div className="max-h-52 overflow-y-auto divide-y divide-[#f7f7f7]">
-                {workspaces.map((ws) => (
+              {currentWorkspace && (
+                <div className="flex w-full items-center justify-between gap-2.5 bg-[#4a38f5]/[0.04] px-3 py-2 text-[13px]">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#4a38f5] text-[11px] font-semibold text-white">
+                      {currentWorkspace.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0 truncate">
+                      <span className="block truncate text-[13px] font-semibold text-[#111111]">
+                        {currentWorkspace.name}
+                      </span>
+                      <span className="block truncate text-[10px] text-[#888888]">
+                        {currentWorkspace.slug}.getvoxly.ru
+                      </span>
+                    </div>
+                  </div>
+                  <Check className="h-3.5 w-3.5 shrink-0 text-[#4a38f5]" />
+                </div>
+              )}
+
+              {/* Родительский управляющий партнёр (если мы находимся внутри клиентского портала) */}
+              {parentWorkspace && (
+                <div className="border-t border-[#f0f0f0]">
+                  <div className="bg-[#fafafa]/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888]">
+                    Управляющий партнёр
+                  </div>
                   <button
-                    key={ws.id}
                     type="button"
                     disabled={switchingSlug !== null}
-                    onClick={() => handleSwitchWorkspace(ws.slug)}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]",
-                      ws.is_current && "bg-[#4a38f5]/[0.04]",
-                    )}
+                    onClick={() => handleSwitchWorkspace(parentWorkspace.slug)}
+                    className="flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <div
-                        className={cn(
-                          "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold",
-                          ws.is_current
-                            ? "bg-[#4a38f5] text-white"
-                            : "bg-black/[0.07] text-[#111111]",
-                        )}
-                      >
-                        {ws.name.charAt(0)}
+                      <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black/[0.07] text-[11px] font-semibold text-[#111111]">
+                        {parentWorkspace.name.charAt(0)}
                       </div>
                       <div className="min-w-0 truncate">
-                        <span
-                          className={cn(
-                            "block truncate text-[13px]",
-                            ws.is_current
-                              ? "font-semibold text-[#111111]"
-                              : "font-medium text-[#333333]",
-                          )}
-                        >
-                          {ws.name}
+                        <span className="block truncate text-[13px] font-medium text-[#333333]">
+                          {parentWorkspace.name}
                         </span>
                         <span className="block truncate text-[10px] text-[#888888]">
-                          {ws.slug}.getvoxly.ru
+                          {parentWorkspace.slug}.getvoxly.ru
                         </span>
                       </div>
                     </div>
-
                     <div className="flex shrink-0 items-center gap-1.5">
-                      {switchingSlug === ws.slug ? (
+                      {switchingSlug === parentWorkspace.slug ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
-                      ) : ws.is_current ? (
-                        <Check className="h-3.5 w-3.5 text-[#4a38f5]" />
                       ) : (
-                        <span className="rounded-[4px] border border-emerald-200 bg-emerald-50 px-1.5 py-0.2 text-[10px] font-medium text-emerald-700">
-                          {ws.status === "active" ? "активен" : ws.status}
+                        <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+                          Партнёр
                         </span>
                       )}
                     </div>
                   </button>
-                ))}
-              </div>
+                </div>
+              )}
+
+              {/* Клиентские порталы партнера */}
+              {childWorkspaces.length > 0 && (
+                <div className="border-t border-[#f0f0f0]">
+                  <div className="flex items-center justify-between bg-[#fafafa]/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888]">
+                    <span>Клиентские порталы</span>
+                    <span className="font-mono text-[10px] text-[#888888]">{childWorkspaces.length}</span>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto divide-y divide-[#f7f7f7]">
+                    {childWorkspaces.map((ws) => (
+                      <button
+                        key={ws.id}
+                        type="button"
+                        disabled={switchingSlug !== null}
+                        onClick={() => handleSwitchWorkspace(ws.slug)}
+                        className="flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black/[0.07] text-[11px] font-semibold text-[#111111]">
+                            {ws.name.charAt(0)}
+                          </div>
+                          <div className="min-w-0 truncate">
+                            <span className="block truncate text-[13px] font-medium text-[#333333]">
+                              {ws.name}
+                            </span>
+                            <span className="block truncate text-[10px] text-[#888888]">
+                              {ws.slug}.getvoxly.ru
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {switchingSlug === ws.slug ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                          ) : ws.is_partner ? (
+                            <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+                              Партнёр
+                            </span>
+                          ) : (
+                            <span className="rounded-[4px] border border-emerald-200 bg-emerald-50 px-1.5 py-0.2 text-[10px] font-medium text-emerald-700">
+                              {ws.status === "active" ? "активен" : ws.status}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="border-t border-[#f0f0f0]">
                 <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">
@@ -567,8 +679,14 @@ export function Sidebar({
             <button
               type="button"
               onClick={() => setLogoutOpen(true)}
-              aria-label="Выйти"
-              className="shrink-0 rounded-md p-1.5 text-[#888888] transition-colors hover:bg-black/[0.04] hover:text-rose-600"
+              aria-label={isImpersonatingClient ? "Вернуться в панель администратора" : "Выйти"}
+              title={isImpersonatingClient ? "Выйти из аккаунта клиента" : "Выйти"}
+              className={cn(
+                "shrink-0 rounded-md p-1.5 transition-colors",
+                isImpersonatingClient
+                  ? "text-[#854d0e] hover:bg-[#fefce8] hover:text-[#713f12]"
+                  : "text-[#888888] hover:bg-black/[0.04] hover:text-rose-600",
+              )}
             >
               <LogOut className="h-4 w-4" />
             </button>
@@ -579,8 +697,14 @@ export function Sidebar({
           <button
             type="button"
             onClick={() => setLogoutOpen(true)}
-            aria-label="Выйти"
-            className="mt-1 flex w-full items-center justify-center rounded-md p-1.5 text-[#888888] transition-colors hover:bg-black/[0.04] hover:text-rose-600"
+            aria-label={isImpersonatingClient ? "Вернуться в панель администратора" : "Выйти"}
+            title={isImpersonatingClient ? "Выйти из аккаунта клиента" : "Выйти"}
+            className={cn(
+              "mt-1 flex w-full items-center justify-center rounded-md p-1.5 transition-colors",
+              isImpersonatingClient
+                ? "text-[#854d0e] hover:bg-[#fefce8] hover:text-[#713f12]"
+                : "text-[#888888] hover:bg-black/[0.04] hover:text-rose-600",
+            )}
           >
             <LogOut className="h-4 w-4" />
           </button>
@@ -591,10 +715,14 @@ export function Sidebar({
         open={logoutOpen}
         onClose={() => setLogoutOpen(false)}
         onConfirm={handleLogout}
-        title="Выйти из системы?"
-        description="Текущая сессия будет завершена. Для входа снова потребуется пароль и код подтверждения."
-        confirmLabel="Выйти"
-        variant="destructive"
+        title={isImpersonatingClient ? "Выйти из аккаунта клиента?" : "Выйти из системы?"}
+        description={
+          isImpersonatingClient
+            ? `Вы завершите просмотр организации «${displayTenant.tenantName || displayTenant.slug}» и вернётесь в панель администратора GETVOXLY.`
+            : "Текущая сессия будет завершена. Для входа снова потребуется пароль и код подтверждения."
+        }
+        confirmLabel={isImpersonatingClient ? "Вернуться в админку" : "Выйти"}
+        variant={isImpersonatingClient ? "default" : "destructive"}
         isPending={isLoggingOut}
       />
 

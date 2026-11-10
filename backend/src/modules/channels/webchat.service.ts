@@ -3,6 +3,9 @@ import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { extractPhoneNumber, extractEmailAddress } from "../crm/channel-identity.js";
+import { extractNameFromText } from "../crm/identity-resolution.js";
+import { preChatModalService } from "../analytics/prechat-modal.service.js";
+import { GeoEnrichmentService } from "../../services/geo-enrichment.service.js";
 
 // ---------------------------------------------------------------------------
 // Сервис публичного онлайн-чата на сайте (WebChat).
@@ -36,6 +39,8 @@ export interface WebchatAccountInfo {
   greeting?: string;
   placeholder?: string;
   position?: "bottom-right" | "bottom-left";
+  launcherStyle?: "circle" | "pill";
+  statusText?: string;
   badgeEnabled?: boolean;
   badgeText?: string;
   badgeTexts?: string[];
@@ -61,6 +66,13 @@ export interface WebchatAccountInfo {
   attentionEnabled?: boolean;
   attentionEffect?: WebchatAttentionEffect;
   attentionInterval?: number;
+  prechatModal?: {
+    enabled: boolean;
+    abMode: string;
+    greetingTemplate: string;
+    whatsappNumber?: string | null;
+    telegramUsername?: string | null;
+  };
 }
 
 interface ChannelAccountRow {
@@ -86,6 +98,7 @@ interface AgentRow {
 export interface WebchatMessageInput {
   channelAccountId: string;
   visitorId: string;
+  sessionId?: string;
   text: string;
   senderName?: string;
   senderPhone?: string;
@@ -94,12 +107,14 @@ export interface WebchatMessageInput {
   attachmentType?: string;
   pageUrl?: string;
   pageTitle?: string;
+  pathname?: string;
   referrer?: string;
   utmTags?: Record<string, string>;
   clickIds?: Record<string, string>;
   analytics?: Record<string, string | null>;
   deviceFingerprint?: string;
   deviceInfo?: Record<string, unknown>;
+  coords?: { latitude: number; longitude: number; accuracy?: number };
   clientIp?: string;
   userAgent?: string;
   ymUid?: string;
@@ -208,14 +223,15 @@ export class WebchatService {
   private static readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly crm = new CrmPipelineService();
   private readonly agentPipeline: AgentPipelineService;
+  private readonly log: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void };
 
   constructor(logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void }) {
-    const log = logger ?? {
+    this.log = logger ?? {
       info: () => undefined,
       warn: () => undefined,
       error: () => undefined,
     };
-    this.agentPipeline = new AgentPipelineService(log);
+    this.agentPipeline = new AgentPipelineService(this.log);
   }
 
   /**
@@ -223,6 +239,11 @@ export class WebchatService {
    * Выполняется в platform_scope, поскольку запрос приходит от неавторизованного посетителя сайта.
    */
   async resolveAccount(channelAccountId: string): Promise<WebchatAccountInfo> {
+    const trimmedId = (channelAccountId || "").trim();
+    if (!trimmedId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmedId)) {
+      throw new NotFoundError("Аккаунт веб-чата не найден");
+    }
+
     const account = await runWithPlatformScope(() =>
       queryOne<ChannelAccountRow>(
         `SELECT id, tenant_id, label, status, external_id, credentials
@@ -230,7 +251,7 @@ export class WebchatService {
          WHERE id = $1
            AND channel = 'webchat'
            AND deleted_at IS NULL`,
-        [channelAccountId],
+        [trimmedId],
       ),
     );
 
@@ -240,6 +261,10 @@ export class WebchatService {
 
     if (account.status === "disabled") {
       throw new AppError(403, "CHAT_DISABLED", "Чат временно отключен администратором");
+    }
+
+    if (account.status !== "connected") {
+      throw new AppError(403, "CHAT_UNAVAILABLE", "Чат временно недоступен");
     }
 
     const tenant = await runWithPlatformScope(() =>
@@ -458,6 +483,63 @@ export class WebchatService {
             ? Math.max(0, parseInt(creds.attentionInterval, 10))
             : 5);
 
+    const prechatConfig = await preChatModalService.getConfig(account.tenant_id).catch(() => null);
+
+    const normalizeAssetUrl = (url: string | undefined): string | undefined => {
+      if (!url || typeof url !== "string") return undefined;
+      const trimmed = url.trim();
+      if (!trimmed) return undefined;
+      if (
+        trimmed.startsWith("data:") ||
+        trimmed.startsWith("blob:") ||
+        trimmed.startsWith("http://") ||
+        trimmed.startsWith("https://")
+      ) {
+        return trimmed;
+      }
+      if (trimmed.startsWith("//")) {
+        return `https:${trimmed}`;
+      }
+      if (trimmed.startsWith("/uploads/") || trimmed.startsWith("uploads/")) {
+        return `https://api.getvoxly.ru/${trimmed.replace(/^\/+/, "")}`;
+      }
+      return `https://getvoxly.ru/${trimmed.replace(/^\/+/, "")}`;
+    };
+
+    const consultantAvatar = normalizeAssetUrl(
+      typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0
+        ? creds.consultantAvatar.trim()
+        : undefined,
+    );
+    const customMascotDirections = normalizeAssetUrl(
+      typeof creds.customMascotDirections === "string" && creds.customMascotDirections.trim().length > 0
+        ? creds.customMascotDirections.trim()
+        : undefined,
+    );
+    const customMascotReactions = normalizeAssetUrl(
+      typeof creds.customMascotReactions === "string" && creds.customMascotReactions.trim().length > 0
+        ? creds.customMascotReactions.trim()
+        : undefined,
+    );
+
+    let avatarType: "icon" | "photo" | "mascot";
+    if (creds.avatarType === "icon" || creds.avatarType === "photo" || creds.avatarType === "mascot") {
+      avatarType = creds.avatarType;
+    } else if (consultantAvatar) {
+      avatarType = "photo";
+    } else if (customMascotDirections || creds.mascotId) {
+      avatarType = "mascot";
+    } else {
+      avatarType = "icon";
+    }
+
+    const mascotId =
+      typeof creds.mascotId === "string" && creds.mascotId.trim().length > 0
+        ? creds.mascotId
+        : customMascotDirections
+          ? "custom"
+          : "drone";
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -472,6 +554,11 @@ export class WebchatService {
       greeting: typeof creds.greeting === "string" && creds.greeting.trim().length > 0 ? creds.greeting.trim() : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.",
       placeholder: typeof creds.placeholder === "string" ? creds.placeholder : "Введите ваш вопрос...",
       position: creds.position === "bottom-left" ? "bottom-left" : "bottom-right",
+      launcherStyle: creds.launcherStyle === "pill" ? "pill" : "circle",
+      statusText:
+        typeof creds.statusText === "string" && creds.statusText.trim().length > 0
+          ? creds.statusText.trim()
+          : "Онлайн",
       showMessengerBanner,
       messengerBannerMode,
       singleTarget,
@@ -481,19 +568,11 @@ export class WebchatService {
       whatsappPhone: rawWa || undefined,
       maxLink: rawMax || undefined,
       consultantName: typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0 ? creds.consultantName.trim() : undefined,
-      consultantAvatar: typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0 ? creds.consultantAvatar.trim() : undefined,
-      avatarType:
-        creds.avatarType === "mascot" || creds.avatarType === "photo" || creds.avatarType === "icon"
-          ? (creds.avatarType as "mascot" | "photo" | "icon")
-          : (creds.customMascotDirections || creds.mascotId === "custom"
-              ? "mascot"
-              : (creds.consultantAvatar ? "photo" : "icon")),
-      mascotId:
-        typeof creds.mascotId === "string" && creds.mascotId.trim().length > 0
-          ? creds.mascotId
-          : (creds.customMascotDirections ? "custom" : "drone"),
-      customMascotDirections: typeof creds.customMascotDirections === "string" && creds.customMascotDirections.trim().length > 0 ? creds.customMascotDirections.trim() : undefined,
-      customMascotReactions: typeof creds.customMascotReactions === "string" && creds.customMascotReactions.trim().length > 0 ? creds.customMascotReactions.trim() : undefined,
+      consultantAvatar,
+      avatarType,
+      mascotId,
+      customMascotDirections,
+      customMascotReactions,
       proactiveEnabled,
       proactiveDelaySeconds,
       proactiveMessage,
@@ -505,6 +584,15 @@ export class WebchatService {
       attentionEnabled,
       attentionEffect,
       attentionInterval,
+      prechatModal: prechatConfig
+        ? {
+            enabled: prechatConfig.isEnabled,
+            abMode: prechatConfig.abMode,
+            greetingTemplate: prechatConfig.greetingTemplate,
+            whatsappNumber: prechatConfig.whatsappNumber,
+            telegramUsername: prechatConfig.telegramUsername,
+          }
+        : undefined,
     };
   }
 
@@ -604,6 +692,12 @@ export class WebchatService {
       }
     }
 
+    const geoService = new GeoEnrichmentService(this.log);
+    const geoData = await geoService.enrichLocation({
+      ip: input.clientIp,
+      coords: input.coords,
+    });
+
     const sourceMetadata: Record<string, unknown> = {
       device: {
         deviceType: (enrichedDeviceInfo.deviceType as string | undefined) || (parsedUa ? parsedUa.deviceType : "desktop"),
@@ -623,9 +717,13 @@ export class WebchatService {
       referrer: input.referrer || "",
       network: {
         ip: input.clientIp || (enrichedDeviceInfo.ip as string | undefined),
-        city: enrichedDeviceInfo.city as string | undefined,
-        country: enrichedDeviceInfo.country as string | undefined,
+        city: geoData?.city || (enrichedDeviceInfo.city as string | undefined),
+        country: geoData?.country || (enrichedDeviceInfo.country as string | undefined),
+        region: geoData?.region,
+        isp: geoData?.isp,
+        timezone: geoData?.timezone,
       },
+      geo: geoData || undefined,
       analytics: {
         yandexuid,
         ymUid,
@@ -642,9 +740,17 @@ export class WebchatService {
     // Метаданные источника сохраняются непосредственно в source_metadata контакта и сделки.
     const crmInboundText = effectiveText;
 
+    let detectedName = input.senderName?.trim();
+    if (!detectedName && crmInboundText) {
+      const extracted = extractNameFromText(crmInboundText);
+      if (extracted?.firstName) {
+        detectedName = `${extracted.firstName} ${extracted.lastName || ""}`.trim();
+      }
+    }
+
     const senderDisplayName =
-      input.senderName && input.senderName.trim().length > 0
-        ? input.senderName.trim()
+      detectedName && detectedName.length > 0
+        ? detectedName
         : `Посетитель сайта (${input.visitorId.slice(-4)})`;
 
     // 1. Создаем или находим контакт и сделку в CRM.
@@ -676,11 +782,54 @@ export class WebchatService {
         visitCount: input.visitCount,
         utmTags: effectiveUtmTags,
         sourceMetadata,
+        geo: geoData || undefined,
       }),
     );
 
-    // Если контакт помечен как личный — CRM не обрабатывает переписку
-    if (crmResult.isPersonal) {
+    // Фиксация этапов воронки в widget_analytics_events:
+    // - CHAT_START при первом отправленном сообщении
+    // - LEAD_CAPTURED при обнаружении телефона или email
+    const effectiveSessionId = input.sessionId?.trim() || input.visitorId;
+    if (!input.isDraft) {
+      void runWithTenantContext(account.tenantId, async () => {
+        try {
+          await query(
+            `INSERT INTO widget_analytics_events
+               (tenant_id, widget_id, session_id, visitor_id, event_type, metadata, created_at)
+             VALUES ($1, $2, $3, $4, 'CHAT_START', $5::jsonb, now())
+             ON CONFLICT (widget_id, session_id, event_type) DO NOTHING`,
+            [
+              account.tenantId,
+              account.id,
+              effectiveSessionId,
+              input.visitorId,
+              JSON.stringify({ textPreview: crmInboundText.slice(0, 100) }),
+            ],
+          );
+
+          if (detectedPhone || detectedEmail) {
+            await query(
+              `INSERT INTO widget_analytics_events
+                 (tenant_id, widget_id, session_id, visitor_id, event_type, metadata, created_at)
+               VALUES ($1, $2, $3, $4, 'LEAD_CAPTURED', $5::jsonb, now())
+               ON CONFLICT (widget_id, session_id, event_type) DO NOTHING`,
+              [
+                account.tenantId,
+                account.id,
+                effectiveSessionId,
+                input.visitorId,
+                JSON.stringify({ phone: Boolean(detectedPhone), email: Boolean(detectedEmail) }),
+              ],
+            );
+          }
+        } catch {
+          // Игнорируем ошибки аналитики, не блокируя доставку сообщений
+        }
+      });
+    }
+
+    // Если контакт помечен как личный или отправитель распознан как бот — CRM не обрабатывает переписку
+    if (crmResult.isPersonal || crmResult.isBot) {
       return {
         dealId: "",
         contactId: crmResult.contactId,
@@ -745,16 +894,21 @@ export class WebchatService {
       };
     }
 
-    // Передаем агенту чистый вопрос и контекст текущей страницы для релевантного ответа
-    const promptText = input.pageUrl ? `[Пользователь на странице: ${input.pageUrl}]\n${text}` : text;
+    // Передаем агенту чистый вопрос и структурированный контекст текущей страницы (URL, title, pathname)
     const outcome = await runWithTenantContext(account.tenantId, () =>
       this.agentPipeline.prepareReply({
         tenantId: account.tenantId,
         channelAccountId: account.id,
         chatId: input.visitorId,
-        text: promptText,
+        text,
         channelType: "онлайн-чат на сайте",
         dealId: crmResult.dealId,
+        pageContext: {
+          pageUrl: input.pageUrl,
+          pageTitle: input.pageTitle,
+          pathname: input.pathname,
+          referrer: input.referrer,
+        },
       }),
     );
 
@@ -762,6 +916,10 @@ export class WebchatService {
 
     // Если канал не привязан к агенту (no_agent) — передаем операторам без заглушки
     if (outcome.kind === "no_agent") {
+      this.log.info(
+        { channelAccountId: account.id, visitorId: input.visitorId },
+        "[WebchatService] No AI agent assigned to channel, routing to operator",
+      );
       return {
         dealId: crmResult.dealId,
         contactId: crmResult.contactId,
@@ -791,9 +949,19 @@ export class WebchatService {
       };
     }
 
-    // 4. Если AI-агент не ответил (нет агента, агент на паузе, ошибка модели) —
+    // 4. Если AI-агент не ответил (нет агента, агент на паузе, ошибка модели, недостаточный баланс) —
     // отправляем автоответ виджета и ОБЯЗАТЕЛЬНО фиксируем его в CRM в deal_messages.
     if (crmResult.dealId) {
+      this.log.warn(
+        {
+          outcomeKind: outcome.kind,
+          tenantId: account.tenantId,
+          dealId: crmResult.dealId,
+          channelAccountId: account.id,
+          visitorId: input.visitorId,
+        },
+        `[WebchatService] AI agent did not reply (outcome: ${outcome.kind}), sending fallback auto-reply`,
+      );
       const hasRecentOutbound = await runWithTenantContext(account.tenantId, async () => {
         const row = await queryOne<{ id: string }>(
           `SELECT id FROM deal_messages
@@ -860,6 +1028,9 @@ export class WebchatService {
          WHERE m.tenant_id = $1
            AND m.channel_account_id = $2
            AND m.channel = 'webchat'
+           AND m.direction IN ('inbound', 'outbound')
+           AND m.source NOT IN ('system', 'internal_note', 'audit')
+           AND m.sender_name != 'Система'
            AND (
              c.socials @> $3::jsonb
              OR c.custom_fields->>'webchat_visitor_id' = $4
@@ -880,7 +1051,26 @@ export class WebchatService {
       ),
     );
 
-    return rows.map((r) => {
+    return rows
+      .filter((r) => {
+        // Защита от утечки системных логов/событий CRM в публичный чат посетителя
+        if (r.direction !== "inbound" && r.direction !== "outbound") return false;
+        if (r.source === "system" || r.source === "internal_note" || r.source === "audit") return false;
+        if (r.sender_name === "Система") return false;
+        const text = r.content || "";
+        if (
+          text.includes("Сделка автоматически переведена") ||
+          text.includes("Получены контактные данные клиента") ||
+          text.includes("Создан лид") ||
+          text.includes("Лид создан") ||
+          text.startsWith("Лид №") ||
+          text.includes("Сделка автоматически закрыта")
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((r) => {
       let content = r.content;
       if (r.direction === "inbound") {
         content = content.replace(/^(\[[^\]]+\]\s*)+\n*/g, "").trim();

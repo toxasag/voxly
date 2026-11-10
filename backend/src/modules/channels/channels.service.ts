@@ -1,12 +1,19 @@
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import type { ChannelSlug } from "../../types/index.js";
-import type {
-  ChannelAccountDTO,
-  ChannelStatus,
-  ChannelSummaryDTO,
-  CreateChannelAccountPayload,
-  UpdateChannelAccountPayload,
+import { channelLinksService } from "./channel-links.service.js";
+import { quotaService } from "../quotas/quota.service.js";
+import {
+  isValidDomain,
+  normalizeDomain,
+  type ChannelAccountDTO,
+  type ChannelAccountLinksDTO,
+  type ChannelStatus,
+  type ChannelSummaryDTO,
+  type CloneChannelAccountPayload,
+  type CreateChannelAccountPayload,
+  type CustomizeAccountLinksQuery,
+  type UpdateChannelAccountPayload,
 } from "./channels.types.js";
 
 interface ChannelAccountRow {
@@ -24,6 +31,10 @@ interface ChannelAccountRow {
   created_at: Date | string;
   bound_agent_id?: string | null;
   bound_agent_name?: string | null;
+  cred_username?: string | null;
+  cred_phone?: string | null;
+  cred_bot?: string | null;
+  has_session?: boolean;
 }
 
 function toIso(value: Date | string | null): string | null {
@@ -41,6 +52,11 @@ function pluralConnections(count: number): string {
 }
 
 function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
+  const links =
+    row.channel !== "webchat"
+      ? channelLinksService.resolveAccountLinks(row)
+      : undefined;
+
   return {
     id: row.id,
     channel: row.channel,
@@ -48,6 +64,8 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     externalId: row.external_id,
     status: row.status,
     statusMessage: row.status_message ?? "",
+    is_enabled: row.status === "connected",
+    isEnabled: row.status === "connected",
     hasCredentials: row.has_credentials,
     credentials: row.credentials,
     remoteUserId: row.remote_user_id,
@@ -56,6 +74,7 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     createdAt: toIso(row.created_at) ?? "",
     boundAgentId: row.bound_agent_id ?? null,
     boundAgentName: row.bound_agent_name ?? null,
+    links,
   };
 }
 
@@ -67,6 +86,10 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
 const SELECT_COLUMNS = `id, channel, label, external_id, status, status_message,
         (credentials <> '{}'::jsonb) AS has_credentials,
         CASE WHEN channel = 'webchat' THEN credentials ELSE '{}'::jsonb END AS credentials,
+        credentials->>'username' AS cred_username,
+        credentials->>'phone' AS cred_phone,
+        credentials->>'telegramBot' AS cred_bot,
+        (credentials ? 'session') AS has_session,
         remote_user_id, last_sync_at, connected_at, created_at`;
 
 /**
@@ -86,6 +109,10 @@ export class ChannelsService {
       `SELECT c.id, c.channel, c.label, c.external_id, c.status, c.status_message,
               (c.credentials <> '{}'::jsonb) AS has_credentials,
               CASE WHEN c.channel = 'webchat' THEN c.credentials ELSE '{}'::jsonb END AS credentials,
+              c.credentials->>'username' AS cred_username,
+              c.credentials->>'phone' AS cred_phone,
+              c.credentials->>'telegramBot' AS cred_bot,
+              (c.credentials ? 'session') AS has_session,
               c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at,
               b.agent_id AS bound_agent_id,
               a.name AS bound_agent_name
@@ -102,6 +129,34 @@ export class ChannelsService {
     );
 
     return rows.map(toDTO);
+  }
+
+  /**
+   * Получение и кастомизация ссылок подключения (Direct Link & Smart Tracking Link).
+   */
+  async getLinks(
+    tenantId: string,
+    channel: ChannelSlug,
+    id: string,
+    options?: CustomizeAccountLinksQuery,
+  ): Promise<ChannelAccountLinksDTO> {
+    const row = await queryOne<ChannelAccountRow>(
+      `SELECT c.id, c.channel, c.label, c.external_id, c.status, c.status_message,
+              (c.credentials <> '{}'::jsonb) AS has_credentials,
+              CASE WHEN c.channel = 'webchat' THEN c.credentials ELSE '{}'::jsonb END AS credentials,
+              c.credentials->>'username' AS cred_username,
+              c.credentials->>'phone' AS cred_phone,
+              c.credentials->>'telegramBot' AS cred_bot,
+              (c.credentials ? 'session') AS has_session,
+              c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at
+       FROM channel_accounts c
+       WHERE c.tenant_id = $1 AND c.channel = $2 AND c.id = $3 AND c.deleted_at IS NULL`,
+      [tenantId, channel, id],
+    );
+
+    if (row === null) throw new NotFoundError("Подключение не найдено");
+
+    return channelLinksService.resolveAccountLinks(row, options);
   }
 
   /**
@@ -137,9 +192,13 @@ export class ChannelsService {
     const isFreeInPlan = (row?.included_units ?? 0) > 0;
     const trialEndsAt = isFreeInPlan ? null : toIso(row?.trial_ends_at ?? null);
 
+    const featureKey = channel === "webchat" ? "webchat_widgets" : `${channel}_channels`;
+    const quota = await quotaService.checkQuota(tenantId, featureKey);
+    const effectiveQuantity = quota.isUnlimited ? 999999 : (quota.maxLimit ?? row?.quantity ?? 0);
+
     return {
       channel,
-      quantity: row?.quantity ?? 0,
+      quantity: effectiveQuantity,
       connectedCount: Number(row?.connected_count ?? 0),
       total: Number(row?.total ?? 0),
       trialEndsAt,
@@ -147,6 +206,8 @@ export class ChannelsService {
       trialActive: isFreeInPlan
         ? false
         : trialEndsAt !== null && new Date(trialEndsAt).getTime() > Date.now(),
+      is_unlimited: quota.isUnlimited,
+      isUnlimited: quota.isUnlimited,
     };
   }
 
@@ -206,12 +267,25 @@ export class ChannelsService {
         [tenantId, channel],
       );
 
-      if (Number(used?.total ?? 0) >= module.quantity) {
-        throw new AppError(
-          409,
-          "CHANNEL_LIMIT_REACHED",
-          `По тарифу оплачено ${module.quantity} ${pluralConnections(module.quantity)}. Увеличьте количество в маркетплейсе.`,
-        );
+      const featureKey = channel === "webchat" ? "webchat_widgets" : `${channel}_channels`;
+      const quota = await quotaService.checkQuota(tenantId, featureKey);
+
+      if (!quota.isUnlimited) {
+        const effectiveLimit = quota.maxLimit ?? module.quantity;
+        if (Number(used?.total ?? 0) >= effectiveLimit) {
+          throw new AppError(
+            403,
+            "CHANNEL_LIMIT_REACHED",
+            channel === "webchat"
+              ? `Исчерпан лимит онлайн-виджетов (${effectiveLimit}). Для снятия ограничений обратитесь к администратору платформы.`
+              : `По тарифу оплачено ${effectiveLimit} ${pluralConnections(effectiveLimit)}. Увеличьте количество в маркетплейсе или обратитесь к администратору.`,
+            {
+              limit: [
+                `Лимит: ${effectiveLimit}, текущее количество: ${used?.total ?? 0}`,
+              ],
+            },
+          );
+        }
       }
 
       const defaultCredentials = channel === "webchat" ? {
@@ -261,6 +335,105 @@ export class ChannelsService {
   }
 
   /**
+   * Клонирование (дублирование) существующего подключения/виджета.
+   *
+   * Все параметры дизайна, фраз приветствия, маскота, звуков и сценариев AI
+   * копируются 1-в-1 из исходного виджета.
+   * Для нового сайта генерируется отдельная изолированная запись с новым UUID.
+   *
+   * Безопасность:
+   * - Запрос выполняется строго в контексте текущего tenantId (защита от IDOR/RLS).
+   * - Проверяется лимит сайтов по тарифу / квотам (403/409 CHANNEL_LIMIT_REACHED).
+   * - Проверяется отсутствие дубликата домена (409 CHANNEL_ACCOUNT_EXISTS).
+   */
+  async clone(
+    tenantId: string,
+    channel: ChannelSlug,
+    sourceId: string,
+    payload: CloneChannelAccountPayload,
+  ): Promise<ChannelAccountDTO> {
+    const rawDomain = payload.external_id || payload.site_url || payload.domain;
+    if (!rawDomain) {
+      throw new AppError(400, "INVALID_DOMAIN", "Укажите адрес сайта или домен для клонированного виджета");
+    }
+
+    const domain = normalizeDomain(rawDomain);
+    if (!isValidDomain(domain)) {
+      throw new AppError(
+        400,
+        "INVALID_DOMAIN_FORMAT",
+        "Некорректный формат адреса сайта (укажите домен, например: new-shop.ru или sub.company.ru)",
+      );
+    }
+
+    return withTenant(tenantId, async () => {
+      // 1. Получаем исходный виджет строго в контексте тенанта (проверка RLS/IDOR)
+      const source = await this.get(tenantId, channel, sourceId);
+      if (!source) {
+        throw new NotFoundError("Исходный виджет не найден");
+      }
+
+      // 2. Запрет клонирования на точно такой же домен
+      if (normalizeDomain(source.externalId) === domain) {
+        throw new AppError(
+          400,
+          "SAME_DOMAIN_CLONE",
+          "Для клонирования укажите новый адрес сайта, отличный от исходного",
+        );
+      }
+
+      // 3. Формируем название: если не передано, берем "[Название оригинала] (Копия)"
+      const newLabel = payload.label?.trim() || `${source.label} (Копия)`;
+
+      // 4. Привязка AI-ассистента: если явно передана в payload — используем ее, иначе копируем из оригинала
+      const targetAgentId = payload.agent_id !== undefined ? payload.agent_id : source.boundAgentId;
+
+      // 5. Глубокое клонирование всех настроек внешнего вида и параметров виджета
+      const clonedCredentials = source.credentials
+        ? (JSON.parse(JSON.stringify(source.credentials)) as Record<string, unknown>)
+        : {};
+
+      // 6. Создаем новую изолированную запись с новым UUID через create()
+      return this.create(tenantId, channel, {
+        label: newLabel,
+        external_id: domain,
+        credentials: clonedCredentials,
+        agent_id: targetAgentId,
+      });
+    });
+  }
+
+  async get(tenantId: string, channel: ChannelSlug, id: string): Promise<ChannelAccountDTO> {
+    const row = await queryOne<ChannelAccountRow>(
+      `SELECT ${SELECT_COLUMNS}
+       FROM channel_accounts
+       WHERE tenant_id = $1 AND channel = $2 AND id = $3 AND deleted_at IS NULL`,
+      [tenantId, channel, id],
+    );
+
+    if (row === null) throw new NotFoundError("Подключение не найдено");
+
+    const bound = await queryOne<{ agent_id: string; name: string }>(
+      `SELECT a.id AS agent_id, a.name
+       FROM ai_agent_channel_bindings b
+       JOIN ai_agents a ON a.id = b.agent_id
+       WHERE b.tenant_id = $1 AND b.channel_account_id = $2 AND b.is_enabled = true
+       LIMIT 1`,
+      [tenantId, id],
+    );
+    row.bound_agent_id = bound?.agent_id ?? null;
+    row.bound_agent_name = bound?.name ?? null;
+
+    return toDTO(row);
+  }
+
+  async toggleStatus(tenantId: string, channel: ChannelSlug, id: string): Promise<ChannelAccountDTO> {
+    const current = await this.get(tenantId, channel, id);
+    const nextStatus: ChannelStatus = current.status === "disabled" ? "connected" : "disabled";
+    return this.update(tenantId, channel, id, { status: nextStatus, is_enabled: nextStatus === "connected" });
+  }
+
+  /**
    * Изменение подключения.
    *
    * `connected_at` выставляется вместе с переходом в `connected` и только при
@@ -273,6 +446,14 @@ export class ChannelsService {
     id: string,
     payload: UpdateChannelAccountPayload,
   ): Promise<ChannelAccountDTO> {
+    const statusToSet =
+      payload.status ??
+      (payload.is_enabled !== undefined
+        ? payload.is_enabled
+          ? "connected"
+          : "disabled"
+        : null);
+
     const row = await queryOne<ChannelAccountRow>(
       `UPDATE channel_accounts SET
          label = COALESCE($4, label),
@@ -293,7 +474,7 @@ export class ChannelsService {
         channel,
         id,
         payload.label ?? null,
-        payload.status ?? null,
+        statusToSet,
         payload.status_message ?? null,
         payload.credentials === undefined ? null : JSON.stringify(payload.credentials),
       ],

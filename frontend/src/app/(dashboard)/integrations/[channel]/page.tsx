@@ -8,6 +8,7 @@ import { CheckCircle2, Gift, Plug, Plus, ShoppingBag } from "lucide-react";
 import { Guard } from "@/components/shared/Guard";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ChannelAccountsTable } from "@/components/integrations/ChannelAccountsTable";
+import { ChannelAccountLinksCard } from "@/components/integrations/ChannelAccountLinksCard";
 import { ConnectChannelModal } from "@/components/integrations/ConnectChannelModal";
 import { ConnectTelegramModal } from "@/components/integrations/ConnectTelegramModal";
 import { ConnectWhatsappModal } from "@/components/integrations/ConnectWhatsappModal";
@@ -36,7 +37,8 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
 
   // Лимит считается по оплаченному количеству: кнопка не должна предлагать
   // действие, которое сервер отклонит с 409 CHANNEL_LIMIT_REACHED.
-  const limitReached = summary !== undefined && summary.total >= summary.quantity;
+  const isUnlimited = Boolean(summary?.isUnlimited || summary?.is_unlimited);
+  const limitReached = summary !== undefined && !isUnlimited && summary.total >= summary.quantity;
   const daysLeft = trialDaysLeft(summary?.trialEndsAt ?? null);
 
   const openConnect = useCallback(() => setConnectOpen(true), []);
@@ -117,6 +119,12 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
           </button>
         )}
       </div>
+
+      <ChannelAccountLinksCard
+        channel={channel}
+        accounts={accounts}
+        onConnect={limitReached ? undefined : openConnect}
+      />
 
       <ChannelAccountsTable
         channel={channel}

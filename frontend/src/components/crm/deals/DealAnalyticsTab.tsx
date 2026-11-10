@@ -5,6 +5,7 @@ import {
   Activity,
   ArrowRight,
   BarChart3,
+  Building2,
   Check,
   Clock,
   Compass,
@@ -18,6 +19,7 @@ import {
   MapPin,
   MessageCircle,
   Monitor,
+  Navigation,
   Phone,
   Send,
   ShieldCheck,
@@ -57,6 +59,25 @@ interface DeviceInfoData {
   maxTouchPoints?: number;
   canvasHash?: string;
   gpuRenderer?: string;
+}
+
+interface VisitorGeoData {
+  ip?: string;
+  country?: string;
+  countryCode?: string;
+  region?: string;
+  city?: string;
+  district?: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
+  timezone?: string;
+  isp?: string;
+  sourceType?: "ip" | "gps" | "hybrid" | "local" | "unknown";
+  provider?: string;
+  resolvedAt?: string;
+  mapUrl?: string;
 }
 
 function CopyableValue({
@@ -127,7 +148,8 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
   const webchatVisitorId = (mergedFields.webchat_visitor_id as string | undefined) || (mergedFields.visitorId as string | undefined);
 
   // Канал поступления
-  const channel = contactQuery.data?.channel || (deal.title.toLowerCase().includes("webchat") || deal.title.includes("Онлайн-чат") ? "webchat" : "unknown");
+  const dealTitleLower = (deal?.title || "").toLowerCase();
+  const channel = contactQuery.data?.channel || (dealTitleLower.includes("webchat") || dealTitleLower.includes("онлайн-чат") ? "webchat" : "unknown");
 
   // 2. UTM-метки
   const utmTags = (
@@ -164,6 +186,23 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
         : {}
   ) as DeviceInfoData;
 
+  // 6. Геолокация и адрес посетителя
+  const rawGeo = (
+    dealFields.geo && typeof dealFields.geo === "object"
+      ? dealFields.geo
+      : contactFields.geo && typeof contactFields.geo === "object"
+        ? contactFields.geo
+        : deal.sourceMetadata && typeof deal.sourceMetadata === "object" && (deal.sourceMetadata as Record<string, unknown>).geo
+          ? (deal.sourceMetadata as Record<string, unknown>).geo
+          : contactQuery.data?.sourceMetadata && typeof contactQuery.data.sourceMetadata === "object" && (contactQuery.data.sourceMetadata as Record<string, unknown>).geo
+            ? (contactQuery.data.sourceMetadata as Record<string, unknown>).geo
+            : undefined
+  ) as VisitorGeoData | undefined;
+
+  const geoLat = rawGeo?.latitude !== undefined && rawGeo.latitude !== null ? Number(rawGeo.latitude) : NaN;
+  const geoLon = rawGeo?.longitude !== undefined && rawGeo.longitude !== null ? Number(rawGeo.longitude) : NaN;
+  const hasValidCoords = Number.isFinite(geoLat) && Number.isFinite(geoLon);
+
   const hasAnyAnalytics =
     Boolean(pageUrl) ||
     Boolean(referrer) ||
@@ -172,6 +211,7 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
     Boolean(yandexuid) ||
     Boolean(webchatVisitorId) ||
     Boolean(deviceFingerprint) ||
+    Boolean(rawGeo) ||
     Object.keys(utmTags).length > 0 ||
     Object.keys(clickIds).length > 0 ||
     Boolean(rawDeviceInfo.ip || rawDeviceInfo.os || rawDeviceInfo.browser);
@@ -318,7 +358,134 @@ export function DealAnalyticsTab({ deal }: DealAnalyticsTabProps) {
         )}
       </div>
 
-      {/* 2. Блок: UTM-метки и рекламные кампании */}
+      {/* 2. Блок: Геолокация и адрес посетителя */}
+      {rawGeo && (
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-2.5">
+            <div className="flex items-center gap-2 font-medium text-[#111111]">
+              <MapPin className="w-4 h-4 text-[#4a38f5]" />
+              <span>Геолокация и адрес посетителя</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {rawGeo.sourceType === "gps" ? (
+                <TagPill color="emerald">
+                  <span className="flex items-center gap-1">
+                    <Navigation className="w-3 h-3" /> Точный GPS
+                    {rawGeo.accuracy ? ` (±${rawGeo.accuracy} м)` : ""}
+                  </span>
+                </TagPill>
+              ) : rawGeo.sourceType === "local" ? (
+                <TagPill color="slate">
+                  <span className="flex items-center gap-1">Локальная сеть</span>
+                </TagPill>
+              ) : (
+                <TagPill color="sky">
+                  <span className="flex items-center gap-1">
+                    <Globe className="w-3 h-3" /> IP-геолокация
+                  </span>
+                </TagPill>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <div className="space-y-1">
+              <span className="text-xs text-[#666666] font-medium flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-[#888888]" /> Город и регион
+              </span>
+              <p className="font-medium text-[#111111]">
+                {[rawGeo.city, rawGeo.region && rawGeo.region !== rawGeo.city ? rawGeo.region : null, rawGeo.country]
+                  .filter(Boolean)
+                  .join(", ") || "Не определен"}
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-xs text-[#666666] font-medium flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-[#888888]" /> Физический адрес
+              </span>
+              <div>
+                <CopyableValue
+                  value={rawGeo.address || [rawGeo.city, rawGeo.country].filter(Boolean).join(", ") || "Приблизительная зона IP"}
+                  label="Адрес"
+                  mono={false}
+                />
+              </div>
+            </div>
+
+            {hasValidCoords && (
+              <div className="space-y-1">
+                <span className="text-xs text-[#666666] font-medium flex items-center gap-1.5">
+                  <Navigation className="w-3.5 h-3.5 text-[#888888]" /> Географические координаты
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CopyableValue
+                    value={`${geoLat.toFixed(5)}, ${geoLon.toFixed(5)}`}
+                    label="Координаты"
+                  />
+                  <div className="flex items-center gap-1.5 pl-1">
+                    <a
+                      href={`https://yandex.ru/maps/?pt=${geoLon},${geoLat}&z=15&l=map`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-medium text-[#4a38f5] hover:underline flex items-center gap-0.5"
+                    >
+                      Яндекс.Карты <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <span className="text-[#cccccc]">·</span>
+                    <a
+                      href={`https://www.openstreetmap.org/?mlat=${geoLat}&mlon=${geoLon}#map=16/${geoLat}/${geoLon}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-medium text-[#666666] hover:text-[#111111] flex items-center gap-0.5"
+                    >
+                      OSM <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(rawGeo.ip || rawGeo.isp) && (
+              <div className="space-y-1">
+                <span className="text-xs text-[#666666] font-medium flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-[#888888]" /> Сеть / Провайдер (ISP)
+                </span>
+                <div className="flex items-center gap-1.5 truncate">
+                  {rawGeo.isp && <span className="font-medium text-[#111111] truncate">{rawGeo.isp}</span>}
+                  {rawGeo.ip && (
+                    <span className="font-mono text-xs text-[#666666] shrink-0">
+                      ({rawGeo.ip})
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {hasValidCoords && (
+            <div className="relative mt-2 h-36 w-full overflow-hidden rounded-[6px] border border-[#e5e5e5] bg-[#f5f5f5]">
+              <iframe
+                title="Карта расположения"
+                className="h-full w-full border-0 pointer-events-none"
+                loading="lazy"
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${geoLon - 0.012}%2C${geoLat - 0.008}%2C${geoLon + 0.012}%2C${geoLat + 0.008}&layer=mapnik&marker=${geoLat}%2C${geoLon}`}
+              />
+              <a
+                href={`https://yandex.ru/maps/?pt=${geoLon},${geoLat}&z=15&l=map`}
+                target="_blank"
+                rel="noreferrer"
+                className="absolute bottom-2 right-2 flex items-center gap-1 rounded-[6px] bg-white/95 px-2.5 py-1 text-xs font-medium text-[#4a38f5] shadow-xs hover:bg-white hover:underline transition-colors backdrop-blur-xs"
+              >
+                <span>Открыть на Яндекс.Картах</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 3. Блок: UTM-метки и рекламные кампании */}
       <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs space-y-3">
         <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-2.5">
           <div className="flex items-center gap-2 font-medium text-[#111111]">

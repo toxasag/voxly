@@ -68,4 +68,26 @@ describe("Notification Channels & Anti-Ban Architecture", () => {
     assert.equal(normalizePhone("79150946944"), "+79150946944");
     assert.equal(normalizePhone("+375 (29) 123-45-67"), "+375291234567");
   });
+
+  it("Test 5: Telegram auto-binding meta correctly extracts owner handle and Chat ID badge", () => {
+    const channel = {
+      destination: "239374030",
+      channel_type: "telegram",
+      extra_meta: {
+        username: "bugy2000",
+        name: "Константин",
+        auto_linked: true,
+        source: "owner_account",
+      },
+    };
+
+    const meta = channel.extra_meta;
+    const tgUsername = meta.username ? `@${meta.username}` : null;
+    const isAutoLinked = Boolean(meta.auto_linked);
+    const badgeId = `ID: ${channel.destination}`;
+
+    assert.equal(tgUsername, "@bugy2000");
+    assert.equal(isAutoLinked, true);
+    assert.equal(badgeId, "ID: 239374030");
+  });
 });

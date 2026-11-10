@@ -1,5 +1,6 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
+import type { Role, PlatformRole } from "../../types/index.js";
 import { AuthService } from "./auth.service.js";
 import { AuthSessionService } from "./auth-session.service.js";
 import { PasswordResetService } from "./password-reset.service.js";
@@ -9,7 +10,8 @@ import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
-import { UnauthorizedError } from "../../plugins/errorHandler.js";
+import { UnauthorizedError, PermissionDeniedError, NotFoundError } from "../../plugins/errorHandler.js";
+import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import {
   setAuthCookies,
   clearAuthCookies,
@@ -160,6 +162,7 @@ const telegramUpdate = z.object({
       }),
       from: z
         .object({
+          id: z.number().optional(),
           username: z.string().optional(),
           first_name: z.string().optional(),
           last_name: z.string().optional(),
@@ -304,12 +307,38 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     const startMatch = /^\/start(?:\s+([A-Za-z0-9_-]+))?/.exec(text);
 
     if (startMatch === null) {
+      // Пользователь отправил обычное текстовое сообщение: фиксируем квалифицированное первое сообщение
+      if (text.length > 0) {
+        await attributionEngineService.handleIncomingMessage(
+          "telegram",
+          String(message.from?.id || chatId),
+          text,
+          {
+            username: message.from?.username ?? null,
+            chatId: String(chatId),
+          },
+        );
+      }
       return reply.status(200).send({ ok: true });
     }
 
     const token = startMatch[1];
 
     if (token === undefined) {
+      await telegram.sendGreeting(chatId);
+      return reply.status(200).send({ ok: true });
+    }
+
+    // Регистрация запуска бота по маркетинговому deep link: ref_<token>
+    // ВНИМАНИЕ: На этом этапе конверсия НЕ отправляется, чтобы не сливать бюджет за пустые клики
+    if (token.startsWith("ref_")) {
+      await attributionEngineService.handleBotStart(
+        token,
+        "telegram",
+        String(message.from?.id || chatId),
+        message.from?.username ?? null,
+        String(chatId),
+      );
       await telegram.sendGreeting(chatId);
       return reply.status(200).send({ ok: true });
     }
@@ -440,16 +469,27 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
    * Пароль проверяется первым: код без пароля не должен пускать в систему, а
    * пароль без кода — тем более.
    */
-  app.post("/login/verify", async (request, reply) => {
-    const body = loginWithCodeBody.parse(request.body);
-    const meta = {
-      userAgent: request.headers["user-agent"],
-      ip: request.ip,
-    };
-    const result = await service.loginWithPasswordAndCode(sessions, body, meta);
-    setAuthCookies(request, reply, result);
-    return reply.status(200).send({ data: result });
-  });
+  app.post(
+    "/login/verify",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = loginWithCodeBody.parse(request.body);
+      const meta = {
+        userAgent: request.headers["user-agent"],
+        ip: request.ip,
+      };
+      const result = await service.loginWithPasswordAndCode(sessions, body, meta);
+      setAuthCookies(request, reply, result);
+      return reply.status(200).send({ data: result });
+    },
+  );
 
   app.post("/otp/send", async (request, reply) => {
     const body = sendOtpBody.parse(request.body);
@@ -468,16 +508,27 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     return reply.status(200).send({ data: result });
   });
 
-  app.post("/login", async (request, reply) => {
-    const body = loginBody.parse(request.body);
-    const meta = {
-      userAgent: request.headers["user-agent"],
-      ip: request.ip,
-    };
-    const result = await service.loginWithPassword(body.email, body.password, meta);
-    setAuthCookies(request, reply, result);
-    return reply.status(200).send({ data: result });
-  });
+  app.post(
+    "/login",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = loginBody.parse(request.body);
+      const meta = {
+        userAgent: request.headers["user-agent"],
+        ip: request.ip,
+      };
+      const result = await service.loginWithPassword(body.email, body.password, meta);
+      setAuthCookies(request, reply, result);
+      return reply.status(200).send({ data: result });
+    },
+  );
 
   /**
    * Public self-service registration: creates the tenant, its subdomain and
@@ -620,87 +671,366 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
    * Получение данных текущей сессии без ротации refresh-токена.
    * Позволяет Next.js восстанавливать профиль на старте без гонок и сброса сессий.
    */
-  app.get("/me", async (request, reply) => {
-    const authHeader = request.headers.authorization;
-    const cookies = parseCookies(request.headers.cookie);
-    let token: string | null = null;
+  app.get(
+    "/me",
+    {
+      config: {
+        rateLimit: {
+          max: 200,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const authHeader = request.headers.authorization;
+      const cookies = parseCookies(request.headers.cookie);
+      let token: string | null = null;
 
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.slice("Bearer ".length);
-    } else if (cookies[AUTH_COOKIE_NAME]) {
-      token = cookies[AUTH_COOKIE_NAME];
-    }
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.slice("Bearer ".length);
+      } else if (cookies[AUTH_COOKIE_NAME]) {
+        token = cookies[AUTH_COOKIE_NAME];
+      }
 
-    if (!token) {
-      throw new UnauthorizedError("Missing bearer token");
-    }
+      if (!token) {
+        throw new UnauthorizedError("Missing bearer token");
+      }
 
-    let payload: { sub: string; tenant_id: string; typ?: string };
-    try {
-      payload = app.jwt.verify(token) as { sub: string; tenant_id: string; typ?: string };
-    } catch {
-      throw new UnauthorizedError("Invalid or expired token");
-    }
+      let payload: { sub: string; tenant_id: string; typ?: string; impersonator_id?: string };
+      try {
+        payload = app.jwt.verify(token) as { sub: string; tenant_id: string; typ?: string; impersonator_id?: string };
+      } catch {
+        throw new UnauthorizedError("Invalid or expired token");
+      }
 
-    if (payload.typ !== undefined && payload.typ !== "access") {
-      throw new UnauthorizedError("Invalid token type");
-    }
+      if (payload.typ !== undefined && payload.typ !== "access") {
+        throw new UnauthorizedError("Invalid token type");
+      }
 
-    const data = await service.getMe(payload.sub, payload.tenant_id);
-    return reply.status(200).send({ data });
-  });
+      const data = await service.getMe(payload.sub, payload.tenant_id, payload.impersonator_id);
+      return reply.status(200).send({ data });
+    },
+  );
 
-  app.post("/refresh", async (request, reply) => {
-    const cookies = parseCookies(request.headers.cookie);
-    let candidateToken: string | undefined;
+  app.post(
+    "/refresh",
+    {
+      config: {
+        rateLimit: {
+          max: 120,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const cookies = parseCookies(request.headers.cookie);
+      let candidateToken: string | undefined;
+
+      if (request.body && typeof request.body === "object") {
+        const parsed = refreshBody.safeParse(request.body);
+        if (parsed.success) {
+          candidateToken = parsed.data.refresh_token;
+        }
+      }
+
+      const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+      if (!refreshToken || typeof refreshToken !== "string" || refreshToken.trim().length === 0) {
+        clearAuthCookies(request, reply);
+        throw new UnauthorizedError("Refresh token is required");
+      }
+
+      let impersonatorId: string | undefined;
+      const authHeader = request.headers.authorization;
+      const rawAccessToken =
+        authHeader && authHeader.startsWith("Bearer ")
+          ? authHeader.slice("Bearer ".length)
+          : cookies[AUTH_COOKIE_NAME];
+      if (rawAccessToken) {
+        try {
+          const decoded = app.jwt.decode<{ impersonator_id?: string }>(rawAccessToken);
+          if (decoded && typeof decoded.impersonator_id === "string") {
+            impersonatorId = decoded.impersonator_id;
+          }
+        } catch {
+          // ignore decode errors
+        }
+      }
+
+      const meta = {
+        userAgent: request.headers["user-agent"],
+        ip: request.ip,
+      };
+      try {
+        const result = await service.refreshToken(refreshToken.trim(), meta, impersonatorId);
+        setAuthCookies(request, reply, result);
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        clearAuthCookies(request, reply);
+        throw err;
+      }
+    },
+  );
+
+  const handleExitImpersonation = async (request: FastifyRequest, reply: FastifyReply) => {
+    let candidateRefresh: string | undefined;
+    let candidateAccess: string | undefined;
 
     if (request.body && typeof request.body === "object") {
-      const parsed = refreshBody.safeParse(request.body);
+      const parsed = z
+        .object({
+          admin_refresh_token: z.string().optional(),
+          admin_access_token: z.string().optional(),
+        })
+        .safeParse(request.body);
       if (parsed.success) {
-        candidateToken = parsed.data.refresh_token;
+        candidateRefresh = parsed.data.admin_refresh_token;
+        candidateAccess = parsed.data.admin_access_token;
       }
     }
 
-    const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
-    if (!refreshToken || typeof refreshToken !== "string" || refreshToken.trim().length === 0) {
-      clearAuthCookies(request, reply);
-      throw new UnauthorizedError("Refresh token is required");
+    const cookies = parseCookies(request.headers.cookie);
+    const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+    const rawAccessToken =
+      (request.headers.authorization || "").replace(/^Bearer\s+/i, "") || cookies[AUTH_COOKIE_NAME];
+
+    let impersonatorIdFromToken: string | undefined;
+    if (rawAccessToken) {
+      try {
+        const decoded = app.jwt.decode<{ impersonator_id?: string }>(rawAccessToken);
+        if (decoded && typeof decoded.impersonator_id === "string") {
+          impersonatorIdFromToken = decoded.impersonator_id;
+        }
+      } catch {
+        // ignore
+      }
     }
 
     const meta = {
       userAgent: request.headers["user-agent"],
       ip: request.ip,
     };
-    try {
-      const result = await service.refreshToken(refreshToken.trim(), meta);
-      setAuthCookies(request, reply, result);
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      clearAuthCookies(request, reply);
-      throw err;
-    }
-  });
 
-  app.post("/logout", async (request, reply) => {
-    const cookies = parseCookies(request.headers.cookie);
-    let candidateToken: string | undefined;
+    const tokens = await service.exitImpersonation(
+      {
+        adminRefreshToken: candidateRefresh,
+        adminAccessToken: candidateAccess || rawAccessToken,
+        cookieRefreshToken: cookieRefresh,
+        impersonatorId: impersonatorIdFromToken,
+      },
+      meta,
+    );
 
-    if (request.body && typeof request.body === "object") {
-      const parsed = refreshBody.safeParse(request.body);
-      if (parsed.success) {
-        candidateToken = parsed.data.refresh_token;
+    setAuthCookies(request, reply, tokens);
+    return reply.status(200).send({ success: true, data: tokens });
+  };
+
+  app.post(
+    "/exit-impersonation",
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    handleExitImpersonation,
+  );
+
+  app.post(
+    "/revert-impersonation",
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    handleExitImpersonation,
+  );
+
+  const impersonateBodySchema = z
+    .object({
+      tenant_id: z.string().uuid().optional(),
+      slug: z.string().min(1).optional(),
+    })
+    .refine((data) => data.tenant_id !== undefined || data.slug !== undefined, {
+      message: "Необходимо передать tenant_id или slug",
+    });
+
+  app.post(
+    "/impersonate",
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const cookies = parseCookies(request.headers.cookie);
+      const rawToken =
+        (request.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() ||
+        cookies[AUTH_COOKIE_NAME] ||
+        cookies["getvoxly_auth_token"] ||
+        "";
+      if (!rawToken) {
+        throw new UnauthorizedError("Необходима авторизация");
       }
-    }
+      let payload: { sub: string; tenant_id: string; typ?: string; impersonator_id?: string };
+      try {
+        payload = app.jwt.verify(rawToken);
+      } catch {
+        throw new UnauthorizedError("Недействительный токен");
+      }
+      const callerUser = await queryOne<{
+        id: string;
+        tenant_id: string;
+        email: string;
+        name: string;
+        role: Role;
+        platform_role: PlatformRole | null;
+        is_partner: boolean;
+        tenant_is_partner: boolean;
+      }>(
+        `SELECT u.id, u.tenant_id, u.email, u.name, u.role, u.platform_role, u.is_partner, t.is_partner AS tenant_is_partner
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [payload.sub],
+      );
+      if (!callerUser) {
+        throw new UnauthorizedError("Пользователь не найден");
+      }
 
-    const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
-    let result = { message: "Logged out" };
-    if (refreshToken && typeof refreshToken === "string" && refreshToken.trim().length > 0) {
-      result = await service.logout(refreshToken.trim());
-    }
+      let impersonatorUser: {
+        id: string;
+        tenant_id: string;
+        platform_role: PlatformRole | null;
+        is_partner: boolean;
+        role: Role;
+      } | null = null;
 
-    clearAuthCookies(request, reply);
-    return reply.status(200).send({ data: result });
-  });
+      if (typeof payload.impersonator_id === "string") {
+        impersonatorUser = await queryOne(
+          `SELECT u.id, u.tenant_id, u.platform_role, u.is_partner, u.role, t.is_partner AS tenant_is_partner
+           FROM users u
+           JOIN tenants t ON t.id = u.tenant_id
+           WHERE u.id = $1 AND u.deleted_at IS NULL`,
+          [payload.impersonator_id],
+        );
+      }
+
+      const body = impersonateBodySchema.parse(request.body);
+      let targetTenant: {
+        id: string;
+        name: string;
+        slug: string;
+        parent_tenant_id: string | null;
+        owner_partner_id: string | null;
+      } | null = null;
+
+      if (body.tenant_id) {
+        targetTenant = await queryOne(
+          `SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE id = $1`,
+          [body.tenant_id],
+        );
+      } else if (body.slug) {
+        targetTenant = await queryOne(
+          `SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE lower(slug) = lower($1)`,
+          [body.slug.trim()],
+        );
+      }
+
+      if (!targetTenant) {
+        throw new NotFoundError("Компания не найдена");
+      }
+
+      const isPlatformOwner =
+        callerUser.platform_role === "platform_owner" ||
+        impersonatorUser?.platform_role === "platform_owner";
+
+      const partnerTenantId = impersonatorUser ? impersonatorUser.tenant_id : callerUser.tenant_id;
+      const isPartner =
+        callerUser.is_partner === true ||
+        callerUser.role === "partner" ||
+        callerUser.tenant_is_partner === true ||
+        impersonatorUser?.is_partner === true ||
+        impersonatorUser?.role === "partner";
+
+      const isTargetChildOfPartner =
+        (targetTenant.parent_tenant_id !== null && targetTenant.parent_tenant_id === partnerTenantId) ||
+        (targetTenant.owner_partner_id !== null && targetTenant.owner_partner_id === partnerTenantId);
+
+      if (!isPlatformOwner && !(isPartner && isTargetChildOfPartner)) {
+        throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
+      }
+
+      const actorId = isPlatformOwner
+        ? callerUser.platform_role === "platform_owner"
+          ? callerUser.id
+          : impersonatorUser?.id || callerUser.id
+        : impersonatorUser?.id || callerUser.id;
+
+      if (!actorId) {
+        throw new UnauthorizedError("Не удалось определить идентификатор администратора или партнера");
+      }
+
+      const tokens = await service.impersonateTenant(targetTenant.id, actorId);
+      setAuthCookies(request, reply, tokens);
+
+      const adminRefreshToken = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"] || "";
+      const adminAccessToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+      return reply.send({
+        success: true,
+        data: {
+          ...tokens,
+          admin_refresh_token: adminRefreshToken,
+          admin_access_token: adminAccessToken,
+          admin_user: {
+            id: actorId,
+            email: callerUser.email,
+            name: callerUser.name,
+          },
+        },
+      });
+    },
+  );
+
+  app.post(
+    "/logout",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const cookies = parseCookies(request.headers.cookie);
+      let candidateToken: string | undefined;
+
+      if (request.body && typeof request.body === "object") {
+        const parsed = refreshBody.safeParse(request.body);
+        if (parsed.success) {
+          candidateToken = parsed.data.refresh_token;
+        }
+      }
+
+      const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+      let result = { message: "Logged out" };
+      if (refreshToken && typeof refreshToken === "string" && refreshToken.trim().length > 0) {
+        result = await service.logout(refreshToken.trim());
+      }
+
+      clearAuthCookies(request, reply);
+      return reply.status(200).send({ data: result });
+    },
+  );
 };
 
 export default authRoutes;

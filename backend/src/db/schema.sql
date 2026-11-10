@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS tenants (
   custom_plan_name TEXT DEFAULT NULL,
   business_niche TEXT DEFAULT NULL,
   custom_notes TEXT DEFAULT NULL,
+  is_partner BOOLEAN NOT NULL DEFAULT false,
+  tenant_type VARCHAR(20) NOT NULL DEFAULT 'client',
+  parent_tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+  owner_partner_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT tenants_slug_format CHECK (
@@ -415,6 +419,7 @@ CREATE TABLE IF NOT EXISTS deal_messages (
   channel TEXT NOT NULL DEFAULT 'system',
   attachment TEXT,
   attachment_type TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   -- Доставка исходящего в канал. Хранится на строке сообщения, а не тостом на
   -- фронте: тост исчезает, а неотправленное сообщение осталось бы висеть в
   -- таймлайне как отправленное. `neutral` — доставлять некуда (входящие,
@@ -456,6 +461,7 @@ CREATE TABLE IF NOT EXISTS notes (
   contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
   company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
   deal_id UUID REFERENCES deals(id) ON DELETE CASCADE,
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -569,6 +575,7 @@ CREATE TABLE IF NOT EXISTS repair_orders (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   ticket_number TEXT NOT NULL,
+  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
   customer_id UUID NOT NULL,
   customer_name TEXT NOT NULL,
   customer_phone TEXT NOT NULL,
@@ -581,6 +588,7 @@ CREATE TABLE IF NOT EXISTS repair_orders (
   defect_description TEXT NOT NULL,
   defect_photos TEXT[] NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'intake',
+  payment_status TEXT NOT NULL DEFAULT 'unpaid',
   priority TEXT NOT NULL DEFAULT 'normal',
   master_id UUID NOT NULL,
   master_name TEXT NOT NULL,
@@ -602,6 +610,8 @@ CREATE TABLE IF NOT EXISTS repair_works (
   description TEXT NOT NULL,
   master_id UUID NOT NULL,
   master_name TEXT NOT NULL,
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
   cost NUMERIC NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -610,6 +620,8 @@ CREATE TABLE IF NOT EXISTS repair_parts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  warehouse_item_id UUID,
+  status TEXT NOT NULL DEFAULT 'used',
   name TEXT NOT NULL,
   article TEXT NOT NULL DEFAULT '',
   quantity INT NOT NULL DEFAULT 1,
@@ -624,6 +636,8 @@ ALTER TABLE repair_works ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tena
 ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
 
 ALTER TABLE repair_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE repair_orders ADD COLUMN IF NOT EXISTS deal_id UUID REFERENCES deals(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_repair_orders_deal_id ON repair_orders(tenant_id, deal_id) WHERE deal_id IS NOT NULL;
 
 -- Technician notes and status-change log for a repair order
 CREATE TABLE IF NOT EXISTS repair_notes (
@@ -740,6 +754,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   cash_account_id UUID NOT NULL REFERENCES cash_accounts(id),
   category_id UUID REFERENCES finance_categories(id),
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
   amount NUMERIC NOT NULL,
   currency TEXT NOT NULL DEFAULT 'RUB',
   direction TEXT NOT NULL,
@@ -1327,6 +1342,7 @@ CREATE INDEX IF NOT EXISTS idx_companies_tenant_id ON companies(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deals_tenant_id ON deals(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_tenant_id ON deal_messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_channel_account_id ON deal_messages(channel_account_id);
+CREATE INDEX IF NOT EXISTS idx_deal_messages_metadata_gin ON deal_messages USING gin (metadata);
 CREATE INDEX IF NOT EXISTS idx_contacts_telegram_chat_id ON contacts(tenant_id, telegram_chat_id) WHERE telegram_chat_id IS NOT NULL;
 -- Поиск контакта по любому из его номеров и мессенджеров идёт по JSONB: без GIN
 -- crm-pipeline читал бы таблицу целиком на каждое входящее сообщение.
@@ -1519,3 +1535,240 @@ CREATE POLICY tenant_isolation ON invoice_items
         AND i.tenant_id = current_tenant_id()
     )
   );
+
+-- Каналы уведомлений и передачи заявок (Email, Telegram, WhatsApp, Битрикс24)
+CREATE TABLE IF NOT EXISTS tenant_notification_channels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    channel_type VARCHAR(20) NOT NULL CHECK (channel_type IN ('email', 'telegram', 'whatsapp', 'bitrix24')),
+    destination TEXT NOT NULL,
+    extra_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    is_verified BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_notification_channels_direct
+    ON tenant_notification_channels (tenant_id, channel_type, destination)
+    WHERE channel_type IN ('email', 'telegram', 'whatsapp');
+
+CREATE INDEX IF NOT EXISTS idx_tenant_notification_channels_active
+    ON tenant_notification_channels (tenant_id, is_active)
+    WHERE is_active = TRUE;
+
+ALTER TABLE tenant_notification_channels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_notification_channels FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON tenant_notification_channels;
+CREATE POLICY tenant_isolation ON tenant_notification_channels
+    FOR ALL
+    USING (tenant_id = current_tenant_id() OR platform_scope())
+    WITH CHECK (tenant_id = current_tenant_id());
+
+-- Интеграция с Битрикс24 (входящий вебхук crm.lead.add)
+CREATE TABLE IF NOT EXISTS tenant_bitrix24_configs (
+  tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  webhook_url TEXT NOT NULL DEFAULT '',
+  is_enabled BOOLEAN NOT NULL DEFAULT false,
+  allowed_sources TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+  selected_widget_ids TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+  custom_source_id TEXT NOT NULL DEFAULT 'UC_VWN1ZK',
+  send_utm_marks BOOLEAN NOT NULL DEFAULT true,
+  send_geo_data BOOLEAN NOT NULL DEFAULT true,
+  last_lead_id TEXT,
+  last_sync_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE tenant_bitrix24_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_bitrix24_configs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_bitrix24_configs_isolation ON tenant_bitrix24_configs;
+CREATE POLICY tenant_bitrix24_configs_isolation ON tenant_bitrix24_configs
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Журнал синхронизации с Битрикс24 (наблюдаемость исходящих лидов)
+CREATE TABLE IF NOT EXISTS bitrix24_sync_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
+  entity_type VARCHAR(32) NOT NULL DEFAULT 'deal',
+  direction VARCHAR(16) NOT NULL DEFAULT 'outbound',
+  status VARCHAR(32) NOT NULL,
+  bitrix_lead_id VARCHAR(64),
+  webhook_url TEXT,
+  request_payload JSONB,
+  response_status INTEGER,
+  response_body JSONB,
+  error_message TEXT,
+  lead_source VARCHAR(64),
+  widget_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bitrix24_sync_logs_tenant_created ON bitrix24_sync_logs (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bitrix24_sync_logs_deal ON bitrix24_sync_logs (deal_id);
+
+ALTER TABLE bitrix24_sync_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bitrix24_sync_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS bitrix24_sync_logs_isolation ON bitrix24_sync_logs;
+CREATE POLICY bitrix24_sync_logs_isolation ON bitrix24_sync_logs
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Складской учет: Номенклатура
+CREATE TABLE IF NOT EXISTS warehouse_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  sku TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  unit TEXT NOT NULL DEFAULT 'шт',
+  min_stock NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  retail_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+-- Складской учет: Партии поступления (FIFO)
+CREATE TABLE IF NOT EXISTS warehouse_batches (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  batch_number TEXT NOT NULL DEFAULT '',
+  supplier_name TEXT NOT NULL DEFAULT '',
+  purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  initial_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  remaining_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Резервы
+CREATE TABLE IF NOT EXISTS warehouse_reservations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  batch_id UUID REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'reserved',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Журнал движений
+CREATE TABLE IF NOT EXISTS warehouse_movements (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  batch_id UUID REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  type TEXT NOT NULL,
+  quantity NUMERIC(10, 2) NOT NULL,
+  cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  description TEXT NOT NULL DEFAULT '',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Заявки на закупку
+CREATE TABLE IF NOT EXISTS purchase_requests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  item_name TEXT NOT NULL,
+  sku TEXT NOT NULL DEFAULT '',
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  unit TEXT NOT NULL DEFAULT 'шт',
+  estimated_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  comment TEXT NOT NULL DEFAULT '',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Конструктор печатных документов
+CREATE TABLE IF NOT EXISTS print_templates (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  document_type VARCHAR(64) NOT NULL DEFAULT 'work_order',
+  page_size TEXT NOT NULL DEFAULT 'A4',
+  orientation TEXT NOT NULL DEFAULT 'portrait',
+  body_template TEXT NOT NULL DEFAULT '',
+  layout_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  is_default BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_print_templates_tenant_doctype_default
+  ON print_templates(tenant_id, document_type)
+  WHERE is_default = true;
+
+CREATE INDEX IF NOT EXISTS idx_print_templates_tenant_doctype
+  ON print_templates(tenant_id, document_type);
+
+-- Настройки печати и брендинга документов
+CREATE TABLE IF NOT EXISTS print_template_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  company_name TEXT NOT NULL DEFAULT 'Ремонт инструмента ИП Сагайдак А.Г.',
+  company_address TEXT NOT NULL DEFAULT 'Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214',
+  company_phone TEXT NOT NULL DEFAULT '+7 977 628 20 49',
+  company_email TEXT NOT NULL DEFAULT '',
+  company_website TEXT NOT NULL DEFAULT 'РЕМОНТ-ИНСТРУМЕНТ.РФ',
+  company_inn TEXT NOT NULL DEFAULT '',
+  company_ogrn TEXT NOT NULL DEFAULT '',
+  working_hours TEXT NOT NULL DEFAULT 'Пн-Пт 10:00-19:00',
+  logo_url TEXT NOT NULL DEFAULT '/service-logo.png',
+  numbering_format TEXT NOT NULL DEFAULT 'compact',
+  numbering_prefix TEXT NOT NULL DEFAULT '№',
+  intake_terms TEXT NOT NULL DEFAULT '',
+  intake_pdn_consent TEXT NOT NULL DEFAULT '',
+  show_equipment_serial BOOLEAN NOT NULL DEFAULT true,
+  show_appearance BOOLEAN NOT NULL DEFAULT true,
+  show_package_contents BOOLEAN NOT NULL DEFAULT true,
+  show_defect_description BOOLEAN NOT NULL DEFAULT true,
+  show_estimated_cost BOOLEAN NOT NULL DEFAULT true,
+  show_client_tear_off_ticket BOOLEAN NOT NULL DEFAULT true,
+  show_intake_signatures BOOLEAN NOT NULL DEFAULT true,
+  warranty_terms TEXT NOT NULL DEFAULT '',
+  return_policy TEXT NOT NULL DEFAULT '',
+  show_works_table BOOLEAN NOT NULL DEFAULT true,
+  show_parts_table BOOLEAN NOT NULL DEFAULT true,
+  show_completion_signatures BOOLEAN NOT NULL DEFAULT true,
+  show_completion_stamp BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_print_template_settings_tenant UNIQUE (tenant_id)
+);
+
+-- Индивидуальные квоты и лимиты функций тенанта
+CREATE TABLE IF NOT EXISTS tenant_feature_quotas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  feature_key VARCHAR(64) NOT NULL,
+  is_unlimited BOOLEAN NOT NULL DEFAULT false,
+  max_limit INT NOT NULL DEFAULT 1,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_tenant_feature_quotas UNIQUE (tenant_id, feature_key)
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_feature_quotas_tenant ON tenant_feature_quotas(tenant_id);
+
+
+

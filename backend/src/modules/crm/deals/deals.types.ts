@@ -24,6 +24,7 @@ export const createDealSchema = z.object({
   contact_id: optionalUuid,
   company_id: optionalUuid,
   owner_id: optionalUuid,
+  source_widget_id: optionalUuid,
   close_date: optionalDate,
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
@@ -38,6 +39,7 @@ export const updateDealSchema = z.object({
   contact_id: optionalUuid,
   company_id: optionalUuid,
   owner_id: optionalUuid,
+  source_widget_id: optionalUuid,
   close_date: optionalDate,
   position: z.number().optional(),
   custom_fields: z.record(z.unknown()).optional(),
@@ -83,6 +85,7 @@ export const createDealMessageSchema = z.object({
   channel_account_id: z.string().uuid().optional().or(z.literal("")),
   attachment: z.string().max(500).optional().or(z.literal("")),
   attachment_type: z.string().max(50).optional().or(z.literal("")),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 export type CreateDealPayload = z.infer<typeof createDealSchema>;
@@ -105,6 +108,7 @@ export interface DealRow {
   stage_id: string;
   contact_id: string | null;
   company_id: string | null;
+  source_widget_id?: string | null;
   title: string;
   description: string;
   /** NUMERIC arrives from pg as a string. */
@@ -153,6 +157,7 @@ export interface DealDTO {
   stageId: string;
   contactId: string | null;
   companyId: string | null;
+  sourceWidgetId?: string | null;
   title: string;
   description: string;
   budget: number;
@@ -213,6 +218,7 @@ export function toDealDTO(row: DealRow): DealDTO {
     stageId: row.stage_id,
     contactId: row.contact_id,
     companyId: row.company_id,
+    sourceWidgetId: row.source_widget_id ?? null,
     title: row.title,
     description: row.description,
     budget: Number(row.budget),
@@ -257,6 +263,30 @@ export function toDealDTO(row: DealRow): DealDTO {
 export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed", "received"]);
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
 
+export interface AudioTranscriptMetadata {
+  text: string;
+  status: "pending" | "completed" | "failed";
+  language?: string;
+  duration?: number;
+  error?: string;
+}
+
+export interface DocumentInfoMetadata {
+  summary: string;
+  doc_type: string;
+  status: "pending" | "completed" | "failed";
+  file_size?: number;
+  pages_count?: number;
+  attributes?: Record<string, string>;
+  error?: string;
+}
+
+export interface DealMessageMetadata {
+  transcript?: AudioTranscriptMetadata;
+  document_info?: DocumentInfoMetadata;
+  [key: string]: unknown;
+}
+
 export interface DealMessageRow {
   id: string;
   tenant_id: string;
@@ -269,6 +299,7 @@ export interface DealMessageRow {
   channel: string;
   attachment: string | null;
   attachment_type: string | null;
+  metadata?: Record<string, unknown> | null;
   delivery_status: string;
   delivery_error: string | null;
   created_at: Date | string;
@@ -285,6 +316,7 @@ export interface DealMessageDTO {
   channel: string;
   attachment: string | null;
   attachmentType: string | null;
+  metadata: DealMessageMetadata;
   deliveryStatus: DeliveryStatus;
   deliveryError: string | null;
   createdAt: string;
@@ -308,6 +340,7 @@ export function toDealMessageDTO(row: DealMessageRow): DealMessageDTO {
     channel: row.channel,
     attachment: row.attachment,
     attachmentType: row.attachment_type,
+    metadata: (row.metadata as DealMessageMetadata) ?? {},
     deliveryStatus: toDeliveryStatus(row.delivery_status),
     deliveryError: row.delivery_error,
     createdAt: toIso(row.created_at),

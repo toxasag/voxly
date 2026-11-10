@@ -576,7 +576,7 @@ export class DealMessagingService {
   async listContactMessages(tenantId: string, contactId: string): Promise<DealMessageDTO[]> {
     const rows = await query<any>(
       `SELECT m.id, m.tenant_id, m.deal_id, m.channel_account_id, m.source, m.direction, m.sender_name, m.content, m.channel,
-              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.created_at
+              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.metadata, m.created_at
        FROM deal_messages m
        JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
        WHERE m.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
@@ -597,6 +597,7 @@ export class DealMessagingService {
       attachmentType: r.attachment_type,
       deliveryStatus: r.delivery_status,
       deliveryError: r.delivery_error,
+      metadata: r.metadata ?? {},
       createdAt: r.created_at,
     }));
   }
@@ -950,6 +951,38 @@ export class DealMessagingService {
             totalSynced += count;
           }
         }
+      }
+    }
+
+    // Синхронизация истории диалогов WhatsApp
+    const whatsappAccount = await queryOne<{ id: string }>(
+      `SELECT id FROM channel_accounts
+       WHERE tenant_id = $1 AND channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL
+       LIMIT 1`,
+      [tenantId],
+    );
+
+    if (whatsappAccount && deal.contact_id) {
+      const contact = await queryOne<{
+        first_name: string;
+        last_name: string;
+        phone: string;
+      }>(
+        `SELECT first_name, last_name, phone FROM contacts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, deal.contact_id],
+      );
+
+      if (contact && contact.phone) {
+        const { syncWhatsappDialogHistory } = await import("../../channels/whatsapp-integration.routes.js");
+        const count = await syncWhatsappDialogHistory({
+          tenantId,
+          dealId,
+          channelAccountId: whatsappAccount.id,
+          phone: contact.phone,
+          senderName: `${contact.first_name} ${contact.last_name}`.trim(),
+        });
+        totalSynced += count;
       }
     }
 

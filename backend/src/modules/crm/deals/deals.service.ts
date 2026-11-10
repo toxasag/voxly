@@ -22,10 +22,12 @@ import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js"
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
 import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
+import { notificationQueue } from "../../notifications/notification.queue.js";
+import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
 
 const DEAL_COLUMNS = `
-  id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
+  id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
   budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
   closed_at, lead_notified_at, created_at, updated_at
 `;
@@ -38,7 +40,7 @@ const DEAL_COLUMNS = `
  * список из 50 сделок стоил бы 150 дополнительных запросов.
  */
 const DEAL_COLUMNS_WITH_LABELS = `
-  d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.title,
+  d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.source_widget_id, d.title,
   d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
   co.name AS company_name,
@@ -109,7 +111,7 @@ const DEAL_LABEL_JOINS = `
 
 const MESSAGE_COLUMNS = `
   id, tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel,
-  attachment, attachment_type, delivery_status, delivery_error, created_at
+  attachment, attachment_type, delivery_status, delivery_error, metadata, created_at
 `;
 
 export type DealWonHandler = (payload: { tenantId: string; dealId: string }) => void | Promise<void>;
@@ -142,6 +144,24 @@ export function onDealStageChanged(handler: DealStageChangedHandler): () => void
   };
 }
 
+/**
+ * Оповещение слушателей о смене этапа сделки (StageRules, ConversionDispatcher и др.)
+ */
+export function notifyDealStageChanged(payload: { tenantId: string; dealId: string; stageId: string }): void {
+  for (const handler of dealStageChangedHandlers) {
+    Promise.resolve(handler(payload)).catch(() => undefined);
+  }
+}
+
+/**
+ * Оповещение слушателей о выигрыше сделки (SalesLearnService и др.)
+ */
+export function notifyDealWon(payload: { tenantId: string; dealId: string }): void {
+  for (const handler of dealWonHandlers) {
+    Promise.resolve(handler(payload)).catch(() => undefined);
+  }
+}
+
 /** Treats "" from form payloads as "no value". */
 function nullIfBlank(value: string | undefined): string | null {
   if (value === undefined || value === "") return null;
@@ -151,6 +171,7 @@ function nullIfBlank(value: string | undefined): string | null {
 export interface ListDealsOptions {
   pipelineId?: string;
   stageId?: string;
+  status?: "active" | "won" | "lost" | "all";
   search?: string;
   /** Секция «Сделки» на карточке контакта. */
   contactId?: string;
@@ -182,9 +203,33 @@ export class DealsService {
       conditions.push(`d.stage_id = $${params.length}`);
     }
 
+    if (options.status === "active") {
+      conditions.push("d.closed_at IS NULL");
+    } else if (options.status === "won" || options.status === "lost") {
+      conditions.push("d.closed_at IS NOT NULL");
+    }
+
     if (options.search !== undefined && options.search.length > 0) {
       params.push(`%${options.search}%`);
-      conditions.push(`(d.title ILIKE $${params.length} OR d.description ILIKE $${params.length})`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder}
+          OR EXISTS (
+            SELECT 1 FROM contacts ct
+            WHERE ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
+              AND (
+                ct.first_name ILIKE ${placeholder}
+                OR ct.last_name ILIKE ${placeholder}
+                OR ct.phone ILIKE ${placeholder}
+              )
+          )
+          OR EXISTS (
+            SELECT 1 FROM companies co
+            WHERE co.id = d.company_id AND co.tenant_id = d.tenant_id AND co.deleted_at IS NULL
+              AND (co.name ILIKE ${placeholder} OR co.phone ILIKE ${placeholder})
+          ))`,
+      );
     }
 
     if (options.contactId !== undefined) {
@@ -326,6 +371,8 @@ export class DealsService {
     });
 
     void leadNotificationQueue.checkAndTriggerNotification(tenantId, created.id);
+    void notificationQueue.dispatchLeadCreated({ tenantId, dealId: created.id });
+    void conversionDispatcher.handleDealCreated({ tenantId, dealId: created.id });
     return created;
   }
 
@@ -361,8 +408,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -382,6 +429,7 @@ export class DealsService {
           nullIfBlank(payload.owner_id) ?? createdBy,
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
+          nullIfBlank(payload.source_widget_id),
         ],
       );
 
@@ -716,8 +764,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealMessageRow>(
         `INSERT INTO deal_messages
            (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel,
-            attachment, attachment_type, delivery_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            attachment, attachment_type, delivery_status, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING ${MESSAGE_COLUMNS}`,
         [
           tenantId,
@@ -731,6 +779,7 @@ export class DealsService {
           nullIfBlank(payload.attachment),
           nullIfBlank(payload.attachment_type),
           deliveryStatus,
+          payload.metadata ? JSON.stringify(payload.metadata) : "{}",
         ],
       );
 

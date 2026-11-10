@@ -72,6 +72,7 @@ export interface CurrentUser {
   role: Role;
   platform_role: PlatformRole | null;
   permissions: Set<Permission>;
+  is_partner?: boolean;
 }
 
 export interface Tenant {
@@ -80,6 +81,10 @@ export interface Tenant {
   /** Personal subdomain: {slug}.getvoxly.ru. */
   slug: string;
   plan: string;
+  is_partner?: boolean;
+  tenant_type?: "partner" | "client";
+  parent_tenant_id?: string | null;
+  owner_partner_id?: string | null;
   installedModules: InstalledModule[];
 }
 
@@ -210,9 +215,23 @@ export interface ReferralPayout {
 // Notification Types
 // ---------------------------------------------------------------------------
 
-export type NotificationCategory = "message" | "repair" | "payment" | "system";
+export type NotificationCategory =
+  | "message"
+  | "lead"
+  | "task"
+  | "repair"
+  | "payment"
+  | "system";
 
-export type NotificationEntityType = "deal" | "repair" | "invoice" | "contact" | "system";
+export type NotificationEntityType =
+  | "deal"
+  | "lead"
+  | "chat"
+  | "task"
+  | "repair"
+  | "invoice"
+  | "contact"
+  | "system";
 
 export interface AppNotification {
   id: string;
@@ -223,6 +242,7 @@ export interface AppNotification {
   description: string;
   created_at: string;
   read: boolean;
+  data?: Record<string, unknown>;
 }
 
 export interface NotificationGroup {

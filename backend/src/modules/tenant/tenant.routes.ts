@@ -2,11 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ALL_PERMISSIONS } from "../../config/permissions.js";
 import type { Permission } from "../../types/index.js";
-import { query, queryOne } from "../../db/client.js";
+import { query, queryOne, type SqlParam } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
 import { TeamService } from "./team.service.js";
 import { ensureTenantDefaults } from "./tenant-defaults.js";
+import { quotaService } from "../quotas/quota.service.js";
 
 /**
  * Tenant utility routes, mounted at /api/v1/tenant by app.ts.
@@ -36,6 +37,11 @@ const changeRoleBody = z.object({
   permissions: z.array(permissionSchema).optional(),
 });
 const userParams = z.object({ id: z.string().uuid() });
+
+const updateInfoBody = z.object({
+  name: z.string().trim().min(1, "Название компании не может быть пустым").max(100).optional(),
+  business_niche: z.string().trim().max(255).optional().nullable(),
+});
 
 export default async function tenantRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
@@ -78,9 +84,10 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       custom_price_rubles: number | null;
       custom_plan_name: string | null;
       trial_ends_at: Date | string | null;
+      is_partner: boolean;
       created_at: Date | string;
     }>(
-      `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name, trial_ends_at, created_at
+      `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name, trial_ends_at, is_partner, created_at
        FROM tenants WHERE id = $1`,
       [request.tenant_id],
     );
@@ -90,15 +97,31 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     const toIso = (value: Date | string | null): string | null =>
       value === null ? null : value instanceof Date ? value.toISOString() : value;
 
-    const trialEndsAt = toIso(row.trial_ends_at);
-    const trialDaysLeft =
-      trialEndsAt === null
-        ? 0
-        : Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86_400_000));
-
     const hasCustomPrice = row.custom_price_rubles !== null && row.custom_price_rubles !== undefined;
     const isFreeCustomPlan = (hasCustomPrice && Number(row.custom_price_rubles) === 0) || row.plan === "custom_free";
-    const customPlanName = row.custom_plan_name ?? (isFreeCustomPlan ? "Партнёрский" : "Индивидуальный");
+    const isPartner = Boolean(row.is_partner || row.plan === "partner" || request.authUser?.is_partner);
+    const isTrialAccount = (row.plan === "trial" || row.status === "trial") && !isFreeCustomPlan && !isPartner;
+
+    const rawTrialEndsAt = toIso(row.trial_ends_at);
+    const rawTrialDaysLeft =
+      rawTrialEndsAt === null
+        ? 0
+        : Math.max(0, Math.ceil((new Date(rawTrialEndsAt).getTime() - Date.now()) / 86_400_000));
+
+    // Считается на сервере: для активных, партнёрских и кастомных бесплатных аккаунтов
+    // триал не действует, даже если в БД сохранилась старая дата триала от регистрации.
+    const trialActive = isTrialAccount && rawTrialDaysLeft > 0;
+    const trialDaysLeft = trialActive ? rawTrialDaysLeft : 0;
+    const trialEndsAt = trialActive ? rawTrialEndsAt : null;
+
+    let customPlanName: string | null = null;
+    if (hasCustomPrice || isPartner) {
+      if (row.custom_plan_name && row.custom_plan_name !== "Индивидуальный") {
+        customPlanName = row.custom_plan_name;
+      } else {
+        customPlanName = isPartner ? "Партнёрский тариф" : "Индивидуальный";
+      }
+    }
     const customPriceRubles = hasCustomPrice ? Number(row.custom_price_rubles) : null;
 
     return reply.send({
@@ -109,17 +132,57 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         plan: row.plan,
         status: row.status,
         trialEndsAt,
-        // Считается на сервере: браузерные часы можно перевести, и клиент
-        // показал бы работающий триал после его окончания.
         trialDaysLeft,
-        trialActive: trialDaysLeft > 0,
+        trialActive,
         createdAt: toIso(row.created_at),
         customPriceRubles,
-        customPlanName: hasCustomPrice ? customPlanName : null,
-        isCustomPlan: hasCustomPrice,
+        customPlanName: (hasCustomPrice || isPartner) ? customPlanName : null,
+        isCustomPlan: hasCustomPrice || isPartner,
         isFreeCustomPlan,
+        isPartner,
       },
     });
+  });
+
+  /**
+   * PATCH /tenant/info — обновление названия компании и бизнес-ниши арендатора.
+   * Доступно администраторам арендатора (tenant:admin).
+   */
+  app.patch("/info", { onRequest: app.requirePermission("tenant:admin") }, async (request, reply) => {
+    const body = updateInfoBody.parse(request.body);
+    const updates: string[] = [];
+    const values: SqlParam[] = [];
+    let idx = 1;
+
+    if (body.name !== undefined) {
+      updates.push(`name = $${idx++}`);
+      values.push(body.name);
+    }
+    if (body.business_niche !== undefined) {
+      updates.push(`business_niche = $${idx++}`);
+      values.push(body.business_niche);
+    }
+
+    if (updates.length === 0) {
+      return reply.send({ message: "Нет данных для обновления" });
+    }
+
+    updates.push(`updated_at = now()`);
+    values.push(request.tenant_id);
+
+    const updated = await queryOne<{
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      business_niche: string | null;
+    }>(
+      `UPDATE tenants SET ${updates.join(", ")} WHERE id = $${idx} RETURNING id, name, slug, plan, status, business_niche`,
+      values,
+    );
+
+    return reply.send({ data: updated });
   });
 
   /**
@@ -131,12 +194,12 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     const currentTenantId = request.tenant_id;
     const user = request.authUser;
     const isPlatformOwner = user.platform_role === "platform_owner";
-    const canManageTenants =
+    const isPartner =
       isPlatformOwner ||
+      user.is_partner === true ||
       user.role === "partner" ||
-      user.role === "owner" ||
-      user.role === "admin" ||
-      request.permissions.has("tenant:admin");
+      request.tenant_is_partner === true ||
+      request.impersonator_is_partner === true;
 
     const currentTenant = await queryOne<{
       id: string;
@@ -145,8 +208,10 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       plan: string;
       status: string;
       parent_tenant_id: string | null;
+      owner_partner_id: string | null;
+      is_partner: boolean;
     }>(
-      "SELECT id, name, slug, plan, status, parent_tenant_id FROM tenants WHERE id = $1",
+      "SELECT id, name, slug, plan, status, parent_tenant_id, owner_partner_id, is_partner FROM tenants WHERE id = $1",
       [currentTenantId],
     );
 
@@ -163,6 +228,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       is_current: boolean;
       is_parent: boolean;
       role: string;
+      is_partner: boolean;
     }> = [];
 
     workspaces.push({
@@ -174,18 +240,21 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       is_current: true,
       is_parent: false,
       role: user.role,
+      is_partner: Boolean(currentTenant.is_partner),
     });
 
-    if (currentTenant.parent_tenant_id) {
+    const parentTenantRef = currentTenant.owner_partner_id ?? currentTenant.parent_tenant_id;
+    if (parentTenantRef) {
       const parentTenant = await queryOne<{
         id: string;
         name: string;
         slug: string;
         plan: string;
         status: string;
+        is_partner: boolean;
       }>(
-        "SELECT id, name, slug, plan, status FROM tenants WHERE id = $1",
-        [currentTenant.parent_tenant_id],
+        "SELECT id, name, slug, plan, status, is_partner FROM tenants WHERE id = $1",
+        [parentTenantRef],
       );
       if (parentTenant) {
         workspaces.push({
@@ -197,12 +266,17 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
           is_current: false,
           is_parent: true,
           role: "owner",
+          is_partner: Boolean(parentTenant.is_partner),
         });
       }
     }
 
-    if (canManageTenants) {
-      const parentIdForChildren = currentTenant.parent_tenant_id ?? currentTenant.id;
+    if (isPartner) {
+      const parentIdForChildren = currentTenant.is_partner
+        ? currentTenant.id
+        : (currentTenant.owner_partner_id ??
+           currentTenant.parent_tenant_id ??
+           ((request.impersonator_is_partner && request.impersonator_tenant_id) || currentTenant.id));
       interface ChildTenantRow {
         id: string;
         name: string;
@@ -210,11 +284,13 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         plan: string;
         status: string;
         parent_tenant_id: string | null;
+        owner_partner_id: string | null;
+        is_partner: boolean;
       }
       const childRows = await query<ChildTenantRow>(
-        `SELECT id, name, slug, plan, status, parent_tenant_id
+        `SELECT id, name, slug, plan, status, parent_tenant_id, owner_partner_id, is_partner
          FROM tenants
-         WHERE parent_tenant_id = $1 AND id != $2
+         WHERE (parent_tenant_id = $1 OR owner_partner_id = $1) AND id != $2
          ORDER BY name ASC`,
         [parentIdForChildren, currentTenant.id],
       );
@@ -229,11 +305,21 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
           is_current: false,
           is_parent: false,
           role: "partner",
+          is_partner: Boolean(child.is_partner),
         });
       }
     }
 
     return reply.send({ data: workspaces, meta: { total: workspaces.length } });
+  });
+
+  /**
+   * GET /api/v1/tenant/quotas/current
+   * Получение лимитов и квот текущего тенанта
+   */
+  app.get("/quotas/current", async (request, reply) => {
+    const quotas = await quotaService.getTenantQuotas(request.tenant_id);
+    return reply.send({ data: quotas });
   });
 
   // -------------------------------------------------------------------------

@@ -1,5 +1,5 @@
-import { query, transaction, type TransactionClient } from "../../db/client.js";
-import { DealsService } from "./deals/deals.service.js";
+import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
+import { DealsService, notifyDealStageChanged } from "./deals/deals.service.js";
 import { ContactsService } from "./contacts/contacts.service.js";
 import {
   contactChannelFor,
@@ -9,6 +9,7 @@ import {
   displayNameFrom,
   extractPhoneNumber,
   extractEmailAddress,
+  isBotSender,
   UNKNOWN_CONTACT_NAME,
   type ChannelProfile,
 } from "./channel-identity.js";
@@ -16,11 +17,18 @@ import { NotFoundError } from "../../plugins/errorHandler.js";
 import { CrmEnrichmentService } from "./enrichment.service.js";
 import { MaxBridgeService } from "../channels/max-bridge.service.js";
 import { leadNotificationQueue } from "./leads/lead-notification.queue.js";
+import { notificationQueue } from "../notifications/notification.queue.js";
+import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution.js";
+import { getDealConversationSummary } from "./leads/lead-summary.service.js";
+import { attributionEngineService } from "../analytics/attribution-engine.service.js";
+import { ConversionDispatcherService } from "../analytics/conversion-dispatcher.service.js";
+import type { VisitorGeoData } from "../../services/geo-enrichment.service.js";
 
-// Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
-// реэкспортируется здесь: транспорт получает его вместе с типом входящего
+// Профиль и проверка бота объявлены в `channel-identity.ts` вместе с раскладкой по полям,
+// но реэкспортируются здесь: транспорт получает их вместе с типом входящего
 // сообщения и не должен знать о внутреннем делении модуля CRM.
 export type { ChannelProfile } from "./channel-identity.js";
+export { isBotSender } from "./channel-identity.js";
 
 // ---------------------------------------------------------------------------
 // CRM operational core (M7.5.18).
@@ -43,6 +51,9 @@ export interface InboundMessageInput {
   senderPhone?: string;
   senderEmail?: string;
   senderTelegramChatId?: string;
+  senderTelegramUsername?: string;
+  senderUsername?: string;
+  isBot?: boolean;
   attachment?: string | null;
   attachmentType?: string | null;
   deliveryStatus?: "neutral" | "pending" | "sent" | "failed" | "received";
@@ -65,6 +76,7 @@ export interface InboundMessageInput {
   visitCount?: number;
   utmTags?: Record<string, string>;
   sourceMetadata?: Record<string, unknown>;
+  geo?: VisitorGeoData;
 }
 
 /** Найденный контакт: ФИО нужно заголовку сделки, когда профиль недоступен. */
@@ -77,6 +89,7 @@ interface ExistingContact {
   telegram_chat_id?: string | number | null;
   telegram_username?: string | null;
   whatsapp?: string | null;
+  socials?: unknown;
   is_personal?: boolean | null;
   custom_fields?: Record<string, unknown> | null;
 }
@@ -87,9 +100,10 @@ export interface CrmPipelineResult {
   isNewContact: boolean;
   isNewDeal: boolean;
   isPersonal?: boolean;
+  isBot?: boolean;
 }
 
-const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, is_personal, custom_fields";
+const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, telegram_username, socials, is_personal, custom_fields";
 
 const DEFAULT_STAGES: ReadonlyArray<{
   name: string;
@@ -113,9 +127,26 @@ function nullIfBlank(value: string | undefined): string | null {
   return value;
 }
 
+interface PipelineLogger {
+  info: (obj: object, message: string) => void;
+  warn: (obj: object, message: string) => void;
+  error: (obj: object, message: string) => void;
+}
+
+const defaultPipelineLogger: PipelineLogger = {
+  info: (obj, msg) => console.info(JSON.stringify(obj), msg),
+  warn: (obj, msg) => console.warn(JSON.stringify(obj), msg),
+  error: (obj, msg) => console.error(JSON.stringify(obj), msg),
+};
+
 export class CrmPipelineService {
   private readonly deals = new DealsService();
   private readonly contacts = new ContactsService();
+  private readonly log: PipelineLogger;
+
+  constructor(logger?: PipelineLogger) {
+    this.log = logger ?? defaultPipelineLogger;
+  }
 
   /**
    * Processes an incoming message from a channel:
@@ -125,16 +156,141 @@ export class CrmPipelineService {
    */
   async processIncoming(input: InboundMessageInput): Promise<CrmPipelineResult> {
     const rawText = input.text ? input.text.trim() : "";
+    let baseInput = { ...input };
+
+    // Проверяем наличие кода двухшагового пре-чата (vx-xxxx) или маркетингового токена (ref_xxxx)
+    const leadCodeMatch =
+      rawText.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i) ||
+      rawText.match(/\b(vx-[a-z0-9]{4,6})\b/i);
+    const sessionTokenMatch =
+      rawText.match(/\[ID:(ref_[a-zA-Z0-9_-]+)\]/) ||
+      rawText.match(/\b(ref_[a-zA-Z0-9_-]+)\b/);
+
+    const leadCode = leadCodeMatch && leadCodeMatch[1] ? leadCodeMatch[1].toLowerCase() : null;
+    const sessionToken = sessionTokenMatch && sessionTokenMatch[1] ? sessionTokenMatch[1] : null;
+
+    if (leadCode || sessionToken) {
+      const session = await queryOne<{
+        id: string;
+        tenant_id: string;
+        prechat_name: string | null;
+        ga_client_id: string | null;
+        ym_client_id: string | null;
+        yandexuid: string | null;
+        gclid: string | null;
+        yclid: string | null;
+        fbclid: string | null;
+        vkclid: string | null;
+        utm_source: string | null;
+        utm_medium: string | null;
+        utm_campaign: string | null;
+        utm_content: string | null;
+        utm_term: string | null;
+        referrer: string | null;
+        page_url: string | null;
+      }>(
+        leadCode
+          ? `SELECT * FROM analytics_sessions WHERE prechat_lead_code = $1 ORDER BY created_at DESC LIMIT 1`
+          : `SELECT * FROM analytics_sessions WHERE session_token = $1 ORDER BY created_at DESC LIMIT 1`,
+        [leadCode || sessionToken],
+      );
+
+      if (session) {
+        const utmTags: Record<string, string> = { ...baseInput.utmTags };
+        if (session.utm_source) utmTags.utm_source = session.utm_source;
+        if (session.utm_medium) utmTags.utm_medium = session.utm_medium;
+        if (session.utm_campaign) utmTags.utm_campaign = session.utm_campaign;
+        if (session.utm_content) utmTags.utm_content = session.utm_content;
+        if (session.utm_term) utmTags.utm_term = session.utm_term;
+
+        const clickIds: Record<string, string> = { ...baseInput.clickIds };
+        if (session.yclid) clickIds.yclid = session.yclid;
+        if (session.gclid) clickIds.gclid = session.gclid;
+        if (session.fbclid) clickIds.fbclid = session.fbclid;
+        if (session.vkclid) clickIds.vkclid = session.vkclid;
+
+        baseInput = {
+          ...baseInput,
+          senderName:
+            baseInput.senderName &&
+            !baseInput.senderName.startsWith("Посетитель") &&
+            baseInput.senderName !== "Клиент"
+              ? baseInput.senderName
+              : session.prechat_name || baseInput.senderName,
+          visitorId: baseInput.visitorId || leadCode || sessionToken || undefined,
+          ymUid: baseInput.ymUid || session.ym_client_id || undefined,
+          gaId: baseInput.gaId || session.ga_client_id || undefined,
+          yandexuid: baseInput.yandexuid || session.yandexuid || undefined,
+          referrer: baseInput.referrer || session.referrer || undefined,
+          pageUrl: baseInput.pageUrl || session.page_url || undefined,
+          utmTags: Object.keys(utmTags).length > 0 ? utmTags : baseInput.utmTags,
+          clickIds: Object.keys(clickIds).length > 0 ? clickIds : baseInput.clickIds,
+        };
+
+        const messengerType =
+          baseInput.channel === "whatsapp"
+            ? "whatsapp"
+            : baseInput.channel === "vk"
+              ? "vk"
+              : baseInput.channel === "max"
+                ? "max"
+                : "telegram";
+
+        attributionEngineService
+          .handleIncomingMessage(
+            messengerType,
+            baseInput.senderTelegramChatId || baseInput.chatId,
+            rawText,
+            {
+              username: baseInput.profile?.username ?? null,
+              chatId: baseInput.chatId,
+              tokenFromText: sessionToken,
+            },
+          )
+          .catch(() => {});
+      }
+    }
+
     const extractedPhone = extractPhoneNumber(rawText);
-    const effectiveSenderPhone = input.senderPhone?.trim() || extractedPhone || undefined;
+    const validatedSenderPhone = baseInput.senderPhone ? extractPhoneNumber(baseInput.senderPhone) : null;
+    const effectiveSenderPhone = validatedSenderPhone || extractedPhone || undefined;
     const extractedEmail = extractEmailAddress(rawText);
-    const effectiveSenderEmail = input.senderEmail?.trim() || extractedEmail || undefined;
+    const effectiveSenderEmail = baseInput.senderEmail?.trim() || extractedEmail || undefined;
 
     const enrichedInput: InboundMessageInput = {
-      ...input,
+      ...baseInput,
       senderPhone: effectiveSenderPhone,
       senderEmail: effectiveSenderEmail,
     };
+
+    // Защита CRM-воронки: запрет автогенерации контактов и сделок для ботов
+    if (isBotSender(enrichedInput)) {
+      const botIdentifier =
+        enrichedInput.profile?.username ||
+        enrichedInput.senderTelegramUsername ||
+        enrichedInput.senderUsername ||
+        enrichedInput.senderName ||
+        "bot";
+      const cleanBotName = botIdentifier.replace(/^@/, "");
+      this.log.info(
+        {
+          tenantId: input.tenantId,
+          channel: input.channel,
+          chatId: input.chatId,
+          senderName: input.senderName,
+          botIdentifier,
+        },
+        `Skipping lead/contact creation: sender is a bot (@${cleanBotName})`,
+      );
+
+      return {
+        contactId: "",
+        dealId: "",
+        isNewContact: false,
+        isNewDeal: false,
+        isBot: true,
+      };
+    }
 
     const result = await transaction(async (tx) => {
       const contact = await this.findContact(tx, input.tenantId, enrichedInput);
@@ -152,13 +308,37 @@ export class CrmPipelineService {
         };
       }
 
+      // Если существующий контакт был ранее распознан как бот
+      if (
+        contact !== null &&
+        ((contact.telegram_username && isBotSender({ senderUsername: contact.telegram_username })) ||
+          (contact.custom_fields && (contact.custom_fields.is_bot === true || contact.custom_fields.isBot === true)))
+      ) {
+        const botUsername = contact.telegram_username || "bot";
+        this.log.info(
+          {
+            tenantId: input.tenantId,
+            contactId: contact.id,
+            username: botUsername,
+          },
+          `Skipping lead/contact creation: sender is a bot (@${botUsername.replace(/^@/, "")})`,
+        );
+        return {
+          contactId: contact.id,
+          dealId: "",
+          isNewContact: false,
+          isNewDeal: false,
+          isBot: true,
+        };
+      }
+
       const isNewContact = contact === null;
 
       // Имя для заголовка сделки: у известного контакта берётся из его записи, а
       // не из профиля. Профиль мог стать недоступным (клиент закрыл приватность)
       // или не запрашиваться вовсе, и тогда у постоянного клиента появилась бы
       // сделка «Заявка от Клиент» при заполненном ФИО в карточке.
-      const displayName =
+      let displayName =
         contact === null ? displayNameFrom(input) : this.contactDisplayName(contact);
 
       let contactId: string;
@@ -237,7 +417,14 @@ export class CrmPipelineService {
         }
 
         // 1.6. Обогащаем данными посетителя сайта (webchat_visitor_id, ym_uid, ga_id, fb_id, utm, page)
-        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        const siteVisitorId =
+          input.visitorId ||
+          (input.channel === "webchat" ? input.chatId : undefined) ||
+          (input.text
+            ? (input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] ||
+               input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i)?.[1] ||
+               input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i)?.[1])
+            : undefined);
         if (siteVisitorId) {
           await tx.query(
             `UPDATE contacts
@@ -358,6 +545,15 @@ export class CrmPipelineService {
           );
         }
 
+        if (input.geo) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{geo}', $1::jsonb, true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(input.geo), contact.id, input.tenantId],
+          );
+        }
+
         if (input.sourceMetadata && Object.keys(input.sourceMetadata).length > 0) {
           await tx.query(
             `UPDATE contacts
@@ -368,22 +564,66 @@ export class CrmPipelineService {
           );
         }
 
-        // 2. Если имя контакта было заглушкой «Клиент», а в профиле пришло нормальное имя — обновляем
+        // 2. Многоуровневый экстрактор достоверного имени контакта (Contact Identity Resolver):
+        // Если имя контакта было заглушкой («Клиент», «Клиент +7...», «Посетитель...») или клиент
+        // представился в сообщении («Меня зовут Наталья», подпись «С уважением, Наталья Дюдяева») —
+        // обогащаем карточку контакта и заголовок сделки.
         const newName = contactNameFrom(input);
-        if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
+        const isCurrentPlaceholder = isPlaceholderName(contact.first_name, contact.last_name);
+
+        const identity = resolveContactIdentity({
+          messageText: input.text,
+          channelMetadata: {
+            senderName: input.senderName,
+            email: input.senderEmail,
+            telegramUsername: contact.telegram_username || input.profile?.username,
+            firstName: input.profile?.firstName,
+            lastName: input.profile?.lastName,
+            socials: Array.isArray(contact.socials) ? (contact.socials as Array<{ kind: string; value: string }>) : null,
+          },
+          currentContact: {
+            firstName: contact.first_name,
+            lastName: contact.last_name,
+          },
+        });
+
+        const shouldUpdateContact = identity && (
+          isCurrentPlaceholder ||
+          identity.source === "message_body" ||
+          identity.source === "email_signature" ||
+          (!contact.last_name && Boolean(identity.lastName))
+        );
+
+        if (shouldUpdateContact && identity && (identity.firstName !== contact.first_name || (identity.lastName || "") !== (contact.last_name || ""))) {
           await tx.query(
-            `UPDATE contacts SET first_name = $1, last_name = $2 WHERE id = $3`,
-            [newName.first_name, newName.last_name, contact.id],
+            `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
+            [identity.firstName, identity.lastName || "", contact.id, input.tenantId],
+          );
+          contact.first_name = identity.firstName;
+          contact.last_name = identity.lastName || "";
+          displayName = `${identity.firstName} ${identity.lastName || ""}`.trim();
+        } else if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
+          await tx.query(
+            `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
+            [newName.first_name, newName.last_name, contact.id, input.tenantId],
           );
           contact.first_name = newName.first_name;
           contact.last_name = newName.last_name;
+          displayName = `${newName.first_name} ${newName.last_name || ""}`.trim();
         }
       } else {
         const customFields: Record<string, unknown> = {};
         if (input.channel === "max" && input.chatId) {
           customFields.max_chat_id = input.chatId;
         }
-        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        const siteVisitorId =
+          input.visitorId ||
+          (input.channel === "webchat" ? input.chatId : undefined) ||
+          (input.text
+            ? (input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] ||
+               input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i)?.[1] ||
+               input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i)?.[1])
+            : undefined);
         if (siteVisitorId) {
           customFields.webchat_visitor_id = siteVisitorId;
           customFields.visitor_ids = [siteVisitorId];
@@ -401,11 +641,34 @@ export class CrmPipelineService {
         if (input.pageUrl) customFields.page_url = input.pageUrl;
         if (input.visitCount) customFields.visit_count = input.visitCount;
         if (input.pageHistory) customFields.page_history = input.pageHistory;
+        if (input.geo) customFields.geo = input.geo;
+
+        const initialName = contactNameFrom(input);
+        const resolvedIdentity = resolveContactIdentity({
+          messageText: input.text,
+          channelMetadata: {
+            senderName: input.senderName,
+            email: input.senderEmail,
+            telegramUsername: input.profile?.username,
+            firstName: input.profile?.firstName,
+            lastName: input.profile?.lastName,
+          },
+          currentContact: {
+            firstName: initialName.first_name,
+            lastName: initialName.last_name,
+          },
+        });
+        const finalFirstName = resolvedIdentity?.firstName || initialName.first_name;
+        const finalLastName = resolvedIdentity?.lastName !== undefined ? resolvedIdentity.lastName : initialName.last_name;
+        if (finalFirstName !== initialName.first_name || (finalLastName && finalLastName !== initialName.last_name)) {
+          displayName = `${finalFirstName} ${finalLastName || ""}`.trim();
+        }
 
         // Компания не подставляется заглушкой «Не указана»: у входящего лида её
         // ещё нет, а строка-заглушка создавала бы фиктивную организацию.
         contactId = await this.contacts.createInTx(tx, input.tenantId, {
-          ...contactNameFrom(input),
+          first_name: finalFirstName,
+          last_name: finalLastName,
           phones: contactPhonesFrom(input),
           email: input.senderEmail ? input.senderEmail.trim() : undefined,
           socials: contactSocialsFrom(input),
@@ -422,7 +685,14 @@ export class CrmPipelineService {
       let dealId: string;
       let isNewDeal = false;
 
-      const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+      const siteVisitorId =
+        input.visitorId ||
+        (input.channel === "webchat" ? input.chatId : undefined) ||
+        (input.text
+          ? (input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] ||
+             input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i)?.[1] ||
+             input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i)?.[1])
+          : undefined);
       const dealCustomFields: Record<string, unknown> = {};
       if (siteVisitorId) dealCustomFields.webchat_visitor_id = siteVisitorId;
       if (input.deviceFingerprint) dealCustomFields.device_fingerprint = input.deviceFingerprint;
@@ -455,6 +725,11 @@ export class CrmPipelineService {
       }
       if (input.visitCount) dealCustomFields.visit_count = input.visitCount;
       if (input.pageHistory) dealCustomFields.page_history = input.pageHistory;
+      if (input.geo) {
+        dealCustomFields.geo = input.geo;
+      } else if (contactCf.geo) {
+        dealCustomFields.geo = contactCf.geo;
+      }
 
       if (activeDeal !== null) {
         dealId = activeDeal.id;
@@ -476,6 +751,30 @@ export class CrmPipelineService {
                  updated_at = now()
              WHERE id = $2 AND tenant_id = $3`,
             [JSON.stringify(input.sourceMetadata), activeDeal.id, input.tenantId],
+          );
+        }
+
+        // Если в сделке еще нет описания (или оно пустое), заполняем его текстом первого сообщения клиента
+        if (input.text && input.text.trim()) {
+          await tx.query(
+            `UPDATE deals
+             SET description = $1, updated_at = now()
+             WHERE id = $2 AND tenant_id = $3
+               AND (description IS NULL OR description = '')`,
+            [input.text.trim(), activeDeal.id, input.tenantId],
+          );
+        }
+
+        // Если имя контакта известно (не плейсхолдер), обновляем заголовок сделки, если он был заглушкой
+        if (contact && !isPlaceholderName(contact.first_name, contact.last_name)) {
+          const resolvedContactName = `${contact.first_name} ${contact.last_name || ""}`.trim();
+          await tx.query(
+            `UPDATE deals
+             SET title = 'Заявка от ' || $1 || ' (' || $2 || ')',
+                 updated_at = now()
+             WHERE id = $3 AND tenant_id = $4
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%')`,
+            [resolvedContactName, this.channelLabel(input.channel), activeDeal.id, input.tenantId],
           );
         }
 
@@ -548,6 +847,12 @@ export class CrmPipelineService {
                 [input.tenantId, activeDeal.id, currentStage.id, newLeadStage.id],
               );
 
+              notifyDealStageChanged({
+                tenantId: input.tenantId,
+                dealId: activeDeal.id,
+                stageId: newLeadStage.id,
+              });
+
               const contactIdentifier =
                 effectiveSenderPhone ||
                 effectiveSenderEmail ||
@@ -564,7 +869,7 @@ export class CrmPipelineService {
                   source: "system",
                   direction: "neutral",
                   content: `Получены контактные данные клиента (${contactIdentifier}). Сделка автоматически переведена из этапа «Первый контакт» в «Новый лид».`,
-                  channel: input.channel,
+                  channel: "system",
                   channel_account_id: input.channelAccountId,
                 },
                 "neutral",
@@ -632,7 +937,7 @@ export class CrmPipelineService {
 
           const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
             title: dealTitle,
-            description: "",
+            description: input.text?.trim() || "",
             budget: 0,
             currency: "RUB",
             pipeline_id: pipelineId,
@@ -642,6 +947,7 @@ export class CrmPipelineService {
             // не находится, и каждое следующее сообщение клиента создавало
             // новую — канал плодил дубли.
             contact_id: contactId,
+            source_widget_id: input.channel === "webchat" && input.channelAccountId ? input.channelAccountId : undefined,
             custom_fields: dealCustomFields,
             source_metadata: input.sourceMetadata,
           });
@@ -659,14 +965,14 @@ export class CrmPipelineService {
             : "Вложение"
           : "");
 
-      // Защита от дублирования сообщений при параллельной доставке вебхуков
+      // Защита от дублирования сообщений при параллельной доставке вебхуков и повторах запросов клиентом
       const existingMsg = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND direction = 'inbound'
            AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
            AND channel = $5
-           AND created_at > now() - interval '15 seconds'
+           AND created_at > now() - interval '60 seconds'
          LIMIT 1`,
         [input.tenantId, dealId, contentText, input.attachment ?? null, input.channel],
       );
@@ -702,22 +1008,51 @@ export class CrmPipelineService {
       return { contactId, dealId, isNewContact, isNewDeal };
     });
 
-    // Асинхронное уведомление о новом лиде (при наличии контактов и этапе не «Первый контакт»)
-    void leadNotificationQueue.checkAndTriggerNotification(input.tenantId, result.dealId);
+    // Асинхронные уведомления и выжимка только если создана или найдена сделка (не бот, не личный контакт)
+    if (result.dealId) {
+      void leadNotificationQueue.checkAndTriggerNotification(input.tenantId, result.dealId);
+
+      // Мгновенные Web Push & In-App уведомления
+      if (result.isNewDeal) {
+        void notificationQueue.dispatchLeadCreated({
+          tenantId: input.tenantId,
+          dealId: result.dealId,
+        });
+        void ConversionDispatcherService.getInstance().handleDealCreated({
+          tenantId: input.tenantId,
+          dealId: result.dealId,
+        });
+      } else {
+        const messageText = input.text.trim() || (input.attachment ? "Вложение" : "Входящее сообщение");
+        void notificationQueue.dispatchMessageReceived({
+          tenantId: input.tenantId,
+          dealId: result.dealId,
+          senderName: input.senderName,
+          text: messageText,
+          channel: input.channel,
+        });
+      }
+
+      // Автоматическая генерация и синхронизация AI-выжимки в заметку сделки
+      void getDealConversationSummary(input.tenantId, result.dealId).catch(() => {});
+    }
 
     // Автоматическое кросс-канальное обогащение контакта по номеру телефона (Never invent)
-    const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];
-    const validPhone = phoneCandidates.find((p) => p && p.replace(/\D/g, "").length >= 10);
-    if (validPhone) {
-      const enrichService = new CrmEnrichmentService();
-      void enrichService
-        .enrichContact(input.tenantId, result.contactId, {
-          phoneOverride: validPhone,
-          channels: ["telegram", "max", "whatsapp"],
-        })
-        .catch(() => {
-          // Ошибки провайдеров не влияют на создание сделки
-        });
+    if (result.contactId) {
+      const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];
+      const validPhone = phoneCandidates.find((p) => p && p.replace(/\D/g, "").length >= 10);
+      if (validPhone) {
+        const enrichService = new CrmEnrichmentService();
+        void enrichService
+          .enrichContact(input.tenantId, result.contactId, {
+            phoneOverride: validPhone,
+            channels: ["telegram", "max", "whatsapp"],
+            dealId: result.dealId,
+          })
+          .catch(() => {
+            // Ошибки провайдеров не влияют на создание сделки
+          });
+      }
     }
 
     return result;
@@ -735,6 +1070,25 @@ export class CrmPipelineService {
     senderName?: string;
   }): Promise<void> {
     for (const message of input.reply.messages) {
+      const trimmed = message.trim();
+      if (!trimmed) continue;
+
+      // Дедупликация: исключаем повторную запись идентичного ответа AI в ту же сделку в пределах 60 секунд
+      const duplicate = await queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND direction = 'outbound'
+           AND source = 'ai'
+           AND content = $3
+           AND created_at >= now() - interval '60 seconds'
+         LIMIT 1`,
+        [input.tenantId, input.dealId, trimmed],
+      );
+
+      if (duplicate) {
+        continue;
+      }
+
       await this.deals.createMessage(
         input.tenantId,
         input.dealId,
@@ -742,7 +1096,7 @@ export class CrmPipelineService {
         {
           source: "ai",
           direction: "outbound",
-          content: message,
+          content: trimmed,
           channel: input.channel,
           channel_account_id: input.channelAccountId,
         },
@@ -1049,9 +1403,12 @@ export class CrmPipelineService {
     // Идентификация посетителя веб-чата и связывание сессий при переходе в Telegram/WhatsApp
     let siteVisitorIdFromText: string | undefined;
     if (input.text) {
-      const match = input.text.match(/site_([a-zA-Z0-9_-]+)/);
+      const match =
+        input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/) ||
+        input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i) ||
+        input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i);
       if (match) {
-        siteVisitorIdFromText = match[1];
+        siteVisitorIdFromText = (match[1] || match[0]).toLowerCase();
       }
     }
 

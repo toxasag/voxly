@@ -6,14 +6,18 @@ import { Bot, Plus, Search, Zap } from "lucide-react";
 import type { AiBot, BotStatus } from "@/lib/ai-bots/ai-bots.types";
 import { BotCard } from "@/components/ai-bots/BotCard";
 import { BotModal } from "@/components/ai-bots/BotModal";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Guard } from "@/components/shared/Guard";
 import { Skeleton } from "@/components/shared/Skeleton";
+import { useHasPermission } from "@/lib/auth/use-auth";
 import {
   useAiAgents,
   useCreateAiAgent,
+  useDeleteAiAgent,
   useUpdateAiAgent,
 } from "@/lib/api/use-ai-agents";
+import { useTenantQuotas } from "@/lib/api/use-tenant-quotas";
 import type { CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { cn } from "@/lib/utils";
 
@@ -31,13 +35,26 @@ function AiBotsContent() {
   const { data, isLoading, isError, error, refetch } = useAiAgents();
   const create = useCreateAiAgent();
   const update = useUpdateAiAgent();
+  const deleteMutation = useDeleteAiAgent();
+  const canConfigure = useHasPermission("ai_bots:configure");
 
   const bots = useMemo(() => data ?? [], [data]);
+
+  const { data: quotas } = useTenantQuotas();
+  const aiQuota = useMemo(
+    () => quotas?.find((q) => q.feature_key === "ai_agents"),
+    [quotas],
+  );
+
+  const isUnlimited = Boolean(aiQuota?.is_unlimited);
+  const maxLimit = aiQuota ? (aiQuota.is_unlimited ? null : aiQuota.max_limit) : 2;
+  const isLimitReached = !isUnlimited && maxLimit !== null && bots.length >= maxLimit;
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AiBot | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AiBot | null>(null);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -108,12 +125,34 @@ function AiBotsContent() {
     [bots, update],
   );
 
+  const handleConfirmDelete = useCallback(async () => {
+    if (pendingDelete === null) return;
+    try {
+      await deleteMutation.mutateAsync({ id: pendingDelete.id });
+      toast.success(`AI-агент «${pendingDelete.name}» успешно удалён`);
+      setPendingDelete(null);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить агента");
+    }
+  }, [deleteMutation, pendingDelete]);
+
   return (
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-[#111111]">AI-агенты</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-[#111111]">AI-агенты</h1>
+            {isUnlimited ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
+                Безлимитно
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                {bots.length} из {maxLimit} по тарифу
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-[13px] text-[#666666]">
             {bots.length === 0 ? (
               "Ассистенты для автоответов и квалификации лидов"
@@ -131,14 +170,30 @@ function AiBotsContent() {
             )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
-        >
-          <Plus className="h-4 w-4" />
-          Создать AI-агента
-        </button>
+
+        {isLimitReached ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[#888888]">Лимит тарифа ({maxLimit} шт.) исчерпан</span>
+            <button
+              type="button"
+              disabled
+              title={`Достигнут лимит создания AI-агентов (${maxLimit} шт.). Обратитесь к администратору для увеличения квоты.`}
+              className="flex items-center gap-2 rounded-[8px] bg-[#e5e5e5] px-3.5 py-2 text-[13px] font-medium text-[#888888] cursor-not-allowed shadow-2xs"
+            >
+              <Plus className="h-4 w-4" />
+              Создать AI-агента
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={openCreate}
+            className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+          >
+            <Plus className="h-4 w-4" />
+            Создать AI-агента
+          </button>
+        )}
       </div>
 
       {/*
@@ -235,6 +290,8 @@ function AiBotsContent() {
               bot={bot}
               onToggleStatus={(id) => void handleToggleStatus(id)}
               onConfigure={openEdit}
+              onDelete={canConfigure ? (target) => setPendingDelete(target) : undefined}
+              isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === bot.id}
             />
           ))}
         </div>
@@ -256,6 +313,23 @@ function AiBotsContent() {
         bot={editTarget}
         onClose={closeModal}
         onSubmit={handleSubmit}
+        onDelete={canConfigure ? (target) => setPendingDelete(target) : undefined}
+      />
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Удалить AI-агента?"
+        description={
+          pendingDelete !== null
+            ? `Вы уверены, что хотите удалить агента «${pendingDelete.name}»? Бот будет выведен из эксплуатации, а все привязанные каналы связи отвязаны. Действие необратимо.`
+            : ""
+        }
+        confirmLabel="Удалить агента"
+        cancelLabel="Отмена"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={handleConfirmDelete}
+        onClose={() => setPendingDelete(null)}
       />
     </div>
   );

@@ -26,6 +26,14 @@ export const MODULE_PAGE_LAYOUT_TABS: Readonly<Record<string, readonly ModulePag
       position: 20,
       requiredPermission: "service_center:read",
     },
+    {
+      objectType: "deal",
+      tabKey: "repairs",
+      title: "СЦ",
+      icon: "Wrench",
+      position: 18,
+      requiredPermission: "service_center:read",
+    },
   ],
   finance: [
     {

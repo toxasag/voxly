@@ -65,6 +65,9 @@ function resolveRedirect(): string {
  */
 function postLoginTarget(tenantSlug: string): string {
   const path = resolveRedirect();
+  if (path.startsWith("/admin") || path.startsWith("/superadmin")) {
+    return path;
+  }
   if (!shouldRedirectToOwnPortal(tenantSlug)) return path;
   return tenantPortalUrl(tenantSlug, path);
 }
@@ -346,8 +349,7 @@ export function LoginForm() {
 
       {!codeRequested && (
         <button
-          type="button"
-          onClick={() => void handleRequestCode()}
+          type="submit"
           disabled={code.stage === "requesting" || isLoggingIn}
           className={cn(
             "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
@@ -447,27 +449,29 @@ export function LoginForm() {
         </div>
       )}
 
-      <button
-        type="submit"
-        disabled={isSubmitting || code.stage !== "sent" || otp.length !== 6}
-        className={cn(
-          "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
-          "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
-          "disabled:cursor-not-allowed disabled:opacity-50",
-        )}
-      >
-        {isSubmitting ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Входим...
-          </>
-        ) : (
-          <>
-            Войти
-            <ArrowRight className="h-4 w-4" />
-          </>
-        )}
-      </button>
+      {code.stage === "sent" && (
+        <button
+          type="submit"
+          disabled={isSubmitting || otp.length !== 6}
+          className={cn(
+            "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
+            "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+          )}
+        >
+          {isSubmitting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Входим...
+            </>
+          ) : (
+            <>
+              Войти
+              <ArrowRight className="h-4 w-4" />
+            </>
+          )}
+        </button>
+      )}
 
       {/*
         Ссылка доступна всегда, а не только после ошибки: пользователь, который

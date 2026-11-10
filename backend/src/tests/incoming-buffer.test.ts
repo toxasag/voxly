@@ -302,7 +302,7 @@ describe("parseAgentReply", () => {
     }
   });
 
-  it("обрезает слишком длинное сообщение по границе слова", () => {
+  it("сохраняет длинные сообщения без механической обрезки для передачи в MessageRefiner", () => {
     const long = `${"очень длинная фраза ".repeat(80)}конец`;
     const reply = parseAgentReply(JSON.stringify({ message1: long }));
 
@@ -310,16 +310,7 @@ describe("parseAgentReply", () => {
     expect(message).toBeDefined();
     if (message === undefined) return;
 
-    // Telegram режет на 4096, но склейка реплик в одну обесценивает мульти-отправку.
-    expect(message.length).toBeLessThan(1000);
-    expect(message.endsWith("…")).toBe(true);
-
-    // Обрезка идёт по границе слова: последнее слово перед многоточием должно
-    // целиком присутствовать в исходном тексте. Проверка «не заканчивается на
-    // букву» была неверной — «фраза…» это как раз корректный случай.
-    const lastWord = message.slice(0, -1).trimEnd().split(" ").pop() ?? "";
-    expect(lastWord.length).toBeGreaterThan(0);
-    expect(long.split(" ")).toContain(lastWord);
+    expect(message).toBe(long.trim());
   });
 
   it("сохраняет порядок сообщений", () => {

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckSquare, Clock, FileText, Handshake, Heart, Home, Mail, MoreHorizontal, Paperclip, Pencil, ShieldAlert, Trash2, UserX } from "lucide-react";
+import { CheckSquare, Clock, FileText, Handshake, Heart, Home, Mail, MoreHorizontal, Paperclip, Pencil, ShieldAlert, Trash2, UserX, Wrench } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -47,6 +47,8 @@ function TabIcon({ id }: { id: string }) {
       return <Home className="h-3.5 w-3.5 shrink-0" />;
     case "chat":
       return <Clock className="h-3.5 w-3.5 shrink-0" />;
+    case "repairs":
+      return <Wrench className="h-3.5 w-3.5 shrink-0" />;
     case "tasks":
       return <CheckSquare className="h-3.5 w-3.5 shrink-0" />;
     case "notes":
@@ -79,11 +81,15 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
     setCardView("deal");
   }, [dealId, open]);
 
-  const handleExpand = () => {
+  const handleOpenFullPage = () => {
     if (deal.data) {
       onClose();
       router.push(`/crm/deals/${deal.data.id}`);
     }
+  };
+
+  const handleToggleMaximize = () => {
+    setIsMaximized((prev) => !prev);
   };
 
   const context: DealTabsContext = useMemo(
@@ -157,7 +163,7 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
             });
             setCardView("deal");
           }}
-          onExpand={handleExpand}
+          onExpand={handleOpenFullPage}
         />
       ) : cardView === "create_contact" && deal.data ? (
         <DrawerCreateContact
@@ -174,7 +180,7 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
             });
             setCardView("deal");
           }}
-          onExpand={handleExpand}
+          onExpand={handleOpenFullPage}
         />
       ) : (
         <>
@@ -182,8 +188,9 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
             onClose={onClose}
             onDelete={onDelete === undefined || deal.data === undefined ? undefined : () => onDelete(deal.data!.id)}
             isDeleting={isDeleting || deleteDeal.isPending}
-            onToggleMaximize={handleExpand}
+            onToggleMaximize={handleToggleMaximize}
             isMaximized={isMaximized}
+            onOpenFullPage={handleOpenFullPage}
           >
             {deal.isLoading ? (
               <Skeleton className="h-5 w-40" />
@@ -264,12 +271,12 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
               </div>
             ) : (
               <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">
-                <TabsList className="px-4 bg-white border-b border-[#e5e5e5] gap-1 shrink-0">
+                <TabsList className="px-4 bg-white border-b border-[#e5e5e5] gap-1 shrink-0 overflow-x-auto no-scrollbar">
                   {tabs.map((item) => (
                     <TabsTrigger
                       key={item.id}
                       value={item.id}
-                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium cursor-pointer"
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium cursor-pointer shrink-0"
                     >
                       <TabIcon id={item.id} />
                       <span>{item.label}</span>

@@ -7,6 +7,7 @@ import { AuthSessionService } from "../auth/auth-session.service.js";
 import { TelegramService } from "../auth/telegram.service.js";
 import { MaxService } from "../../services/max.service.js";
 import { ProfileService } from "./profile.service.js";
+import { parseCookies, REFRESH_COOKIE_NAME } from "../auth/auth-cookie.js";
 
 // ---------------------------------------------------------------------------
 // Личный профиль: /api/v1/profile.
@@ -98,16 +99,20 @@ export default async function profileRoutes(app: FastifyInstance): Promise<void>
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (request, reply) => {
       const body = changePasswordBody.parse(request.body);
+      const cookies = parseCookies(request.headers.cookie);
+      const keepCandidate =
+        body.keep_refresh_token ||
+        cookies[REFRESH_COOKIE_NAME] ||
+        cookies["getvoxly_refresh_token"];
 
       await service.changePassword({
         userId: request.authUser.id,
         currentPassword: body.current_password,
         newPassword: body.password,
-        // Клиент передаёт свой refresh-токен, чтобы его сессия не была отозвана
-        // вместе с остальными: иначе успешная смена пароля выкидывала бы
-        // пользователя из интерфейса.
-        ...(body.keep_refresh_token !== undefined && {
-          keepRefreshTokenHash: hashToken(body.keep_refresh_token),
+        // Клиент передаёт свой refresh-токен (или сервер извлекает его из HttpOnly cookie),
+        // чтобы его сессия не была отозвана вместе с остальными.
+        ...(keepCandidate !== undefined && {
+          keepRefreshTokenHash: hashToken(keepCandidate),
         }),
       });
 

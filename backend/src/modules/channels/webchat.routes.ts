@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { WebchatService } from "./webchat.service.js";
+import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +15,7 @@ import { ChatMediaService } from "../crm/chat/media.service.js";
 const messageBodySchema = z
   .object({
     visitorId: z.string().trim().min(1, "visitorId is required").max(100),
+    sessionId: z.string().trim().max(100).optional(),
     text: z.string().trim().max(4000).default(""),
     senderName: z.string().trim().max(100).optional(),
     senderPhone: z.string().trim().max(30).optional(),
@@ -22,6 +24,7 @@ const messageBodySchema = z
     attachmentType: z.string().trim().max(100).optional(),
     pageUrl: z.string().trim().max(500).optional(),
     pageTitle: z.string().trim().max(300).optional(),
+    pathname: z.string().trim().max(500).optional(),
     referrer: z.string().trim().max(500).optional(),
     utmTags: z.record(z.string()).optional(),
     clickIds: z.record(z.string().nullable().optional()).optional(),
@@ -32,6 +35,13 @@ const messageBodySchema = z
     gaId: z.string().trim().max(100).optional(),
     fbId: z.string().trim().max(100).optional(),
     visitCount: z.number().int().min(0).optional(),
+    coords: z
+      .object({
+        latitude: z.number(),
+        longitude: z.number(),
+        accuracy: z.number().optional(),
+      })
+      .optional(),
     pageHistory: z
       .array(
         z.object({
@@ -49,6 +59,14 @@ const messageBodySchema = z
 
 const historyQuerySchema = z.object({
   visitorId: z.string().trim().min(1, "visitorId is required").max(100),
+});
+
+const trackBodySchema = z.object({
+  widgetId: z.string().uuid("widgetId must be a UUID"),
+  sessionId: z.string().trim().min(1, "sessionId is required").max(100),
+  visitorId: z.string().trim().min(1, "visitorId is required").max(100),
+  eventType: z.enum(["VISIT", "WIDGET_OPEN", "CHAT_START", "LEAD_CAPTURED"]),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -83,6 +101,27 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     },
   });
 
+  // Публичный сбор событий конверсионной воронки виджета (с сайта клиента)
+  app.route({
+    method: ["POST", "OPTIONS"],
+    url: "/track",
+    handler: async (request, reply) => {
+      reply.header("Access-Control-Allow-Origin", "*");
+      reply.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+      reply.header("Access-Control-Allow-Headers", "*");
+
+      if (request.method === "OPTIONS") {
+        return reply.status(204).send();
+      }
+
+      const body = trackBodySchema.parse(request.body);
+      const analyticsService = new WidgetAnalyticsService(app.log);
+      const result = await analyticsService.trackPublicEvent(body);
+
+      return reply.status(200).send({ data: result });
+    },
+  });
+
   // Получение настроек чата для виджета (название компании, имя агента)
   app.get<{ Params: { channelAccountId: string } }>(
     "/info/:channelAccountId",
@@ -94,7 +133,16 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
   );
 
   // Инициализация диалога (проверка доступности и сессии)
-  app.post<{ Params: { channelAccountId: string }; Body: { visitorId?: string } }>(
+  app.post<{
+    Params: { channelAccountId: string };
+    Body: {
+      visitorId?: string;
+      pageUrl?: string;
+      pageTitle?: string;
+      pathname?: string;
+      referrer?: string;
+    };
+  }>(
     "/init/:channelAccountId",
     async (request, reply) => {
       const { channelAccountId } = request.params;
@@ -156,16 +204,20 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       const { channelAccountId } = request.params;
       const body = messageBodySchema.parse(request.body);
 
+      const cfConnectingIp = request.headers["cf-connecting-ip"];
       const forwarded = request.headers["x-forwarded-for"];
+      const xRealIp = request.headers["x-real-ip"];
       const clientIp =
+        (typeof cfConnectingIp === "string" ? cfConnectingIp.trim() : null) ||
         (typeof forwarded === "string" ? forwarded.split(",")[0]?.trim() : Array.isArray(forwarded) ? forwarded[0] : null) ||
-        (request.headers["x-real-ip"] as string) ||
+        (typeof xRealIp === "string" ? xRealIp.trim() : null) ||
         request.ip;
       const userAgent = (request.headers["user-agent"] as string) || "";
 
       const result = await service.processIncomingMessage({
         channelAccountId,
         visitorId: body.visitorId,
+        sessionId: body.sessionId,
         text: body.text,
         senderName: body.senderName,
         senderPhone: body.senderPhone,
@@ -173,12 +225,15 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         attachment: body.attachment,
         attachmentType: body.attachmentType,
         pageUrl: body.pageUrl,
+        pageTitle: body.pageTitle,
+        pathname: body.pathname,
         referrer: body.referrer,
         utmTags: body.utmTags,
         clickIds: body.clickIds as Record<string, string> | undefined,
         analytics: body.analytics as Record<string, string | null> | undefined,
         deviceFingerprint: body.deviceFingerprint,
         deviceInfo: body.deviceInfo,
+        coords: body.coords,
         clientIp,
         userAgent,
         ymUid: body.ymUid,

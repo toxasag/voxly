@@ -4,12 +4,14 @@ import path from "node:path";
 import { z } from "zod";
 import { query, queryOne, transaction } from "../../db/client.js";
 import { updateTenantSchema } from "./admin.types.js";
-import { AppError, NotFoundError, PermissionDeniedError } from "../../plugins/errorHandler.js";
+import { AppError, NotFoundError, PermissionDeniedError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { getEnv } from "../../config/env.js";
 import { AuthService } from "../auth/auth.service.js";
-import { setAuthCookies } from "../auth/auth-cookie.js";
+import { setAuthCookies, parseCookies, REFRESH_COOKIE_NAME } from "../auth/auth-cookie.js";
+import { quotaService } from "../quotas/quota.service.js";
+import { updateTenantQuotasSchema } from "../quotas/quota.types.js";
 
 const tenantParams = z.object({ id: z.string().uuid() });
 
@@ -36,6 +38,10 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       custom_plan_name: string | null;
       business_niche: string | null;
       custom_notes: string | null;
+      auth_settings: {
+        require_telegram_auth: boolean;
+        allow_password_auth?: boolean;
+      } | null;
       ai_tokens_balance: string;
       ai_balance_kopecks: string;
       ai_markup_percent: string;
@@ -53,9 +59,22 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       owner_email: string | null;
       owner_name: string | null;
       owner_phone: string | null;
+      is_partner: boolean;
+      tenant_type: "partner" | "client" | null;
+      parent_tenant_id: string | null;
+      owner_partner_id: string | null;
+      parent_tenant_name: string | null;
+      parent_tenant_slug: string | null;
     }>(
       `SELECT t.id, t.name, t.slug, t.plan, t.status,
+          t.is_partner,
+          COALESCE(t.tenant_type, CASE WHEN t.is_partner = true THEN 'partner' ELSE 'client' END) AS tenant_type,
+          t.parent_tenant_id,
+          t.owner_partner_id,
+          parent.name AS parent_tenant_name,
+          parent.slug AS parent_tenant_slug,
           t.custom_price_rubles, t.custom_plan_name, t.business_niche, t.custom_notes,
+          t.auth_settings,
           t.ai_tokens_balance,
           t.ai_balance_kopecks::text AS ai_balance_kopecks,
           t.ai_markup_percent::text AS ai_markup_percent,
@@ -76,7 +95,8 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           (SELECT u.name FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL ORDER BY (CASE WHEN u.role = 'owner' THEN 0 ELSE 1 END), u.created_at ASC LIMIT 1) AS owner_name,
           (SELECT u.phone FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL ORDER BY (CASE WHEN u.role = 'owner' THEN 0 ELSE 1 END), u.created_at ASC LIMIT 1) AS owner_phone
        FROM tenants t
-       ORDER BY t.created_at DESC`,
+       LEFT JOIN tenants parent ON parent.id = COALESCE(t.owner_partner_id, t.parent_tenant_id)
+       ORDER BY (CASE WHEN t.is_partner = true THEN 0 ELSE 1 END), t.created_at DESC`,
     );
 
     return reply.send({
@@ -118,10 +138,21 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           slug: row.slug,
           plan: row.plan,
           status: row.status,
+          is_partner: Boolean(row.is_partner || row.tenant_type === "partner"),
+          tenant_type: ((row.is_partner || row.tenant_type === "partner") ? "partner" : "client") as "partner" | "client",
+          parent_tenant_id: row.parent_tenant_id || row.owner_partner_id || null,
+          owner_partner_id: row.owner_partner_id || row.parent_tenant_id || null,
+          parent_tenant_name: row.parent_tenant_name ?? null,
+          parent_tenant_slug: row.parent_tenant_slug ?? null,
           custom_price_rubles: row.custom_price_rubles !== null ? Number(row.custom_price_rubles) : null,
           custom_plan_name: row.custom_plan_name ?? null,
           business_niche: row.business_niche ?? null,
           custom_notes: row.custom_notes ?? null,
+          auth_settings: row.auth_settings ?? {
+            require_telegram_auth: false,
+            allow_password_auth: true,
+          },
+          require_telegram_auth: Boolean(row.auth_settings?.require_telegram_auth),
           ai_tokens_balance: Number(row.ai_tokens_balance || 0),
           ai_balance_kopecks: Number(row.ai_balance_kopecks || 0),
           ai_markup_percent: Number(row.ai_markup_percent || 0),
@@ -156,7 +187,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const tenantId = tenantParams.parse(request.params).id;
     const body = updateTenantSchema.parse(request.body);
     const sets: string[] = [];
-    const params: (string | number | null)[] = [tenantId];
+    const params: (string | number | boolean | null)[] = [tenantId];
 
     if (body.status !== undefined) {
       params.push(body.status);
@@ -184,9 +215,50 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       params.push(Math.round(body.ai_balance_rubles * 100));
       sets.push(`ai_balance_kopecks = $${params.length}`);
     }
+    if (body.tenant_type !== undefined) {
+      const isPartner = body.tenant_type === "partner";
+      params.push(body.tenant_type);
+      sets.push(`tenant_type = $${params.length}`);
+      params.push(isPartner);
+      sets.push(`is_partner = $${params.length}`);
+      if (isPartner) {
+        sets.push(`parent_tenant_id = NULL`);
+        sets.push(`owner_partner_id = NULL`);
+      }
+    } else if (body.is_partner !== undefined) {
+      params.push(body.is_partner);
+      sets.push(`is_partner = $${params.length}`);
+      params.push(body.is_partner ? "partner" : "client");
+      sets.push(`tenant_type = $${params.length}`);
+      if (body.is_partner) {
+        sets.push(`parent_tenant_id = NULL`);
+        sets.push(`owner_partner_id = NULL`);
+      }
+    }
+
+    if (body.parent_tenant_id !== undefined) {
+      params.push(body.parent_tenant_id);
+      sets.push(`parent_tenant_id = $${params.length}`);
+      params.push(body.parent_tenant_id);
+      sets.push(`owner_partner_id = $${params.length}`);
+    } else if (body.owner_partner_id !== undefined) {
+      params.push(body.owner_partner_id);
+      sets.push(`parent_tenant_id = $${params.length}`);
+      params.push(body.owner_partner_id);
+      sets.push(`owner_partner_id = $${params.length}`);
+    }
+
     if (body.custom_price_rubles !== undefined) {
       params.push(body.custom_price_rubles);
       sets.push(`custom_price_rubles = $${params.length}`);
+      if (body.custom_price_rubles === 0) {
+        sets.push(`trial_ends_at = NULL`);
+        if (body.custom_plan_name === undefined) {
+          const isPartner = body.tenant_type === "partner" || body.is_partner === true;
+          params.push(isPartner ? "Партнёрский тариф" : "Бесплатный (Клиент)");
+          sets.push(`custom_plan_name = $${params.length}`);
+        }
+      }
     }
     if (body.custom_plan_name !== undefined) {
       params.push(body.custom_plan_name);
@@ -200,29 +272,83 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       params.push(body.custom_notes);
       sets.push(`custom_notes = $${params.length}`);
     }
+    if (body.auth_settings !== undefined) {
+      params.push(JSON.stringify(body.auth_settings));
+      sets.push(`auth_settings = $${params.length}::jsonb`);
+    } else if (body.require_telegram_auth !== undefined) {
+      params.push(
+        JSON.stringify({
+          require_telegram_auth: body.require_telegram_auth,
+          allow_password_auth: true,
+        }),
+      );
+      sets.push(`auth_settings = $${params.length}::jsonb`);
+    }
 
-    const RETURN_COLUMNS = `id, name, slug, plan, status, custom_price_rubles,
-         custom_plan_name, business_niche, custom_notes, ai_tokens_balance,
+    interface UpdatedTenantRow {
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      is_partner: boolean;
+      tenant_type: "partner" | "client";
+      parent_tenant_id: string | null;
+      owner_partner_id: string | null;
+      custom_price_rubles: number | null;
+      custom_plan_name: string | null;
+      business_niche: string | null;
+      custom_notes: string | null;
+      auth_settings: {
+        require_telegram_auth: boolean;
+        allow_password_auth?: boolean;
+      } | null;
+      ai_tokens_balance: number;
+      ai_balance_kopecks: string;
+      ai_markup_percent: string;
+      subscription_expires_at: Date | string | null;
+    }
+
+    const RETURN_COLUMNS = `id, name, slug, plan, status, is_partner, tenant_type,
+         parent_tenant_id, owner_partner_id, custom_price_rubles,
+         custom_plan_name, business_niche, custom_notes, auth_settings, ai_tokens_balance,
          ai_balance_kopecks::text AS ai_balance_kopecks,
          ai_markup_percent::text AS ai_markup_percent,
          subscription_expires_at`;
 
     if (sets.length === 0) {
-      const existing = await queryOne(
+      const existing = await queryOne<UpdatedTenantRow>(
         `SELECT ${RETURN_COLUMNS} FROM tenants WHERE id = $1`,
         [tenantId],
       );
       if (existing === null) throw new NotFoundError("Tenant not found");
-      return reply.send({ data: existing });
+      return reply.send({
+        data: {
+          ...existing,
+          require_telegram_auth: Boolean(existing.auth_settings?.require_telegram_auth),
+        },
+      });
     }
 
-    const row = await queryOne(
+    const row = await queryOne<UpdatedTenantRow>(
       `UPDATE tenants SET ${sets.join(", ")}
        WHERE id = $1
        RETURNING ${RETURN_COLUMNS}`,
       params,
     );
     if (row === null) throw new NotFoundError("Tenant not found");
+
+    if (body.tenant_type !== undefined || body.is_partner !== undefined) {
+      const isPartner = Boolean(row.is_partner || row.tenant_type === "partner");
+      if (isPartner) {
+        await query(`UPDATE users SET is_partner = true WHERE tenant_id = $1`, [tenantId]);
+      } else {
+        await query(
+          `UPDATE users SET is_partner = false WHERE tenant_id = $1 AND platform_role IS DISTINCT FROM 'platform_owner'`,
+          [tenantId],
+        );
+      }
+    }
 
     await query(
       `INSERT INTO tenant_audit_log
@@ -231,33 +357,165 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       [tenantId, request.authUser.id, tenantId, JSON.stringify(body)],
     );
 
-    return reply.send({ data: row });
+    return reply.send({
+      data: {
+        ...row,
+        require_telegram_auth: Boolean(row.auth_settings?.require_telegram_auth),
+      },
+    });
   });
 
-  app.post("/tenants/:id/impersonate", { onRequest: platformOwner }, async (request, reply) => {
+  // -------------------------------------------------------------------------
+  // Управление индивидуальными квотами тенанта (Feature Quotas & Entitlements)
+  // -------------------------------------------------------------------------
+  app.get("/tenants/:id/quotas", { onRequest: platformOwner }, async (request, reply) => {
     const tenantId = tenantParams.parse(request.params).id;
+    const quotas = await quotaService.getTenantQuotas(tenantId);
+    return reply.send({ data: quotas });
+  });
+
+  app.put("/tenants/:id/quotas", { onRequest: platformOwner }, async (request, reply) => {
+    const tenantId = tenantParams.parse(request.params).id;
+    const body = updateTenantQuotasSchema.parse(request.body);
+    const updated = await quotaService.bulkUpdateTenantQuotas(tenantId, body.quotas);
+    return reply.send({ data: updated });
+  });
+
+  app.post("/tenants/:id/impersonate", async (request, reply) => {
+    const tenantId = tenantParams.parse(request.params).id;
+    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null; owner_partner_id: string | null }>(
+      "SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE id = $1",
+      [tenantId],
+    );
+    if (!tenant) {
+      throw new NotFoundError("Компания не найдена");
+    }
+    const isPlatformOwner =
+      request.authUser?.platform_role === "platform_owner" ||
+      Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
+    const partnerTenantId = request.tenant_is_partner
+      ? request.tenant_id
+      : (request.impersonator_tenant_id || request.tenant_id);
+    const isParentPartner =
+      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
+      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
+    if (!isPlatformOwner && !isParentPartner) {
+      throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
+    }
     const authService = new AuthService(app);
-    const tokens = await authService.impersonateTenant(tenantId, request.authUser.id);
+    const actorId =
+      request.authUser?.platform_role === "platform_owner"
+        ? request.authUser.id
+        : request.impersonator_id || request.authUser?.id;
+    if (!actorId) {
+      throw new UnauthorizedError("Не удалось определить идентификатор администратора или партнера");
+    }
+    const tokens = await authService.impersonateTenant(tenantId, actorId);
     setAuthCookies(request, reply, tokens);
-    return reply.send({ success: true, data: tokens });
+
+    const cookies = parseCookies(request.headers.cookie);
+    const adminRefreshToken = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"] || "";
+    const adminAccessToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+    return reply.send({
+      success: true,
+      data: {
+        ...tokens,
+        admin_refresh_token: adminRefreshToken,
+        admin_access_token: adminAccessToken,
+        admin_user: {
+          id: actorId,
+          email: request.authUser.email,
+          name: request.authUser.name,
+        },
+      },
+    });
   });
 
   app.post("/tenants/by-slug/:slug/impersonate", async (request, reply) => {
     const { slug } = z.object({ slug: z.string().min(1) }).parse(request.params);
-    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null }>(
-      "SELECT id, name, slug, parent_tenant_id FROM tenants WHERE slug = $1",
+    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null; owner_partner_id: string | null }>(
+      "SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE slug = $1",
       [slug.toLowerCase()],
     );
     if (!tenant) {
       throw new NotFoundError("Компания не найдена");
     }
-    const isPlatformOwner = request.authUser?.platform_role === "platform_owner";
-    const isParentPartner = tenant.parent_tenant_id !== null && tenant.parent_tenant_id === request.tenant_id;
+    const isPlatformOwner =
+      request.authUser?.platform_role === "platform_owner" ||
+      Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
+    const partnerTenantId = request.tenant_is_partner
+      ? request.tenant_id
+      : (request.impersonator_tenant_id || request.tenant_id);
+    const isParentPartner =
+      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
+      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
     if (!isPlatformOwner && !isParentPartner) {
       throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
     }
     const authService = new AuthService(app);
-    const tokens = await authService.impersonateTenant(tenant.id, request.authUser.id);
+    const actorId =
+      request.authUser?.platform_role === "platform_owner"
+        ? request.authUser.id
+        : request.impersonator_id || request.authUser?.id;
+    const tokens = await authService.impersonateTenant(tenant.id, actorId);
+    setAuthCookies(request, reply, tokens);
+
+    const cookies = parseCookies(request.headers.cookie);
+    const adminRefreshToken = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"] || "";
+    const adminAccessToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+    return reply.send({
+      success: true,
+      data: {
+        ...tokens,
+        admin_refresh_token: adminRefreshToken,
+        admin_access_token: adminAccessToken,
+        admin_user: {
+          id: actorId,
+          email: request.authUser.email,
+          name: request.authUser.name,
+        },
+      },
+    });
+  });
+
+  app.post("/tenants/exit-impersonation", async (request, reply) => {
+    let candidateRefresh: string | undefined;
+    let candidateAccess: string | undefined;
+
+    if (request.body && typeof request.body === "object") {
+      const parsed = z
+        .object({
+          admin_refresh_token: z.string().optional(),
+          admin_access_token: z.string().optional(),
+        })
+        .safeParse(request.body);
+      if (parsed.success) {
+        candidateRefresh = parsed.data.admin_refresh_token;
+        candidateAccess = parsed.data.admin_access_token;
+      }
+    }
+
+    const cookies = parseCookies(request.headers.cookie);
+    const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+    const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+    const meta = {
+      userAgent: request.headers["user-agent"],
+      ip: request.ip,
+    };
+
+    const authService = new AuthService(app);
+    const tokens = await authService.exitImpersonation(
+      {
+        adminRefreshToken: candidateRefresh,
+        adminAccessToken: candidateAccess || headerToken,
+        cookieRefreshToken: cookieRefresh,
+      },
+      meta,
+    );
+
     setAuthCookies(request, reply, tokens);
     return reply.send({ success: true, data: tokens });
   });

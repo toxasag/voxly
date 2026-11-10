@@ -45,8 +45,8 @@ export function useCreateCheckout() {
 
   return useMutation({
     mutationFn: async (payload: CreateCheckoutPayload): Promise<CheckoutResultDTO> => {
-      const res = await apiClient.post<{ data: CheckoutResultDTO }>("/api/v1/billing/checkout", payload);
-      return res.data.data;
+      const res = await apiClient.post<CheckoutResultDTO>("/api/v1/billing/checkout", payload);
+      return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: billingKeys.payments });
@@ -61,8 +61,8 @@ export function useBillingPayments() {
   return useQuery({
     queryKey: billingKeys.payments,
     queryFn: async (): Promise<BillingPaymentItem[]> => {
-      const res = await apiClient.get<{ data: BillingPaymentItem[] }>("/api/v1/billing/payments");
-      return res.data.data;
+      const res = await apiClient.get<BillingPaymentItem[]>("/api/v1/billing/payments");
+      return res.data ?? [];
     },
   });
 }

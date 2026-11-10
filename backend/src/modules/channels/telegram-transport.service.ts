@@ -27,7 +27,8 @@ import {
   type StoryPublishResult,
 } from "./outbound-registry.js";
 import { ChannelProfileCache } from "./profile-cache.js";
-import type { ChannelProfile } from "../crm/crm-pipeline.service.js";
+import { isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
+import { chatEventBus } from "../crm/chat/chat-events.js";
 
 // ---------------------------------------------------------------------------
 // Транспорт входящих и исходящих сообщений Telegram (M7.5.16).
@@ -509,6 +510,16 @@ export class TelegramTransportService {
 
       if (senderId === undefined || chatId === undefined) return;
 
+      // Быстрая проверка: если профиль отправителя уже в кэше и это бот — сразу игнорируем
+      const cachedProfile = this.profiles.get(account.id, senderId);
+      if (cachedProfile && isBotSender({ profile: cachedProfile, channel: "telegram", chatId })) {
+        this.log.info(
+          { senderId, username: cachedProfile.username, accountId: account.id },
+          `Skipping lead/contact creation: sender is a bot (@${(cachedProfile.username || "").replace(/^@/, "")})`,
+        );
+        return;
+      }
+
       const text = typeof message.message === "string" ? message.message.trim() : "";
 
       // Проверяем наличие медиавложения (фотография, документ)
@@ -561,6 +572,14 @@ export class TelegramTransportService {
       // Если получено медиа (фотография или документ)
       if (mediaAttachment !== null) {
         const profile = connection ? await this.fetchProfile(connection, senderId) : null;
+        if (profile && isBotSender({ profile, channel: "telegram", chatId })) {
+          this.log.info(
+            { senderId, username: profile.username, accountId: account.id },
+            `Skipping lead/contact creation: sender is a bot (@${(profile.username || "").replace(/^@/, "")})`,
+          );
+          return;
+        }
+
         const senderName = profile?.firstName || senderId;
         const contentText =
           text || (mediaAttachment.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
@@ -574,6 +593,7 @@ export class TelegramTransportService {
             text: contentText,
             senderName,
             senderTelegramChatId: senderId,
+            senderTelegramUsername: profile?.username,
             profile: profile ?? undefined,
             attachment: mediaAttachment.url,
             attachmentType: mediaAttachment.mimeType,
@@ -589,6 +609,26 @@ export class TelegramTransportService {
         if (crmResult?.isPersonal) {
           this.log.info({ senderId }, "Personal Telegram contact media ignored by CRM");
           return;
+        }
+
+        if (crmResult?.isBot) {
+          this.log.info({ senderId, username: profile?.username }, "Bot Telegram media ignored by CRM");
+          return;
+        }
+
+        // Фоновая синхронизация предшествующей истории переписки при создании сделки
+        if (crmResult?.dealId && crmResult.isNewDeal) {
+          void this.syncDialogHistory({
+            tenantId: account.tenant_id,
+            dealId: crmResult.dealId,
+            channelAccountId: account.id,
+            peerId: senderId,
+            username: profile?.username,
+            phone: profile?.phone,
+            limit: 50,
+          }).catch((err) => {
+            this.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync Telegram history for new deal");
+          });
         }
 
         // Если с медиа была текстовая подпись, передаем её в буфер для AI-бота
@@ -636,6 +676,15 @@ export class TelegramTransportService {
     // заполнить имя потом будет нечем. Отказ не мешает сохранить переписку.
     const profile = await this.fetchProfile(connection, batch.peerId);
 
+    // Защита от ботов: если собеседник — бот, прерываем обработку до создания контактов/сделок
+    if (profile && isBotSender({ profile, channel: "telegram", chatId: batch.chatId })) {
+      this.log.info(
+        { peerId: batch.peerId, username: profile.username, channelAccountId: batch.channelAccountId },
+        `Skipping lead/contact creation: sender is a bot (@${(profile.username || "").replace(/^@/, "")})`,
+      );
+      return;
+    }
+
     // 2. Сохраняем входящее сообщение в CRM и получаем/создаём контакт и сделку.
     let dealId: string | null = null;
     let contactId: string | null = null;
@@ -650,6 +699,7 @@ export class TelegramTransportService {
           text: batch.text,
           senderName: batch.peerId,
           senderTelegramChatId: batch.peerId,
+          senderTelegramUsername: profile?.username,
           profile: profile ?? undefined,
         }),
       );
@@ -659,8 +709,28 @@ export class TelegramTransportService {
         return;
       }
 
+      if (crmResult.isBot) {
+        this.log.info({ peerId: batch.peerId, username: profile?.username }, "Bot Telegram message ignored by CRM");
+        return;
+      }
+
       dealId = crmResult.dealId;
       contactId = crmResult.contactId;
+
+      // Фоновая синхронизация предшествующей истории переписки при создании сделки
+      if (crmResult.dealId && crmResult.isNewDeal) {
+        void this.syncDialogHistory({
+          tenantId: batch.tenantId,
+          dealId: crmResult.dealId,
+          channelAccountId: batch.channelAccountId,
+          peerId: batch.peerId,
+          username: profile?.username,
+          phone: profile?.phone,
+          limit: 50,
+        }).catch((err) => {
+          this.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync Telegram history for new deal");
+        });
+      }
     } catch (error) {
       this.log.error(
         { error, chatId: batch.chatId, channelAccountId: batch.channelAccountId },
@@ -814,6 +884,7 @@ export class TelegramTransportService {
           // Номер приходит только если открыт настройками приватности или
           // собеседник в контактах аккаунта.
           phone: entity.phone ?? undefined,
+          isBot: Boolean(entity.bot),
         };
       }
     } catch (error) {
@@ -1159,12 +1230,16 @@ export class TelegramTransportService {
         // ignore
       }
 
+      const isLeadPlaceholder =
+        (user.firstName === "Lead" && user.lastName === "Contact") ||
+        (user.firstName === "Lead" && !user.lastName);
+
       return {
         exists: true,
         userId: user.id ? user.id.toString() : undefined,
         username: username || undefined,
-        firstName: user.firstName ? String(user.firstName).trim() : undefined,
-        lastName: user.lastName ? String(user.lastName).trim() : undefined,
+        firstName: !isLeadPlaceholder && user.firstName ? String(user.firstName).trim() : undefined,
+        lastName: !isLeadPlaceholder && user.lastName ? String(user.lastName).trim() : undefined,
       };
     } catch (err) {
       this.log.warn({ err, phone }, "Telegram resolveUserByPhone failed");
@@ -1253,6 +1328,9 @@ export class TelegramTransportService {
           const contentText =
             text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
 
+          const source = isOutbound ? "manager" : "client";
+          const direction = isOutbound ? "outbound" : "inbound";
+
           // Проверяем наличие сообщения в сделке (дедупликация)
           const existing = await queryOne<{ id: string }>(
             `SELECT id FROM deal_messages
@@ -1260,7 +1338,13 @@ export class TelegramTransportService {
                AND channel = 'telegram'
                AND (
                  (attachment IS NOT NULL AND attachment = $3)
-                 OR (content = $4 AND created_at BETWEEN $5::timestamptz - interval '5 seconds' AND $5::timestamptz + interval '5 seconds')
+                 OR (
+                   content = $4
+                   AND (
+                     created_at BETWEEN $5::timestamptz - interval '60 seconds' AND $5::timestamptz + interval '60 seconds'
+                     OR (direction = $6 AND created_at > now() - interval '2 minutes')
+                   )
+                 )
                )
              LIMIT 1`,
             [
@@ -1269,20 +1353,22 @@ export class TelegramTransportService {
               mediaAttachment?.url ?? null,
               contentText,
               date.toISOString(),
+              direction,
             ],
           );
 
           if (!existing) {
-            await query(
+            const [inserted] = await query<{ id: string }>(
               `INSERT INTO deal_messages
                  (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, attachment, attachment_type, delivery_status, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, 'telegram', $8, $9, $10, $11)`,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 'telegram', $8, $9, $10, $11)
+               RETURNING id`,
               [
                 params.tenantId,
                 params.dealId,
                 params.channelAccountId,
-                isOutbound ? "manager" : "client",
-                isOutbound ? "outbound" : "inbound",
+                source,
+                direction,
                 isOutbound ? "Менеджер" : params.peerId,
                 contentText,
                 mediaAttachment?.url ?? null,
@@ -1292,6 +1378,30 @@ export class TelegramTransportService {
               ],
             );
             importedCount++;
+
+            if (inserted) {
+              chatEventBus.emitChatEvent({
+                type: "message_created",
+                tenantId: params.tenantId,
+                dealId: params.dealId,
+                data: {
+                  id: inserted.id,
+                  tenantId: params.tenantId,
+                  dealId: params.dealId,
+                  channelAccountId: params.channelAccountId,
+                  source: isOutbound ? "manager" : "client",
+                  direction: isOutbound ? "outbound" : "inbound",
+                  senderName: isOutbound ? "Менеджер" : params.peerId,
+                  content: contentText,
+                  channel: "telegram",
+                  deliveryStatus: isOutbound ? "sent" : "neutral",
+                  attachment: mediaAttachment?.url ?? null,
+                  attachmentType: mediaAttachment?.mimeType ?? null,
+                  createdAt: date.toISOString(),
+                },
+                timestamp: new Date().toISOString(),
+              });
+            }
           }
         }
       });

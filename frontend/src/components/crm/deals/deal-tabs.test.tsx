@@ -60,7 +60,7 @@ describe("dealTabContents", () => {
     expect(Object.keys(contents).sort()).toEqual([...DEAL_TAB_IDS].sort());
   });
 
-  it("с запасным сидом даёт порядок Главная → Чат → Таймлайн → Аналитика → Источник → История контакта → Задачи → Заметки", () => {
+  it("с запасным сидом даёт порядок Главная → Чат → Таймлайн → Аналитика → Источник → История → Задачи → Заметки", () => {
     // files в сиде is_active=false — на телефоне не занимает место в ряду.
     const tabs = resolvePageLayoutTabs(
       FALLBACK_PAGE_LAYOUT_TABS.deal,
@@ -84,7 +84,7 @@ describe("dealTabContents", () => {
       "Таймлайн",
       "Аналитика",
       "Источник",
-      "История контакта",
+      "История",
       "Задачи",
       "Заметки",
     ]);
@@ -101,10 +101,32 @@ describe("dealTabContents", () => {
       "home",
       "timeline",
       "analytics",
+      "source",
       "contact-history",
       "tasks",
       "notes",
     ]);
+  });
+
+  it("показывает вкладку СЦ между Чат и Таймлайн при установленном модуле service_center", () => {
+    const tabs = resolvePageLayoutTabs(
+      FALLBACK_PAGE_LAYOUT_TABS.deal,
+      dealTabContents(deal(), context()),
+      { installedModules: [{ slug: "service_center" }], hasPermission: () => true },
+    );
+
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "home",
+      "chat",
+      "repairs",
+      "timeline",
+      "analytics",
+      "source",
+      "contact-history",
+      "tasks",
+      "notes",
+    ]);
+    expect(tabs.find((tab) => tab.id === "repairs")?.label).toBe("СЦ");
   });
 
   it("не зависит от наличия справочника этапов", () => {

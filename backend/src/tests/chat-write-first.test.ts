@@ -80,6 +80,7 @@ describe("Write-First Chat and Send-From Options", () => {
         deliveryError: null,
         attachment: null,
         attachmentType: null,
+        metadata: {},
         createdAt: new Date().toISOString(),
       };
       vi.spyOn(dealsService, "createMessage").mockResolvedValue(createdMessage);

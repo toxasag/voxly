@@ -32,11 +32,19 @@ export function resolvePageLayoutTabs(
     )
     .filter((row) => Object.prototype.hasOwnProperty.call(contents, row.tabKey))
     .sort((left, right) => left.position - right.position)
-    .map((row) => ({
-      id: row.tabKey,
-      label: row.title,
-      content: contents[row.tabKey],
-    }));
+    .map((row) => {
+      let label = row.title;
+      if (row.tabKey === "repairs" && (label === "Сервисный центр" || !label)) {
+        label = "СЦ";
+      } else if (row.tabKey === "contact-history" && (label === "История контакта" || !label)) {
+        label = "История";
+      }
+      return {
+        id: row.tabKey,
+        label,
+        content: contents[row.tabKey],
+      };
+    });
 }
 
 /**
@@ -76,10 +84,11 @@ export const FALLBACK_PAGE_LAYOUT_TABS: Record<
   deal: [
     { tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, moduleSlug: null, requiredPermission: "deals:write", updatedAt: "" },
+    { tabKey: "repairs", title: "СЦ", icon: "Wrench", position: 17, isActive: true, moduleSlug: "service_center", requiredPermission: "service_center:read", updatedAt: "" },
     { tabKey: "timeline", title: "Таймлайн", icon: "Activity", position: 20, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "analytics", title: "Аналитика", icon: "BarChart3", position: 22, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "source", title: "Источник", icon: "Globe", position: 24, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
-    { tabKey: "contact-history", title: "История контакта", icon: "History", position: 25, isActive: true, moduleSlug: null, requiredPermission: "contacts:read", updatedAt: "" },
+    { tabKey: "contact-history", title: "История", icon: "History", position: 25, isActive: true, moduleSlug: null, requiredPermission: "contacts:read", updatedAt: "" },
     { tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "files", title: "Файлы", icon: "Paperclip", position: 50, isActive: false, moduleSlug: null, requiredPermission: null, updatedAt: "" },

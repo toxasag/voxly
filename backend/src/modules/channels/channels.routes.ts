@@ -3,9 +3,13 @@ import { z } from "zod";
 
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { ChannelsService } from "./channels.service.js";
+import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import {
   channelSlugSchema,
+  channelStatusSchema,
+  cloneChannelAccountSchema,
   createChannelAccountSchema,
+  customizeAccountLinksSchema,
   updateChannelAccountSchema,
 } from "./channels.types.js";
 
@@ -59,6 +63,15 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
     return reply.status(201).send({ data: account });
   });
 
+  app.post("/:channel/accounts/:id/clone", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const body = cloneChannelAccountSchema.parse(request.body);
+
+    const account = await service.clone(request.tenant_id, channel, id, body);
+
+    return reply.status(201).send({ data: account });
+  });
+
   app.patch("/:channel/accounts/:id", { onRequest: guards }, async (request, reply) => {
     const { channel, id } = accountParams.parse(request.params);
     const body = updateChannelAccountSchema.parse(request.body);
@@ -66,6 +79,72 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
     const account = await service.update(request.tenant_id, channel, id, body);
 
     return reply.send({ data: account });
+  });
+
+  app.patch("/:channel/accounts/:id/toggle", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const account = await service.toggleStatus(request.tenant_id, channel, id);
+    return reply.send({ data: account });
+  });
+
+  app.patch("/:channel/accounts/:id/status", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const body = z
+      .object({
+        status: channelStatusSchema.optional(),
+        is_enabled: z.boolean().optional(),
+      })
+      .refine((v) => v.status !== undefined || v.is_enabled !== undefined, {
+        message: "Укажите status или is_enabled",
+      })
+      .parse(request.body);
+
+    const nextStatus =
+      body.status ??
+      (body.is_enabled !== undefined ? (body.is_enabled ? "connected" : "disabled") : undefined);
+
+    const account = await service.update(request.tenant_id, channel, id, {
+      status: nextStatus,
+      is_enabled: body.is_enabled,
+    });
+
+    return reply.send({ data: account });
+  });
+
+  app.get("/:channel/accounts/:id/links", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const query = customizeAccountLinksSchema.parse(request.query ?? {});
+
+    const links = await service.getLinks(request.tenant_id, channel, id, query);
+
+    return reply.send({ data: links });
+  });
+
+  app.get("/:channel/accounts/:id/stats", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    if (channel !== "webchat") {
+      return reply.status(400).send({
+        error: "Статистика воронки доступна только для онлайн-виджетов веб-чата",
+      });
+    }
+
+    const querySchema = z.object({
+      period: z.enum(["today", "7d", "30d", "all", "custom"]).default("30d"),
+      from: z.string().optional(),
+      to: z.string().optional(),
+    });
+    const query = querySchema.parse(request.query);
+
+    const analyticsService = new WidgetAnalyticsService(app.log);
+    const stats = await analyticsService.getWidgetFunnelStats({
+      tenantId: request.tenant_id,
+      widgetId: id,
+      period: query.period,
+      from: query.from,
+      to: query.to,
+    });
+
+    return reply.send({ data: stats });
   });
 
   app.delete("/:channel/accounts/:id", { onRequest: guards }, async (request, reply) => {

@@ -25,10 +25,21 @@ export interface AdminTenantDTO {
   slug?: string;
   plan: string;
   status: string;
+  is_partner?: boolean;
+  tenant_type?: "partner" | "client";
+  parent_tenant_id?: string | null;
+  owner_partner_id?: string | null;
+  parent_tenant_name?: string | null;
+  parent_tenant_slug?: string | null;
   custom_price_rubles: number | null;
   custom_plan_name: string | null;
   business_niche: string | null;
   custom_notes: string | null;
+  auth_settings?: {
+    require_telegram_auth: boolean;
+    allow_password_auth?: boolean;
+  };
+  require_telegram_auth?: boolean;
   /** УСТАРЕЛО: остаток в штуках токенов. Актуален ai_balance_kopecks. */
   ai_tokens_balance: number;
   /** Баланс ИИ в копейках. */
@@ -57,6 +68,10 @@ export interface AdminTenantDTO {
 
 export type UpdateTenantPayload = {
   status?: "trial" | "active" | "past_due" | "suspended";
+  is_partner?: boolean;
+  tenant_type?: "partner" | "client";
+  parent_tenant_id?: string | null;
+  owner_partner_id?: string | null;
   plan?: string;
   subscription_expires_at?: string | null;
   ai_tokens_balance?: number;
@@ -68,6 +83,11 @@ export type UpdateTenantPayload = {
   custom_plan_name?: string | null;
   business_niche?: string | null;
   custom_notes?: string | null;
+  require_telegram_auth?: boolean;
+  auth_settings?: {
+    require_telegram_auth: boolean;
+    allow_password_auth?: boolean;
+  };
 };
 
 export interface ImpersonateResponse {
@@ -75,6 +95,13 @@ export interface ImpersonateResponse {
   refresh_token?: string;
   accessToken?: string;
   refreshToken?: string;
+  admin_access_token?: string;
+  admin_refresh_token?: string;
+  admin_user?: {
+    id: string;
+    email: string;
+    name?: string;
+  };
   expires_in?: number;
   user?: {
     id: string;
@@ -162,10 +189,11 @@ export const adminKeys = {
 };
 
 /** Все тенанты платформы. 403 для всех, кроме platform_owner. */
-export function useAdminTenants(): UseQueryResult<AdminTenantDTO[], ApiClientError> {
+export function useAdminTenants(options?: { enabled?: boolean }): UseQueryResult<AdminTenantDTO[], ApiClientError> {
   return useQuery({
     queryKey: adminKeys.tenants,
     queryFn: async () => (await apiClient.get<AdminTenantDTO[]>("/api/v1/admin/tenants")).data,
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -478,15 +506,22 @@ export interface LlmModelItem {
 export interface LlmKeyVerifyResult {
   index: number;
   maskedKey: string;
-  status: "valid" | "invalid";
+  status: "valid" | "invalid" | "pending_activation";
   statusCode?: number;
   message: string;
   modelsCount?: number;
+  isTemporary?: boolean;
+  retryAfterSeconds?: number;
 }
 
 export interface VerifyLlmKeysResponse {
   success: boolean;
-  summary: { total: number; valid: number; invalid: number };
+  summary: {
+    total: number;
+    valid: number;
+    invalid: number;
+    pendingActivation?: number;
+  };
   results: LlmKeyVerifyResult[];
   models?: LlmModelItem[];
   message?: string;
@@ -496,6 +531,18 @@ export interface FetchLlmModelsResponse {
   success: boolean;
   models: LlmModelItem[];
   message?: string;
+}
+
+export interface ModelHealthItem {
+  providerId: string;
+  providerType: string;
+  modelId: string;
+  status: "healthy" | "degraded" | "unavailable";
+  latencyMs?: number;
+  lastCheckedAt: number;
+  failureReason?: string;
+  statusCode?: number;
+  expiresAt: number;
 }
 
 export function useTestAdminLlm(): UseMutationResult<
@@ -532,7 +579,14 @@ export function useVerifyLlmKeys(): UseMutationResult<
 }
 
 export function useVerifySingleGeminiKey(): UseMutationResult<
-  { success: boolean; is_active: boolean; message: string; modelsCount?: number },
+  {
+    success: boolean;
+    is_active: boolean;
+    status?: "valid" | "invalid" | "pending_activation";
+    isTemporary?: boolean;
+    message: string;
+    modelsCount?: number;
+  },
   ApiClientError,
   { apiKey: string; baseUrl?: string; save?: boolean }
 > {
@@ -543,6 +597,8 @@ export function useVerifySingleGeminiKey(): UseMutationResult<
         await apiClient.post<{
           success: boolean;
           is_active: boolean;
+          status?: "valid" | "invalid" | "pending_activation";
+          isTemporary?: boolean;
           message: string;
           modelsCount?: number;
         }>("/api/integrations/gemini/verify", payload)
@@ -553,6 +609,30 @@ export function useVerifySingleGeminiKey(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: ["ai-bots"] });
       void queryClient.invalidateQueries({ queryKey: ["tenant", "integrations"] });
       void queryClient.invalidateQueries({ queryKey: ["ai-agent", "providers"] });
+    },
+  });
+}
+
+export function useLlmModelHealth(): UseQueryResult<ModelHealthItem[], ApiClientError> {
+  return useQuery({
+    queryKey: ["admin", "integrations", "llm", "health"],
+    queryFn: async () =>
+      (await apiClient.get<ModelHealthItem[]>("/api/v1/admin/integrations/llm/health")).data,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useCheckLlmModelHealth(): UseMutationResult<
+  ModelHealthItem[],
+  ApiClientError,
+  void
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      (await apiClient.post<ModelHealthItem[]>("/api/v1/admin/integrations/llm/health/check", {})).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "integrations", "llm", "health"] });
     },
   });
 }

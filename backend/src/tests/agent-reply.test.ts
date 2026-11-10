@@ -25,6 +25,23 @@ describe("agent-reply - parseAgentReply", () => {
     expect(parsed?.session_pause).toBe(false);
   });
 
+  it("разбирает до 4 коротких сообщений (message1..message4)", () => {
+    const raw = JSON.stringify({
+      message1: "Здравствуйте, Наталья!",
+      message2: "По аппаратам Шарм базовая модель для лица стоит от 275 000 руб.",
+      message3: "Комбинированная версия для лица и тела — от 450 000 руб.",
+      message4: "Давайте созвонимся на 5 минут для точного расчета комплектации? На какой номер удобно набрать?",
+      handoff_required: false,
+      session_pause: false,
+    });
+
+    const parsed = parseAgentReply(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.messages).toHaveLength(4);
+    expect(parsed?.messages[0]).toBe("Здравствуйте, Наталья!");
+    expect(parsed?.messages[3]).toContain("Давайте созвонимся");
+  });
+
   it("извлекает JSON из markdown-блока ```json ... ``` с текстом вокруг", () => {
     const raw = `
 Вот мой ответ клиенту:
@@ -90,8 +107,9 @@ describe("agent-reply - parseAgentReply", () => {
     expect(parsed?.session_pause).toBe(false);
   });
 
-  it("обрезает сообщения длиннее 900 символов по границе слова", () => {
-    const longText = "Слово ".repeat(200); // > 1000 символов
+  it("сохраняет полный текст сообщения без механической обрезки для обработки в MessageRefiner", () => {
+    const sentence = "Это первое предложение. Это второе предложение. ";
+    const longText = sentence.repeat(15); // > 600 символов
     const raw = JSON.stringify({
       message1: longText,
       message2: "",
@@ -99,8 +117,8 @@ describe("agent-reply - parseAgentReply", () => {
 
     const parsed = parseAgentReply(raw);
     expect(parsed).not.toBeNull();
-    expect(parsed?.messages[0]?.length).toBeLessThanOrEqual(901);
-    expect(parsed?.messages[0]?.endsWith("…")).toBe(true);
+    expect(parsed?.messages[0]).toBe(longText.trim());
+    expect(parsed?.messages[0]?.length).toBeGreaterThan(600);
   });
 });
 

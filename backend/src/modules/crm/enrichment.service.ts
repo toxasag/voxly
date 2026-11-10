@@ -1,7 +1,9 @@
-import { queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
+import { query, queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
 import type { ContactSocialJson } from "./contacts/contacts.types.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { resolveTelegramPhone } from "../channels/outbound-registry.js";
+import { isPlaceholderName, parseNameFromTelegramUsername, cleanContactDisplayName } from "./identity-resolution.js";
+import { isFakeOrDummyPhone } from "./channel-identity.js";
 
 // ---------------------------------------------------------------------------
 // Автоматическое кросс-канальное обогащение контактов по номеру телефона (4.2).
@@ -62,16 +64,7 @@ function normalizePhoneDigits(raw: string): string {
   return digits;
 }
 
-function isPlaceholderName(firstName: string | null | undefined, lastName: string | null | undefined): boolean {
-  const full = `${firstName ?? ""} ${lastName ?? ""}`.trim().toLowerCase();
-  return (
-    full.length === 0 ||
-    full === "клиент" ||
-    full === "client" ||
-    /^noname\d*$/.test(full) ||
-    /^клиент\s*\d*$/.test(full)
-  );
-}
+// isPlaceholderName импортирован из identity-resolution.js со строгой проверкой шаблонов («Клиент +7...», «Посетитель сайта...»)
 
 export class CrmEnrichmentService {
   private providers: CrossChannelProviders;
@@ -93,6 +86,7 @@ export class CrmEnrichmentService {
     options?: {
       phoneOverride?: string;
       channels?: Array<"telegram" | "max" | "whatsapp">;
+      dealId?: string;
     },
   ): Promise<EnrichContactResult> {
     const contact = await queryOne<{
@@ -150,11 +144,15 @@ export class CrmEnrichmentService {
 
     const shouldUpdateName = isPlaceholderName(contact.first_name, contact.last_name);
 
+    let tgRes: TelegramProfileResolved | null = null;
+    let maxRes: MaxProfileResolved | null = null;
+    let waRes: WhatsAppProfileResolved | null = null;
+
     // 1. Проверка Telegram (через GramJS bridge/MTProto)
     if (selectedChannels.includes("telegram")) {
       channelsChecked.push("telegram");
       try {
-        const tgRes = await this.providers.checkTelegram(phoneDigits, tenantId);
+        tgRes = await this.providers.checkTelegram(phoneDigits, tenantId);
         if (tgRes.exists) {
           if (tgRes.username && !updatedTgUsername) {
             updatedTgUsername = tgRes.username;
@@ -172,11 +170,6 @@ export class CrmEnrichmentService {
             });
             enrichedFields.push("socials:telegram");
           }
-          if (shouldUpdateName && (tgRes.firstName || tgRes.lastName)) {
-            if (tgRes.firstName) updatedFirstName = tgRes.firstName;
-            if (tgRes.lastName) updatedLastName = tgRes.lastName;
-            enrichedFields.push("name");
-          }
         }
       } catch (err) {
         // Ошибка проверки одного канала не должна ломать остальные
@@ -187,7 +180,7 @@ export class CrmEnrichmentService {
     if (selectedChannels.includes("max")) {
       channelsChecked.push("max");
       try {
-        const maxRes = await this.providers.checkMax(phoneDigits, tenantId);
+        maxRes = await this.providers.checkMax(phoneDigits, tenantId);
         if (maxRes.exists) {
           const maxVal = maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : (phoneDigits ? `+${phoneDigits}` : ""));
           if (maxVal) {
@@ -205,11 +198,6 @@ export class CrmEnrichmentService {
               enrichedFields.push("socials:max");
             }
           }
-          if (shouldUpdateName && !enrichedFields.includes("name") && (maxRes.firstName || maxRes.lastName)) {
-            if (maxRes.firstName) updatedFirstName = maxRes.firstName;
-            if (maxRes.lastName) updatedLastName = maxRes.lastName;
-            enrichedFields.push("name");
-          }
         }
       } catch (err) {
         // пропускаем ошибку канала
@@ -220,7 +208,7 @@ export class CrmEnrichmentService {
     if (selectedChannels.includes("whatsapp")) {
       channelsChecked.push("whatsapp");
       try {
-        const waRes = await this.providers.checkWhatsApp(phoneDigits, tenantId);
+        waRes = await this.providers.checkWhatsApp(phoneDigits, tenantId);
         if (waRes.exists) {
           const waValue = `+${phoneDigits}`;
           if (!updatedWhatsapp) {
@@ -238,6 +226,47 @@ export class CrmEnrichmentService {
         }
       } catch (err) {
         // пропускаем ошибку канала
+      }
+    }
+
+    // 3.5. Определение имени с жестким приоритетом источников:
+    // Приоритет 1: MAX (официальный мессенджер, прямая привязка к номеру)
+    // Приоритет 2: Telegram Display Name (очищенный от суффиксов компаний, доменов и ролей)
+    // Приоритет 3: Telegram username (СТРОГО по словарю реальных имен, запрет транслитерации ников вроде toxasagmsk)
+    // Фоллбэк: если имя не подтверждено — не выдумывать и не транслитерировать ники
+    if (shouldUpdateName) {
+      let candidateName: { firstName: string; lastName?: string } | null = null;
+
+      // 1. MAX
+      if (maxRes?.exists && (maxRes.firstName || maxRes.lastName)) {
+        const rawMax = `${maxRes.firstName || ""} ${maxRes.lastName || ""}`.trim();
+        const cleanedMax = cleanContactDisplayName(rawMax);
+        if (cleanedMax && !isPlaceholderName(cleanedMax.firstName, cleanedMax.lastName)) {
+          candidateName = cleanedMax;
+        }
+      }
+
+      // 2. Telegram display name
+      if (!candidateName && tgRes?.exists && (tgRes.firstName || tgRes.lastName)) {
+        const rawTg = `${tgRes.firstName || ""} ${tgRes.lastName || ""}`.trim();
+        const cleanedTg = cleanContactDisplayName(rawTg);
+        if (cleanedTg && !isPlaceholderName(cleanedTg.firstName, cleanedTg.lastName)) {
+          candidateName = cleanedTg;
+        }
+      }
+
+      // 3. Telegram username (только если совпало со словарем имен)
+      if (!candidateName && tgRes?.exists && (updatedTgUsername || tgRes.username)) {
+        const parsedTg = parseNameFromTelegramUsername(updatedTgUsername || tgRes.username);
+        if (parsedTg && !isPlaceholderName(parsedTg.firstName, parsedTg.lastName)) {
+          candidateName = parsedTg;
+        }
+      }
+
+      if (candidateName) {
+        updatedFirstName = candidateName.firstName;
+        updatedLastName = candidateName.lastName ?? null;
+        enrichedFields.push("name");
       }
     }
 
@@ -277,7 +306,75 @@ export class CrmEnrichmentService {
             tenantId,
           ],
         );
+
+        if (enrichedFields.includes("name")) {
+          const resolvedFullName = `${updatedFirstName} ${updatedLastName || ""}`.trim();
+          await tx.query(
+            `UPDATE deals
+             SET title = 'Заявка от ' || $1 || ' (' || 
+                 COALESCE(
+                   CASE 
+                     WHEN title LIKE '%(Онлайн-чат)%' THEN 'Онлайн-чат'
+                     WHEN title LIKE '%(Telegram)%' THEN 'Telegram'
+                     WHEN title LIKE '%(WhatsApp)%' THEN 'WhatsApp'
+                     WHEN title LIKE '%(MAX)%' THEN 'MAX'
+                     ELSE 'Прямое обращение'
+                   END, 'Прямое обращение'
+                 ) || ')',
+                 updated_at = now()
+             WHERE contact_id = $2 AND tenant_id = $3
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%')`,
+            [resolvedFullName, contactId, tenantId],
+          );
+        }
       });
+    }
+
+    // 5. Логируем результаты верификации мессенджеров в таймлайн сделки
+    try {
+      let targetDealId = options?.dealId;
+      if (!targetDealId) {
+        const dealRow = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE contact_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+           ORDER BY created_at DESC LIMIT 1`,
+          [contactId, tenantId],
+        );
+        targetDealId = dealRow?.id;
+      }
+
+      if (targetDealId) {
+        const isDummy = isFakeOrDummyPhone(phoneDigits);
+        const tgLabel = tgRes?.exists
+          ? `Telegram: найден (${tgRes.username ? `@${tgRes.username}` : `ID: ${tgRes.userId}`})`
+          : "Telegram: не найден";
+        const waLabel = waRes?.exists ? `WhatsApp: активен (+${phoneDigits})` : "WhatsApp: не найден";
+        const maxLabel = maxRes?.exists ? `MAX: найден (${maxRes.username || maxRes.userId || "активен"})` : "MAX: не найден";
+
+        const dummyHeader = isDummy ? "⚠️ Внимание: номер определен как фиктивный/тестовый!\n" : "";
+        const auditMessage = `${dummyHeader}Результат проверки мессенджеров для +${phoneDigits}:\n• ${tgLabel}\n• ${waLabel}\n• ${maxLabel}`;
+
+        await query(
+          `INSERT INTO deal_messages
+             (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, metadata)
+           VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral', $4::jsonb)`,
+          [
+            tenantId,
+            targetDealId,
+            auditMessage,
+            JSON.stringify({
+              event: "messenger_verification",
+              phone: `+${phoneDigits}`,
+              isFake: isDummy,
+              telegram: tgRes?.exists ?? false,
+              whatsapp: waRes?.exists ?? false,
+              max: maxRes?.exists ?? false,
+            }),
+          ],
+        );
+      }
+    } catch {
+      // Ошибки логирования аудита не блокируют возврат результата
     }
 
     return {
@@ -349,7 +446,7 @@ export class CrmEnrichmentService {
     if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
 
     try {
-      const account = await runWithPlatformScope(() =>
+      let account = await runWithPlatformScope(() =>
         queryOne<{ id: string }>(
           `SELECT id FROM channel_accounts
            WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
@@ -358,6 +455,16 @@ export class CrmEnrichmentService {
           [tenantId],
         ),
       );
+      if (!account) {
+        account = await runWithPlatformScope(() =>
+          queryOne<{ id: string }>(
+            `SELECT id FROM channel_accounts
+             WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+             ORDER BY connected_at DESC NULLS LAST
+             LIMIT 1`,
+          ),
+        );
+      }
       if (!account) return { exists: false, error: "No active MAX account" };
 
       const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {

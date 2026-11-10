@@ -5,8 +5,11 @@ import QRCode from "qrcode";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService } from "./max-bridge.service.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
-import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
+import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
+import { ChatMediaService } from "../crm/chat/media.service.js";
+import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
+import { chatEventBus } from "../crm/chat/chat-events.js";
 
 /**
  * INC-113: никогда не записывать номер подключенного аккаунта оператора
@@ -81,6 +84,13 @@ const internalInboundSchema = z.object({
   selfPhone: z.string().nullable().optional(),
   maxLink: z.string().nullable().optional(),
   attachments: z.array(inboundAttachmentSchema).max(20).optional(),
+  isBot: z.boolean().optional(),
+  is_bot: z.boolean().optional(),
+  type: z.string().optional(),
+  senderType: z.string().optional(),
+  out: z.boolean().optional(),
+  fromMe: z.boolean().optional(),
+  direction: z.string().optional(),
   // Устаревшие поля для обратной совместимости
   tenantId: z.string().uuid().optional(),
   chatId: z.string().optional(),
@@ -102,6 +112,62 @@ function isDuplicateInbound(key: string): boolean {
   if (recentInboundMessages.has(key)) return true;
   recentInboundMessages.set(key, now);
   return false;
+}
+
+function guessMimeType(fileName: string, mime?: string): string {
+  if (mime && mime !== "application/octet-stream") return mime;
+  const ext = fileName.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "pdf": return "application/pdf";
+    case "wav": return "audio/wav";
+    case "ogg": return "audio/ogg";
+    case "mp3": return "audio/mpeg";
+    case "m4a": return "audio/mp4";
+    case "jpg":
+    case "jpeg": return "image/jpeg";
+    case "png": return "image/png";
+    case "webp": return "image/webp";
+    case "gif": return "image/gif";
+    case "doc": return "application/msword";
+    case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "xls": return "application/vnd.ms-excel";
+    case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    default: return mime || "application/octet-stream";
+  }
+}
+
+async function resolveAndStoreMaxAttachment(opts: {
+  tenantId: string;
+  botId: string;
+  fileId: string;
+  fileName?: string;
+  mimeType?: string;
+  log?: FastifyBaseLogger;
+}): Promise<{ url: string; mimeType: string } | null> {
+  const bridge = new MaxBridgeService();
+  try {
+    const downloaded = await bridge.downloadMedia({
+      botId: opts.botId,
+      fileId: opts.fileId,
+    });
+    if (!downloaded.ok || !downloaded.buffer) {
+      opts.log?.warn({ fileId: opts.fileId, error: downloaded.error }, "Failed to download MAX media");
+      return null;
+    }
+    const cleanName = opts.fileName || "file.bin";
+    const realMime = guessMimeType(cleanName, downloaded.mimeType || opts.mimeType);
+    const mediaService = new ChatMediaService();
+    const stored = await mediaService.storeBuffer({
+      buffer: downloaded.buffer,
+      originalName: cleanName,
+      mimeType: realMime,
+      tenantId: opts.tenantId,
+    });
+    return { url: stored.url, mimeType: stored.mimeType };
+  } catch (err) {
+    opts.log?.warn({ err, fileId: opts.fileId }, "Exception downloading MAX media");
+    return null;
+  }
 }
 
 /**
@@ -144,26 +210,60 @@ export async function syncMaxDialogHistory(opts: {
       if (!text) continue;
       const msgDate = msg.date ? new Date(msg.date * 1000) : new Date();
 
-      const existing = await queryOne<{ id: string }>(
-        `SELECT id FROM deal_messages
-         WHERE tenant_id = $1 AND deal_id = $2
-           AND content = $3
-           AND created_at >= $4::timestamptz - interval '10 seconds'
-           AND created_at <= $4::timestamptz + interval '10 seconds'
-         LIMIT 1`,
-        [opts.tenantId, opts.dealId, text, msgDate.toISOString()],
-      );
-
-      if (existing) continue;
+      let attachmentUrl: string | null = null;
+      let attachmentType: string | null = null;
+      const msgAtts = Array.isArray(msg.attachments) ? msg.attachments : [];
+      const firstAtt = msgAtts[0];
+      if (firstAtt && firstAtt.fileId) {
+        const stored = await resolveAndStoreMaxAttachment({
+          tenantId: opts.tenantId,
+          botId: opts.channelAccountId,
+          fileId: firstAtt.fileId,
+          fileName: firstAtt.fileName,
+          mimeType: firstAtt.mimeType,
+          log: opts.log,
+        });
+        if (stored) {
+          attachmentUrl = stored.url;
+          attachmentType = stored.mimeType;
+        }
+      }
 
       const source = msg.out ? "manager" : "client";
       const direction = msg.out ? "outbound" : "inbound";
       const senderName = msg.out ? "Менеджер" : (target.firstName || opts.senderName || "Клиент MAX");
 
-      await query(
+      const existing = await queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND content = $3
+           AND (
+             (created_at >= $4::timestamptz - interval '60 seconds' AND created_at <= $4::timestamptz + interval '60 seconds')
+             OR (direction = $5 AND created_at > now() - interval '2 minutes')
+           )
+         LIMIT 1`,
+        [opts.tenantId, opts.dealId, text, msgDate.toISOString(), direction],
+      );
+
+      if (existing) {
+        if (attachmentUrl) {
+          await query(
+            `UPDATE deal_messages
+             SET attachment = COALESCE(attachment, $1),
+                 attachment_type = COALESCE(attachment_type, $2)
+             WHERE id = $3 AND tenant_id = $4`,
+            [attachmentUrl, attachmentType, existing.id, opts.tenantId],
+          );
+          void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, existing.id).catch(() => {});
+        }
+        continue;
+      }
+
+      const [inserted] = await query<{ id: string }>(
         `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9)`,
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11)
+         RETURNING id`,
         [
           opts.tenantId,
           opts.dealId,
@@ -173,9 +273,37 @@ export async function syncMaxDialogHistory(opts: {
           senderName,
           text,
           msg.out ? "sent" : "neutral",
+          attachmentUrl,
+          attachmentType,
           msgDate.toISOString(),
         ],
       );
+      if (inserted && attachmentUrl) {
+        void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, inserted.id).catch(() => {});
+      }
+      if (inserted) {
+        chatEventBus.emitChatEvent({
+          type: "message_created",
+          tenantId: opts.tenantId,
+          dealId: opts.dealId,
+          data: {
+            id: inserted.id,
+            tenantId: opts.tenantId,
+            dealId: opts.dealId,
+            channelAccountId: opts.channelAccountId,
+            source,
+            direction,
+            senderName,
+            content: text,
+            channel: "max",
+            deliveryStatus: msg.out ? "sent" : "neutral",
+            attachment: attachmentUrl,
+            attachmentType,
+            createdAt: msgDate.toISOString(),
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
       insertedCount++;
     }
   });
@@ -186,6 +314,13 @@ export async function syncMaxDialogHistory(opts: {
 
 async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   const body = internalInboundSchema.parse(request.body);
+
+  // Если сообщение пришло с флагом исходящего (например, из нативного приложения оператора),
+  // перенаправляем в обработчик нативных исходящих
+  if (body.out === true || body.fromMe === true || body.direction === "outbound") {
+    return processMaxOutbound(request, reply);
+  }
+
   const peerId = (body.peerId || body.chatId || "").trim();
   if (!peerId) {
     return reply.code(400).send({ ok: false, error: "peerId or chatId required" });
@@ -276,6 +411,56 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     body.senderName ||
     "Клиент MAX";
 
+  let attachmentUrl: string | undefined;
+  let attachmentType: string | undefined;
+  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
+    const att = body.attachments[0];
+    if (att && att.fileId) {
+      const stored = await resolveAndStoreMaxAttachment({
+        tenantId,
+        botId: channelAccountId,
+        fileId: att.fileId,
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        log: request.log,
+      });
+      if (stored) {
+        attachmentUrl = stored.url;
+        attachmentType = stored.mimeType;
+      }
+    }
+  }
+
+  const isBotFlag =
+    body.isBot === true ||
+    body.is_bot === true ||
+    body.type === "bot" ||
+    body.senderType === "bot";
+
+  const maxProfile: ChannelProfile = {
+    firstName: body.firstName ?? undefined,
+    phone: peerPhone,
+    username: body.username ?? body.senderUsername ?? undefined,
+    isBot: isBotFlag,
+  };
+
+  if (
+    isBotSender({
+      channel: "max",
+      chatId: peerId,
+      senderUsername: maxProfile.username,
+      senderName,
+      profile: maxProfile,
+      isBot: isBotFlag,
+    })
+  ) {
+    request.log.info(
+      { peerId, username: maxProfile.username, botId: channelAccountId },
+      `Skipping lead/contact creation: sender is a bot (@${(maxProfile.username || "unknown").replace(/^@/, "")})`,
+    );
+    return reply.send({ ok: true, skipped: "bot" });
+  }
+
   const crm = new CrmPipelineService();
   const crmResult = await runWithTenantContext(tenantId, () =>
     crm.processIncoming({
@@ -286,17 +471,21 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
       text: body.text,
       senderName,
       senderPhone: peerPhone,
-      profile: {
-        firstName: body.firstName ?? undefined,
-        phone: peerPhone,
-        username: body.username ?? body.senderUsername ?? undefined,
-      },
+      attachment: attachmentUrl,
+      attachmentType: attachmentType,
+      isBot: isBotFlag,
+      profile: maxProfile,
     }),
   );
 
   if (crmResult.isPersonal) {
     request.log.info({ peerId }, "Personal MAX contact message ignored by CRM");
     return reply.send({ ok: true });
+  }
+
+  if (crmResult.isBot) {
+    request.log.info({ peerId, username: body.username }, "Bot MAX sender ignored by CRM");
+    return reply.send({ ok: true, skipped: "bot" });
   }
 
   // Проверяем, не отключен ли или приостановлен AI-автопилот
@@ -464,6 +653,26 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
   const peerPhone = stripOwnerPhone(rawPhone, selfPhone);
 
   const crm = new CrmPipelineService();
+  let attachmentUrl: string | undefined;
+  let attachmentType: string | undefined;
+  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
+    const att = body.attachments[0];
+    if (att && att.fileId) {
+      const stored = await resolveAndStoreMaxAttachment({
+        tenantId: account.tenant_id,
+        botId: account.id,
+        fileId: att.fileId,
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        log: request.log,
+      });
+      if (stored) {
+        attachmentUrl = stored.url;
+        attachmentType = stored.mimeType;
+      }
+    }
+  }
+
   const result = await runWithTenantContext(account.tenant_id, () =>
     crm.processNativeOutbound({
       tenantId: account.tenant_id,
@@ -476,6 +685,8 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
       text: body.text,
       senderName: "Менеджер",
       pauseMinutes: 30,
+      attachment: attachmentUrl,
+      attachmentType: attachmentType,
     }),
   );
 

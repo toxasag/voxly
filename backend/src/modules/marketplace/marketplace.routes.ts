@@ -86,7 +86,10 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
 
     const hasCustomPrice = tenant?.custom_price_rubles !== null && tenant?.custom_price_rubles !== undefined;
     const isFreeCustomPlan = (hasCustomPrice && Number(tenant.custom_price_rubles) === 0) || tenant?.plan === "custom_free";
-    const customPlanName = tenant?.custom_plan_name ?? (isFreeCustomPlan ? "Партнёрский" : "Индивидуальный");
+    const isPartner = isFreeCustomPlan || tenant?.plan === "partner" || tenant?.plan === "custom_free";
+    const customPlanName = tenant?.custom_plan_name && tenant.custom_plan_name !== "Индивидуальный"
+      ? tenant.custom_plan_name
+      : (isPartner ? "Партнёрский тариф" : "Индивидуальный");
 
     const rows = await query<CatalogRow>(
       `SELECT m.slug, m.name, m.description, m.price_monthly, m.billing_kind,
@@ -168,7 +171,10 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
 
     const hasCustomPrice = tenant?.custom_price_rubles !== null && tenant?.custom_price_rubles !== undefined;
     const isFreeCustomPlan = (hasCustomPrice && Number(tenant.custom_price_rubles) === 0) || tenant?.plan === "custom_free";
-    const customPlanName = tenant?.custom_plan_name ?? (isFreeCustomPlan ? "Партнёрский" : "Индивидуальный");
+    const isPartner = isFreeCustomPlan || tenant?.plan === "partner" || tenant?.plan === "custom_free";
+    const customPlanName = tenant?.custom_plan_name && tenant.custom_plan_name !== "Индивидуальный"
+      ? tenant.custom_plan_name
+      : (isPartner ? "Партнёрский тариф" : "Индивидуальный");
     const customPrice = hasCustomPrice ? Number(tenant.custom_price_rubles) : null;
 
     const rows = await query<CatalogRow>(

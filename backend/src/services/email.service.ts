@@ -267,6 +267,101 @@ export class EmailService {
   }
 
   /**
+   * Приветственное письмо с реквизитами доступа (онбординг партнёра / создание тенанта).
+   * Содержит логин, сгенерированный пароль и прямую ссылку на портал.
+   */
+  static async sendTenantCredentialsEmail(options: {
+    to: string;
+    subdomain: string;
+    companyName: string;
+    adminName?: string;
+    loginEmail: string;
+    password?: string;
+  }): Promise<SendResult> {
+    const portalUrl = `https://${options.subdomain}.getvoxly.ru`;
+    const loginUrl = `${portalUrl}/login`;
+    const safePortal = escapeHtml(portalUrl);
+    const safeLoginUrl = escapeHtml(loginUrl);
+    const safeCompany = escapeHtml(options.companyName);
+    const safeName = escapeHtml(options.adminName || "Администратор");
+    const safeLogin = escapeHtml(options.loginEmail);
+    const safePassword = options.password ? escapeHtml(options.password) : null;
+
+    const body = `
+      <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Добро пожаловать в Voxly</h1>
+      <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
+        ${safeName}, для вашей компании «<strong>${safeCompany}</strong>» создано и настроено персональное рабочее пространство Voxly.
+      </p>
+
+      <div style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:20px;margin:20px 0;">
+        <h2 style="margin:0 0 14px 0;font-size:13px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">
+          Реквизиты для входа в систему
+        </h2>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;line-height:22px;">
+          <tr>
+            <td style="padding:6px 0;color:#64748b;width:130px;">Адрес портала:</td>
+            <td style="padding:6px 0;font-weight:600;">
+              <a href="${safeLoginUrl}" style="color:#2563eb;text-decoration:none;font-family:'SF Mono',Menlo,Consolas,monospace;">${safePortal}</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#64748b;">Логин (E-mail):</td>
+            <td style="padding:6px 0;font-weight:600;color:#0f172a;font-family:'SF Mono',Menlo,Consolas,monospace;">
+              ${safeLogin}
+            </td>
+          </tr>
+          ${
+            safePassword
+              ? `<tr>
+            <td style="padding:6px 0;color:#64748b;">Пароль:</td>
+            <td style="padding:6px 0;">
+              <span style="font-weight:700;color:#0f172a;font-family:'SF Mono',Menlo,Consolas,monospace;background-color:#ffffff;display:inline-block;padding:2px 8px;border-radius:4px;border:1px solid #cbd5e1;">${safePassword}</span>
+            </td>
+          </tr>`
+              : ""
+          }
+        </table>
+      </div>
+
+      ${button(loginUrl, "Войти в личный кабинет")}
+
+      <p style="margin:20px 0 8px 0;font-size:14px;font-weight:600;color:#0f172a;">Важные рекомендации по безопасности:</p>
+      <ul style="margin:0 0 16px 0;padding-left:20px;font-size:13px;line-height:22px;color:#475569;">
+        <li>После первого входа вы можете изменить пароль в разделе «Настройки профиля» → «Безопасность».</li>
+        <li>Привяжите личный Telegram-аккаунт в профиле для мгновенного получения уведомлений и двухфакторной авторизации.</li>
+      </ul>
+      <p style="margin:0;font-size:12px;line-height:18px;color:#94a3b8;">
+        Если у вас возникнут вопросы по настройке, напишите в службу поддержки Voxly.
+      </p>`;
+
+    const textLines = [
+      `Добро пожаловать в Voxly!`,
+      ``,
+      `${options.adminName || "Администратор"}, для компании «${options.companyName}» создано рабочее пространство.`,
+      ``,
+      `--- Реквизиты для входа ---`,
+      `Адрес портала: ${portalUrl}`,
+      `Ссылка для входа: ${loginUrl}`,
+      `Логин: ${options.loginEmail}`,
+      ...(options.password ? [`Пароль: ${options.password}`] : []),
+      ``,
+      `После первого входа вы можете сменить пароль в профиле.`,
+      `Команда Voxly · getvoxly.ru`,
+    ];
+
+    return EmailService.send({
+      to: options.to,
+      subject: `Доступ к Voxly: рабочее пространство ${options.companyName} (${options.subdomain}.getvoxly.ru)`,
+      html: layout({
+        title: `Добро пожаловать в Voxly — ${options.companyName}`,
+        preheader: `Реквизиты доступа к порталу ${options.subdomain}.getvoxly.ru для ${options.loginEmail}`,
+        body,
+      }),
+      text: textLines.join("\n"),
+    });
+  }
+
+  /**
    * Приглашение сотрудника в компанию.
    *
    * Роль называется прямо в письме: получатель должен понимать, какой доступ

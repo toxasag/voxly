@@ -43,6 +43,8 @@ const PLAN_LABELS: Record<string, string> = {
   starter: "Старт",
   business: "Бизнес",
   enterprise: "Корпоративный",
+  partner: "Партнёрский тариф",
+  custom_free: "Партнёрский тариф",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -233,16 +235,18 @@ function BillingContent() {
               )}
             </div>
             <p className="mt-1.5 text-2xl font-bold text-[#111111]">
-              {info?.isCustomPlan
-                ? (info.customPlanName || "Индивидуальный")
-                : summary.isCustomPlan
-                  ? (summary.customPlanName || "Индивидуальный")
-                  : info === undefined
-                    ? "—"
-                    : (PLAN_LABELS[info.plan] ?? info.plan)}
+              {info?.isPartner || info?.isFreeCustomPlan
+                ? (info.customPlanName || "Партнёрский тариф")
+                : info?.isCustomPlan
+                  ? (info.customPlanName || "Индивидуальный")
+                  : summary.isCustomPlan
+                    ? (summary.customPlanName || "Индивидуальный")
+                    : info === undefined
+                      ? "—"
+                      : (PLAN_LABELS[info.plan] ?? info.plan)}
             </p>
 
-            {info !== undefined && info.trialActive && (
+            {info !== undefined && info.trialActive && !info.isPartner && !info.isFreeCustomPlan && (
               <p className="mt-2 flex items-center gap-1.5 text-sm font-medium text-emerald-700">
                 <Gift className="h-4 w-4" />
                 Пробный период: осталось {info.trialDaysLeft} {pluralDays(info.trialDaysLeft)}
@@ -252,7 +256,7 @@ function BillingContent() {
               </p>
             )}
 
-            {info !== undefined && !info.trialActive && info.status === "trial" && (
+            {info !== undefined && !info.trialActive && info.status === "trial" && !info.isPartner && !info.isFreeCustomPlan && (
               <p className="mt-2 flex items-center gap-1.5 text-sm font-medium text-amber-700">
                 <CalendarClock className="h-4 w-4" />
                 Пробный период завершён

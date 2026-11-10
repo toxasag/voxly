@@ -20,6 +20,7 @@ import type { NextRequest } from "next/server";
 const PROTECTED_PREFIXES = [
   "/crm",
   "/repairs",
+  "/warehouse",
   "/finance",
   "/inbox",
   "/marketing",
@@ -64,7 +65,7 @@ export const TENANT_SLUG_HEADER = "x-tenant-slug";
  * hosts; the rest mirror `reserved_slugs` in the database so a reserved name
  * can never be mistaken for a tenant portal.
  */
-const PLATFORM_HOSTS: ReadonlySet<string> = new Set(["app", "www", "api", "admin"]);
+const PLATFORM_HOSTS: ReadonlySet<string> = new Set(["app", "www", "api", "admin", "voxly"]);
 
 const DEFAULT_AUTHENTICATED_TARGET = "/crm/contacts";
 
@@ -132,10 +133,12 @@ export function middleware(request: NextRequest) {
   const refreshToken =
     request.cookies.get("getvoxly_refresh")?.value ||
     request.cookies.get("getvoxly_refresh_token")?.value;
+  const sessionMarker = request.cookies.get("getvoxly_session")?.value;
   const hasActiveToken = token !== undefined && token.length > 0;
   const hasSession =
     hasActiveToken ||
-    (refreshToken !== undefined && refreshToken.length > 0);
+    (refreshToken !== undefined && refreshToken.length > 0) ||
+    sessionMarker === "active";
 
   // If visitor is on /login or /register:
   // Only redirect away if they have an ACTIVE access token AND they did not land here

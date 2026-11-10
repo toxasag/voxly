@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="12dp"
+    android:background="@android:color/white"
+    android:elevation="12dp"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Верхняя строка: лого/статус и кнопка закрытия -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <View
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@android:color/holo_green_dark" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="GETVOXLY CRM • Клиент"
+            android:textColor="@color/voxly_primary"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/btnCloseOverlay"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Закрыть"
+            android:src="@android:drawable/ic_menu_close_clear_cancel" />
+    </LinearLayout>
+
+    <!-- Имя контакта -->
+    <TextView
+        android:id="@+id/tvCallerName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="Имя контакта"
+        android:textColor="@color/voxly_text_primary"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <!-- Компания / Должность -->
+    <TextView
+        android:id="@+id/tvCallerCompany"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="Компания"
+        android:textColor="@color/voxly_text_secondary"
+        android:textSize="13sp" />
+
+    <!-- Активная сделка (Twenty UX чип) -->
+    <TextView
+        android:id="@+id/tvCallerDeal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:background="#FEFCE8"
+        android:padding="8dp"
+        android:text="Сделка: 150 000 ₽ • Согласование"
+        android:textColor="#854D0E"
+        android:textSize="12sp"
+        android:visibility="visible" />
+
+    <!-- Кнопка перехода в CRM -->
+    <Button
+        android:id="@+id/btnOpenCrm"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="12dp"
+        android:backgroundTint="@color/voxly_primary"
+        android:text="Открыть карточку в CRM"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp" />
+
+</LinearLayout>

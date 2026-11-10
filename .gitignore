@@ -19,5 +19,6 @@ backend/.audit/
 
 .vite/
 bin/
+.bin/
 
 .DS_Store
