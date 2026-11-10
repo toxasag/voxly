@@ -58,6 +58,7 @@ const ENTITY_ICONS: Record<string, string> = {
   "/marketing/funnels": "text-[#4a38f5]",
   "/modules/ai-bots": "text-indigo-600",
   "/repairs": "text-cyan-600",
+  "/warehouse": "text-amber-600",
   "/finance": "text-emerald-600",
   "/marketplace": "text-blue-500",
 };

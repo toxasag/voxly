@@ -236,17 +236,21 @@ export const createWorkSchema = z.object({
   description: z.string().min(1, "Description is required").max(500),
   master_id: z.string().uuid("master_id must be a UUID"),
   master_name: z.string().min(1, "Master name is required").max(200),
-  cost: z.number().nonnegative("Cost cannot be negative"),
+  quantity: z.number().positive("Quantity must be positive").default(1),
+  unit_price: z.number().nonnegative("Unit price cannot be negative").optional(),
+  cost: z.number().nonnegative("Cost cannot be negative").optional(),
 });
 
 export const updateWorkSchema = createWorkSchema.partial();
 
 export const createPartSchema = z.object({
+  warehouse_item_id: z.string().uuid().optional(),
   name: z.string().min(1, "Part name is required").max(200),
   article: z.string().max(100).optional().or(z.literal("")),
   quantity: z.number().int().positive("Quantity must be at least 1").default(1),
   retail_price: z.number().nonnegative("Retail price cannot be negative"),
   cost_price: z.number().nonnegative("Cost price cannot be negative").default(0),
+  status: z.enum(["used", "reserved", "needs_purchase"]).optional().default("used"),
 });
 
 export const updatePartSchema = createPartSchema.partial();
@@ -332,6 +336,8 @@ export interface RepairWorkRow {
   description: string;
   master_id: string;
   master_name: string;
+  quantity?: number | string;
+  unit_price?: number | string;
   cost: string;
   created_at: Date | string;
 }
@@ -339,6 +345,8 @@ export interface RepairWorkRow {
 export interface RepairPartRow {
   id: string;
   repair_order_id: string;
+  warehouse_item_id?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -377,12 +385,16 @@ export interface RepairWorkDTO {
   description: string;
   masterId: string;
   masterName: string;
+  quantity: number;
+  unitPrice: number;
   cost: number;
   createdAt: string;
 }
 
 export interface RepairPartDTO {
   id: string;
+  warehouseItemId?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -547,12 +559,18 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
 }
 
 export function toRepairWorkDTO(row: RepairWorkRow): RepairWorkDTO {
+  const qty = Number(row.quantity ?? 1);
+  const cost = Number(row.cost);
+  const unitPrice =
+    row.unit_price != null ? Number(row.unit_price) : qty > 0 ? cost / qty : cost;
   return {
     id: row.id,
     description: row.description,
     masterId: row.master_id,
     masterName: row.master_name,
-    cost: Number(row.cost),
+    quantity: qty,
+    unitPrice: Math.round(unitPrice * 100) / 100,
+    cost: cost,
     createdAt: toIso(row.created_at),
   };
 }
@@ -565,6 +583,8 @@ export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
 
   return {
     id: row.id,
+    warehouseItemId: row.warehouse_item_id ?? null,
+    status: row.status ?? "used",
     name: row.name,
     article: row.article,
     quantity: row.quantity,

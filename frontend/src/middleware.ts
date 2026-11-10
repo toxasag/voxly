@@ -20,6 +20,7 @@ import type { NextRequest } from "next/server";
 const PROTECTED_PREFIXES = [
   "/crm",
   "/repairs",
+  "/warehouse",
   "/finance",
   "/inbox",
   "/marketing",

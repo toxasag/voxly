@@ -13,6 +13,7 @@ import {
   CircleCheckBig,
   Building2,
   Receipt,
+  Boxes,
   Loader2,
   ArrowRight,
   type LucideIcon,
@@ -48,6 +49,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Дашборд", href: "/dashboard", icon: Home, shortcut: "G D" },
   { label: "CRM / Сделки", href: "/crm/deals", icon: Handshake, shortcut: "G C" },
   { label: "Сервисный центр", href: "/repairs", icon: Wrench, shortcut: "G R" },
+  { label: "Склад", href: "/warehouse", icon: Boxes, shortcut: "G W" },
   { label: "Финансы", href: "/finance", icon: Wallet, shortcut: "G F" },
   { label: "Маркетплейс", href: "/marketplace", icon: Store, shortcut: "G M" },
 ];
