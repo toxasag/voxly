@@ -117,7 +117,13 @@ function AddChannelModal({
   const updateBitrixMutation = useUpdateBitrix24Config();
   const testBitrixMutation = useTestBitrix24Connection();
 
-  const logsTotalCount = logsData?.total ?? 0;
+  const logsTotalCount = typeof logsData?.total === "number"
+    ? logsData.total
+    : Array.isArray(logsData)
+      ? logsData.length
+      : Array.isArray(logsData?.logs)
+        ? logsData.logs.length
+        : 0;
 
   const [bitrixUrl, setBitrixUrl] = useState("");
   const [bitrixEnabled, setBitrixEnabled] = useState(true);

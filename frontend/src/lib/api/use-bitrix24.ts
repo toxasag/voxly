@@ -153,11 +153,40 @@ export function useBitrix24Logs(params: { limit?: number; page?: number } = {}) 
 
   return useQuery({
     queryKey: bitrix24Keys.logs({ limit, page }),
-    queryFn: async () => {
-      const res = await apiClient.get<Bitrix24LogsResponse>(
+    queryFn: async (): Promise<Bitrix24LogsResponse> => {
+      const res = await apiClient.get<Bitrix24SyncLogDTO[] | Bitrix24LogsResponse>(
         `/api/v1/settings/integrations/bitrix24/logs?limit=${limit}&page=${page}`,
       );
-      return res.data;
+      const meta = res.meta ?? {};
+      const raw = res.data;
+
+      let logs: Bitrix24SyncLogDTO[] = [];
+      let total = 0;
+
+      if (Array.isArray(raw)) {
+        logs = raw;
+        total = typeof meta.total === "number" ? meta.total : logs.length;
+      } else if (raw && typeof raw === "object") {
+        const rawObj = raw as Bitrix24LogsResponse;
+        logs = Array.isArray(rawObj.logs)
+          ? rawObj.logs
+          : Array.isArray(rawObj.data)
+            ? rawObj.data
+            : [];
+        total = typeof rawObj.total === "number"
+          ? rawObj.total
+          : typeof meta.total === "number"
+            ? meta.total
+            : logs.length;
+      }
+
+      return {
+        data: logs,
+        logs,
+        total,
+        limit,
+        offset: (page - 1) * limit,
+      };
     },
     staleTime: 10_000,
     refetchInterval: 15_000,
