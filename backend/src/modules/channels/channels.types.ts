@@ -168,4 +168,6 @@ export interface ChannelSummaryDTO {
   total: number;
   trialEndsAt: string | null;
   trialActive: boolean;
+  is_unlimited?: boolean;
+  isUnlimited?: boolean;
 }

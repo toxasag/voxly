@@ -55,6 +55,8 @@ export interface ChannelSummaryDTO {
   total: number;
   trialEndsAt: string | null;
   trialActive: boolean;
+  is_unlimited?: boolean;
+  isUnlimited?: boolean;
 }
 
 export interface ChannelAccountsResult {
@@ -67,6 +69,7 @@ const BASE_PATH = "/api/v1/channels";
 export const channelKeys = {
   all: ["channels"] as const,
   accounts: (channel: ChannelSlug) => ["channels", channel, "accounts"] as const,
+  summary: (channel: ChannelSlug) => ["channels", channel, "summary"] as const,
 };
 
 /**
@@ -122,6 +125,7 @@ export function useCreateChannelAccount(
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
       void queryClient.invalidateQueries({ queryKey: ["widgets"] });
       void queryClient.invalidateQueries({ queryKey: ["channels"] });
+      void queryClient.invalidateQueries({ queryKey: ["quotas"] });
     },
   });
 }
@@ -150,6 +154,7 @@ export function useCloneChannelAccount(
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
       void queryClient.invalidateQueries({ queryKey: ["widgets"] });
       void queryClient.invalidateQueries({ queryKey: ["channels"] });
+      void queryClient.invalidateQueries({ queryKey: ["quotas"] });
     },
   });
 }

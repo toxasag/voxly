@@ -7,6 +7,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
 import { TeamService } from "./team.service.js";
 import { ensureTenantDefaults } from "./tenant-defaults.js";
+import { quotaService } from "../quotas/quota.service.js";
 
 /**
  * Tenant utility routes, mounted at /api/v1/tenant by app.ts.
@@ -310,6 +311,15 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     }
 
     return reply.send({ data: workspaces, meta: { total: workspaces.length } });
+  });
+
+  /**
+   * GET /api/v1/tenant/quotas/current
+   * Получение лимитов и квот текущего тенанта
+   */
+  app.get("/quotas/current", async (request, reply) => {
+    const quotas = await quotaService.getTenantQuotas(request.tenant_id);
+    return reply.send({ data: quotas });
   });
 
   // -------------------------------------------------------------------------

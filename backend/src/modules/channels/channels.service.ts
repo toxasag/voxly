@@ -2,6 +2,7 @@ import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import type { ChannelSlug } from "../../types/index.js";
 import { channelLinksService } from "./channel-links.service.js";
+import { quotaService } from "../quotas/quota.service.js";
 import {
   isValidDomain,
   normalizeDomain,
@@ -191,9 +192,13 @@ export class ChannelsService {
     const isFreeInPlan = (row?.included_units ?? 0) > 0;
     const trialEndsAt = isFreeInPlan ? null : toIso(row?.trial_ends_at ?? null);
 
+    const featureKey = channel === "webchat" ? "webchat_widgets" : `${channel}_channels`;
+    const quota = await quotaService.checkQuota(tenantId, featureKey);
+    const effectiveQuantity = quota.isUnlimited ? 999999 : (quota.maxLimit ?? row?.quantity ?? 0);
+
     return {
       channel,
-      quantity: row?.quantity ?? 0,
+      quantity: effectiveQuantity,
       connectedCount: Number(row?.connected_count ?? 0),
       total: Number(row?.total ?? 0),
       trialEndsAt,
@@ -201,6 +206,8 @@ export class ChannelsService {
       trialActive: isFreeInPlan
         ? false
         : trialEndsAt !== null && new Date(trialEndsAt).getTime() > Date.now(),
+      is_unlimited: quota.isUnlimited,
+      isUnlimited: quota.isUnlimited,
     };
   }
 
@@ -260,12 +267,25 @@ export class ChannelsService {
         [tenantId, channel],
       );
 
-      if (Number(used?.total ?? 0) >= module.quantity) {
-        throw new AppError(
-          409,
-          "CHANNEL_LIMIT_REACHED",
-          `По тарифу оплачено ${module.quantity} ${pluralConnections(module.quantity)}. Увеличьте количество в маркетплейсе.`,
-        );
+      const featureKey = channel === "webchat" ? "webchat_widgets" : `${channel}_channels`;
+      const quota = await quotaService.checkQuota(tenantId, featureKey);
+
+      if (!quota.isUnlimited) {
+        const effectiveLimit = quota.maxLimit ?? module.quantity;
+        if (Number(used?.total ?? 0) >= effectiveLimit) {
+          throw new AppError(
+            403,
+            "CHANNEL_LIMIT_REACHED",
+            channel === "webchat"
+              ? `Исчерпан лимит онлайн-виджетов (${effectiveLimit}). Для снятия ограничений обратитесь к администратору платформы.`
+              : `По тарифу оплачено ${effectiveLimit} ${pluralConnections(effectiveLimit)}. Увеличьте количество в маркетплейсе или обратитесь к администратору.`,
+            {
+              limit: [
+                `Лимит: ${effectiveLimit}, текущее количество: ${used?.total ?? 0}`,
+              ],
+            },
+          );
+        }
       }
 
       const defaultCredentials = channel === "webchat" ? {
@@ -323,7 +343,7 @@ export class ChannelsService {
    *
    * Безопасность:
    * - Запрос выполняется строго в контексте текущего tenantId (защита от IDOR/RLS).
-   * - Проверяется лимит сайтов по тарифу (409 CHANNEL_LIMIT_REACHED).
+   * - Проверяется лимит сайтов по тарифу / квотам (403/409 CHANNEL_LIMIT_REACHED).
    * - Проверяется отсутствие дубликата домена (409 CHANNEL_ACCOUNT_EXISTS).
    */
   async clone(
