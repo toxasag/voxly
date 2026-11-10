@@ -233,7 +233,7 @@ export function displayNameFrom(identity: SenderIdentity): string {
 export interface PhoneValidationResult {
   isValid: boolean;
   normalized: string | null;
-  issue?: "too_short" | "too_long" | "invalid_format";
+  issue?: "too_short" | "too_long" | "invalid_format" | "fake_number";
   digits: string;
 }
 
@@ -241,9 +241,63 @@ export interface PhoneAnalysis {
   hasAttempt: boolean;
   isValid: boolean;
   phone: string | null;
-  issue?: "too_short" | "too_long" | "invalid_format";
+  issue?: "too_short" | "too_long" | "invalid_format" | "fake_number";
   rawCandidate?: string;
   digitsCount?: number;
+}
+
+/**
+ * Проверяет, не является ли номер телефона фиктивным/тестовым заглушечным значением
+ * (все одинаковые цифры, 6+ повторяющихся цифр подряд, восходящие/нисходящие последовательности,
+ * тривиальные шаблоны вроде 79111111111, 79999999999, 1234567890).
+ */
+export function isFakeOrDummyPhone(digits: string): boolean {
+  if (!digits || digits.length < 7) return true;
+
+  // 1. Все одинаковые цифры (например, 11111111111, 0000000000)
+  const uniqueDigits = new Set(digits.split(""));
+  if (uniqueDigits.size <= 1) return true;
+
+  // 2. Шесть или более одинаковых цифр подряд в любом месте номера (например, 91111111111, 9999999999)
+  if (/(.)\1{5,}/.test(digits)) return true;
+
+  // 3. Анализ 7-значного абонентского номера (последние 7 цифр)
+  if (digits.length >= 10) {
+    const subscriberNumber = digits.slice(-7);
+    const subUnique = new Set(subscriberNumber.split(""));
+    // Если в 7 цифрах номера абонента только 1 уникальная цифра (111-11-11, 000-00-00, 222-22-22)
+    if (subUnique.size <= 1) return true;
+
+    // Если одна цифра повторяется 6 или 7 раз из 7 (например, 111-11-12, 111-12-11)
+    const counts: Record<string, number> = {};
+    for (const ch of subscriberNumber) {
+      counts[ch] = (counts[ch] ?? 0) + 1;
+    }
+    if (Object.values(counts).some((cnt) => cnt >= 6)) return true;
+
+    // Чередующиеся паттерны из 2 цифр в абонентском номере (1212121, 0101010)
+    if (subUnique.size === 2 && /^(\d)(\d)\1\2\1\2\1?$/.test(subscriberNumber)) return true;
+  }
+
+  // 4. Последовательности цифр подряд (123456, 234567, 987654 и т.д.)
+  const sequentialPatterns = [
+    "0123456", "1234567", "2345678", "3456789", "4567890",
+    "9876543", "8765432", "7654321", "6543210",
+  ];
+  for (const seq of sequentialPatterns) {
+    if (digits.includes(seq)) return true;
+  }
+
+  // 5. Невалидные префиксы операторов для РФ (11 цифр, начинающихся с 7 или 8)
+  if ((digits.startsWith("7") || digits.startsWith("8")) && digits.length === 11) {
+    const def = digits.slice(1, 4); // DEF-код или код города
+    // Мобильные коды в РФ строго на 9 (900-999).
+    // Стационарные коды на 3, 4, 8 (300-499, 811-879).
+    // Коды на 0, 1, 2, 5, 6, 7 в РФ не являются валидными кодами назначения (DEF/ABC).
+    if (/^[012567]/.test(def)) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -255,6 +309,7 @@ export interface PhoneAnalysis {
  * - Неполные номера (10 цифр с 7 или 8, например 7911111111) бракуются как `too_short`!
  * - Номера с избыточными цифрами (+7999123456789) бракуются как `too_long`!
  * - Международные (+...): 10-15 цифр по стандарту E.164, при этом +7 строго 11 цифр.
+ * - Фиктивные и тестовые номера (все одинаковые цифры, 79111111111, 1234567890) бракуются как `fake_number`!
  */
 export function validatePhoneCandidate(candidate: string): PhoneValidationResult {
   const trimmed = candidate.trim();
@@ -263,6 +318,10 @@ export function validatePhoneCandidate(candidate: string): PhoneValidationResult
 
   if (digits.length < 7) {
     return { isValid: false, normalized: null, issue: "too_short", digits };
+  }
+
+  if (isFakeOrDummyPhone(digits)) {
+    return { isValid: false, normalized: null, issue: "fake_number", digits };
   }
 
   // 1. Международный формат с явным знаком плюса (+)
@@ -408,7 +467,7 @@ export function analyzePhoneInText(text?: string | null): PhoneAnalysis {
   ];
 
   let firstInvalidAttempt: {
-    issue?: "too_short" | "too_long" | "invalid_format";
+    issue?: "too_short" | "too_long" | "invalid_format" | "fake_number";
     candidate: string;
     digits: string;
   } | null = null;

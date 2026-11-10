@@ -57,8 +57,20 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       owner_email: string | null;
       owner_name: string | null;
       owner_phone: string | null;
+      is_partner: boolean;
+      tenant_type: "partner" | "client" | null;
+      parent_tenant_id: string | null;
+      owner_partner_id: string | null;
+      parent_tenant_name: string | null;
+      parent_tenant_slug: string | null;
     }>(
       `SELECT t.id, t.name, t.slug, t.plan, t.status,
+          t.is_partner,
+          COALESCE(t.tenant_type, CASE WHEN t.is_partner = true THEN 'partner' ELSE 'client' END) AS tenant_type,
+          t.parent_tenant_id,
+          t.owner_partner_id,
+          parent.name AS parent_tenant_name,
+          parent.slug AS parent_tenant_slug,
           t.custom_price_rubles, t.custom_plan_name, t.business_niche, t.custom_notes,
           t.auth_settings,
           t.ai_tokens_balance,
@@ -81,7 +93,8 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           (SELECT u.name FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL ORDER BY (CASE WHEN u.role = 'owner' THEN 0 ELSE 1 END), u.created_at ASC LIMIT 1) AS owner_name,
           (SELECT u.phone FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL ORDER BY (CASE WHEN u.role = 'owner' THEN 0 ELSE 1 END), u.created_at ASC LIMIT 1) AS owner_phone
        FROM tenants t
-       ORDER BY t.created_at DESC`,
+       LEFT JOIN tenants parent ON parent.id = COALESCE(t.owner_partner_id, t.parent_tenant_id)
+       ORDER BY (CASE WHEN t.is_partner = true THEN 0 ELSE 1 END), t.created_at DESC`,
     );
 
     return reply.send({
@@ -123,6 +136,12 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           slug: row.slug,
           plan: row.plan,
           status: row.status,
+          is_partner: Boolean(row.is_partner || row.tenant_type === "partner"),
+          tenant_type: ((row.is_partner || row.tenant_type === "partner") ? "partner" : "client") as "partner" | "client",
+          parent_tenant_id: row.parent_tenant_id || row.owner_partner_id || null,
+          owner_partner_id: row.owner_partner_id || row.parent_tenant_id || null,
+          parent_tenant_name: row.parent_tenant_name ?? null,
+          parent_tenant_slug: row.parent_tenant_slug ?? null,
           custom_price_rubles: row.custom_price_rubles !== null ? Number(row.custom_price_rubles) : null,
           custom_plan_name: row.custom_plan_name ?? null,
           business_niche: row.business_niche ?? null,
@@ -166,7 +185,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const tenantId = tenantParams.parse(request.params).id;
     const body = updateTenantSchema.parse(request.body);
     const sets: string[] = [];
-    const params: (string | number | null)[] = [tenantId];
+    const params: (string | number | boolean | null)[] = [tenantId];
 
     if (body.status !== undefined) {
       params.push(body.status);
@@ -194,13 +213,47 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       params.push(Math.round(body.ai_balance_rubles * 100));
       sets.push(`ai_balance_kopecks = $${params.length}`);
     }
+    if (body.tenant_type !== undefined) {
+      const isPartner = body.tenant_type === "partner";
+      params.push(body.tenant_type);
+      sets.push(`tenant_type = $${params.length}`);
+      params.push(isPartner);
+      sets.push(`is_partner = $${params.length}`);
+      if (isPartner) {
+        sets.push(`parent_tenant_id = NULL`);
+        sets.push(`owner_partner_id = NULL`);
+      }
+    } else if (body.is_partner !== undefined) {
+      params.push(body.is_partner);
+      sets.push(`is_partner = $${params.length}`);
+      params.push(body.is_partner ? "partner" : "client");
+      sets.push(`tenant_type = $${params.length}`);
+      if (body.is_partner) {
+        sets.push(`parent_tenant_id = NULL`);
+        sets.push(`owner_partner_id = NULL`);
+      }
+    }
+
+    if (body.parent_tenant_id !== undefined) {
+      params.push(body.parent_tenant_id);
+      sets.push(`parent_tenant_id = $${params.length}`);
+      params.push(body.parent_tenant_id);
+      sets.push(`owner_partner_id = $${params.length}`);
+    } else if (body.owner_partner_id !== undefined) {
+      params.push(body.owner_partner_id);
+      sets.push(`parent_tenant_id = $${params.length}`);
+      params.push(body.owner_partner_id);
+      sets.push(`owner_partner_id = $${params.length}`);
+    }
+
     if (body.custom_price_rubles !== undefined) {
       params.push(body.custom_price_rubles);
       sets.push(`custom_price_rubles = $${params.length}`);
       if (body.custom_price_rubles === 0) {
         sets.push(`trial_ends_at = NULL`);
         if (body.custom_plan_name === undefined) {
-          params.push("Партнёрский тариф");
+          const isPartner = body.tenant_type === "partner" || body.is_partner === true;
+          params.push(isPartner ? "Партнёрский тариф" : "Бесплатный (Клиент)");
           sets.push(`custom_plan_name = $${params.length}`);
         }
       }
@@ -236,6 +289,10 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       slug: string;
       plan: string;
       status: string;
+      is_partner: boolean;
+      tenant_type: "partner" | "client";
+      parent_tenant_id: string | null;
+      owner_partner_id: string | null;
       custom_price_rubles: number | null;
       custom_plan_name: string | null;
       business_niche: string | null;
@@ -250,7 +307,8 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       subscription_expires_at: Date | string | null;
     }
 
-    const RETURN_COLUMNS = `id, name, slug, plan, status, custom_price_rubles,
+    const RETURN_COLUMNS = `id, name, slug, plan, status, is_partner, tenant_type,
+         parent_tenant_id, owner_partner_id, custom_price_rubles,
          custom_plan_name, business_niche, custom_notes, auth_settings, ai_tokens_balance,
          ai_balance_kopecks::text AS ai_balance_kopecks,
          ai_markup_percent::text AS ai_markup_percent,
@@ -278,6 +336,18 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     );
     if (row === null) throw new NotFoundError("Tenant not found");
 
+    if (body.tenant_type !== undefined || body.is_partner !== undefined) {
+      const isPartner = Boolean(row.is_partner || row.tenant_type === "partner");
+      if (isPartner) {
+        await query(`UPDATE users SET is_partner = true WHERE tenant_id = $1`, [tenantId]);
+      } else {
+        await query(
+          `UPDATE users SET is_partner = false WHERE tenant_id = $1 AND platform_role IS DISTINCT FROM 'platform_owner'`,
+          [tenantId],
+        );
+      }
+    }
+
     await query(
       `INSERT INTO tenant_audit_log
          (tenant_id, actor_user_id, action, entity_type, entity_id, details)
@@ -293,15 +363,32 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     });
   });
 
-  app.post("/tenants/:id/impersonate", { onRequest: platformOwner }, async (request, reply) => {
+  app.post("/tenants/:id/impersonate", async (request, reply) => {
     const tenantId = tenantParams.parse(request.params).id;
+    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null; owner_partner_id: string | null }>(
+      "SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE id = $1",
+      [tenantId],
+    );
+    if (!tenant) {
+      throw new NotFoundError("Компания не найдена");
+    }
+    const isPlatformOwner =
+      request.authUser?.platform_role === "platform_owner" ||
+      Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
+    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const isParentPartner =
+      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
+      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
+    if (!isPlatformOwner && !isParentPartner) {
+      throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
+    }
     const authService = new AuthService(app);
     const actorId =
       request.authUser?.platform_role === "platform_owner"
         ? request.authUser.id
         : request.impersonator_id || request.authUser?.id;
     if (!actorId) {
-      throw new UnauthorizedError("Не удалось определить идентификатор администратора");
+      throw new UnauthorizedError("Не удалось определить идентификатор администратора или партнера");
     }
     const tokens = await authService.impersonateTenant(tenantId, actorId);
     setAuthCookies(request, reply, tokens);
@@ -327,8 +414,8 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
 
   app.post("/tenants/by-slug/:slug/impersonate", async (request, reply) => {
     const { slug } = z.object({ slug: z.string().min(1) }).parse(request.params);
-    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null }>(
-      "SELECT id, name, slug, parent_tenant_id FROM tenants WHERE slug = $1",
+    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null; owner_partner_id: string | null }>(
+      "SELECT id, name, slug, parent_tenant_id, owner_partner_id FROM tenants WHERE slug = $1",
       [slug.toLowerCase()],
     );
     if (!tenant) {
@@ -337,7 +424,10 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const isPlatformOwner =
       request.authUser?.platform_role === "platform_owner" ||
       Boolean(request.impersonator_id && request.impersonator_platform_role === "platform_owner");
-    const isParentPartner = tenant.parent_tenant_id !== null && tenant.parent_tenant_id === request.tenant_id;
+    const partnerTenantId = request.impersonator_tenant_id || request.tenant_id;
+    const isParentPartner =
+      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
+      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
     if (!isPlatformOwner && !isParentPartner) {
       throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
     }

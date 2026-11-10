@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { usePathname } from "next/navigation";
-import { LogOut, ShieldAlert } from "lucide-react";
-import { writeTokens } from "@/lib/auth/session";
+import { LogOut, ShieldAlert, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth/use-auth";
 import {
   readImpersonationBackup,
@@ -15,11 +14,11 @@ import {
 
 export function ImpersonationBanner() {
   const pathname = usePathname();
-  const { user, tenant } = useAuth();
+  const { user, tenant, impersonator } = useAuth();
   const [backup, setBackup] = useState<ImpersonationBackup | null>(null);
   const [isExiting, setIsExiting] = useState(false);
 
-  // Синхронизируем состояние при монтировании и при каждом переходе по маршрутам Next.js
+  // Синхронизируем состояние бэкапа при монтировании и при каждом переходе по маршрутам Next.js
   const syncBackup = useCallback(() => {
     const active = readImpersonationBackup();
     setBackup(active);
@@ -28,7 +27,6 @@ export function ImpersonationBanner() {
   useEffect(() => {
     syncBackup();
 
-    // Слушаем storage events на случай смены сессии в соседних вкладках
     const handleStorageChange = () => {
       syncBackup();
     };
@@ -39,24 +37,45 @@ export function ImpersonationBanner() {
     };
   }, [pathname, syncBackup]);
 
-  // Если пользователь находится в своём основном рабочем пространстве администратора платформы (Voxly Platform),
-  // он НЕ находится в режиме имперсонации клиента. Плашка категорически не должна отображаться.
+  // Определяем, находится ли пользователь в своем основном кабинете платформы (Voxly Platform),
+  // когда сессия не является имперсонированной (impersonator === null)
   const isPlatformAdminWorkspace =
+    !impersonator &&
     user?.platform_role === "platform_owner" &&
-    (tenant?.slug === "voxly" || !tenant?.slug || tenant?.tenantName?.toLowerCase().includes("platform"));
+    (tenant?.slug === "voxly" || tenant?.tenantName?.toLowerCase().includes("platform"));
 
-  // Если админ вернулся в свой кабинет, сбрасываем оставшийся бэкап
+  // Определяем, находится ли партнер в своем личном кабинете партнера
+  const isPartnerOwnWorkspace =
+    !impersonator &&
+    Boolean(
+      backup?.isPartner &&
+        backup?.adminUserEmail &&
+        user?.email?.toLowerCase() === backup.adminUserEmail.toLowerCase() &&
+        (!backup.impersonatedTenantSlug || tenant?.slug !== backup.impersonatedTenantSlug),
+    );
+
+  // Сбрасываем бэкап ТОЛЬКО тогда, когда пользователь действительно вернулся в свой исходный кабинет
+  // и серверный токен подтверждает, что режим имперсонации завершен (!impersonator)
   useEffect(() => {
-    if (isPlatformAdminWorkspace && backup) {
-      clearImpersonationBackup();
-      setBackup(null);
+    if (!impersonator && (isPlatformAdminWorkspace || isPartnerOwnWorkspace) && backup) {
+      if (
+        backup.impersonatedTenantSlug &&
+        tenant?.slug &&
+        tenant.slug !== backup.impersonatedTenantSlug
+      ) {
+        clearImpersonationBackup();
+        setBackup(null);
+      }
     }
-  }, [isPlatformAdminWorkspace, backup]);
+  }, [impersonator, isPlatformAdminWorkspace, isPartnerOwnWorkspace, backup, tenant?.slug]);
 
-  if (isPlatformAdminWorkspace || !backup) return null;
+  // Если в своем собственном кабинете и не в режиме имперсонации — скрываем
+  if (isPlatformAdminWorkspace || isPartnerOwnWorkspace) {
+    return null;
+  }
 
-  // Если текущий авторизованный пользователь — сам суперадминистратор, мы не в клиенте
-  if (backup.adminUserEmail && user?.email === backup.adminUserEmail) {
+  // Если ни серверный флаг impersonator, ни локальный бэкап не найдены — не показываем
+  if (!impersonator && !backup) {
     return null;
   }
 
@@ -70,42 +89,81 @@ export function ImpersonationBanner() {
         window.location.href = res.targetUrl;
         return;
       }
-      window.location.href = getPlatformAdminUrl();
+      window.location.href = getPlatformAdminUrl(undefined, backup);
     } catch (err) {
-      console.error("Ошибка возврата в сессию администратора", err);
-      window.location.href = getPlatformAdminUrl();
+      console.error("Ошибка возврата в сессию администратора/партнера:", err);
+      window.location.href = getPlatformAdminUrl(undefined, backup);
     }
   };
+
+  const isPartner = Boolean(
+    impersonator?.is_partner ||
+      (backup?.isPartner && !backup?.isPlatformOwner),
+  );
+
+  const returnLabel = isExiting
+    ? "Возвращение..."
+    : isPartner
+    ? "Вернуться в кабинет партнёра"
+    : "Вернуться в свой аккаунт";
+
+  const adminDisplayName =
+    impersonator?.name ||
+    impersonator?.email ||
+    backup?.adminUserName ||
+    backup?.adminUserEmail ||
+    "администратора";
+
+  const clientTenantName =
+    tenant?.tenantName ||
+    backup?.impersonatedTenantName ||
+    tenant?.slug ||
+    backup?.impersonatedTenantSlug ||
+    "клиента";
+
+  const clientUserEmail =
+    user?.email ||
+    backup?.impersonatedUserEmail ||
+    "";
 
   return (
     <aside
       role="alert"
       aria-label="Режим просмотра аккаунта клиента"
+      data-testid="impersonation-banner"
       className="sticky top-0 z-50 flex w-full flex-wrap items-center justify-between gap-3 border-b border-[#fef08a] bg-[#fefce8] px-4 py-2 text-[#854d0e] shadow-2xs transition-all"
     >
       <div className="flex items-center gap-2 text-xs">
         <ShieldAlert className="h-4 w-4 shrink-0 text-[#854d0e]" />
-        <span className="font-semibold">Режим просмотра арендатора:</span>
-        <span className="font-medium text-[#713f12]">
-          вы вошли от имени{" "}
-          <strong className="underline underline-offset-2">
-            {backup.impersonatedTenantName || "компании"}
-          </strong>
-          {backup.impersonatedUserEmail ? ` (${backup.impersonatedUserEmail})` : ""}
+        <span className="font-semibold">
+          {isPartner ? "Режим просмотра клиента:" : "Режим просмотра клиента:"}
         </span>
-        <span className="hidden text-[11px] opacity-80 lg:inline">
-          — действия в CRM применяются от лица этого клиента
+        <span className="font-medium text-[#713f12]">
+          вы вошли в организацию{" "}
+          <strong className="underline underline-offset-2">
+            {clientTenantName}
+          </strong>
+          {clientUserEmail ? ` (${clientUserEmail})` : ""}{" "}
+          от лица <span className="font-semibold">{adminDisplayName}</span>
+        </span>
+        <span className="hidden text-[11px] opacity-80 xl:inline">
+          — действия в CRM применяются от лица этой организации
         </span>
       </div>
 
       <button
         type="button"
+        data-testid="revert-impersonation-btn"
         onClick={handleReturnToAdmin}
         disabled={isExiting}
-        className="flex items-center gap-1.5 rounded-[8px] bg-[#111111] px-3 py-1 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#333333] focus:outline-none focus:ring-2 focus:ring-[#111111]/30 disabled:opacity-50 cursor-pointer"
+        className="flex items-center gap-1.5 rounded-[8px] bg-[#111111] px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#333333] focus:outline-none focus:ring-2 focus:ring-[#111111]/30 disabled:opacity-50 cursor-pointer"
       >
-        <LogOut className="h-3.5 w-3.5" />
-        <span>{isExiting ? "Возвращение..." : "Вернуться в панель администратора"}</span>
+        {isExiting ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <LogOut className="h-3.5 w-3.5" />
+        )}
+        <span>{returnLabel}</span>
       </button>
     </aside>
   );

@@ -349,7 +349,7 @@ export class AgentPipelineService {
               profileParts.push(`Имя клиента: ${fullName}`);
               profileParts.push(`Имя клиента УЖЕ известно (${contactRow.first_name}). Обязательно обращайся к нему по имени и КАТЕГОРИЧЕСКИ НЕ СПРАШИВАЙ его имя повторно!`);
             } else {
-              profileParts.push(`Имя клиента пока неизвестно. Представься сам (Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}) и вежливо спроси: «Подскажите, как могу к вам обращаться?».`);
+              profileParts.push(`Имя клиента пока неизвестно. Представься сам (Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}) и вежливо спроси суть его задачи: «Подскажите, какой вопрос хотите решить?». Не трать отдельный вопрос на выяснение имени клиента.`);
             }
             if (contactRow.phone) profileParts.push(`Телефон: ${contactRow.phone}`);
             if (contactRow.notes && contactRow.notes.trim()) profileParts.push(`Заметки менеджера: ${contactRow.notes.trim()}`);
@@ -600,10 +600,12 @@ export class AgentPipelineService {
       const reply = parseAgentReply(completion.content);
 
       // Серверный предохранитель от преждевременного отключения бота и ложной фиксации контактов (Узел 5):
-      // 1. Если модель выставила handoff_required: true, но клиент еще не сообщил валидный номер телефона
+      // 1. Если клиент ввел фиктивный/тестовый номер (+79111111111, все одинаковые цифры) — жестко блокируем
+      // и запрашиваем реальный номер.
+      // 2. Если модель выставила handoff_required: true, но клиент еще не сообщил валидный номер телефона
       // и не требовал оператора/человека — предотвращаем ложную эскалацию.
-      // 2. Если модель галлюцинирует («номер зафиксировал / передал специалисту»), но клиент ввел
-      // неполный или ошибочный номер (например 7911111111) — перехватываем и заменяем на вежливую просьбу исправить номер.
+      // 3. Если модель галлюцинирует («номер зафиксировал / передал специалисту»), но клиент ввел
+      // неполный или ошибочный номер — перехватываем и заменяем на вежливую просьбу исправить номер.
       if (reply !== null) {
         const phoneAnalysis = analyzePhoneInText(input.text);
         const hasValidPhoneInMessage = phoneAnalysis.isValid && phoneAnalysis.phone !== null;
@@ -614,7 +616,17 @@ export class AgentPipelineService {
         const phoneConfirmationRegex = /(?:номер\s+(?:зафиксировал|записал|принял|сохранен)|(?:зафиксировал|записал|принял)\s+номер|передал(?:\s+в\s+работу)?\s+(?:старшему|специалист|коллег)|коллега\s+свяжется|специалист\s+свяжется|набер[её]т(?:\s+вам)?)/i;
         const replyClaimsPhoneRecorded = reply.messages.some((msg) => phoneConfirmationRegex.test(msg));
 
-        if (!hasValidPhoneInMessage && !hasKnownPhone && !hasEscalationIntent) {
+        if (phoneAnalysis.hasAttempt && phoneAnalysis.issue === "fake_number") {
+          this.log.warn(
+            { agentId: agent.id, dealId: input.dealId, text: input.text, candidate: phoneAnalysis.rawCandidate },
+            "[AgentPipeline] Rejected fake/dummy phone number, asking for valid contact",
+          );
+          reply.handoff_required = false;
+          reply.session_pause = false;
+          reply.messages = [
+            "Похоже, указан тестовый или некорректный номер телефона. Пожалуйста, укажите ваш действующий номер для связи со специалистом.",
+          ];
+        } else if (!hasValidPhoneInMessage && !hasKnownPhone && !hasEscalationIntent) {
           if (reply.handoff_required) {
             this.log.warn(
               { agentId: agent.id, dealId: input.dealId, text: input.text, issue: phoneAnalysis.issue },
@@ -634,7 +646,7 @@ export class AgentPipelineService {
                 correctionMessage = "Похоже, в номере опечатка. Пожалуйста, проверьте и напишите правильный номер телефона для связи.";
               }
             } else {
-              correctionMessage = "Подскажите, на какой номер коллеге удобнее вам набрать для консультации?";
+              correctionMessage = "Подскажите, на какой номер специалист сможет перезвонить вам для детального разбора ситуации?";
             }
 
             this.log.warn(
@@ -651,6 +663,12 @@ export class AgentPipelineService {
             reply.messages = [correctionMessage];
             reply.handoff_required = false;
           }
+        }
+
+        // Гарантия отсутствия дуплетов (SLA: 1 логическое сообщение на 1 входящее):
+        // Если модель разбила ответ на несколько частей, объединяем в одну связную реплику.
+        if (reply.messages.length > 1) {
+          reply.messages = [reply.messages.join(" ")];
         }
       }
 

@@ -1,4 +1,4 @@
-import { query, runWithPlatformScope, transaction } from "../../../db/client.js";
+import { query, runWithPlatformScope, runWithTenantContext, transaction } from "../../../db/client.js";
 
 // ---------------------------------------------------------------------------
 // Фоновое обслуживание сделок CRM (Deal Maintenance Service).
@@ -43,31 +43,33 @@ export async function expireStaleFirstContactDeals(): Promise<DealMaintenanceRep
     let closedCount = 0;
 
     for (const deal of staleDeals) {
-      await transaction(async (tx) => {
-        const lostStage = await tx.queryOne<{ id: string }>(
-          `SELECT id FROM stages
-           WHERE pipeline_id = $1 AND is_lost = true
-           ORDER BY sort_order DESC
-           LIMIT 1`,
-          [deal.pipeline_id],
-        );
+      await runWithTenantContext(deal.tenant_id, async () => {
+        await transaction(async (tx) => {
+          const lostStage = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM stages
+             WHERE pipeline_id = $1 AND is_lost = true
+             ORDER BY sort_order DESC
+             LIMIT 1`,
+            [deal.pipeline_id],
+          );
 
-        if (!lostStage) return;
+          if (!lostStage) return;
 
-        await tx.query(
-          `UPDATE deals
-           SET stage_id = $1, closed_at = now(), updated_at = now()
-           WHERE id = $2 AND tenant_id = $3`,
-          [lostStage.id, deal.id, deal.tenant_id],
-        );
+          await tx.query(
+            `UPDATE deals
+             SET stage_id = $1, closed_at = now(), updated_at = now()
+             WHERE id = $2 AND tenant_id = $3`,
+            [lostStage.id, deal.id, deal.tenant_id],
+          );
 
-        await tx.query(
-          `INSERT INTO deal_messages (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, created_at)
-           VALUES ($1, $2, 'system', 'neutral', 'Система', 'Сделка автоматически закрыта: истёк срок ожидания контакта (5 суток без активности).', 'system', 'neutral', now())`,
-          [deal.tenant_id, deal.id],
-        );
+          await tx.query(
+            `INSERT INTO deal_messages (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, created_at)
+             VALUES ($1, $2, 'system', 'neutral', 'Система', 'Сделка автоматически закрыта: истёк срок ожидания контакта (5 суток без активности).', 'system', 'neutral', now())`,
+            [deal.tenant_id, deal.id],
+          );
 
-        closedCount++;
+          closedCount++;
+        });
       });
     }
 

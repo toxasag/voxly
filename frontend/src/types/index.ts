@@ -72,6 +72,7 @@ export interface CurrentUser {
   role: Role;
   platform_role: PlatformRole | null;
   permissions: Set<Permission>;
+  is_partner?: boolean;
 }
 
 export interface Tenant {
@@ -80,6 +81,10 @@ export interface Tenant {
   /** Personal subdomain: {slug}.getvoxly.ru. */
   slug: string;
   plan: string;
+  is_partner?: boolean;
+  tenant_type?: "partner" | "client";
+  parent_tenant_id?: string | null;
+  owner_partner_id?: string | null;
   installedModules: InstalledModule[];
 }
 

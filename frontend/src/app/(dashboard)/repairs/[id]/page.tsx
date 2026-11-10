@@ -6,7 +6,8 @@ import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase, Tag, Hash,
-  AlertCircle, ExternalLink, Clock, ShieldCheck, Users,
+  AlertCircle, ExternalLink, Clock, ShieldCheck, Users, NotebookPen,
+  SlidersHorizontal,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -17,10 +18,13 @@ import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
 import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
 import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
+import { PrintDocumentModal } from "@/components/repairs/PrintDocumentModal";
+import { PrintTemplateSettingsDrawer } from "@/components/repairs/PrintTemplateSettingsDrawer";
 import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerModal";
 import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
+import { RepairNotesSection } from "@/components/repairs/RepairNotesSection";
 import { TagPill, type TagColor } from "@/components/ui/tag";
 import { Guard } from "@/components/shared/Guard";
 import { isModuleInstalled } from "@/lib/context/tenant";
@@ -38,10 +42,11 @@ import {
 import { useTeamMembers } from "@/lib/api/use-team";
 import { cn } from "@/lib/utils";
 
-type DetailTab = "details" | "work_parts" | "history" | "finance" | "chat";
+type DetailTab = "details" | "notes" | "work_parts" | "history" | "finance" | "chat";
 
 const TABS: { key: DetailTab; label: string; icon: typeof FileText }[] = [
   { key: "details", label: "Данные заказа", icon: FileText },
+  { key: "notes", label: "Заметки", icon: NotebookPen },
   { key: "work_parts", label: "Работы и запчасти", icon: Wrench },
   { key: "history", label: "История", icon: History },
   { key: "finance", label: "Финансы", icon: Receipt },
@@ -107,6 +112,9 @@ export default function RepairDetailPage() {
 
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printModalSlug, setPrintModalSlug] = useState<"work_order" | "completion_act" | "warranty_ticket" | "receipt">("work_order");
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
@@ -337,6 +345,7 @@ export default function RepairDetailPage() {
         defect_description: detail.defectDescription,
         defect_photos: detail.defectPhotos,
         status: detail.status,
+        payment_status: detail.paymentStatus || (detail.status === "issued" ? "paid" : "unpaid"),
         priority: detail.priority,
         master_id: detail.masterId,
         master_name: detail.masterName,
@@ -436,7 +445,10 @@ export default function RepairDetailPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setReceiptOpen(true)}
+              onClick={() => {
+                setPrintModalSlug("receipt");
+                setPrintModalOpen(true);
+              }}
               className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
             >
               <Printer className="h-3.5 w-3.5 text-[#666666]" />
@@ -444,11 +456,35 @@ export default function RepairDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => setWorkOrderOpen(true)}
+              onClick={() => {
+                setPrintModalSlug("completion_act");
+                setPrintModalOpen(true);
+              }}
               className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
             >
               <Printer className="h-3.5 w-3.5 text-[#666666]" />
               Акт выполненных работ
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPrintModalSlug("work_order");
+                setPrintModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#4a38f5] shadow-2xs hover:bg-[#4a38f5]/5 transition-colors cursor-pointer"
+              title="Печать документов и выбор шаблона"
+            >
+              <Printer className="h-3.5 w-3.5 text-[#4a38f5]" />
+              Печать
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettingsDrawerOpen(true)}
+              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] shadow-2xs hover:text-[#4a38f5] hover:bg-[#fafafa] transition-colors cursor-pointer"
+              title="Настройки шаблонов и реквизитов"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5 text-[#4a38f5]" />
+              Настроить
             </button>
             {hasFinance && (
               <button
@@ -727,8 +763,17 @@ export default function RepairDetailPage() {
 
                   {ticket.deal_note && (
                     <div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] p-2 text-xs text-[#854d0e] leading-relaxed">
-                      <div className="font-medium text-[11px] text-[#854d0e]/80 uppercase mb-0.5">
-                        Заметка к сделке
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="font-medium text-[11px] text-[#854d0e]/80 uppercase">
+                          Заметка к сделке
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setTab("notes")}
+                          className="text-[10px] text-[#854d0e] hover:underline cursor-pointer"
+                        >
+                          Все заметки
+                        </button>
                       </div>
                       {ticket.deal_note}
                     </div>
@@ -1161,6 +1206,14 @@ export default function RepairDetailPage() {
                     )}
                   </div>
 
+                  {/* Интерактивный блок заметок и истории наряда */}
+                  <RepairNotesSection
+                    orderId={ticket.id}
+                    ticketNumber={ticket.ticket_number}
+                    dealId={ticket.deal_id}
+                    dealTitle={ticket.deal_title}
+                  />
+
                   {/* Блок 4: Примечания и доверенные лица */}
                   <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
                     <div className="flex items-center gap-2 pb-3 border-b border-[#f0f0f0]">
@@ -1215,11 +1268,24 @@ export default function RepairDetailPage() {
                 </div>
               )}
 
+              {/* Вкладка: Заметки */}
+              {tab === "notes" && (
+                <div className="space-y-6 max-w-4xl">
+                  <RepairNotesSection
+                    orderId={ticket.id}
+                    ticketNumber={ticket.ticket_number}
+                    dealId={ticket.deal_id}
+                    dealTitle={ticket.deal_title}
+                    fullWidth
+                  />
+                </div>
+              )}
+
               {/* Вкладка 2: Работы и запчасти */}
               {tab === "work_parts" && (
                 <div className="space-y-6">
                   <WorkItemsTable orderId={ticket.id} items={ticket.work_items} />
-                  <PartsTable items={ticket.parts_used} onChange={() => {}} />
+                  <PartsTable orderId={ticket.id} items={ticket.parts_used} onChange={() => {}} />
                 </div>
               )}
 
@@ -1414,6 +1480,18 @@ export default function RepairDetailPage() {
 
       <RepairReceiptModal open={receiptOpen} ticket={ticket} onClose={() => setReceiptOpen(false)} />
       <RepairWorkOrderModal open={workOrderOpen} ticket={ticket} onClose={() => setWorkOrderOpen(false)} />
+      <PrintDocumentModal
+        open={printModalOpen}
+        orderId={ticket.id}
+        orderNumber={ticket.ticket_number}
+        initialSlug={printModalSlug}
+        onClose={() => setPrintModalOpen(false)}
+      />
+      <PrintTemplateSettingsDrawer
+        open={settingsDrawerOpen}
+        onClose={() => setSettingsDrawerOpen(false)}
+        orderId={ticket?.id}
+      />
       <ContactPickerModal
         open={contactPickerOpen}
         onClose={() => setContactPickerOpen(false)}

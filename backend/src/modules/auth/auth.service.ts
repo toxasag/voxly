@@ -24,6 +24,7 @@ export interface AuthTokens {
     phone: string;
     role: Role;
     platform_role: PlatformRole | null;
+    is_partner?: boolean;
     permissions: Permission[];
   };
   tenant: {
@@ -33,9 +34,23 @@ export interface AuthTokens {
     slug: string;
     plan: string;
     status: string;
+    is_partner?: boolean;
+    parent_tenant_id?: string | null;
+    owner_partner_id?: string | null;
     custom_price_rubles?: number | null;
     custom_plan_name?: string | null;
   };
+  impersonator?: {
+    id: string;
+    email: string;
+    name: string;
+    role: Role;
+    platform_role: PlatformRole | null;
+    is_partner?: boolean;
+    tenant_id: string;
+    tenant_slug: string;
+    tenant_name: string;
+  } | null;
 }
 
 export interface AuthUserRow {
@@ -47,6 +62,9 @@ export interface AuthUserRow {
   role: Role;
   platform_role: PlatformRole | null;
   permissions: string[] | null;
+  is_partner?: boolean;
+  tenant_is_partner?: boolean;
+  tenant_owner_partner_id?: string | null;
   password_hash: string;
   tenant_name: string;
   tenant_slug: string;
@@ -124,6 +142,7 @@ type RefreshOutcome =
 // ---------------------------------------------------------------------------
 
 export const USER_COLUMNS = `u.id, u.tenant_id, u.email, u.phone, u.name, u.role, u.platform_role, u.permissions,
+    u.is_partner, t.is_partner AS tenant_is_partner, t.owner_partner_id AS tenant_owner_partner_id,
     u.password_hash, t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan,
     t.status AS tenant_status, t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name,
     t.auth_settings AS tenant_auth_settings, t.parent_tenant_id AS tenant_parent_id, t.custom_pricing AS tenant_custom_pricing`;
@@ -325,6 +344,7 @@ export class AuthService {
         phone: user.phone,
         role: user.role,
         platform_role: user.platform_role,
+        is_partner: Boolean(user.is_partner || user.role === "partner" || user.tenant_is_partner),
         permissions: toPermissions(user.permissions),
       },
       tenant: {
@@ -333,6 +353,9 @@ export class AuthService {
         slug: user.tenant_slug,
         plan: user.tenant_plan,
         status: user.tenant_status,
+        is_partner: Boolean(user.tenant_is_partner),
+        parent_tenant_id: user.tenant_parent_id ?? null,
+        owner_partner_id: user.tenant_owner_partner_id ?? user.tenant_parent_id ?? null,
         custom_price_rubles:
           user.tenant_custom_price_rubles !== null && user.tenant_custom_price_rubles !== undefined
             ? Number(user.tenant_custom_price_rubles)
@@ -574,6 +597,7 @@ export class AuthService {
   async refreshToken(
     refreshToken: string,
     metadata?: { userAgent?: string; ip?: string },
+    impersonatorId?: string,
   ): Promise<AuthTokens> {
     const outcome = await transaction<RefreshOutcome>(async (tx) => {
       const row = await tx.queryOne<RefreshRow>(
@@ -608,7 +632,7 @@ export class AuthService {
             if (user.tenant_status === "suspended" || user.tenant_status === "past_due") {
               return { kind: "tenant_inactive", status: user.tenant_status };
             }
-            return { kind: "ok", tokens: await this.issueTokens(user, tx, successor.id, metadata) };
+            return { kind: "ok", tokens: await this.issueTokens(user, tx, successor.id, metadata, impersonatorId) };
           }
         }
 
@@ -635,12 +659,49 @@ export class AuthService {
 
       await tx.query(`UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1`, [row.id]);
 
-      return { kind: "ok", tokens: await this.issueTokens(user, tx, row.id, metadata) };
+      return { kind: "ok", tokens: await this.issueTokens(user, tx, row.id, metadata, impersonatorId) };
     });
 
     switch (outcome.kind) {
-      case "ok":
-        return outcome.tokens;
+      case "ok": {
+        const tokens = outcome.tokens;
+        if (impersonatorId) {
+          const actor = await queryOne<{
+            id: string;
+            email: string;
+            name: string;
+            role: Role;
+            platform_role: PlatformRole | null;
+            is_partner: boolean;
+            tenant_id: string;
+            tenant_slug: string;
+            tenant_name: string;
+            tenant_is_partner: boolean;
+          }>(
+            `SELECT u.id, u.email, u.name, u.role, u.platform_role, u.is_partner,
+                    t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,
+                    t.is_partner AS tenant_is_partner
+             FROM users u
+             JOIN tenants t ON t.id = u.tenant_id
+             WHERE u.id = $1 AND u.deleted_at IS NULL`,
+            [impersonatorId],
+          );
+          if (actor) {
+            tokens.impersonator = {
+              id: actor.id,
+              email: actor.email,
+              name: actor.name,
+              role: actor.role,
+              platform_role: actor.platform_role,
+              is_partner: Boolean(actor.is_partner || actor.role === "partner" || actor.tenant_is_partner),
+              tenant_id: actor.tenant_id,
+              tenant_slug: actor.tenant_slug,
+              tenant_name: actor.tenant_name,
+            };
+          }
+        }
+        return tokens;
+      }
       case "unknown":
         throw new UnauthorizedError("Invalid refresh token");
       case "reused":
@@ -731,6 +792,41 @@ export class AuthService {
 
     const tokens = await this.issueTokens(user, undefined, undefined, undefined, actorUserId);
 
+    const actor = await queryOne<{
+      id: string;
+      email: string;
+      name: string;
+      role: Role;
+      platform_role: PlatformRole | null;
+      is_partner: boolean;
+      tenant_id: string;
+      tenant_slug: string;
+      tenant_name: string;
+      tenant_is_partner: boolean;
+    }>(
+      `SELECT u.id, u.email, u.name, u.role, u.platform_role, u.is_partner,
+              t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,
+              t.is_partner AS tenant_is_partner
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.id = $1 AND u.deleted_at IS NULL`,
+      [actorUserId],
+    );
+
+    if (actor) {
+      tokens.impersonator = {
+        id: actor.id,
+        email: actor.email,
+        name: actor.name,
+        role: actor.role,
+        platform_role: actor.platform_role,
+        is_partner: Boolean(actor.is_partner || actor.role === "partner" || actor.tenant_is_partner),
+        tenant_id: actor.tenant_id,
+        tenant_slug: actor.tenant_slug,
+        tenant_name: actor.tenant_name,
+      };
+    }
+
     await query(
       `INSERT INTO tenant_audit_log
          (tenant_id, actor_user_id, action, entity_type, entity_id, details)
@@ -751,13 +847,15 @@ export class AuthService {
   }
 
   /**
-   * Безопасный выход из режима имперсонации с полным восстановлением сессии платформенного владельца.
+   * Безопасный выход из режима имперсонации с полным восстановлением сессии
+   * владельца платформы или партнера.
    */
   async exitImpersonation(
     tokens: {
       adminRefreshToken?: string;
       adminAccessToken?: string;
       cookieRefreshToken?: string;
+      impersonatorId?: string;
     },
     meta?: { userAgent?: string; ip?: string },
   ): Promise<AuthTokens> {
@@ -771,11 +869,26 @@ export class AuthService {
           refreshed.access_token,
         );
         if (payload?.sub) {
-          const adminUser = await queryOne<{ id: string; platform_role: string | null }>(
-            "SELECT id, platform_role FROM users WHERE id = $1 AND deleted_at IS NULL",
+          const adminUser = await queryOne<{
+            id: string;
+            platform_role: string | null;
+            is_partner: boolean;
+            role: string;
+            tenant_is_partner: boolean;
+          }>(
+            `SELECT u.id, u.platform_role, u.is_partner, u.role, t.is_partner AS tenant_is_partner
+             FROM users u
+             JOIN tenants t ON t.id = u.tenant_id
+             WHERE u.id = $1 AND u.deleted_at IS NULL`,
             [payload.sub],
           );
-          if (adminUser?.platform_role === "platform_owner") {
+          if (
+            adminUser &&
+            (adminUser.platform_role === "platform_owner" ||
+              adminUser.is_partner === true ||
+              adminUser.role === "partner" ||
+              adminUser.tenant_is_partner === true)
+          ) {
             return refreshed;
           }
         }
@@ -804,7 +917,13 @@ export class AuthService {
             [targetUserId],
           );
 
-          if (adminUser && adminUser.platform_role === "platform_owner") {
+          if (
+            adminUser &&
+            (adminUser.platform_role === "platform_owner" ||
+              adminUser.is_partner === true ||
+              adminUser.role === "partner" ||
+              adminUser.tenant_is_partner === true)
+          ) {
             return await this.issueTokens(adminUser, undefined, undefined, meta);
           }
         }
@@ -813,7 +932,28 @@ export class AuthService {
       }
     }
 
-    throw new UnauthorizedError("Не удалось восстановить сессию администратора платформы");
+    // 3. Прямое восстановление по переданному impersonatorId
+    if (tokens.impersonatorId) {
+      const adminUser = await queryOne<AuthUserRow>(
+        `SELECT ${USER_COLUMNS}
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [tokens.impersonatorId],
+      );
+
+      if (
+        adminUser &&
+        (adminUser.platform_role === "platform_owner" ||
+          adminUser.is_partner === true ||
+          adminUser.role === "partner" ||
+          adminUser.tenant_is_partner === true)
+      ) {
+        return await this.issueTokens(adminUser, undefined, undefined, meta);
+      }
+    }
+
+    throw new UnauthorizedError("Не удалось восстановить сессию администратора или партнёра платформы");
   }
 
   // -- registration ---------------------------------------------------------
@@ -1028,15 +1168,54 @@ export class AuthService {
    * Позволяет восстанавливать сессию при открытии вкладки или перезагрузке без лишней
    * ротации и race conditions между вкладками.
    */
-  async getMe(userId: string, tenantId: string): Promise<{
+  async getMe(userId: string, tenantId: string, impersonatorId?: string): Promise<{
     user: AuthTokens["user"];
     tenant: AuthTokens["tenant"];
+    impersonator?: AuthTokens["impersonator"];
   }> {
     const user = await this.findById(userId, tenantId);
     if (user === null) {
       throw new UnauthorizedError("User not found");
     }
     assertTenantActive(user.tenant_status);
+
+    let impersonator: AuthTokens["impersonator"] = null;
+    if (impersonatorId) {
+      const imp = await queryOne<{
+        id: string;
+        email: string;
+        name: string;
+        role: Role;
+        platform_role: PlatformRole | null;
+        is_partner: boolean;
+        tenant_id: string;
+        tenant_slug: string;
+        tenant_name: string;
+        tenant_is_partner: boolean;
+      }>(
+        `SELECT u.id, u.email, u.name, u.role, u.platform_role, u.is_partner,
+                t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,
+                t.is_partner AS tenant_is_partner
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [impersonatorId],
+      );
+      if (imp) {
+        impersonator = {
+          id: imp.id,
+          email: imp.email,
+          name: imp.name,
+          role: imp.role,
+          platform_role: imp.platform_role,
+          is_partner: Boolean(imp.is_partner || imp.role === "partner" || imp.tenant_is_partner),
+          tenant_id: imp.tenant_id,
+          tenant_slug: imp.tenant_slug,
+          tenant_name: imp.tenant_name,
+        };
+      }
+    }
+
     return {
       user: {
         id: user.id,
@@ -1045,6 +1224,7 @@ export class AuthService {
         phone: user.phone,
         role: user.role,
         platform_role: user.platform_role,
+        is_partner: Boolean(user.is_partner || user.role === "partner" || user.tenant_is_partner),
         permissions: toPermissions(user.permissions),
       },
       tenant: {
@@ -1053,12 +1233,16 @@ export class AuthService {
         slug: user.tenant_slug,
         plan: user.tenant_plan,
         status: user.tenant_status,
+        is_partner: Boolean(user.tenant_is_partner),
+        parent_tenant_id: user.tenant_parent_id ?? null,
+        owner_partner_id: user.tenant_owner_partner_id ?? user.tenant_parent_id ?? null,
         custom_price_rubles:
           user.tenant_custom_price_rubles !== null && user.tenant_custom_price_rubles !== undefined
             ? Number(user.tenant_custom_price_rubles)
             : null,
         custom_plan_name: user.tenant_custom_plan_name ?? null,
       },
+      ...(impersonator ? { impersonator } : {}),
     };
   }
 

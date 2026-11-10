@@ -1,34 +1,49 @@
 "use client";
 
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Wrench,
   Search,
   Printer,
+  SlidersHorizontal,
   Phone,
   Building2,
   AlertCircle,
   Trash2,
   Copy,
+  ChevronDown,
+  FileText,
+  CheckSquare,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { RepairTicket, RepairStatus, RepairFilterStatus } from "@/lib/repairs/repairs.types";
+import type { RepairTicket, RepairStatus, RepairFilterStatus, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
 import { getRepairStatusLabel } from "@/lib/repairs/repairs.types";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
-import { useBatchUpdateRepairStatus, useBatchDeleteRepairs } from "@/lib/api/use-repairs";
+import { PrintTemplateSettingsDrawer } from "./PrintTemplateSettingsDrawer";
+import { usePrintTemplateSettings, formatTicketNumber } from "@/lib/api/use-print-templates";
+import {
+  useBatchUpdateRepairStatus,
+  useBatchDeleteRepairs,
+  useUpdateRepair,
+  useUpdateRepairPaymentStatus,
+  useBatchUpdateRepairPaymentStatus,
+} from "@/lib/api/use-repairs";
 import { cn } from "@/lib/utils";
 
 interface RepairsTableProps {
   tickets: RepairTicket[];
   filterStatus: RepairFilterStatus;
   onFilterStatusChange: (status: RepairFilterStatus) => void;
+  filterPaymentStatus?: RepairPaymentStatus | "all";
+  onFilterPaymentStatusChange?: (status: RepairPaymentStatus | "all") => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onPrintReceipt: (ticket: RepairTicket) => void;
+  onPrintWorkOrder?: (ticket: RepairTicket) => void;
   onCopyTicket?: (ticket: RepairTicket) => void;
   isLoading?: boolean;
   isError?: boolean;
@@ -45,18 +60,15 @@ const STATUS_TABS: { value: RepairFilterStatus; label: string }[] = [
 ];
 
 /**
- * Компактное форматирование номера акта: заменяет громоздкий префикс
- * №ЗН-2026-0001 на компактный вид №0001 с сохранением исходного номера.
+ * Форматирование номера наряда с учетом настроек (компактный №0001 или полный ЗН-2026-0001)
+ * и защитой от дублирования символа №.
  */
-export function formatOrderNumber(rawNumber: string): string {
-  if (!rawNumber) return "";
-  const clean = rawNumber.trim();
-  const match = clean.match(/(?:.*-)?(\d+)$/);
-  if (match && match[1]) {
-    return `№${match[1]}`;
-  }
-  if (clean.startsWith("№")) return clean;
-  return `№${clean}`;
+export function formatOrderNumber(
+  rawNumber: string,
+  format: "compact" | "full" = "compact",
+  prefix: string = "№",
+): string {
+  return formatTicketNumber(rawNumber, format, prefix);
 }
 
 function formatDateTime(iso: string): string {
@@ -71,6 +83,328 @@ function formatDateTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+export function formatDateTimeWithFullYear(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+  } catch {
+    return iso;
+  }
+}
+
+export function formatInternationalPhone(raw: string | null | undefined): string {
+  if (!raw) return "—";
+  const clean = raw.trim();
+  const digits = clean.replace(/\D/g, "");
+  if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
+    return `+7 ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7, 9)} ${digits.slice(9, 11)}`;
+  }
+  if (digits.length === 10) {
+    return `+7 ${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 8)} ${digits.slice(8, 10)}`;
+  }
+  if (clean.startsWith("+")) return clean;
+  return clean;
+}
+
+function getEquipmentDefectLines(ticket: RepairTicket): { primary: string; additional: string } {
+  const malfs = ticket.malfunctions && ticket.malfunctions.length > 0 ? ticket.malfunctions : [];
+  const desc = (ticket.defect_description || "").trim();
+
+  if (malfs.length > 0) {
+    const primary = malfs[0];
+    const remainingMalfs = malfs.slice(1).join(", ");
+    const additional = desc && desc !== primary ? desc : remainingMalfs;
+    return {
+      primary,
+      additional: additional || (ticket.equipment.appearance ? `Внешний вид: ${ticket.equipment.appearance}` : ""),
+    };
+  }
+
+  if (desc) {
+    const parts = desc.split(/\n|\. (?=[А-ЯA-Z0-9])/);
+    if (parts.length > 1 && parts[0].trim().length < 45) {
+      return {
+        primary: parts[0].trim(),
+        additional: parts.slice(1).join(". ").trim(),
+      };
+    }
+    return {
+      primary: desc,
+      additional: ticket.equipment.appearance ? `Внешний вид: ${ticket.equipment.appearance}` : "",
+    };
+  }
+
+  return {
+    primary: "Без описания дефекта",
+    additional: ticket.equipment.appearance ? `Внешний вид: ${ticket.equipment.appearance}` : "",
+  };
+}
+
+function PrintDropdownMenu({
+  ticket,
+  onPrintReceipt,
+  onPrintWorkOrder,
+  onOpenSettings,
+}: {
+  ticket: RepairTicket;
+  onPrintReceipt: (ticket: RepairTicket) => void;
+  onPrintWorkOrder?: (ticket: RepairTicket) => void;
+  onOpenSettings?: () => void;
+}) {
+  const router = useRouter();
+  const [isOpen, setIsOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; right: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const toggleOpen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + 4,
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    }
+    setIsOpen(true);
+  };
+
+  const handleReceipt = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    if (onPrintReceipt) {
+      onPrintReceipt(ticket);
+    } else {
+      window.open(`/repairs/${ticket.id}/print/intake`, "_blank");
+    }
+  };
+
+  const handleWorkOrder = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    if (onPrintWorkOrder) {
+      onPrintWorkOrder(ticket);
+    } else {
+      window.open(`/repairs/${ticket.id}/print/completion`, "_blank");
+    }
+  };
+
+  return (
+    <div className="relative inline-flex items-center justify-center gap-0.5">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={toggleOpen}
+        className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+        aria-label="Печать документов"
+        title="Печать документов"
+      >
+        <Printer className="h-3.5 w-3.5" />
+      </button>
+
+      {onOpenSettings && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenSettings();
+          }}
+          className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#888888] hover:text-[#4a38f5] hover:bg-black/[0.04] transition-colors cursor-pointer"
+          aria-label="Настроить бланки"
+          title="Настроить бланки"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+        </button>
+      )}
+
+      {isOpen && coords && (
+        <>
+          <div
+            className="fixed inset-0 z-[9998]"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsOpen(false);
+            }}
+          />
+          <div
+            style={{ top: coords.top, right: coords.right }}
+            onClick={(e) => e.stopPropagation()}
+            className="fixed z-[9999] w-56 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-lg animate-in fade-in zoom-in-95 duration-100"
+          >
+            <button
+              type="button"
+              onClick={handleReceipt}
+              className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer text-left"
+            >
+              <FileText className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+              <span>Акт приемки (Договор)</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleWorkOrder}
+              className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer text-left"
+            >
+              <CheckSquare className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+              <span>Акт выполненных работ</span>
+            </button>
+            {onOpenSettings && (
+              <>
+                <div className="my-1 border-t border-[#e5e5e5]" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsOpen(false);
+                    onOpenSettings();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#4a38f5] hover:bg-[#4a38f5]/5 transition-colors cursor-pointer text-left"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-[#4a38f5] shrink-0" />
+                  <span>Настроить бланки</span>
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function RepairNotePopoverCell({ ticket }: { ticket: RepairTicket }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [localNote, setLocalNote] = useState<string | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
+  const cellRef = useRef<HTMLDivElement>(null);
+  const updateRepair = useUpdateRepair();
+
+  const noteText = localNote !== null ? localNote : (ticket.notes || ticket.deal_note || "");
+  const [draft, setDraft] = useState(noteText);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setDraft(noteText);
+    }
+  }, [noteText, isOpen]);
+
+  const handleOpen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (cellRef.current) {
+      const rect = cellRef.current.getBoundingClientRect();
+      const top = Math.min(rect.bottom + 4, window.innerHeight - 240);
+      const left = Math.min(Math.max(rect.left, 16), window.innerWidth - 340);
+      setCoords({ top, left, width: Math.max(rect.width, 280) });
+    }
+    setDraft(noteText);
+    setIsOpen(true);
+  };
+
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const trimmed = draft.trim();
+    const previous = noteText;
+    setLocalNote(trimmed);
+    setIsOpen(false);
+
+    try {
+      await updateRepair.mutateAsync({
+        id: ticket.id,
+        payload: { notes: trimmed, deal_note: trimmed },
+      });
+      toast.success("Заметка сохранена");
+    } catch (err: unknown) {
+      setLocalNote(previous);
+      const msg = err instanceof Error ? err.message : "Не удалось сохранить заметку";
+      toast.error(msg);
+    }
+  };
+
+  return (
+    <div
+      ref={cellRef}
+      onClick={handleOpen}
+      className="group/note flex w-full h-full min-h-[44px] items-center cursor-pointer rounded-[4px] px-1 py-1 hover:bg-black/[0.03] transition-colors"
+      title="Нажмите, чтобы изменить заметку"
+    >
+      {noteText ? (
+        <span className="text-xs text-[#111111] line-clamp-5 whitespace-pre-wrap leading-snug break-words">
+          {noteText}
+        </span>
+      ) : (
+        <span className="text-xs text-[#888888] italic opacity-60 group-hover/note:opacity-100 transition-opacity">
+          + заметка
+        </span>
+      )}
+
+      {isOpen && coords && (
+        <>
+          <div
+            className="fixed inset-0 z-[9998]"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsOpen(false);
+            }}
+          />
+          <div
+            style={{
+              top: coords.top,
+              left: coords.left,
+              width: coords.width,
+              maxWidth: 360,
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="fixed z-[9999] rounded-[10px] border border-[#e5e5e5] bg-white p-3 shadow-xl animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#f0f0f0]">
+              <span className="text-xs font-semibold text-[#111111]">Заметка</span>
+              <span className="text-[10px] text-[#888888]">Наряд {formatOrderNumber(ticket.ticket_number)}</span>
+            </div>
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Текст заметки..."
+              rows={4}
+              autoFocus
+              className="w-full resize-none rounded-[6px] border border-[#e5e5e5] bg-white p-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 leading-relaxed"
+            />
+            <div className="mt-2.5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsOpen(false);
+                }}
+                className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={updateRepair.isPending}
+                className="rounded-[6px] bg-[#4a38f5] px-3 py-1 text-xs font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {updateRepair.isPending ? "Сохранение..." : "Сохранить"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function formatCost(amount: number | null): string {
@@ -117,13 +451,61 @@ function renderStatusBadge(status: RepairStatus) {
   }
 }
 
+function PaymentStatusBadge({
+  status,
+  onChange,
+  disabled,
+}: {
+  status: RepairPaymentStatus;
+  onChange: (newStatus: RepairPaymentStatus) => void;
+  disabled?: boolean;
+}) {
+  const colorClass =
+    status === "paid"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/80"
+      : status === "invoiced"
+        ? "bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100/80"
+        : "bg-[#f5f5f5] text-[#666666] border-[#e5e5e5] hover:bg-[#ebebeb]";
+
+  return (
+    <div
+      className="relative inline-flex items-center"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <select
+        value={status}
+        disabled={disabled}
+        onChange={(e) => {
+          e.stopPropagation();
+          onChange(e.target.value as RepairPaymentStatus);
+        }}
+        onClick={(e) => e.stopPropagation()}
+        title="Быстро сменить статус оплаты"
+        className={cn(
+          "h-5 appearance-none rounded-[4px] border pl-2 pr-4 text-[10px] font-medium leading-none cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-[#4a38f5]",
+          colorClass,
+          disabled && "opacity-60 cursor-not-allowed",
+        )}
+      >
+        <option value="unpaid">Не оплачен</option>
+        <option value="invoiced">Счет выставлен</option>
+        <option value="paid">Оплачен</option>
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-1 h-2.5 w-2.5 opacity-60" />
+    </div>
+  );
+}
+
 export const RepairsTable = memo(function RepairsTable({
   tickets,
   filterStatus,
   onFilterStatusChange,
+  filterPaymentStatus,
+  onFilterPaymentStatusChange,
   searchQuery,
   onSearchChange,
   onPrintReceipt,
+  onPrintWorkOrder,
   onCopyTicket,
   isLoading,
   isError,
@@ -134,16 +516,40 @@ export const RepairsTable = memo(function RepairsTable({
   // Пакетные операции (выбор строк чекбоксами)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [selectedBulkStatus, setSelectedBulkStatus] = useState<string>("");
+  const [selectedBulkPaymentStatus, setSelectedBulkPaymentStatus] = useState<string>("");
+
+  const { data: printSettings } = usePrintTemplateSettings();
 
   const batchStatusMutation = useBatchUpdateRepairStatus();
   const batchDeleteMutation = useBatchDeleteRepairs();
+  const updatePaymentStatusMutation = useUpdateRepairPaymentStatus();
+  const batchPaymentStatusMutation = useBatchUpdateRepairPaymentStatus();
 
   const handleRowClick = useCallback(
     (id: string) => {
       router.push(`/repairs/${id}`);
     },
     [router],
+  );
+
+  const handleSinglePaymentStatusChange = useCallback(
+    async (id: string, newStatus: RepairPaymentStatus) => {
+      try {
+        await updatePaymentStatusMutation.mutateAsync({
+          id,
+          paymentStatus: newStatus,
+        });
+        const label =
+          newStatus === "paid" ? "Оплачен" : newStatus === "invoiced" ? "Счет выставлен" : "Не оплачен";
+        toast.success(`Статус оплаты изменен на «${label}»`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Ошибка обновления статуса оплаты";
+        toast.error(msg);
+      }
+    },
+    [updatePaymentStatusMutation],
   );
 
   const handleBulkStatusChange = async (newStatus: RepairStatus) => {
@@ -158,6 +564,22 @@ export const RepairsTable = memo(function RepairsTable({
       setSelectedBulkStatus("");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Ошибка при смене статуса";
+      toast.error(msg);
+    }
+  };
+
+  const handleBulkPaymentStatusChange = async (newPaymentStatus: RepairPaymentStatus) => {
+    if (selectedIds.size === 0) return;
+    try {
+      await batchPaymentStatusMutation.mutateAsync({
+        ids: Array.from(selectedIds),
+        paymentStatus: newPaymentStatus,
+      });
+      toast.success(`Статус оплаты обновлен для ${selectedIds.size} наряд-заказов`);
+      setSelectedIds(new Set());
+      setSelectedBulkPaymentStatus("");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Ошибка при смене статуса оплаты";
       toast.error(msg);
     }
   };
@@ -181,17 +603,21 @@ export const RepairsTable = memo(function RepairsTable({
     () => [
       {
         id: "ticket_number",
-        header: "Акт приёма",
-        width: 130,
+        header: "Акт приема",
+        width: 160,
         sortValue: (t) => t.ticket_number,
         render: (ticket) => (
           <RecordCellShell isLabelIdentifier>
-            <div className="flex flex-col py-0.5" title={`Исходный номер: ${ticket.ticket_number}`}>
-              <span className="font-mono text-xs font-bold text-[#111111]">
-                {formatOrderNumber(ticket.ticket_number)}
+            <div className="flex flex-col py-1 min-w-0" title={`Исходный номер: ${ticket.ticket_number}`}>
+              <span className="font-mono text-xs font-bold text-[#111111] tracking-tight">
+                {formatTicketNumber(
+                  ticket.ticket_number,
+                  printSettings?.numberingFormat,
+                  printSettings?.numberingPrefix,
+                )}
               </span>
-              <span className="text-[11px] text-[#666666]">
-                {formatDateTime(ticket.received_at)}
+              <span className="text-[11px] text-[#666666] leading-tight mt-0.5 whitespace-nowrap">
+                {formatDateTimeWithFullYear(ticket.received_at)}
               </span>
             </div>
           </RecordCellShell>
@@ -200,52 +626,96 @@ export const RepairsTable = memo(function RepairsTable({
       {
         id: "equipment",
         header: "Оборудование",
-        width: 220,
+        width: 250,
         sortValue: (t) => `${t.equipment.brand} ${t.equipment.model}`,
-        render: (ticket) => (
-          <RecordCellShell>
-            <div className="flex flex-col py-0.5 min-w-0">
-              <span className="truncate text-xs font-semibold text-[#111111]">
-                {ticket.equipment.type ? `${ticket.equipment.type} ` : ""}
-                {ticket.equipment.brand} {ticket.equipment.model}
-              </span>
-              <span className="truncate text-[11px] text-[#666666]">
-                {ticket.defect_description || "Без описания дефекта"}
-                {ticket.equipment.serial_number ? ` · S/N: ${ticket.equipment.serial_number}` : ""}
-              </span>
-            </div>
-          </RecordCellShell>
-        ),
+        render: (ticket) => {
+          const brand = (ticket.equipment.brand || "").trim();
+          const model = (ticket.equipment.model || "").trim();
+          const fullModel =
+            brand && !model.toLowerCase().includes(brand.toLowerCase())
+              ? `${brand} ${model}`
+              : model || brand || "Оборудование";
+          const type = (ticket.equipment.type || "").trim() || "Оборудование";
+          const serial = (ticket.equipment.serial_number || "").trim();
+          const defectLines = getEquipmentDefectLines(ticket);
+
+          return (
+            <RecordCellShell>
+              <div className="flex flex-col py-1 min-w-0 leading-tight w-full">
+                {/* 1. Модель крупным/полужирным шрифтом */}
+                <span className="truncate text-xs font-bold text-[#111111]" title={fullModel}>
+                  {fullModel}
+                </span>
+                {/* 2. Категория / тип оборудования */}
+                <span className="truncate text-[11px] text-[#666666] mt-0.5" title={type}>
+                  {type}
+                </span>
+                {/* 3. Серийный номер */}
+                <span className="truncate font-mono text-[10px] text-[#777777] mt-0.5">
+                  S/N: {serial || "—"}
+                </span>
+                {/* 4. Основная заявленная неисправность */}
+                <span
+                  className="truncate text-[11px] font-medium text-[#111111] mt-0.5"
+                  title={defectLines.primary}
+                >
+                  {defectLines.primary}
+                </span>
+                {/* 5. Дополнительное описание дефекта (курсив, мягкий перенос) */}
+                {defectLines.additional ? (
+                  <span
+                    className="line-clamp-1 text-[10px] italic text-[#666666] mt-0.5"
+                    title={defectLines.additional}
+                  >
+                    {defectLines.additional}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[#aaaaaa] italic mt-0.5">—</span>
+                )}
+              </div>
+            </RecordCellShell>
+          );
+        },
       },
       {
         id: "customer_name",
         header: "Клиент",
-        width: 210,
+        width: 220,
         sortValue: (t) => t.customer_name,
-        render: (ticket) => (
-          <RecordCellShell>
-            <div className="flex flex-col py-0.5 min-w-0">
-              <span className="truncate text-xs font-semibold text-[#111111]">
-                {ticket.customer_name}
-              </span>
-              <div className="flex items-center gap-2 text-[11px] text-[#666666] truncate">
-                <span className="inline-flex items-center gap-1 shrink-0">
-                  <Phone className="h-2.5 w-2.5 text-slate-400" />
-                  {ticket.customer_phone}
+        render: (ticket) => {
+          const compName = (ticket.company_name || "").trim();
+          return (
+            <RecordCellShell>
+              <div className="flex flex-col py-1 min-w-0 leading-tight w-full">
+                {/* 1. Имя контактного лица */}
+                <span className="truncate text-xs font-semibold text-[#111111]" title={ticket.customer_name}>
+                  {ticket.customer_name || "Без имени"}
                 </span>
-                {ticket.company_name && (
-                  <span
-                    className="inline-flex items-center gap-1 truncate text-slate-500"
-                    title={`${ticket.company_name}${ticket.company_inn ? ` (ИНН: ${ticket.company_inn})` : ""}`}
-                  >
-                    <Building2 className="h-2.5 w-2.5 shrink-0 text-slate-400" />
-                    <span className="truncate">{ticket.company_name}</span>
+                {/* 2. Организация / юрлицо либо Частное лицо */}
+                <div className="flex items-center gap-1 text-[11px] text-[#666666] truncate mt-0.5">
+                  {compName ? (
+                    <span
+                      className="inline-flex items-center gap-1 truncate text-[#555555]"
+                      title={`${compName}${ticket.company_inn ? ` (ИНН: ${ticket.company_inn})` : ""}`}
+                    >
+                      <Building2 className="h-2.5 w-2.5 shrink-0 text-[#888888]" />
+                      <span className="truncate">{compName}</span>
+                    </span>
+                  ) : (
+                    <span className="text-[#888888] italic">Частное лицо</span>
+                  )}
+                </div>
+                {/* 3. Телефон в международном формате */}
+                <div className="flex items-center gap-1 text-[11px] text-[#666666] mt-0.5">
+                  <Phone className="h-2.5 w-2.5 shrink-0 text-[#888888]" />
+                  <span className="font-mono text-[11px] text-[#666666]">
+                    {formatInternationalPhone(ticket.customer_phone)}
                   </span>
-                )}
+                </div>
               </div>
-            </div>
-          </RecordCellShell>
-        ),
+            </RecordCellShell>
+          );
+        },
       },
       {
         id: "deal",
@@ -270,25 +740,10 @@ export const RepairsTable = memo(function RepairsTable({
       {
         id: "deal_note",
         header: "Заметка",
-        width: 190,
+        width: 200,
         render: (ticket) => (
           <RecordCellShell>
-            {ticket.deal_note ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2 py-0.5 text-[11px] text-[#854d0e] line-clamp-2 max-w-[175px] leading-snug cursor-help"
-                  >
-                    {ticket.deal_note}
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-xs text-xs">
-                  {ticket.deal_note}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <span className="text-xs text-[#888888]">—</span>
-            )}
+            <RepairNotePopoverCell ticket={ticket} />
           </RecordCellShell>
         ),
       },
@@ -320,56 +775,61 @@ export const RepairsTable = memo(function RepairsTable({
       {
         id: "cost",
         header: "Сумма",
-        width: 120,
+        width: 145,
         align: "right",
         sortValue: (t) => t.final_cost ?? t.estimated_cost ?? 0,
         render: (ticket) => (
           <RecordCellShell align="right">
-            <div className="flex flex-col items-end py-0.5">
+            <div className="flex flex-col items-end py-0.5 gap-0.5">
               <span className="font-mono text-xs font-bold text-[#111111]">
                 {formatCost(ticket.final_cost ?? ticket.estimated_cost)}
               </span>
-              <span
-                className={cn(
-                  "text-[10px] font-medium",
-                  ticket.status === "issued" ? "text-emerald-600" : "text-slate-400",
-                )}
-              >
-                {ticket.status === "issued" ? "Оплачен" : "Не оплачен"}
-              </span>
+              <PaymentStatusBadge
+                status={ticket.payment_status || (ticket.status === "issued" ? "paid" : "unpaid")}
+                onChange={(newStatus) => handleSinglePaymentStatusChange(ticket.id, newStatus)}
+                disabled={updatePaymentStatusMutation.isPending}
+              />
             </div>
           </RecordCellShell>
         ),
       },
       {
-        id: "actions",
-        header: "",
-        width: 48,
+        id: "print",
+        header: (
+          <div className="flex items-center justify-center gap-1">
+            <Printer className="h-3.5 w-3.5 text-[#666666]" />
+            <button
+              type="button"
+              onClick={() => setSettingsDrawerOpen(true)}
+              className="flex h-5 w-5 items-center justify-center rounded text-[#888888] hover:text-[#4a38f5] hover:bg-black/5 transition-colors cursor-pointer"
+              title="Настроить бланки"
+            >
+              <SlidersHorizontal className="h-3 w-3" />
+            </button>
+          </div>
+        ),
+        width: 72,
+        align: "center",
         render: (ticket) => (
-          <RecordCellShell>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onPrintReceipt(ticket);
-                  }}
-                  className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors"
-                  aria-label="Печать квитанции"
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="left" className="text-xs">
-                Печать квитанции
-              </TooltipContent>
-            </Tooltip>
+          <RecordCellShell align="center">
+            <PrintDropdownMenu
+              ticket={ticket}
+              onPrintReceipt={onPrintReceipt}
+              onPrintWorkOrder={onPrintWorkOrder}
+              onOpenSettings={() => setSettingsDrawerOpen(true)}
+            />
           </RecordCellShell>
         ),
       },
     ],
-    [onPrintReceipt],
+    [
+      onPrintReceipt,
+      onPrintWorkOrder,
+      handleSinglePaymentStatusChange,
+      updatePaymentStatusMutation.isPending,
+      printSettings?.numberingFormat,
+      printSettings?.numberingPrefix,
+    ],
   );
 
   if (isLoading) {
@@ -446,6 +906,24 @@ export const RepairsTable = memo(function RepairsTable({
             ))}
           </div>
 
+          {onFilterPaymentStatusChange && (
+            <div className="flex items-center gap-1.5 ml-1">
+              <span className="text-xs text-[#666666]">Оплата:</span>
+              <select
+                value={filterPaymentStatus ?? "all"}
+                onChange={(e) =>
+                  onFilterPaymentStatusChange(e.target.value as RepairPaymentStatus | "all")
+                }
+                className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
+              >
+                <option value="all">Все</option>
+                <option value="unpaid">Не оплачен</option>
+                <option value="invoiced">Счет выставлен</option>
+                <option value="paid">Оплачен</option>
+              </select>
+            </div>
+          )}
+
           <span className="ml-auto text-xs text-[#888888]">
             {tickets.length} наряд-заказов
           </span>
@@ -457,7 +935,7 @@ export const RepairsTable = memo(function RepairsTable({
           columns={columns}
           getRowId={(ticket) => ticket.id}
           tableId="repairs"
-          rowHeight={52}
+          rowHeight={92}
           selectable={true}
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
@@ -497,6 +975,27 @@ export const RepairsTable = memo(function RepairsTable({
                   <option value="in_progress">В работе</option>
                   <option value="ready">Готов к выдаче</option>
                   <option value="issued">Выдан</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#666666]">Оплата:</span>
+                <select
+                  value={selectedBulkPaymentStatus}
+                  onChange={(e) => {
+                    const val = e.target.value as RepairPaymentStatus;
+                    if (val) {
+                      setSelectedBulkPaymentStatus(val);
+                      void handleBulkPaymentStatusChange(val);
+                    }
+                  }}
+                  disabled={batchPaymentStatusMutation.isPending}
+                  className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
+                >
+                  <option value="">Сменить оплату...</option>
+                  <option value="unpaid">Не оплачен</option>
+                  <option value="invoiced">Счет выставлен</option>
+                  <option value="paid">Оплачен</option>
                 </select>
               </div>
 
@@ -549,6 +1048,12 @@ export const RepairsTable = memo(function RepairsTable({
           confirmLabel="Удалить"
           variant="destructive"
           isPending={batchDeleteMutation.isPending}
+        />
+
+        {/* Шторка настроек конструктора печатных форм */}
+        <PrintTemplateSettingsDrawer
+          open={settingsDrawerOpen}
+          onClose={() => setSettingsDrawerOpen(false)}
         />
       </div>
     </TooltipProvider>

@@ -41,10 +41,42 @@ describe("Phone Validation & Incomplete Phone Detection", () => {
       expect(res3.issue).toBe("too_long");
     });
 
-    it("принимает полные 11-значные номера РФ и нормализует в E.164 (+7XXXXXXXXXX)", () => {
+    it("бракует фиктивные и тестовые номера (+79111111111, все одинаковые цифры, последовательности) как fake_number", () => {
       const res1 = validatePhoneCandidate("+79111111111");
+      expect(res1.isValid).toBe(false);
+      expect(res1.normalized).toBeNull();
+      expect(res1.issue).toBe("fake_number");
+
+      const res2 = validatePhoneCandidate("89111111111");
+      expect(res2.isValid).toBe(false);
+      expect(res2.normalized).toBeNull();
+      expect(res2.issue).toBe("fake_number");
+
+      const res3 = validatePhoneCandidate("+7 (911) 111-11-11");
+      expect(res3.isValid).toBe(false);
+      expect(res3.normalized).toBeNull();
+      expect(res3.issue).toBe("fake_number");
+
+      const res4 = validatePhoneCandidate("11111111111");
+      expect(res4.isValid).toBe(false);
+      expect(res4.normalized).toBeNull();
+      expect(res4.issue).toBe("fake_number");
+
+      const res5 = validatePhoneCandidate("+79999999999");
+      expect(res5.isValid).toBe(false);
+      expect(res5.normalized).toBeNull();
+      expect(res5.issue).toBe("fake_number");
+
+      const res6 = validatePhoneCandidate("+79123456789");
+      expect(res6.isValid).toBe(false);
+      expect(res6.normalized).toBeNull();
+      expect(res6.issue).toBe("fake_number");
+    });
+
+    it("принимает полные 11-значные номера РФ и нормализует в E.164 (+7XXXXXXXXXX)", () => {
+      const res1 = validatePhoneCandidate("+79150946944");
       expect(res1.isValid).toBe(true);
-      expect(res1.normalized).toBe("+79111111111");
+      expect(res1.normalized).toBe("+79150946944");
 
       const res2 = validatePhoneCandidate("89150946944");
       expect(res2.isValid).toBe(true);
@@ -54,9 +86,9 @@ describe("Phone Validation & Incomplete Phone Detection", () => {
       expect(res3.isValid).toBe(true);
       expect(res3.normalized).toBe("+79150946944");
 
-      const res4 = validatePhoneCandidate("+7 (911) 111-11-11");
+      const res4 = validatePhoneCandidate("+7 (926) 555-43-21");
       expect(res4.isValid).toBe(true);
-      expect(res4.normalized).toBe("+79111111111");
+      expect(res4.normalized).toBe("+79265554321");
 
       const res5 = validatePhoneCandidate("8-915-094-69-44");
       expect(res5.isValid).toBe(true);
@@ -109,12 +141,20 @@ describe("Phone Validation & Incomplete Phone Detection", () => {
       expect(analysis2.issue).toBe("too_long");
     });
 
-    it("извлекает валидный номер из смешанного текста", () => {
-      const res = extractPhoneNumber("Алексей, мой номер +7 (911) 111-11-11, звоните после 18:00");
-      expect(res).toBe("+79111111111");
+    it("извлекает валидный номер из смешанного текста и бракует фиктивные", () => {
+      const res = extractPhoneNumber("Алексей, мой номер +7 (926) 555-43-21, звоните после 18:00");
+      expect(res).toBe("+79265554321");
 
       const res2 = extractPhoneNumber("звоните 89150946944");
       expect(res2).toBe("+79150946944");
+
+      const fakeRes = extractPhoneNumber("мой номер 89111111111");
+      expect(fakeRes).toBeNull();
+
+      const fakeAnalysis = analyzePhoneInText("мой номер +7 (911) 111-11-11 перезвоните");
+      expect(fakeAnalysis.hasAttempt).toBe(true);
+      expect(fakeAnalysis.isValid).toBe(false);
+      expect(fakeAnalysis.issue).toBe("fake_number");
     });
 
     it("не путает суммы долга, кредитов и статей с номерами телефонов", () => {

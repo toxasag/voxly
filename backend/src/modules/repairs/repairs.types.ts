@@ -22,9 +22,11 @@ export const repairStatusSchema = z.enum([
 ]);
 
 export const repairPrioritySchema = z.enum(["low", "normal", "high", "urgent"]);
+export const repairPaymentStatusSchema = z.enum(["unpaid", "invoiced", "paid"]);
 
 export type RepairStatus = z.infer<typeof repairStatusSchema>;
 export type RepairPriority = z.infer<typeof repairPrioritySchema>;
+export type RepairPaymentStatus = z.infer<typeof repairPaymentStatusSchema>;
 
 /** Ordered happy path: Принят → Заказ запчастей → Готов → Выдан */
 export const REPAIR_STATUS_FLOW: readonly RepairStatus[] = [
@@ -111,6 +113,7 @@ export const createRepairSchema = z.object({
   malfunctions: z.array(z.string()).optional(),
   defect_photos: z.array(z.string().url("Each photo must be a URL")).max(20).optional(),
   priority: repairPrioritySchema.default("normal"),
+  payment_status: repairPaymentStatusSchema.optional(),
   master_id: optionalUuid,
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative("Estimated cost cannot be negative").default(0),
@@ -153,6 +156,7 @@ export const createBatchRepairSchema = z.object({
   equipments: z.array(equipmentIntakeItemSchema).min(1, "Добавьте хотя бы одно оборудование"),
   defect_photos: z.array(z.string()).optional(),
   priority: repairPrioritySchema.default("normal"),
+  payment_status: repairPaymentStatusSchema.optional(),
   master_id: optionalUuid,
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative().default(0),
@@ -187,6 +191,7 @@ export const updateRepairSchema = z.object({
   defect_description: z.string().max(4000).optional(),
   malfunctions: z.array(z.string()).optional(),
   priority: repairPrioritySchema.optional(),
+  payment_status: repairPaymentStatusSchema.optional(),
   master_id: optionalUuid,
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative().optional(),
@@ -222,21 +227,30 @@ export const changeStatusSchema = z.object({
   diagnostics: diagnosticsSchema.optional(),
 });
 
+export const changePaymentStatusSchema = z.object({
+  payment_status: repairPaymentStatusSchema,
+});
+export type ChangePaymentStatusPayload = z.infer<typeof changePaymentStatusSchema>;
+
 export const createWorkSchema = z.object({
   description: z.string().min(1, "Description is required").max(500),
   master_id: z.string().uuid("master_id must be a UUID"),
   master_name: z.string().min(1, "Master name is required").max(200),
-  cost: z.number().nonnegative("Cost cannot be negative"),
+  quantity: z.number().positive("Quantity must be positive").default(1),
+  unit_price: z.number().nonnegative("Unit price cannot be negative").optional(),
+  cost: z.number().nonnegative("Cost cannot be negative").optional(),
 });
 
 export const updateWorkSchema = createWorkSchema.partial();
 
 export const createPartSchema = z.object({
+  warehouse_item_id: z.string().uuid().optional(),
   name: z.string().min(1, "Part name is required").max(200),
   article: z.string().max(100).optional().or(z.literal("")),
   quantity: z.number().int().positive("Quantity must be at least 1").default(1),
   retail_price: z.number().nonnegative("Retail price cannot be negative"),
   cost_price: z.number().nonnegative("Cost price cannot be negative").default(0),
+  status: z.enum(["used", "reserved", "needs_purchase"]).optional().default("used"),
 });
 
 export const updatePartSchema = createPartSchema.partial();
@@ -293,6 +307,7 @@ export interface RepairOrderRow {
   defect_photos: string[];
   additional_contacts?: AdditionalContact[];
   status: RepairStatus;
+  payment_status?: string | null;
   priority: RepairPriority;
   master_id: string;
   master_name: string;
@@ -321,6 +336,8 @@ export interface RepairWorkRow {
   description: string;
   master_id: string;
   master_name: string;
+  quantity?: number | string;
+  unit_price?: number | string;
   cost: string;
   created_at: Date | string;
 }
@@ -328,6 +345,8 @@ export interface RepairWorkRow {
 export interface RepairPartRow {
   id: string;
   repair_order_id: string;
+  warehouse_item_id?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -366,12 +385,16 @@ export interface RepairWorkDTO {
   description: string;
   masterId: string;
   masterName: string;
+  quantity: number;
+  unitPrice: number;
   cost: number;
   createdAt: string;
 }
 
 export interface RepairPartDTO {
   id: string;
+  warehouseItemId?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -390,6 +413,10 @@ export interface RepairNoteDTO {
   id: string;
   authorId: string;
   authorName: string;
+  userId?: string;
+  repairId?: string;
+  repairOrderId?: string;
+  dealId?: string | null;
   kind: string;
   content: string;
   fromStatus: string | null;
@@ -446,6 +473,7 @@ export interface RepairOrderDTO {
   defectPhotos: string[];
   additionalContacts?: AdditionalContact[];
   status: RepairStatus;
+  paymentStatus: RepairPaymentStatus;
   nextStatus: RepairStatus | null;
   allowedTransitions: RepairStatus[];
   priority: RepairPriority;
@@ -512,6 +540,7 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
     defectPhotos: row.defect_photos,
     additionalContacts: Array.isArray(row.additional_contacts) ? row.additional_contacts : [],
     status: row.status,
+    paymentStatus: (row.payment_status as RepairPaymentStatus) || (row.status === "issued" ? "paid" : "unpaid"),
     nextStatus: nextStatus(row.status),
     allowedTransitions: [...allowedTransitionsFrom(row.status)],
     priority: row.priority,
@@ -530,12 +559,18 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
 }
 
 export function toRepairWorkDTO(row: RepairWorkRow): RepairWorkDTO {
+  const qty = Number(row.quantity ?? 1);
+  const cost = Number(row.cost);
+  const unitPrice =
+    row.unit_price != null ? Number(row.unit_price) : qty > 0 ? cost / qty : cost;
   return {
     id: row.id,
     description: row.description,
     masterId: row.master_id,
     masterName: row.master_name,
-    cost: Number(row.cost),
+    quantity: qty,
+    unitPrice: Math.round(unitPrice * 100) / 100,
+    cost: cost,
     createdAt: toIso(row.created_at),
   };
 }
@@ -548,6 +583,8 @@ export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
 
   return {
     id: row.id,
+    warehouseItemId: row.warehouse_item_id ?? null,
+    status: row.status ?? "used",
     name: row.name,
     article: row.article,
     quantity: row.quantity,
@@ -560,11 +597,17 @@ export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
   };
 }
 
-export function toRepairNoteDTO(row: RepairNoteRow): RepairNoteDTO {
+export function toRepairNoteDTO(
+  row: RepairNoteRow & { deal_id?: string | null },
+): RepairNoteDTO {
   return {
     id: row.id,
     authorId: row.author_id,
     authorName: row.author_name,
+    userId: row.author_id,
+    repairId: row.repair_order_id,
+    repairOrderId: row.repair_order_id,
+    dealId: row.deal_id ?? null,
     kind: row.kind,
     content: row.content,
     fromStatus: row.from_status,

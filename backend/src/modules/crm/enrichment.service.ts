@@ -1,8 +1,9 @@
-import { queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
+import { query, queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
 import type { ContactSocialJson } from "./contacts/contacts.types.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { resolveTelegramPhone } from "../channels/outbound-registry.js";
 import { isPlaceholderName, parseNameFromTelegramUsername, cleanContactDisplayName } from "./identity-resolution.js";
+import { isFakeOrDummyPhone } from "./channel-identity.js";
 
 // ---------------------------------------------------------------------------
 // Автоматическое кросс-канальное обогащение контактов по номеру телефона (4.2).
@@ -85,6 +86,7 @@ export class CrmEnrichmentService {
     options?: {
       phoneOverride?: string;
       channels?: Array<"telegram" | "max" | "whatsapp">;
+      dealId?: string;
     },
   ): Promise<EnrichContactResult> {
     const contact = await queryOne<{
@@ -326,6 +328,53 @@ export class CrmEnrichmentService {
           );
         }
       });
+    }
+
+    // 5. Логируем результаты верификации мессенджеров в таймлайн сделки
+    try {
+      let targetDealId = options?.dealId;
+      if (!targetDealId) {
+        const dealRow = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE contact_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+           ORDER BY created_at DESC LIMIT 1`,
+          [contactId, tenantId],
+        );
+        targetDealId = dealRow?.id;
+      }
+
+      if (targetDealId) {
+        const isDummy = isFakeOrDummyPhone(phoneDigits);
+        const tgLabel = tgRes?.exists
+          ? `Telegram: найден (${tgRes.username ? `@${tgRes.username}` : `ID: ${tgRes.userId}`})`
+          : "Telegram: не найден";
+        const waLabel = waRes?.exists ? `WhatsApp: активен (+${phoneDigits})` : "WhatsApp: не найден";
+        const maxLabel = maxRes?.exists ? `MAX: найден (${maxRes.username || maxRes.userId || "активен"})` : "MAX: не найден";
+
+        const dummyHeader = isDummy ? "⚠️ Внимание: номер определен как фиктивный/тестовый!\n" : "";
+        const auditMessage = `${dummyHeader}Результат проверки мессенджеров для +${phoneDigits}:\n• ${tgLabel}\n• ${waLabel}\n• ${maxLabel}`;
+
+        await query(
+          `INSERT INTO deal_messages
+             (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, metadata)
+           VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral', $4::jsonb)`,
+          [
+            tenantId,
+            targetDealId,
+            auditMessage,
+            JSON.stringify({
+              event: "messenger_verification",
+              phone: `+${phoneDigits}`,
+              isFake: isDummy,
+              telegram: tgRes?.exists ?? false,
+              whatsapp: waRes?.exists ?? false,
+              max: maxRes?.exists ?? false,
+            }),
+          ],
+        );
+      }
+    } catch {
+      // Ошибки логирования аудита не блокируют возврат результата
     }
 
     return {

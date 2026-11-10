@@ -24,6 +24,9 @@ export interface ImpersonationBackup {
   adminUserEmail?: string;
   adminUserName?: string;
   adminOriginHost?: string;
+  adminOriginPath?: string;
+  isPartner?: boolean;
+  isPlatformOwner?: boolean;
   impersonatedTenantSlug?: string;
   impersonatedTenantName?: string;
   impersonatedUserEmail?: string;
@@ -72,22 +75,55 @@ export function writeImpersonationBackup(backup: ImpersonationBackup): void {
   const domain = cookieDomainAttribute();
   // 1-day validity for admin impersonation session across all subdomains
   document.cookie = `${BACKUP_COOKIE_NAME}=${encodeURIComponent(raw)}; Path=/; Max-Age=86400; SameSite=Lax${domain}${secure}`;
-
-  // If scoped to parent domain, expire any conflicting host-only cookie
-  if (domain) {
-    const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    document.cookie = `${BACKUP_COOKIE_NAME}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
-  }
 }
 
 /**
- * Reads the impersonation backup, checking the domain-scoped cookie first,
+ * Extracts impersonator backup handed off via URL hash (#impersonator_backup=...).
+ * When an admin/partner enters a tenant subdomain, this guarantees the backup
+ * is written to the destination origin's localStorage and cookies even if third-party cookies are blocked.
+ */
+export function consumeHashBackup(): ImpersonationBackup | null {
+  if (!isBrowser()) return null;
+  const hash = window.location.hash;
+  if (!hash) return null;
+
+  const match = hash.match(/(?:^#|[&#])impersonator_backup=([^&]+)/);
+  if (!match || !match[1]) return null;
+
+  try {
+    const raw = decodeURIComponent(match[1]);
+    const parsed = JSON.parse(raw) as ImpersonationBackup;
+    if (parsed && typeof parsed.accessToken === "string" && parsed.accessToken.length > 0) {
+      writeImpersonationBackup(parsed);
+      // Clean from hash without page reload
+      const cleanHash = hash
+        .replace(/[&#]?impersonator_backup=[^&]+/, "")
+        .replace(/^#$/, "");
+      const newUrl =
+        window.location.pathname +
+        window.location.search +
+        (cleanHash ? `#${cleanHash}` : "");
+      window.history.replaceState(null, "", newUrl);
+      return parsed;
+    }
+  } catch {
+    // Ignore JSON errors
+  }
+  return null;
+}
+
+/**
+ * Reads the impersonation backup, checking the URL hash first, then domain-scoped cookie,
  * then falling back to localStorage.
  */
 export function readImpersonationBackup(): ImpersonationBackup | null {
   if (!isBrowser()) return null;
 
-  // 1. Try reading from cookie using split-trim (immune to whitespace irregularities)
+  // 1. Check if handed off in URL hash fragment
+  const fromHash = consumeHashBackup();
+  if (fromHash) return fromHash;
+
+  // 2. Try reading from cookie using split-trim (immune to whitespace irregularities)
   try {
     for (const part of document.cookie.split(";")) {
       const [rawName, ...rest] = part.trim().split("=");
@@ -106,7 +142,7 @@ export function readImpersonationBackup(): ImpersonationBackup | null {
     // Fall through to localStorage on cookie decode/parse failure
   }
 
-  // 2. Fallback to localStorage
+  // 3. Fallback to localStorage
   try {
     const raw = localStorage.getItem(BACKUP_STORAGE_KEY);
     if (raw) {
@@ -144,9 +180,9 @@ export function clearImpersonationBackup(): void {
 /**
  * Returns the absolute or relative URL to the platform admin tenants page.
  * If currently on a tenant subdomain (e.g. remtoua.getvoxly.ru), navigates
- * to https://app.getvoxly.ru/admin/tenants.
+ * to https://voxly.getvoxly.ru/admin/tenants.
  */
-export function getPlatformAdminUrl(token?: string): string {
+export function getPlatformAdminUrl(token?: string, backup?: ImpersonationBackup | null): string {
   if (!isBrowser()) return "/admin/tenants";
 
   const { hostname, protocol, port } = window.location;
@@ -157,9 +193,15 @@ export function getPlatformAdminUrl(token?: string): string {
 
   const parent = labels.length >= 3 ? labels.slice(1).join(".") : labels.join(".");
   const suffix = port ? `:${port}` : "";
-  const backup = readImpersonationBackup();
-  const platformPrefix = backup?.adminOriginHost?.split(".")[0]?.split(":")[0] || "voxly";
-  const base = `${protocol}//${platformPrefix}.${parent}${suffix}/admin/tenants`;
+  const b = backup !== undefined ? backup : readImpersonationBackup();
+  const platformPrefix = b?.adminOriginHost?.split(".")[0]?.split(":")[0] || "voxly";
+
+  const targetPath =
+    b?.isPartner && !b?.isPlatformOwner
+      ? b?.adminOriginPath || "/partner"
+      : "/admin/tenants";
+
+  const base = `${protocol}//${platformPrefix}.${parent}${suffix}${targetPath}`;
   if (token) {
     return `${base}#restore_token=${encodeURIComponent(token)}`;
   }
@@ -173,24 +215,20 @@ export interface RestoreSessionResult {
 }
 
 /**
- * Безопасно восстанавливает сессию владельца платформы:
- * 1. Отправляет запрос на бэкенд (/auth/exit-impersonation), чтобы сервер обновил
+ * Безопасно восстанавливает сессию владельца платформы или партнера:
+ * 1. Отправляет запрос на бэкенд (/api/v1/auth/revert-impersonation), чтобы сервер обновил
  *    долгоживущие HttpOnly cookies (getvoxly_refresh) на общем домене .getvoxly.ru.
  * 2. Записывает свежие токены в localStorage и cookie getvoxly_auth_token.
  * 3. Сохраняет свежие токены в бэкап (не уничтожает его раньше времени, чтобы при навигации
- *    на voxly.getvoxly.ru гейты гарантированно имели доступ к платформенным правам).
+ *    на исходный домен гейты гарантированно имели доступ к правам).
  * 4. Формирует целевой URL с handoff токена в hash fragment (#restore_token=...) для
- *    немедленного применения в origin storage домена voxly.getvoxly.ru.
+ *    немедленного применения в origin storage целевого домена.
  */
 export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResult> {
   if (!isBrowser()) return { success: false, targetUrl: "/admin/tenants" };
 
   const backup = readImpersonationBackup();
-  const defaultUrl = getPlatformAdminUrl();
-
-  if (!backup?.accessToken && !backup?.refreshToken) {
-    return { success: false, targetUrl: defaultUrl };
-  }
+  const defaultUrl = getPlatformAdminUrl(undefined, backup);
 
   // 1. Полноценная серверная ротация с выставлением HttpOnly cookie
   try {
@@ -199,9 +237,9 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
       refresh_token?: string;
       accessToken?: string;
       refreshToken?: string;
-    }>("/auth/exit-impersonation", {
-      admin_refresh_token: backup.refreshToken || undefined,
-      admin_access_token: backup.accessToken || undefined,
+    }>("/api/v1/auth/revert-impersonation", {
+      admin_refresh_token: backup?.refreshToken || undefined,
+      admin_access_token: backup?.accessToken || undefined,
     });
 
     const newAccessToken = res.data?.access_token ?? res.data?.accessToken;
@@ -213,14 +251,16 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
         refreshToken: newRefreshToken,
       });
 
-      // Обновляем бэкап свежими токенами администратора (очистится уже на voxly.getvoxly.ru)
-      writeImpersonationBackup({
-        ...backup,
-        accessToken: newAccessToken,
-        refreshToken: newRefreshToken,
-      });
+      // Обновляем бэкап свежими токенами администратора или партнера если он был
+      if (backup) {
+        writeImpersonationBackup({
+          ...backup,
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+        });
+      }
 
-      const targetUrl = getPlatformAdminUrl(newAccessToken);
+      const targetUrl = getPlatformAdminUrl(newAccessToken, backup);
       return { success: true, accessToken: newAccessToken, targetUrl };
     }
   } catch (err) {
@@ -228,13 +268,13 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
   }
 
   // 2. Локальный фоллбэк: восстанавливаем токены из бэкапа
-  if (backup.accessToken) {
+  if (backup?.accessToken) {
     try {
       writeTokens({
         accessToken: backup.accessToken,
         refreshToken: backup.refreshToken || backup.accessToken,
       });
-      const targetUrl = getPlatformAdminUrl(backup.accessToken);
+      const targetUrl = getPlatformAdminUrl(backup.accessToken, backup);
       return { success: true, accessToken: backup.accessToken, targetUrl };
     } catch (err) {
       console.error("Ошибка локального восстановления сессии администратора:", err);

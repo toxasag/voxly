@@ -122,10 +122,10 @@ export class PartnerService {
           updated_at: Date;
         }>(
           `INSERT INTO tenants (
-             name, slug, plan, status, parent_tenant_id,
+             name, slug, plan, status, parent_tenant_id, owner_partner_id, is_partner,
              custom_pricing, custom_price_rubles, auth_settings, trial_ends_at, ai_balance_kopecks
            )
-           VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, now() + INTERVAL '365 days', 500000)
+           VALUES ($1, $2, $3, 'active', $4, $4, false, $5, $6, $7, now() + INTERVAL '365 days', 500000)
            RETURNING id, name, slug, plan, status, parent_tenant_id, auth_settings, custom_pricing, custom_price_rubles, created_at, updated_at`,
           [
             input.name.trim(),
@@ -277,7 +277,7 @@ export class PartnerService {
          ORDER BY u.created_at ASC
          LIMIT 1
        ) u_admin ON true
-       WHERE t.parent_tenant_id = $1
+       WHERE (t.parent_tenant_id = $1 OR t.owner_partner_id = $1)
        ORDER BY t.created_at DESC`,
       [parentTenantId],
     );

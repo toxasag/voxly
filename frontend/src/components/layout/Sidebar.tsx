@@ -19,6 +19,7 @@ import {
   PlusCircle,
   Check,
   Loader2,
+  Briefcase,
   type LucideIcon,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
@@ -58,6 +59,7 @@ const ENTITY_ICONS: Record<string, string> = {
   "/marketing/funnels": "text-[#4a38f5]",
   "/modules/ai-bots": "text-indigo-600",
   "/repairs": "text-cyan-600",
+  "/warehouse": "text-amber-600",
   "/finance": "text-emerald-600",
   "/marketplace": "text-blue-500",
 };
@@ -106,7 +108,7 @@ export function Sidebar({
   onToggle: () => void;
 }) {
   const pathname = usePathname();
-  const { tenant, user, logout } = useAuth();
+  const { tenant, user, logout, impersonator } = useAuth();
   const { data: liveModules } = useTenantModules(tenant?.tenantId ?? null);
   const [tenantMenuOpen, setTenantMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
@@ -150,6 +152,8 @@ export function Sidebar({
         displayTenant.slug,
         user?.email,
         user?.name,
+        Boolean(user?.is_partner || tenant?.is_partner),
+        isPlatformOwner,
       );
     } catch (err) {
       console.error("Не удалось переключить организацию", err);
@@ -171,16 +175,18 @@ export function Sidebar({
   const isProfileActive = pathname === "/settings/profile";
   const permissions = user?.permissions ?? null;
 
-  const canCreateTenant =
+  const isPartner =
+    user?.is_partner === true ||
+    tenant?.is_partner === true ||
     user?.role === "partner" ||
-    user?.role === "owner" ||
-    user?.role === "admin" ||
-    user?.platform_role === "platform_owner" ||
-    Boolean(user?.permissions?.has("tenant:admin"));
+    isPlatformOwner;
+
+  const canCreateTenant = isPartner;
 
   const backup = typeof window !== "undefined" ? readImpersonationBackup() : null;
   const isImpersonatingClient = Boolean(
-    backup && (!isPlatformOwner || (tenant?.slug !== "voxly" && Boolean(tenant?.slug))),
+    impersonator ||
+      (backup && (!isPlatformOwner || (tenant?.slug !== "voxly" && Boolean(tenant?.slug)))),
   );
 
   const toggleCollapsed = onToggle;
@@ -191,11 +197,11 @@ export function Sidebar({
     if (isImpersonatingClient) {
       try {
         const res = await restoreAdminSessionDetailed();
-        window.location.href = res.targetUrl || getPlatformAdminUrl();
+        window.location.href = res.targetUrl || getPlatformAdminUrl(undefined, backup);
         return;
       } catch (err) {
         console.error("Ошибка выхода из аккаунта клиента:", err);
-        window.location.href = getPlatformAdminUrl();
+        window.location.href = getPlatformAdminUrl(undefined, backup);
         return;
       }
     }
@@ -203,7 +209,7 @@ export function Sidebar({
     await logout().finally(() => {
       window.location.href = "/login";
     });
-  }, [isImpersonatingClient, logout]);
+  }, [isImpersonatingClient, logout, backup]);
 
   const visibleNav = visibleMainNav(installedSlugs, permissions);
   const visibleChannels = visibleChannelNav(installedSlugs, permissions);
@@ -219,6 +225,7 @@ export function Sidebar({
     { label: "Компании", href: "/crm/companies", icon: Building2, always: true },
     { label: "Задачи", href: "/crm/tasks", icon: ListChecks, always: true },
     { label: "Аналитика", href: "/analytics", icon: BarChart3, always: true },
+    ...(isPartner ? [{ label: "Партнёрам", href: "/partner", icon: Briefcase, always: true }] : []),
   ];
 
   return (

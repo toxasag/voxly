@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import {
   Building2,
+  Briefcase,
   Calendar,
   Sparkles,
   Bot,
@@ -20,6 +21,8 @@ import {
   Save,
   Shield,
   ShieldCheck,
+  Check,
+  Users,
 } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import {
@@ -32,6 +35,7 @@ import { cn } from "@/lib/utils";
 interface TenantManageModalProps {
   open: boolean;
   tenant: AdminTenantDTO | null;
+  allTenants?: AdminTenantDTO[];
   onClose: () => void;
   onSaved?: () => void;
 }
@@ -64,22 +68,30 @@ const POPULAR_NICHES = [
   "Производство",
 ];
 
-const PRICE_PRESETS = [
-  { label: "0 ₽ (Партнёр / Грант)", value: 0 },
-  { label: "990 ₽/мес", value: 990 },
-  { label: "1 990 ₽/мес", value: 1990 },
-  { label: "3 900 ₽/мес", value: 3900 },
-  { label: "9 900 ₽/мес", value: 9900 },
+const CLIENT_PRICE_PRESETS = [
+  { label: "0 ₽ (Бесплатный клиент)", value: 0, defaultPlanName: "Бесплатный (Клиент)" },
+  { label: "990 ₽/мес", value: 990, defaultPlanName: "Starter" },
+  { label: "1 990 ₽/мес", value: 1990, defaultPlanName: "Стандарт" },
+  { label: "3 900 ₽/мес", value: 3900, defaultPlanName: "Бизнес" },
+  { label: "9 900 ₽/мес", value: 9900, defaultPlanName: "Enterprise" },
+];
+
+const PARTNER_PRICE_PRESETS = [
+  { label: "0 ₽ (Партнёрский тариф)", value: 0, defaultPlanName: "Партнёрский тариф" },
+  { label: "4 900 ₽/мес (Партнёр PRO)", value: 4900, defaultPlanName: "Партнёр PRO" },
 ];
 
 export function TenantManageModal({
   open,
   tenant,
+  allTenants = [],
   onClose,
   onSaved,
 }: TenantManageModalProps) {
   const update = useUpdateTenant();
 
+  const [tenantType, setTenantType] = useState<"partner" | "client">("client");
+  const [parentPartnerId, setParentPartnerId] = useState<string>("");
   const [status, setStatus] = useState<"trial" | "active" | "past_due" | "suspended">("active");
   const [plan, setPlan] = useState<string>("trial");
   const [isCustomPrice, setIsCustomPrice] = useState<boolean>(false);
@@ -93,8 +105,28 @@ export function TenantManageModal({
   const [requireTelegramAuth, setRequireTelegramAuth] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  const isPlatformRoot =
+    tenant?.slug === "voxly" ||
+    tenant?.id === "c0000000-0000-0000-0000-000000000001";
+
+  const availablePartners = useMemo(() => {
+    return (allTenants || []).filter(
+      (t) =>
+        (t.is_partner ||
+          t.tenant_type === "partner" ||
+          t.slug === "voxly" ||
+          t.id === "c0000000-0000-0000-0000-000000000001") &&
+        t.id !== tenant?.id,
+    );
+  }, [allTenants, tenant?.id]);
+
   useEffect(() => {
     if (tenant) {
+      const initialType: "partner" | "client" =
+        tenant.is_partner || tenant.tenant_type === "partner" ? "partner" : "client";
+      setTenantType(initialType);
+      setParentPartnerId(tenant.parent_tenant_id || tenant.owner_partner_id || "");
+
       setStatus(
         (tenant.status === "active" ||
         tenant.status === "trial" ||
@@ -135,10 +167,17 @@ export function TenantManageModal({
     setIsSaving(true);
 
     try {
+      const isPartner = tenantType === "partner";
+      const parentId = isPartner ? null : (parentPartnerId.trim() ? parentPartnerId.trim() : null);
+
       const payload: Parameters<typeof update.mutateAsync>[0] = {
         id: tenant.id,
         status,
         plan,
+        tenant_type: tenantType,
+        is_partner: isPartner,
+        parent_tenant_id: parentId,
+        owner_partner_id: parentId,
         business_niche: businessNiche.trim() ? businessNiche.trim() : null,
         custom_notes: customNotes.trim() ? customNotes.trim() : null,
         require_telegram_auth: requireTelegramAuth,
@@ -151,7 +190,14 @@ export function TenantManageModal({
       if (isCustomPrice) {
         const parsedPrice = customPriceRubles.trim() !== "" ? Number(customPriceRubles.replace(/\s+/g, "")) : 0;
         payload.custom_price_rubles = Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : 0;
-        payload.custom_plan_name = customPlanName.trim() ? customPlanName.trim() : "Индивидуальный";
+        if (customPlanName.trim()) {
+          payload.custom_plan_name = customPlanName.trim();
+        } else {
+          payload.custom_plan_name =
+            payload.custom_price_rubles === 0
+              ? (isPartner ? "Партнёрский тариф" : "Бесплатный (Клиент)")
+              : "Индивидуальный";
+        }
       } else {
         payload.custom_price_rubles = null;
         payload.custom_plan_name = null;
@@ -184,6 +230,8 @@ export function TenantManageModal({
     }
   }, [
     tenant,
+    tenantType,
+    parentPartnerId,
     status,
     plan,
     isCustomPrice,
@@ -347,6 +395,149 @@ export function TenantManageModal({
           </div>
         </div>
 
+        {/* Секция 0: Тип и роль аккаунта в системе */}
+        <div className="rounded-[10px] border border-[#e5e5e5] p-4 space-y-3.5 bg-white">
+          <div className="flex items-center gap-2">
+            <Briefcase className="h-4 w-4 text-[#4a38f5]" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#111111]">
+              Тип и роль аккаунта в системе
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {/* Карточка: Партнёр */}
+            <button
+              type="button"
+              onClick={() => {
+                setTenantType("partner");
+                setParentPartnerId("");
+                if (isCustomPrice && (customPriceRubles === "0" || !customPlanName)) {
+                  setCustomPlanName("Партнёрский тариф");
+                }
+              }}
+              className={cn(
+                "relative flex flex-col items-start rounded-[8px] border p-3.5 text-left transition-all",
+                tenantType === "partner"
+                  ? "border-[#4a38f5] bg-[#4a38f5]/5 shadow-xs"
+                  : "border-[#e5e5e5] bg-[#fafafa] hover:border-[#cccccc] hover:bg-white",
+              )}
+            >
+              <div className="flex w-full items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-[6px]",
+                      tenantType === "partner"
+                        ? "bg-[#4a38f5] text-white"
+                        : "bg-white text-[#666666] border border-[#e5e5e5]",
+                    )}
+                  >
+                    <Briefcase className="h-3.5 w-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-[#111111]">Партнёр платформы</span>
+                </div>
+                {tenantType === "partner" && (
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#4a38f5] text-white">
+                    <Check className="h-3 w-3" />
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-[#666666]">
+                Интегратор или агентство. Может привлекать суб-клиентов и управлять ими в системе.
+              </p>
+            </button>
+
+            {/* Карточка: Клиент */}
+            <button
+              type="button"
+              disabled={isPlatformRoot}
+              title={isPlatformRoot ? "Основная платформа GETVOXLY не может быть клиентским аккаунтом" : undefined}
+              onClick={() => {
+                if (isPlatformRoot) return;
+                setTenantType("client");
+                if (isCustomPrice && (customPriceRubles === "0" || !customPlanName)) {
+                  setCustomPlanName("Бесплатный (Клиент)");
+                }
+              }}
+              className={cn(
+                "relative flex flex-col items-start rounded-[8px] border p-3.5 text-left transition-all",
+                isPlatformRoot
+                  ? "border-[#e5e5e5] bg-[#f5f5f5] opacity-50 cursor-not-allowed"
+                  : tenantType === "client"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/5 shadow-xs"
+                    : "border-[#e5e5e5] bg-[#fafafa] hover:border-[#cccccc] hover:bg-white",
+              )}
+            >
+              <div className="flex w-full items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-[6px]",
+                      tenantType === "client"
+                        ? "bg-[#4a38f5] text-white"
+                        : "bg-white text-[#666666] border border-[#e5e5e5]",
+                    )}
+                  >
+                    <Building2 className="h-3.5 w-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-[#111111]">Клиентский аккаунт</span>
+                </div>
+                {tenantType === "client" && (
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#4a38f5] text-white">
+                    <Check className="h-3 w-3" />
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-[#666666]">
+                {isPlatformRoot
+                  ? "Основная платформа GETVOXLY управляет всеми организациями."
+                  : "Конечный пользователь CRM (прямой клиент платформы или суб-клиент партнёра)."}
+              </p>
+            </button>
+          </div>
+
+          {/* Если выбран Клиентский аккаунт: выбор партнёра-родителя */}
+          {tenantType === "client" && (
+            <div className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2">
+              <label className="block text-xs font-medium text-[#111111]">
+                Партнёр-владелец или портал платформы (Parent Organization)
+              </label>
+              <select
+                value={parentPartnerId}
+                onChange={(e) => setParentPartnerId(e.target.value)}
+                className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              >
+                <option value="">Без партнёра (Прямой независимый клиент)</option>
+                {availablePartners.map((p) => {
+                  const isRoot =
+                    p.slug === "voxly" ||
+                    p.id === "c0000000-0000-0000-0000-000000000001";
+                  return (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.slug ? `(@${p.slug})` : ""} — {isRoot ? "Основная платформа (Voxly)" : "Партнёр платформы"}
+                    </option>
+                  );
+                })}
+              </select>
+              <p className="text-[11px] text-[#666666]">
+                {parentPartnerId ? (
+                  <>
+                    Клиент закреплён за выбранной организацией. В списке компаний он будет отображаться в иерархическом дереве как дочерний портал.
+                  </>
+                ) : (
+                  <>Клиент работает напрямую и не привязан ни к какому родительскому порталу или партнёру.</>
+                )}
+              </p>
+            </div>
+          )}
+
+          {tenantType === "partner" && (
+            <div className="mt-2 rounded-[8px] border border-indigo-200 bg-indigo-50/50 p-2.5 text-[11px] text-indigo-900">
+              Компания является корневым партнёром. Все зарегистрированные им клиенты отображаются под ним с визуальной связью дерева.
+            </div>
+          )}
+        </div>
+
         {/* Секция 1: Индивидуальный тариф и стоимость */}
         <div className="rounded-[10px] border border-[#e5e5e5] p-4 space-y-4 bg-white">
           <div className="flex items-center justify-between">
@@ -426,7 +617,9 @@ export function TenantManageModal({
                     <span className="absolute right-2.5 top-2 text-xs text-[#888888]">₽</span>
                   </div>
                   <span className="mt-1 block text-[11px] text-[#666666]">
-                    0 ₽ — бесплатный доступ для партнёров или грантов
+                    {tenantType === "partner"
+                      ? "0 ₽ — специальный партнёрский тариф для интегратора"
+                      : "0 ₽ — бесплатный доступ для клиента (субклиент партнёра или грант)"}
                   </span>
                 </div>
 
@@ -438,7 +631,7 @@ export function TenantManageModal({
                     type="text"
                     value={customPlanName}
                     onChange={(e) => setCustomPlanName(e.target.value)}
-                    placeholder="Например: Партнёрский, VIP, Грант"
+                    placeholder={tenantType === "partner" ? "Партнёрский тариф" : "Бесплатный (Клиент)"}
                     className="mt-1 h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                   />
                   <span className="mt-1 block text-[11px] text-[#666666]">
@@ -449,16 +642,16 @@ export function TenantManageModal({
 
               {/* Пресеты цены */}
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                <span className="text-[11px] text-[#666666] mr-1">Быстрый выбор:</span>
-                {PRICE_PRESETS.map((preset) => (
+                <span className="text-[11px] text-[#666666] mr-1">
+                  Пресеты ({tenantType === "partner" ? "партнёр" : "клиент"}):
+                </span>
+                {(tenantType === "partner" ? PARTNER_PRICE_PRESETS : CLIENT_PRICE_PRESETS).map((preset) => (
                   <button
                     key={preset.value}
                     type="button"
                     onClick={() => {
                       setCustomPriceRubles(String(preset.value));
-                      if (preset.value === 0 && !customPlanName) {
-                        setCustomPlanName("Партнёрский (0 ₽)");
-                      }
+                      setCustomPlanName(preset.defaultPlanName);
                     }}
                     className={cn(
                       "rounded-[4px] border px-2 py-0.5 text-[11px] font-medium transition-colors",

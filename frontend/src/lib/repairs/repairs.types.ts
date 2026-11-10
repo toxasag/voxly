@@ -10,6 +10,28 @@ export type RepairStatus =
 
 export type RepairPriority = "low" | "normal" | "high" | "urgent";
 
+export type RepairPaymentStatus = "unpaid" | "invoiced" | "paid";
+
+export const PAYMENT_STATUS_LABELS: Record<RepairPaymentStatus, string> = {
+  unpaid: "Не оплачен",
+  invoiced: "Счет выставлен",
+  paid: "Оплачен",
+};
+
+export const PAYMENT_STATUS_COLORS: Record<RepairPaymentStatus, string> = {
+  unpaid: "bg-[#f5f5f5] text-[#666666] border-[#e5e5e5]",
+  invoiced: "bg-sky-50 text-sky-700 border-sky-200",
+  paid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+};
+
+export function getRepairPaymentStatusLabel(status: RepairPaymentStatus): string {
+  return PAYMENT_STATUS_LABELS[status] ?? "Не оплачен";
+}
+
+export function getRepairPaymentStatusColors(status: RepairPaymentStatus): string {
+  return PAYMENT_STATUS_COLORS[status] ?? PAYMENT_STATUS_COLORS.unpaid;
+}
+
 export interface EquipmentInfo {
   type: string;
   brand: string;
@@ -32,11 +54,15 @@ export interface WorkItem {
   description: string;
   master_name: string;
   master_id: string;
+  quantity?: number;
+  unit_price?: number;
   cost: number;
 }
 
 export interface PartItem {
   id: string;
+  warehouse_item_id?: string | null;
+  status?: string | null;
   name: string;
   article: string;
   quantity: number;
@@ -62,8 +88,10 @@ export interface RepairTicket {
   additional_contacts?: { name: string; phone: string; role?: string }[];
   equipment: EquipmentInfo;
   defect_description: string;
+  malfunctions?: string[];
   defect_photos: string[];
   status: RepairStatus;
+  payment_status: RepairPaymentStatus;
   priority: RepairPriority;
   master_name: string;
   master_id: string;

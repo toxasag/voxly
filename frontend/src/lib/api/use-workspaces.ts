@@ -49,6 +49,8 @@ export async function switchWorkspace(
   currentSlug: string,
   userEmail?: string,
   userName?: string,
+  isPartner?: boolean,
+  isPlatformOwner?: boolean,
 ): Promise<void> {
   const normTarget = targetSlug.trim().toLowerCase();
   const normCurrent = currentSlug.trim().toLowerCase();
@@ -59,13 +61,16 @@ export async function switchWorkspace(
   const currentRefreshToken = readRefreshToken();
   const existingBackup = readImpersonationBackup();
 
-  // Если возвращаемся назад в родительскую платформу (например, voxly) и у нас есть исходная сессия админа:
-  if (normTarget === "voxly" && existingBackup) {
+  const originPrefix = existingBackup?.adminOriginHost?.split(".")[0]?.split(":")[0]?.toLowerCase();
+
+  // Если возвращаемся назад в исходный портал (например, voxly или личный портал партнера) и у нас есть исходная сессия:
+  if (existingBackup && (normTarget === "voxly" || (originPrefix && normTarget === originPrefix))) {
     writeTokens({
       accessToken: existingBackup.accessToken,
       refreshToken: existingBackup.refreshToken || existingBackup.accessToken,
     });
-    const targetUrl = tenantPortalUrl(normTarget, "/crm/contacts");
+    const returnPath = existingBackup.isPartner && !existingBackup.isPlatformOwner ? "/partner" : "/crm/contacts";
+    const targetUrl = tenantPortalUrl(normTarget, returnPath);
     const redirectUrl = targetUrl.includes("://")
       ? `${targetUrl}#restore_token=${encodeURIComponent(existingBackup.accessToken)}`
       : targetUrl;
@@ -74,21 +79,27 @@ export async function switchWorkspace(
   }
 
   // При входе в дочернее пространство сохраняем текущую сессию в бэкап
-  if (currentAccessToken && !existingBackup) {
-    writeImpersonationBackup({
+  let activeBackup = existingBackup;
+  if (currentAccessToken && !activeBackup) {
+    activeBackup = {
       accessToken: currentAccessToken,
       refreshToken: currentRefreshToken || currentAccessToken,
       adminUserEmail: userEmail ?? "",
       adminUserName: userName ?? "",
       adminOriginHost: typeof window !== "undefined" ? window.location.host : "",
+      adminOriginPath: typeof window !== "undefined" ? window.location.pathname : "/partner",
+      isPartner: isPartner ?? false,
+      isPlatformOwner: isPlatformOwner ?? false,
       impersonatedTenantSlug: normTarget,
       enteredAt: new Date().toISOString(),
-    });
+    };
+    writeImpersonationBackup(activeBackup);
   }
 
   // Выпускаем токены для целевого пространства
   const res = await apiClient.post<AuthTokensDTO>(
-    `/api/v1/admin/tenants/by-slug/${normTarget}/impersonate`,
+    `/api/v1/auth/impersonate`,
+    { slug: normTarget },
   );
 
   if (res.data) {
@@ -97,10 +108,13 @@ export async function switchWorkspace(
       writeTokens({ accessToken: access_token, refreshToken: refresh_token });
     }
     const targetUrl = tenantPortalUrl(normTarget, "/crm/contacts");
-    const redirectUrl =
-      targetUrl.includes("://") && access_token
-        ? `${targetUrl}#tenant_token=${encodeURIComponent(access_token)}`
-        : targetUrl;
+    const hashParams = new URLSearchParams();
+    if (access_token) hashParams.set("tenant_token", access_token);
+    if (activeBackup) hashParams.set("impersonator_backup", JSON.stringify(activeBackup));
+
+    const redirectUrl = targetUrl.includes("://")
+      ? `${targetUrl}#${hashParams.toString()}`
+      : targetUrl;
     window.location.href = redirectUrl;
   }
 }

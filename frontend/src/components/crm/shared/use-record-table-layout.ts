@@ -249,11 +249,16 @@ export function useRecordTableLayout<T>({
   );
 
   const columnWidth = useCallback(
-    (column: RecordColumn<T>): number =>
-      Math.max(
-        RECORD_TABLE_COLUMN_MIN_WIDTH,
+    (column: RecordColumn<T>): number => {
+      const explicitMin =
+        column.width !== undefined && column.width < RECORD_TABLE_COLUMN_MIN_WIDTH
+          ? column.width
+          : RECORD_TABLE_COLUMN_MIN_WIDTH;
+      return Math.max(
+        explicitMin,
         layout.widths[column.id] ?? column.width ?? 160,
-      ),
+      );
+    },
     [layout.widths],
   );
 

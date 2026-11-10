@@ -119,6 +119,70 @@ function isApiErrorBody(value: unknown): value is ApiErrorBody {
   return typeof inner.code === "string" && typeof inner.message === "string";
 }
 
+function extractApiErrorBody(parsed: unknown, fallbackMessage: string): ApiErrorBody {
+  if (isApiErrorBody(parsed)) {
+    return parsed;
+  }
+
+  if (typeof parsed === "object" && parsed !== null) {
+    const raw = parsed as Record<string, unknown>;
+
+    let code = "UNKNOWN_ERROR";
+    let message = "";
+    let details: Record<string, string[]> | undefined = undefined;
+
+    if (typeof raw.code === "string" && raw.code.trim()) {
+      code = raw.code.trim();
+    } else if (
+      typeof raw.error === "object" &&
+      raw.error !== null &&
+      typeof (raw.error as Record<string, unknown>).code === "string"
+    ) {
+      code = ((raw.error as Record<string, unknown>).code as string).trim();
+    }
+
+    if (typeof raw.message === "string" && raw.message.trim()) {
+      message = raw.message.trim();
+    } else if (typeof raw.error === "string" && raw.error.trim()) {
+      message = raw.error.trim();
+    } else if (
+      typeof raw.error === "object" &&
+      raw.error !== null &&
+      typeof (raw.error as Record<string, unknown>).message === "string"
+    ) {
+      message = ((raw.error as Record<string, unknown>).message as string).trim();
+    } else if (typeof raw.details === "string" && raw.details.trim()) {
+      message = raw.details.trim();
+    }
+
+    if (
+      typeof raw.details === "object" &&
+      raw.details !== null &&
+      !Array.isArray(raw.details)
+    ) {
+      details = raw.details as Record<string, string[]>;
+    }
+
+    if (message) {
+      return {
+        status: "error",
+        error: {
+          code,
+          message,
+          ...(details ? { details } : {}),
+        },
+      };
+    }
+  }
+
+  return {
+    error: {
+      code: "UNKNOWN_ERROR",
+      message: fallbackMessage || "Request failed",
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Refresh coordination
 // ---------------------------------------------------------------------------
@@ -313,15 +377,38 @@ async function request<T>(
   if (body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
   if (token !== null) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(buildUrl(path, options.query), {
-    method,
-    headers,
-    body: isFormData ? (body as FormData) : body === undefined ? undefined : JSON.stringify(body),
-    // Allows the backend to move to httpOnly cookies (M0.6.5) without a
-    // client change.
-    credentials: "include",
-    ...(options.signal !== undefined && { signal: options.signal }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, options.query), {
+      method,
+      headers,
+      body: isFormData ? (body as FormData) : body === undefined ? undefined : JSON.stringify(body),
+      // Allows the backend to move to httpOnly cookies (M0.6.5) without a
+      // client change.
+      credentials: "include",
+      ...(options.signal !== undefined && { signal: options.signal }),
+    });
+  } catch (networkErr) {
+    if (options.retrying !== true && (!options.signal || !options.signal.aborted)) {
+      // Кратковременный сетевой сбой или перезапуск контейнера бэкенда: одна повторная попытка
+      await new Promise((r) => setTimeout(r, 700));
+      return request<T>(method, path, body, { ...options, retrying: true });
+    }
+    throw new ApiClientError(0, {
+      error: {
+        code: "NETWORK_ERROR",
+        message: networkErr instanceof Error && networkErr.name === "AbortError"
+          ? "Превышено время ожидания запроса"
+          : "Служба временно недоступна, повторите попытку",
+      },
+    });
+  }
+
+  // При получении 502/503/504 (перезапуск бэкенда за прокси) — пробуем повторить запрос один раз
+  if ((res.status === 502 || res.status === 503 || res.status === 504) && options.retrying !== true) {
+    await new Promise((r) => setTimeout(r, 800));
+    return request<T>(method, path, body, { ...options, retrying: true });
+  }
 
   // Expired access token: refresh once, then replay the original request.
   //
@@ -367,9 +454,7 @@ async function request<T>(
 
     throw new ApiClientError(
       res.status,
-      isApiErrorBody(parsed)
-        ? parsed
-        : { error: { code: "UNKNOWN_ERROR", message: res.statusText || "Request failed" } },
+      extractApiErrorBody(parsed, res.statusText),
     );
   }
 
