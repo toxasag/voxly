@@ -4,6 +4,8 @@
 ---
 
 > ⚡ **Паспорт проекта GETVOXLY (Мгновенная память сессии):**
+> - **Деплой:** Команда `/usr/local/bin/vf-deploy GETVOXLY` (синхронизирует backend/frontend на 150.241.98.135 и перезапускает контейнеры).
+> - **Верификация:** Проверка https://api.getvoxly.ru/health и https://getvoxly.ru/login с реальным HTTP 200 ответом.
 > - **Продукт:** B2B SaaS Modular CRM Platform (Fastify 5 + Next.js 15 + Postgres 16 RLS + Redis 7).
 > - **Боевой сервер (VPS):** IP 150.241.98.135, путь /opt/getvoxly (SSH root@150.241.98.135).
 > - **Боевой домен:** https://getvoxly.ru/ и https://api.getvoxly.ru/
