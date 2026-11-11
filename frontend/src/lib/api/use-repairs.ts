@@ -200,6 +200,7 @@ export interface RepairOrderDTO {
   dealNote?: string | null;
   dealBudget?: number | null;
   dealStageName?: string | null;
+  dealPaymentStatus?: RepairPaymentStatus | null;
   companyId?: string | null;
   companyName?: string | null;
   companyInn?: string | null;
@@ -1016,6 +1017,32 @@ export function useCreateNote(): UseMutationResult<RepairNoteDTO, ApiClientError
 }
 
 export const useCreateRepairNote = useCreateNote;
+
+export function useDeleteRepairNote(): UseMutationResult<
+  { id: string; deleted: boolean },
+  ApiClientError,
+  { orderId: string; noteId: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { id: string; deleted: boolean },
+    ApiClientError,
+    { orderId: string; noteId: string }
+  >({
+    mutationFn: async ({ orderId, noteId }) => {
+      const res = await apiClient.delete<{ id: string; deleted: boolean }>(
+        `${BASE_PATH}/${orderId}/notes/${noteId}`,
+      );
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.notes(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["notes"] });
+    },
+  });
+}
 
 export function useCreatePhoto(): UseMutationResult<RepairPhotoDTO, ApiClientError, { orderId: string; payload: CreatePhotoPayload }> {
   const queryClient = useQueryClient();

@@ -487,6 +487,15 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.status(201).send({ data: note });
   });
 
+  app.delete("/:id/notes/:itemId", { onRequest: canWrite }, async (request, reply) => {
+    const { id, itemId } = nestedParamsSchema.parse(request.params);
+    const deleted = await service.deleteNote(request.tenant_id, id, itemId);
+
+    if (!deleted) throw new NotFoundError("Note not found");
+
+    return reply.send({ data: { id: itemId, deleted: true } });
+  });
+
   app.get("/:id/photos", { onRequest: canRead }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const photos = await service.listPhotos(request.tenant_id, id);
