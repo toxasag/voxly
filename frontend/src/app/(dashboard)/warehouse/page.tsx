@@ -2,8 +2,11 @@
 
 import { useState, useMemo, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
   Boxes,
+  PackagePlus,
+  BookOpen,
   Plus,
   ArrowDownToLine,
   Search,
@@ -29,6 +32,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Guard } from "@/components/shared/Guard";
+import { useAuth } from "@/lib/auth/use-auth";
+import { useServices } from "@/lib/api/use-services";
+import { ServicesCatalogTab } from "@/components/warehouse/ServicesCatalogTab";
 import {
   useWarehouseItems,
   useWarehouseBatches,
@@ -86,6 +92,22 @@ function formatDate(iso: string): string {
 }
 
 function WarehouseContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const tabParam = searchParams.get("tab");
+  const [mainTab, setMainTab] = useState<"products" | "services">(
+    tabParam === "services" ? "services" : "products",
+  );
+  const { data: servicesList = [] } = useServices();
+
+  const handleSwitchMainTab = (t: "products" | "services") => {
+    setMainTab(t);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", t);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
   const [activeTab, setActiveTab] = useState<WarehouseTab>("items");
   const [searchQuery, setSearchQuery] = useState("");
   const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<string>("all");
@@ -343,17 +365,18 @@ function WarehouseContent() {
       {/* Header Twenty CRM Light */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 border border-amber-200">
-            <Boxes className="h-5 w-5 text-amber-700" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 border border-indigo-200">
+            <PackagePlus className="h-5 w-5 text-[#4a38f5]" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-[#111111]">Складской учет</h1>
+            <h1 className="text-lg font-bold text-[#111111]">Услуги/Товары</h1>
             <p className="text-xs text-[#666666]">
-              Номенклатура, партионный учет (FIFO), закупки и заказы поставщикам
+              Единый каталог номенклатуры, справочник услуг и складской учёт остатков
             </p>
           </div>
         </div>
 
+        {mainTab === "products" && (
         <div className="flex flex-wrap items-center gap-2">
           {/* Переключатель «Продажа в минус» */}
           <div className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 h-8 shadow-2xs">
@@ -470,8 +493,60 @@ function WarehouseContent() {
             Создать товар
           </button>
         </div>
+        )}
       </div>
 
+      {/* Top-Level Tabs: Товары / Услуги */}
+      <div className="flex items-center gap-2 border-b border-[#e5e5e5] pb-3">
+        <button
+          type="button"
+          onClick={() => handleSwitchMainTab("products")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-1.5 rounded-[8px] text-xs font-medium transition-all cursor-pointer",
+            mainTab === "products"
+              ? "bg-[#4a38f5] text-white shadow-2xs font-semibold"
+              : "bg-white text-[#666666] border border-[#e5e5e5] hover:bg-[#fafafa] hover:text-[#111111]",
+          )}
+        >
+          <Boxes className="h-4 w-4" />
+          <span>Товары</span>
+          <span
+            className={cn(
+              "px-1.5 py-0.2 rounded-full text-[10px] font-mono",
+              mainTab === "products" ? "bg-white/20 text-white" : "bg-[#f0f0f0] text-[#666666]",
+            )}
+          >
+            {items.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleSwitchMainTab("services")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-1.5 rounded-[8px] text-xs font-medium transition-all cursor-pointer",
+            mainTab === "services"
+              ? "bg-[#4a38f5] text-white shadow-2xs font-semibold"
+              : "bg-white text-[#666666] border border-[#e5e5e5] hover:bg-[#fafafa] hover:text-[#111111]",
+          )}
+        >
+          <BookOpen className="h-4 w-4" />
+          <span>Услуги</span>
+          <span
+            className={cn(
+              "px-1.5 py-0.2 rounded-full text-[10px] font-mono",
+              mainTab === "services" ? "bg-white/20 text-white" : "bg-[#f0f0f0] text-[#666666]",
+            )}
+          >
+            {servicesList.length}
+          </span>
+        </button>
+      </div>
+
+      {mainTab === "services" ? (
+        <ServicesCatalogTab />
+      ) : (
+        <>
       {/* KPI Cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
@@ -1354,16 +1429,32 @@ function WarehouseContent() {
           </div>
         </div>
       )}
+        </>
+      )}
     </div>
   );
 }
 
 export default function WarehousePage() {
+  const { tenant } = useAuth();
+  const hasAccess =
+    tenant?.installedModules.some(
+      (m) =>
+        m.slug === "products_services" ||
+        m.slug === "service_center",
+    ) ?? true;
+
+  if (!hasAccess) {
+    return (
+      <Guard requiredModule="products_services">
+        <div />
+      </Guard>
+    );
+  }
+
   return (
-    <Guard requiredPermission="service_center:read" requiredModule="service_center">
-      <Suspense fallback={<div className="p-6 text-sm text-[#888888]">Загрузка склада...</div>}>
-        <WarehouseContent />
-      </Suspense>
-    </Guard>
+    <Suspense fallback={<div className="p-6 text-sm text-[#888888]">Загрузка каталога...</div>}>
+      <WarehouseContent />
+    </Suspense>
   );
 }

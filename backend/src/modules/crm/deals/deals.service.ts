@@ -1,4 +1,5 @@
 import type {
+  CreateDealItemPayload,
   CreateDealMessagePayload,
   CreateDealPayload,
   CreateStagePayload,
@@ -6,6 +7,8 @@ import type {
   DealContactSummaryDTO,
   DealContactTimelineItemDTO,
   DealDTO,
+  DealItemDTO,
+  DealItemRow,
   DealMessageDTO,
   DealMessageRow,
   DealOtherDealItemDTO,
@@ -15,6 +18,7 @@ import type {
   PipelineDTO,
   StageColor,
   StageRow,
+  UpdateDealItemPayload,
   UpdateDealPayload,
   UpdateStagePayload,
 } from "./deals.types.js";
@@ -1404,4 +1408,221 @@ export class DealsService {
       timeline,
     };
   }
+
+  // ---------------------------------------------------------------------------
+  // Deal Items (Услуги и Товары в сделке)
+  // ---------------------------------------------------------------------------
+
+  async listDealItems(
+    tenantId: string,
+    dealId: string,
+  ): Promise<{ items: DealItemDTO[]; totalBudget: number }> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<DealItemRow>(
+        `SELECT id, tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+                unit, discount_percent, discount_amount, total_amount, sort_order, created_at, updated_at
+         FROM deal_items
+         WHERE tenant_id = $1 AND deal_id = $2
+         ORDER BY sort_order ASC, created_at ASC`,
+        [tenantId, dealId],
+      );
+
+      const items = rows.map(toDealItemDTO);
+      const totalBudget = items.reduce((acc, curr) => acc + curr.totalAmount, 0);
+      return { items, totalBudget };
+    });
+  }
+
+  async addDealItem(
+    tenantId: string,
+    dealId: string,
+    payload: CreateDealItemPayload,
+  ): Promise<{ item: DealItemDTO; totalBudget: number }> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM deals WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, dealId],
+      );
+      if (!deal) throw new NotFoundError("Сделка не найдена");
+
+      const price = Number(payload.price ?? 0);
+      const quantity = Number(payload.quantity ?? 1);
+      const discountPercent = Number(payload.discount_percent ?? 0);
+      const discountAmount = Number(payload.discount_amount ?? 0);
+      const totalAmount = calculateItemTotal(price, quantity, discountPercent, discountAmount);
+
+      const row = await tx.queryOneOrThrow<DealItemRow>(
+        `INSERT INTO deal_items
+           (tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+            unit, discount_percent, discount_amount, total_amount, sort_order, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
+         RETURNING id, tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+                   unit, discount_percent, discount_amount, total_amount, sort_order, created_at, updated_at`,
+        [
+          tenantId,
+          dealId,
+          payload.item_type,
+          payload.item_id ?? null,
+          payload.name.trim(),
+          payload.description?.trim() ?? "",
+          payload.sku?.trim() ?? "",
+          price,
+          quantity,
+          payload.unit?.trim() ?? "шт",
+          discountPercent,
+          discountAmount,
+          totalAmount,
+          payload.sort_order ?? 0,
+        ],
+      );
+
+      // Recalculate deal budget
+      const budgetRow = await tx.queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(total_amount), 0) AS total FROM deal_items WHERE tenant_id = $1 AND deal_id = $2`,
+        [tenantId, dealId],
+      );
+      const totalBudget = Number(budgetRow?.total ?? 0);
+
+      await tx.query(
+        `UPDATE deals SET budget = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, dealId, totalBudget],
+      );
+
+      return { item: toDealItemDTO(row), totalBudget };
+    });
+  }
+
+  async updateDealItem(
+    tenantId: string,
+    dealId: string,
+    itemId: string,
+    payload: UpdateDealItemPayload,
+  ): Promise<{ item: DealItemDTO; totalBudget: number }> {
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<DealItemRow>(
+        `SELECT * FROM deal_items WHERE tenant_id = $1 AND deal_id = $2 AND id = $3`,
+        [tenantId, dealId, itemId],
+      );
+      if (!existing) throw new NotFoundError("Позиция не найдена");
+
+      const price = payload.price !== undefined ? Number(payload.price) : Number(existing.price);
+      const quantity = payload.quantity !== undefined ? Number(payload.quantity) : Number(existing.quantity);
+      const discountPercent = payload.discount_percent !== undefined ? Number(payload.discount_percent) : Number(existing.discount_percent);
+      const discountAmount = payload.discount_amount !== undefined ? Number(payload.discount_amount) : Number(existing.discount_amount);
+      const totalAmount = calculateItemTotal(price, quantity, discountPercent, discountAmount);
+
+      const name = payload.name !== undefined ? payload.name.trim() : existing.name;
+      const description = payload.description !== undefined ? payload.description.trim() : (existing.description ?? "");
+      const sku = payload.sku !== undefined ? payload.sku.trim() : (existing.sku ?? "");
+      const unit = payload.unit !== undefined ? payload.unit.trim() : (existing.unit ?? "шт");
+      const sortOrder = payload.sort_order !== undefined ? payload.sort_order : existing.sort_order;
+
+      const row = await tx.queryOneOrThrow<DealItemRow>(
+        `UPDATE deal_items
+         SET name = $4, description = $5, sku = $6, price = $7, quantity = $8,
+             unit = $9, discount_percent = $10, discount_amount = $11, total_amount = $12,
+             sort_order = $13, updated_at = now()
+         WHERE tenant_id = $1 AND deal_id = $2 AND id = $3
+         RETURNING id, tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+                   unit, discount_percent, discount_amount, total_amount, sort_order, created_at, updated_at`,
+        [
+          tenantId,
+          dealId,
+          itemId,
+          name,
+          description,
+          sku,
+          price,
+          quantity,
+          unit,
+          discountPercent,
+          discountAmount,
+          totalAmount,
+          sortOrder,
+        ],
+      );
+
+      // Recalculate deal budget
+      const budgetRow = await tx.queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(total_amount), 0) AS total FROM deal_items WHERE tenant_id = $1 AND deal_id = $2`,
+        [tenantId, dealId],
+      );
+      const totalBudget = Number(budgetRow?.total ?? 0);
+
+      await tx.query(
+        `UPDATE deals SET budget = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, dealId, totalBudget],
+      );
+
+      return { item: toDealItemDTO(row), totalBudget };
+    });
+  }
+
+  async deleteDealItem(
+    tenantId: string,
+    dealId: string,
+    itemId: string,
+  ): Promise<{ success: boolean; totalBudget: number }> {
+    return withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `DELETE FROM deal_items WHERE tenant_id = $1 AND deal_id = $2 AND id = $3`,
+        [tenantId, dealId, itemId],
+      );
+
+      // Recalculate deal budget
+      const budgetRow = await tx.queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(total_amount), 0) AS total FROM deal_items WHERE tenant_id = $1 AND deal_id = $2`,
+        [tenantId, dealId],
+      );
+      const totalBudget = Number(budgetRow?.total ?? 0);
+
+      await tx.query(
+        `UPDATE deals SET budget = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, dealId, totalBudget],
+      );
+
+      return { success: true, totalBudget };
+    });
+  }
+}
+
+function toDealItemDTO(r: DealItemRow): DealItemDTO {
+  return {
+    id: r.id,
+    dealId: r.deal_id,
+    itemType: r.item_type,
+    itemId: r.item_id,
+    name: r.name,
+    description: r.description ?? "",
+    sku: r.sku ?? "",
+    price: Number(r.price ?? 0),
+    quantity: Number(r.quantity ?? 1),
+    unit: r.unit ?? "шт",
+    discountPercent: Number(r.discount_percent ?? 0),
+    discountAmount: Number(r.discount_amount ?? 0),
+    totalAmount: Number(r.total_amount ?? 0),
+    sortOrder: Number(r.sort_order ?? 0),
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    updatedAt: r.updated_at
+      ? r.updated_at instanceof Date
+        ? r.updated_at.toISOString()
+        : String(r.updated_at)
+      : undefined,
+  };
+}
+
+function calculateItemTotal(
+  price: number,
+  quantity: number,
+  discountPercent: number,
+  discountAmount: number,
+): number {
+  const base = price * quantity;
+  if (discountAmount > 0) {
+    return Math.max(0, base - discountAmount);
+  }
+  if (discountPercent > 0) {
+    return Math.max(0, base - (base * discountPercent) / 100);
+  }
+  return Math.max(0, base);
 }

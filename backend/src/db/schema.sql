@@ -1003,6 +1003,10 @@ VALUES
    'Контакты, компании, сделки с Kanban-воронкой и хронологией общения.',
    600, 'per_seat', 600, 200, 10, 'пользователь', false, 'crm', 'Users', 14,
    ARRAY['Контакты и компании', 'Воронка сделок', 'Задачи', 'Хронология и чат'], 10),
+  ('products_services', 'Услуги/Товары',
+   'Единый каталог товаров и справочник услуг, остатки и номенклатура, прикрепление позиций к сделкам с авторасчётом бюджета.',
+   0, 'flat', 0, 0, 0, '', false, 'crm', 'PackagePlus', 0,
+   ARRAY['Справочник услуг с описанием', 'Складской учёт товаров', 'Позиции в сделках', 'Авторасчёт бюджета сделки'], 15),
   ('service_center', 'Сервисный центр',
    'Наряд-заказы, диагностика, учёт работ и запчастей.',
    500, 'flat', 500, 0, 0, '', false, 'service', 'Wrench', 14,
@@ -1833,6 +1837,44 @@ CREATE TABLE IF NOT EXISTS invoice_repair_orders (
 );
 CREATE INDEX IF NOT EXISTS idx_invoice_repair_orders_repair ON invoice_repair_orders (tenant_id, repair_order_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_repair_orders_invoice ON invoice_repair_orders (tenant_id, invoice_id);
+
+-- Справочник услуг
+CREATE TABLE IF NOT EXISTS repair_services_catalog (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  default_price NUMERIC NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT 'усл',
+  duration_minutes INT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_repair_services_catalog_tenant ON repair_services_catalog (tenant_id, name);
+
+-- Позиции в сделках (товары и услуги)
+CREATE TABLE IF NOT EXISTS deal_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('product', 'service')),
+  item_id UUID NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  sku TEXT NOT NULL DEFAULT '',
+  price NUMERIC NOT NULL DEFAULT 0,
+  quantity NUMERIC NOT NULL DEFAULT 1,
+  unit TEXT NOT NULL DEFAULT 'шт',
+  discount_percent NUMERIC NOT NULL DEFAULT 0,
+  discount_amount NUMERIC NOT NULL DEFAULT 0,
+  total_amount NUMERIC NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_deal_items_tenant_deal ON deal_items (tenant_id, deal_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_deal_items_item_id ON deal_items (tenant_id, item_id) WHERE item_id IS NOT NULL;
 
 
 

@@ -283,3 +283,116 @@ export function useUnmarkDealPersonal(): UseMutationResult<
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Deal Items (Услуги/Товары в сделке)
+// ---------------------------------------------------------------------------
+
+export interface DealItemDTO {
+  id: string;
+  dealId: string;
+  itemType: "product" | "service";
+  itemId: string | null;
+  name: string;
+  description: string;
+  sku: string;
+  price: number;
+  quantity: number;
+  unit: string;
+  discountPercent: number;
+  discountAmount: number;
+  totalAmount: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CreateDealItemPayload {
+  item_type: "product" | "service";
+  item_id?: string | null;
+  name: string;
+  description?: string;
+  sku?: string;
+  price?: number;
+  quantity?: number;
+  unit?: string;
+  discount_percent?: number;
+  discount_amount?: number;
+  sort_order?: number;
+}
+
+export interface UpdateDealItemPayload {
+  name?: string;
+  description?: string;
+  sku?: string;
+  price?: number;
+  quantity?: number;
+  unit?: string;
+  discount_percent?: number;
+  discount_amount?: number;
+  sort_order?: number;
+}
+
+export function useDealItems(dealId: string | null | undefined) {
+  return useQuery({
+    queryKey: [...dealKeys.detail(dealId ?? ""), "items"],
+    queryFn: async () => {
+      if (!dealId) return { data: [], totalBudget: 0 };
+      const res = await apiClient.get<DealItemDTO[]>(
+        `${BASE}/${dealId}/items`,
+      );
+      return {
+        data: res.data ?? [],
+        totalBudget: (res as unknown as { totalBudget: number }).totalBudget ?? 0,
+      };
+    },
+    enabled: Boolean(dealId),
+  });
+}
+
+export function useAddDealItem(dealId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateDealItemPayload) => {
+      const res = await apiClient.post<DealItemDTO>(`${BASE}/${dealId}/items`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
+      void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
+export function useUpdateDealItem(dealId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ itemId, payload }: { itemId: string; payload: UpdateDealItemPayload }) => {
+      const res = await apiClient.patch<DealItemDTO>(`${BASE}/${dealId}/items/${itemId}`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
+      void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
+export function useDeleteDealItem(dealId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (itemId: string) => {
+      const res = await apiClient.delete<{ success: boolean; totalBudget: number }>(
+        `${BASE}/${dealId}/items/${itemId}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
+      void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
