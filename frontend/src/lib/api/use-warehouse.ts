@@ -1,12 +1,14 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiClient } from "./apiClient";
+import { apiClient, API_BASE_URL } from "./apiClient";
+import { readAccessToken } from "@/lib/auth/session";
 
 export interface WarehouseItemDTO {
   id: string;
   sku: string;
   name: string;
+  brand?: string;
   category: string;
   unit: string;
   minStock: number;
@@ -67,6 +69,7 @@ export interface PurchaseRequestDTO {
 export interface CreateWarehouseItemPayload {
   sku?: string;
   name: string;
+  brand?: string;
   category?: string;
   unit?: string;
   min_stock?: number;
@@ -432,6 +435,226 @@ export function useCreateReceiptFromSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.batches() });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.movements() });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Export / Import / Bulk Operations
+// ---------------------------------------------------------------------------
+
+export interface ExportWarehouseItemsPayload {
+  format: "xlsx" | "csv";
+  ids?: string[];
+  search?: string;
+}
+
+export interface ImportParseResultDTO {
+  headers: string[];
+  sampleRows: string[][];
+  totalRows: number;
+  detectedDelimiter?: string;
+  suggestedMapping: Record<string, string>;
+}
+
+export interface ImportParsedItem {
+  rowNumber: number;
+  name: string;
+  sku: string;
+  brand: string;
+  category: string;
+  unit: string;
+  costPrice: number;
+  retailPrice: number;
+  minStock: number;
+}
+
+export interface ImportDuplicateConflictDTO {
+  rowNumber: number;
+  reason: "sku_match" | "name_match";
+  matchKey: string;
+  existing: {
+    id: string;
+    sku: string;
+    name: string;
+    brand: string;
+    category: string;
+    unit: string;
+    costPrice: number;
+    retailPrice: number;
+    minStock: number;
+    totalStock?: number;
+  };
+  incoming: ImportParsedItem;
+}
+
+export interface ImportValidatePayload {
+  rows: string[][];
+  mapping: Record<string, string>;
+  skipFirstRow: boolean;
+}
+
+export interface ImportValidateResultDTO {
+  totalRows: number;
+  validCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  duplicates: ImportDuplicateConflictDTO[];
+  sampleValid: ImportParsedItem[];
+  errors: { rowNumber: number; message: string }[];
+}
+
+export interface ImportCommitPayload {
+  rows: string[][];
+  mapping: Record<string, string>;
+  skipFirstRow: boolean;
+  resolutions?: Record<string, "overwrite" | "skip" | "keep_both">;
+  defaultResolution?: "overwrite" | "skip";
+}
+
+export interface ImportCommitResultDTO {
+  importedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  errorCount: number;
+}
+
+export interface PriceAdjustmentAction {
+  mode: "set" | "percent" | "delta";
+  value: number;
+}
+
+export interface BulkUpdateWarehouseItemsPayload {
+  ids: string[];
+  category?: string;
+  brand?: string;
+  unit?: string;
+  min_stock?: number;
+  retail_price_action?: PriceAdjustmentAction;
+  cost_price_action?: PriceAdjustmentAction;
+}
+
+export interface BulkDeleteWarehouseItemsPayload {
+  ids: string[];
+}
+
+export async function downloadWarehouseExport(payload: ExportWarehouseItemsPayload): Promise<void> {
+  const token = readAccessToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE_URL}/api/v1/warehouse/export`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    throw new Error("Не удалось экспортировать номенклатуру");
+  }
+
+  const blob = await res.blob();
+  const contentDisp = res.headers.get("content-disposition");
+  let filename = payload.format === "csv" ? "catalog.csv" : "catalog.xlsx";
+  if (contentDisp) {
+    const match = contentDisp.match(/filename="?([^";]+)"?/);
+    if (match && match[1]) {
+      filename = decodeURIComponent(match[1]);
+    }
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
+export function useExportWarehouseItems() {
+  return useMutation({
+    mutationFn: (payload: ExportWarehouseItemsPayload) => downloadWarehouseExport(payload),
+  });
+}
+
+export function useImportParse() {
+  return useMutation({
+    mutationFn: async ({ file, delimiter }: { file: File; delimiter?: string }): Promise<ImportParseResultDTO> => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (delimiter) {
+        formData.append("delimiter", delimiter);
+      }
+      const res = await apiClient.postFormData<ImportParseResultDTO>(
+        "/api/v1/warehouse/import/parse",
+        formData,
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useImportValidate() {
+  return useMutation({
+    mutationFn: async (payload: ImportValidatePayload): Promise<ImportValidateResultDTO> => {
+      const res = await apiClient.post<ImportValidateResultDTO>(
+        "/api/v1/warehouse/import/validate",
+        payload,
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useImportCommit() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ImportCommitPayload): Promise<ImportCommitResultDTO> => {
+      const res = await apiClient.post<ImportCommitResultDTO>(
+        "/api/v1/warehouse/import/commit",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+    },
+  });
+}
+
+export function useBulkUpdateWarehouseItems() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: BulkUpdateWarehouseItemsPayload): Promise<{ updatedCount: number }> => {
+      const res = await apiClient.post<{ updatedCount: number }>(
+        "/api/v1/warehouse/items/bulk-update",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+    },
+  });
+}
+
+export function useBulkDeleteWarehouseItems() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: BulkDeleteWarehouseItemsPayload): Promise<{ deletedCount: number; errors?: string[] }> => {
+      const res = await apiClient.post<{ deletedCount: number; errors?: string[] }>(
+        "/api/v1/warehouse/items/bulk-delete",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
     },
   });
 }
