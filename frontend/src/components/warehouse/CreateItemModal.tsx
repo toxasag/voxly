@@ -13,6 +13,7 @@ interface CreateItemModalProps {
 export function CreateItemModal({ open, onClose }: CreateItemModalProps) {
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
+  const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("Запчасти");
   const [unit, setUnit] = useState("шт.");
   const [minStock, setMinStock] = useState("2");
@@ -35,6 +36,7 @@ export function CreateItemModal({ open, onClose }: CreateItemModalProps) {
       await createItemMutation.mutateAsync({
         name: trimmedName,
         sku: sku.trim() || undefined,
+        brand: brand.trim() || undefined,
         category: category.trim() || undefined,
         unit: unit.trim() || "шт.",
         min_stock: parseFloat(minStock) || 0,
@@ -46,6 +48,7 @@ export function CreateItemModal({ open, onClose }: CreateItemModalProps) {
       onClose();
       setName("");
       setSku("");
+      setBrand("");
       setRetailPrice("");
       setCostPrice("");
     } catch (err) {
@@ -105,16 +108,29 @@ export function CreateItemModal({ open, onClose }: CreateItemModalProps) {
             </div>
             <div>
               <label className="block text-xs font-medium text-[#111111] mb-1">
-                Категория
+                Бренд
               </label>
               <input
                 type="text"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Запчасти"
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                placeholder="Apple, Samsung"
                 className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[#111111] mb-1">
+              Категория
+            </label>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Запчасти"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">

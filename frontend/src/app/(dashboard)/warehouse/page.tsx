@@ -20,6 +20,12 @@ import {
   XCircle,
   Truck,
   CreditCard,
+  Download,
+  Upload,
+  SlidersHorizontal,
+  ChevronDown,
+  X,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Guard } from "@/components/shared/Guard";
@@ -36,6 +42,8 @@ import {
   useUpdateWarehouseSettings,
   useDeleteWarehouseItem,
   useUpdatePurchaseRequest,
+  useExportWarehouseItems,
+  useBulkDeleteWarehouseItems,
   type WarehouseItemDTO,
   type PurchaseRequestDTO,
   type AggregatedPurchaseRequestDTO,
@@ -44,6 +52,8 @@ import {
 import { CreateItemModal } from "@/components/warehouse/CreateItemModal";
 import { IntakeModal } from "@/components/warehouse/IntakeModal";
 import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierOrderModal";
+import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
+import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
 import { cn } from "@/lib/utils";
 
 type WarehouseTab = "items" | "batches" | "purchases" | "supplier_orders" | "movements";
@@ -88,6 +98,12 @@ function WarehouseContent() {
   const [createSupplierOrderModalOpen, setCreateSupplierOrderModalOpen] = useState(false);
   const [selectedAggregatedIds, setSelectedAggregatedIds] = useState<Set<string>>(new Set());
 
+  // Выбор позиций для массовых действий и модалки
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+
   // Настройки склада (продажа в минус)
   const { data: warehouseSettings } = useWarehouseSettings();
   const updateSettingsMutation = useUpdateWarehouseSettings();
@@ -105,6 +121,8 @@ function WarehouseContent() {
   const updatePurchaseMutation = useUpdatePurchaseRequest();
   const paySupplierOrderMutation = usePaySupplierOrder();
   const createReceiptMutation = useCreateReceiptFromSupplierOrder();
+  const exportMutation = useExportWarehouseItems();
+  const bulkDeleteMutation = useBulkDeleteWarehouseItems();
 
   // Фильтрация номенклатуры
   const filteredItems = useMemo(() => {
@@ -114,9 +132,59 @@ function WarehouseContent() {
       (item) =>
         item.name.toLowerCase().includes(q) ||
         item.sku.toLowerCase().includes(q) ||
+        (item.brand && item.brand.toLowerCase().includes(q)) ||
         item.category.toLowerCase().includes(q),
     );
   }, [items, searchQuery]);
+
+  const handleToggleSelectAll = () => {
+    if (selectedItemIds.size === filteredItems.length && filteredItems.length > 0) {
+      setSelectedItemIds(new Set());
+    } else {
+      setSelectedItemIds(new Set(filteredItems.map((i) => i.id)));
+    }
+  };
+
+  const handleToggleItem = (id: string) => {
+    const next = new Set(selectedItemIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedItemIds(next);
+  };
+
+  const handleExport = async (format: "xlsx" | "csv", onlySelected = false) => {
+    setExportDropdownOpen(false);
+    try {
+      await exportMutation.mutateAsync({
+        format,
+        ids: onlySelected && selectedItemIds.size > 0 ? Array.from(selectedItemIds) : undefined,
+        search: !onlySelected && searchQuery.trim() ? searchQuery.trim() : undefined,
+      });
+      toast.success(format === "xlsx" ? "Файл Excel успешно скачан" : "Файл CSV успешно скачан");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось экспортировать");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedItemIds.size === 0) return;
+    if (!confirm(`Удалить выбранные позиции (${selectedItemIds.size} шт.) из номенклатуры?`)) return;
+
+    try {
+      const res = await bulkDeleteMutation.mutateAsync({ ids: Array.from(selectedItemIds) });
+      if (res.errors && res.errors.length > 0) {
+        toast.warning(`Удалено ${res.deletedCount} позиций. Предупреждение: ${res.errors[0]}`);
+      } else {
+        toast.success(`Успешно удалено позиций: ${res.deletedCount}`);
+      }
+      setSelectedItemIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные позиции");
+    }
+  };
 
   // Фильтрация агрегированных заявок на закупку
   const filteredAggregatedPurchases = useMemo(() => {
@@ -311,6 +379,76 @@ function WarehouseContent() {
             </span>
           </div>
 
+          {/* Экспорт */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setExportDropdownOpen((prev) => !prev)}
+              disabled={exportMutation.isPending}
+              className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors"
+            >
+              {exportMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
+              ) : (
+                <Download className="h-4 w-4 text-[#666666]" />
+              )}
+              Экспорт
+              <ChevronDown className="h-3 w-3 text-[#888888]" />
+            </button>
+
+            {exportDropdownOpen && (
+              <div className="absolute right-0 top-full mt-1.5 z-30 w-56 rounded-xl border border-[#e5e5e5] bg-white py-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                <button
+                  type="button"
+                  onClick={() => handleExport("xlsx", false)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+                  <span>Экспорт каталога в Excel (.xlsx)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExport("csv", false)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-[#666666]" />
+                  <span>Экспорт каталога в CSV (.csv)</span>
+                </button>
+                {selectedItemIds.size > 0 && (
+                  <>
+                    <div className="my-1 border-t border-[#f0f0f0]" />
+                    <button
+                      type="button"
+                      onClick={() => handleExport("xlsx", true)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[#4a38f5] font-medium hover:bg-[#4a38f5]/5 transition-colors"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span>Выбранные в Excel ({selectedItemIds.size})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExport("csv", true)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[#4a38f5] font-medium hover:bg-[#4a38f5]/5 transition-colors"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span>Выбранные в CSV ({selectedItemIds.size})</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Импорт */}
+          <button
+            type="button"
+            onClick={() => setImportModalOpen(true)}
+            className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors"
+          >
+            <Upload className="h-4 w-4 text-[#666666]" />
+            Импорт
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -467,11 +605,22 @@ function WarehouseContent() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="w-[38px] px-3 py-2.5 text-center">
+                    <input
+                      type="checkbox"
+                      checked={filteredItems.length > 0 && selectedItemIds.size === filteredItems.length}
+                      onChange={handleToggleSelectAll}
+                      className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
                     Артикул
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Наименование
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
+                    Бренд
                   </th>
                   <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
                     Физический
@@ -488,24 +637,42 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
                     Розница
                   </th>
-                  <th className="px-4 py-2.5 w-[110px]" />
+                  <th className="px-4 py-2.5 w-[90px]" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
                 {filteredItems.map((item) => {
                   const isOutOfStock = item.availableStock <= 0;
                   const isLowStock = item.availableStock > 0 && item.availableStock <= item.minStock;
+                  const isSelected = selectedItemIds.has(item.id);
 
                   return (
-                    <tr key={item.id} className="transition-colors hover:bg-[#fafafa]">
+                    <tr
+                      key={item.id}
+                      className={cn(
+                        "transition-colors hover:bg-[#fafafa]",
+                        isSelected && "bg-[#4a38f5]/5 hover:bg-[#4a38f5]/8",
+                      )}
+                    >
+                      <td className="w-[38px] px-3 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleItem(item.id)}
+                          className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
-                        <span className="font-mono text-xs text-[#666666]">{item.sku}</span>
+                        <span className="font-mono text-xs text-[#666666]">{item.sku || "—"}</span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-[13px] text-[#111111]">{item.name}</div>
                         {item.category && (
                           <span className="text-[11px] text-[#888888]">{item.category}</span>
                         )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-[#111111] font-medium">{item.brand || "—"}</span>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className="font-mono text-[13px] text-[#111111]">
@@ -570,7 +737,7 @@ function WarehouseContent() {
                 })}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={10} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isItemsLoading ? "Загрузка каталога склада..." : "Товаров не найдено."}
                     </td>
                   </tr>
@@ -1111,6 +1278,82 @@ function WarehouseContent() {
           setActiveTab("supplier_orders");
         }}
       />
+
+      <ProductImportDialog
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+      />
+
+      <ProductBulkEditDialog
+        open={bulkEditModalOpen}
+        selectedIds={Array.from(selectedItemIds)}
+        onClose={() => setBulkEditModalOpen(false)}
+        onSuccess={() => {
+          setSelectedItemIds(new Set());
+        }}
+      />
+
+      {/* Floating Action Bar при выборе позиций */}
+      {selectedItemIds.size > 0 && activeTab === "items" && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-2xl border border-[#e5e5e5] bg-white px-5 py-3 shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
+          <div className="flex items-center gap-2 border-r border-[#e5e5e5] pr-3 text-xs">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#4a38f5] text-[11px] font-bold text-white">
+              {selectedItemIds.size}
+            </span>
+            <span className="font-semibold text-[#111111]">Выбрано позиций</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkEditModalOpen(true)}
+              className="flex h-7 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Изменить выбранные
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleExport("xlsx", true)}
+              disabled={exportMutation.isPending}
+              className="flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Excel
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleExport("csv", true)}
+              disabled={exportMutation.isPending}
+              className="flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              disabled={bulkDeleteMutation.isPending}
+              className="flex h-7 items-center gap-1.5 rounded-[6px] border border-rose-200 bg-rose-50 px-2.5 text-xs font-medium text-rose-700 shadow-2xs hover:bg-rose-100 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Удалить
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedItemIds(new Set())}
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"
+              title="Снять выделение"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

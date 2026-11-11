@@ -2,9 +2,14 @@ import type { FastifyInstance } from "fastify";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { warehouseService } from "./warehouse.service.js";
 import {
+  bulkDeleteWarehouseItemsSchema,
+  bulkUpdateWarehouseItemsSchema,
   createPurchaseRequestSchema,
   createSupplierOrderSchema,
   createWarehouseItemSchema,
+  exportWarehouseItemsSchema,
+  importCommitSchema,
+  importValidateSchema,
   intakeBatchSchema,
   paySupplierOrderSchema,
   updatePurchaseRequestSchema,
@@ -14,6 +19,84 @@ import {
 
 export async function warehouseRoutes(app: FastifyInstance) {
   await app.register(authenticatePlugin);
+
+  // Экспорт номенклатуры (XLSX / CSV)
+  app.post("/export", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = exportWarehouseItemsSchema.parse(request.body ?? {});
+    const { buffer, filename, contentType } = await warehouseService.exportItems(tenant_id, body);
+    return reply
+      .header("Content-Type", contentType)
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
+      .send(buffer);
+  });
+
+  // Парсинг загруженного файла импорта (XLSX / CSV)
+  app.post("/import/parse", async (request, reply) => {
+    if (request.isMultipart()) {
+      const file = await request.file({ limits: { fileSize: 20 * 1024 * 1024 } });
+      if (!file) {
+        return reply.status(400).send({ error: "Файл не передан" });
+      }
+      const buffer = await file.toBuffer();
+      const delimiter =
+        typeof file.fields?.delimiter === "object" && file.fields.delimiter && "value" in file.fields.delimiter
+          ? String(file.fields.delimiter.value)
+          : undefined;
+      const parsed = await warehouseService.parseImportFile(buffer, file.filename, delimiter);
+      return reply.send({ data: parsed });
+    }
+
+    const body = request.body as
+      | { fileBase64?: string; csvText?: string; filename?: string; delimiter?: string }
+      | undefined;
+    if (body?.fileBase64) {
+      const buffer = Buffer.from(body.fileBase64, "base64");
+      const filename = body.filename || "import.xlsx";
+      const parsed = await warehouseService.parseImportFile(buffer, filename, body.delimiter);
+      return reply.send({ data: parsed });
+    }
+
+    if (body?.csvText) {
+      const buffer = Buffer.from(body.csvText, "utf8");
+      const parsed = await warehouseService.parseImportFile(buffer, "import.csv", body.delimiter);
+      return reply.send({ data: parsed });
+    }
+
+    return reply.status(400).send({ error: "Не передан файл для парсинга" });
+  });
+
+  // Валидация колонок и поиск дубликатов
+  app.post("/import/validate", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = importValidateSchema.parse(request.body);
+    const result = await warehouseService.validateImport(tenant_id, body);
+    return reply.send({ data: result });
+  });
+
+  // Выполнение импорта с учетом стратегий коллизий
+  app.post("/import/commit", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = importCommitSchema.parse(request.body);
+    const result = await warehouseService.commitImport(tenant_id, body);
+    return reply.send({ data: result });
+  });
+
+  // Массовое редактирование позиций
+  app.post("/items/bulk-update", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = bulkUpdateWarehouseItemsSchema.parse(request.body);
+    const result = await warehouseService.bulkUpdateItems(tenant_id, body);
+    return reply.send({ data: result });
+  });
+
+  // Массовое удаление позиций
+  app.post("/items/bulk-delete", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = bulkDeleteWarehouseItemsSchema.parse(request.body);
+    const result = await warehouseService.bulkDeleteItems(tenant_id, body);
+    return reply.send({ data: result });
+  });
 
   // Настройки склада (продажа в минус и политики остатков)
   app.get("/settings", async (request, reply) => {

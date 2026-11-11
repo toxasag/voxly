@@ -14,6 +14,7 @@ export interface WarehouseSettingsDTO {
 export const createWarehouseItemSchema = z.object({
   sku: z.string().max(100).optional().default(""),
   name: z.string().min(1, "Name is required").max(300),
+  brand: z.string().max(100).optional().default(""),
   category: z.string().max(100).optional().default(""),
   unit: z.string().max(20).default("шт"),
   min_stock: z.number().nonnegative().default(0),
@@ -96,6 +97,7 @@ export interface WarehouseItemRow {
   tenant_id: string;
   sku: string;
   name: string;
+  brand?: string;
   category: string;
   unit: string;
   min_stock: string | number;
@@ -111,6 +113,7 @@ export interface WarehouseItemDTO {
   id: string;
   sku: string;
   name: string;
+  brand: string;
   category: string;
   unit: string;
   minStock: number;
@@ -300,3 +303,109 @@ export interface SupplierOrderDTO {
   createdAt: string;
   updatedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Export / Import / Bulk Operations
+// ---------------------------------------------------------------------------
+
+export const exportWarehouseItemsSchema = z.object({
+  format: z.enum(["xlsx", "csv"]).default("xlsx"),
+  ids: z.array(z.string().uuid()).optional(),
+  search: z.string().optional(),
+});
+export type ExportWarehouseItemsPayload = z.infer<typeof exportWarehouseItemsSchema>;
+
+export interface ImportParseResultDTO {
+  headers: string[];
+  sampleRows: string[][];
+  totalRows: number;
+  detectedDelimiter?: string;
+  suggestedMapping: Record<string, string>;
+}
+
+export const importValidateSchema = z.object({
+  rows: z.array(z.array(z.string())),
+  mapping: z.record(z.string()),
+  skipFirstRow: z.boolean().default(true),
+});
+export type ImportValidatePayload = z.infer<typeof importValidateSchema>;
+
+export interface ImportParsedItem {
+  rowNumber: number;
+  name: string;
+  sku: string;
+  brand: string;
+  category: string;
+  unit: string;
+  costPrice: number;
+  retailPrice: number;
+  minStock: number;
+}
+
+export interface ImportDuplicateConflictDTO {
+  rowNumber: number;
+  reason: "sku_match" | "name_match";
+  matchKey: string;
+  existing: {
+    id: string;
+    sku: string;
+    name: string;
+    brand: string;
+    category: string;
+    unit: string;
+    costPrice: number;
+    retailPrice: number;
+    minStock: number;
+    totalStock?: number;
+  };
+  incoming: ImportParsedItem;
+}
+
+export interface ImportValidateResultDTO {
+  totalRows: number;
+  validCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  duplicates: ImportDuplicateConflictDTO[];
+  sampleValid: ImportParsedItem[];
+  errors: { rowNumber: number; message: string }[];
+}
+
+export const importCommitSchema = z.object({
+  rows: z.array(z.array(z.string())),
+  mapping: z.record(z.string()),
+  skipFirstRow: z.boolean().default(true),
+  resolutions: z.record(z.enum(["overwrite", "skip", "keep_both"])).optional().default({}),
+  defaultResolution: z.enum(["overwrite", "skip"]).optional().default("skip"),
+});
+export type ImportCommitPayload = z.infer<typeof importCommitSchema>;
+
+export interface ImportCommitResultDTO {
+  importedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  errorCount: number;
+}
+
+export const priceAdjustmentActionSchema = z.object({
+  mode: z.enum(["set", "percent", "delta"]),
+  value: z.number(),
+});
+export type PriceAdjustmentAction = z.infer<typeof priceAdjustmentActionSchema>;
+
+export const bulkUpdateWarehouseItemsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, "Select at least 1 item"),
+  category: z.string().max(100).optional(),
+  brand: z.string().max(100).optional(),
+  unit: z.string().max(20).optional(),
+  min_stock: z.number().nonnegative().optional(),
+  retail_price_action: priceAdjustmentActionSchema.optional(),
+  cost_price_action: priceAdjustmentActionSchema.optional(),
+});
+export type BulkUpdateWarehouseItemsPayload = z.infer<typeof bulkUpdateWarehouseItemsSchema>;
+
+export const bulkDeleteWarehouseItemsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, "Select at least 1 item"),
+});
+export type BulkDeleteWarehouseItemsPayload = z.infer<typeof bulkDeleteWarehouseItemsSchema>;
+

@@ -1,9 +1,19 @@
 import { query, queryOneOrThrow, withTenant, type SqlParam } from "../../db/client.js";
 import {
   type AggregatedPurchaseRequestDTO,
+  type BulkDeleteWarehouseItemsPayload,
+  type BulkUpdateWarehouseItemsPayload,
   type CreatePurchaseRequestPayload,
   type CreateSupplierOrderPayload,
   type CreateWarehouseItemPayload,
+  type ExportWarehouseItemsPayload,
+  type ImportCommitPayload,
+  type ImportCommitResultDTO,
+  type ImportDuplicateConflictDTO,
+  type ImportParsedItem,
+  type ImportParseResultDTO,
+  type ImportValidatePayload,
+  type ImportValidateResultDTO,
   type IntakeBatchPayload,
   type PaySupplierOrderPayload,
   type PurchaseRequestDTO,
@@ -25,6 +35,14 @@ import {
   type WarehouseMovementRow,
   type WarehouseSettingsDTO,
 } from "./warehouse.types.js";
+import {
+  buildCsvBuffer,
+  buildXlsxBuffer,
+  parseCsvText,
+  parseXlsxBuffer,
+  suggestFieldMapping,
+  type ExportColumnDef,
+} from "./warehouse-io.service.js";
 
 function toIso(val: Date | string | null | undefined): string {
   if (!val) return new Date().toISOString();
@@ -34,6 +52,72 @@ function toIso(val: Date | string | null | undefined): string {
 function toNullableIso(val: Date | string | null | undefined): string | null {
   if (!val) return null;
   return typeof val === "string" ? new Date(val).toISOString() : val.toISOString();
+}
+
+function parseCleanNumber(val: unknown): number {
+  if (typeof val === "number") return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  const str = String(val)
+    .replace(/\s+/g, "")
+    .replace(/[^\d.,-]/g, "")
+    .replace(/,/g, ".");
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
+}
+
+function extractRowFields(
+  row: string[],
+  mapping: Record<string, string>,
+  headers?: string[],
+) {
+  const item: Record<string, string> = {
+    sku: "",
+    name: "",
+    brand: "",
+    category: "",
+    unit: "шт",
+    cost_price: "0",
+    retail_price: "0",
+    min_stock: "0",
+  };
+
+  for (const [key, value] of Object.entries(mapping)) {
+    if (!value || value === "skip") continue;
+    if (/^\d+$/.test(key)) {
+      const idx = parseInt(key, 10);
+      if (idx >= 0 && idx < row.length && row[idx] !== undefined) {
+        item[value] = row[idx] ?? "";
+      }
+    } else if (item[key] !== undefined) {
+      if (/^\d+$/.test(value)) {
+        const idx = parseInt(value, 10);
+        if (idx >= 0 && idx < row.length && row[idx] !== undefined) {
+          item[key] = row[idx] ?? "";
+        }
+      } else if (headers) {
+        const idx = headers.indexOf(value);
+        if (idx >= 0 && idx < row.length && row[idx] !== undefined) {
+          item[key] = row[idx] ?? "";
+        }
+      }
+    } else if (headers) {
+      const idx = headers.indexOf(key);
+      if (idx >= 0 && idx < row.length && row[idx] !== undefined) {
+        item[value] = row[idx] ?? "";
+      }
+    }
+  }
+
+  return {
+    sku: (item.sku ?? "").trim(),
+    name: (item.name ?? "").trim(),
+    brand: (item.brand ?? "").trim(),
+    category: (item.category ?? "").trim(),
+    unit: (item.unit ?? "").trim() || "шт",
+    costPrice: Math.max(0, parseCleanNumber(item.cost_price)),
+    retailPrice: Math.max(0, parseCleanNumber(item.retail_price)),
+    minStock: Math.max(0, parseCleanNumber(item.min_stock)),
+  };
 }
 
 export class WarehouseService {
@@ -88,76 +172,83 @@ export class WarehouseService {
 
     if (search && search.trim()) {
       params.push(`%${search.trim().toLowerCase()}%`);
-      searchFilter = `AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length})`;
+      searchFilter = `AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length} OR lower(COALESCE(i.brand, '')) LIKE $${params.length})`;
     }
 
     const settings = await this.getSettings(tenantId);
 
-    const rows = await query<WarehouseItemRow>(
-      `SELECT i.id, i.tenant_id, i.sku, i.name, i.category, i.unit,
-              i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
-              COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
-              COALESCE((
-                SELECT SUM(r.quantity)
-                FROM warehouse_reservations r
-                WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
-              ), 0) AS reserved_stock
-       FROM warehouse_items i
-       LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
-       WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
-       ${searchFilter}
-       GROUP BY i.id
-       ORDER BY i.name ASC`,
-      params,
-    );
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<WarehouseItemRow>(
+        `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
+                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
+                COALESCE((
+                  SELECT SUM(r.quantity)
+                  FROM warehouse_reservations r
+                  WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
+                ), 0) AS reserved_stock
+         FROM warehouse_items i
+         LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+         WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+         ${searchFilter}
+         GROUP BY i.id
+         ORDER BY i.name ASC`,
+        params,
+      );
 
-    return rows.map((r) => {
-      const total = Number(r.total_stock ?? 0);
-      const reserved = Number(r.reserved_stock ?? 0);
-      const available = settings.allowNegativeStock
-        ? total - reserved
-        : Math.max(total - reserved, 0);
+      return rows.map((r) => {
+        const total = Number(r.total_stock ?? 0);
+        const reserved = Number(r.reserved_stock ?? 0);
+        const available = settings.allowNegativeStock
+          ? total - reserved
+          : Math.max(total - reserved, 0);
 
-      return {
-        id: r.id,
-        sku: r.sku,
-        name: r.name,
-        category: r.category,
-        unit: r.unit,
-        minStock: Number(r.min_stock ?? 0),
-        retailPrice: Number(r.retail_price ?? 0),
-        costPrice: Number(r.cost_price ?? 0),
-        totalStock: total,
-        reservedStock: reserved,
-        availableStock: available,
-        createdAt: toIso(r.created_at),
-        updatedAt: toIso(r.updated_at),
-      };
+        return {
+          id: r.id,
+          sku: r.sku,
+          name: r.name,
+          brand: r.brand ?? "",
+          category: r.category,
+          unit: r.unit,
+          minStock: Number(r.min_stock ?? 0),
+          retailPrice: Number(r.retail_price ?? 0),
+          costPrice: Number(r.cost_price ?? 0),
+          totalStock: total,
+          reservedStock: reserved,
+          availableStock: available,
+          createdAt: toIso(r.created_at),
+          updatedAt: toIso(r.updated_at),
+        };
+      });
     });
   }
 
   async createItem(tenantId: string, payload: CreateWarehouseItemPayload): Promise<WarehouseItemDTO> {
-    const row = await queryOneOrThrow<WarehouseItemRow>(
-      `INSERT INTO warehouse_items
-         (tenant_id, sku, name, category, unit, min_stock, retail_price, cost_price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, tenant_id, sku, name, category, unit, min_stock, retail_price, cost_price, created_at, updated_at`,
-      [
-        tenantId,
-        payload.sku ?? "",
-        payload.name,
-        payload.category ?? "",
-        payload.unit ?? "шт",
-        payload.min_stock ?? 0,
-        payload.retail_price ?? 0,
-        payload.cost_price ?? 0,
-      ],
-    );
+    const row = await withTenant(tenantId, async (tx) => {
+      return tx.queryOneOrThrow<WarehouseItemRow>(
+        `INSERT INTO warehouse_items
+           (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id, tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, created_at, updated_at`,
+        [
+          tenantId,
+          payload.sku ?? "",
+          payload.name,
+          payload.brand ?? "",
+          payload.category ?? "",
+          payload.unit ?? "шт",
+          payload.min_stock ?? 0,
+          payload.retail_price ?? 0,
+          payload.cost_price ?? 0,
+        ],
+      );
+    });
 
     return {
       id: row.id,
       sku: row.sku,
       name: row.name,
+      brand: row.brand ?? "",
       category: row.category,
       unit: row.unit,
       minStock: Number(row.min_stock),
@@ -186,6 +277,7 @@ export class WarehouseService {
 
     if (payload.sku !== undefined) add("sku", payload.sku);
     if (payload.name !== undefined) add("name", payload.name);
+    if (payload.brand !== undefined) add("brand", payload.brand);
     if (payload.category !== undefined) add("category", payload.category);
     if (payload.unit !== undefined) add("unit", payload.unit);
     if (payload.min_stock !== undefined) add("min_stock", payload.min_stock);
@@ -1246,6 +1338,460 @@ export class WarehouseService {
          WHERE tenant_id = $1 AND repair_order_id = $2 AND status = 'reserved'`,
         [tenantId, orderId],
       );
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Export, Import, Bulk Operations
+  // ---------------------------------------------------------------------------
+
+  async exportItems(
+    tenantId: string,
+    payload: ExportWarehouseItemsPayload,
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    let items = await this.listItems(tenantId, payload.search);
+    if (payload.ids && payload.ids.length > 0) {
+      const idSet = new Set(payload.ids);
+      items = items.filter((i) => idSet.has(i.id));
+    }
+
+    const columns: ExportColumnDef<WarehouseItemDTO>[] = [
+      { header: "Артикул", key: "sku", width: 16 },
+      { header: "Наименование", key: "name", width: 35 },
+      { header: "Бренд", key: "brand", width: 18 },
+      { header: "Категория", key: "category", width: 20 },
+      { header: "Ед. изм.", key: "unit", width: 10 },
+      { header: "Остаток", key: (i) => i.totalStock, width: 12 },
+      { header: "Доступно", key: (i) => i.availableStock, width: 12 },
+      { header: "Мин. остаток", key: (i) => i.minStock, width: 14 },
+      { header: "Себестоимость", key: (i) => i.costPrice, width: 15 },
+      { header: "Цена розница", key: (i) => i.retailPrice, width: 15 },
+    ];
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    if (payload.format === "csv") {
+      const buffer = buildCsvBuffer(columns, items, ";");
+      return {
+        buffer,
+        filename: `catalog_${dateStr}.csv`,
+        contentType: "text/csv; charset=utf-8",
+      };
+    }
+
+    const buffer = await buildXlsxBuffer(columns, items, "Номенклатура");
+    return {
+      buffer,
+      filename: `catalog_${dateStr}.xlsx`,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+  }
+
+  async parseImportFile(
+    buffer: Buffer,
+    filename: string,
+    delimiter?: string,
+  ): Promise<ImportParseResultDTO> {
+    const isCsv =
+      filename.toLowerCase().endsWith(".csv") ||
+      filename.toLowerCase().endsWith(".txt");
+
+    let rows: string[][] = [];
+    let detectedDelimiter: string | undefined = delimiter;
+
+    if (isCsv) {
+      const parsed = parseCsvText(buffer.toString("utf8"), delimiter);
+      rows = parsed.rows;
+      detectedDelimiter = parsed.detectedDelimiter;
+    } else {
+      rows = await parseXlsxBuffer(buffer);
+    }
+
+    if (rows.length === 0) {
+      return {
+        headers: [],
+        sampleRows: [],
+        totalRows: 0,
+        detectedDelimiter,
+        suggestedMapping: {},
+      };
+    }
+
+    const headers = rows[0] || [];
+    const sampleRows = rows.slice(1, 6);
+    const suggestedMapping: Record<string, string> = {};
+
+    headers.forEach((h, idx) => {
+      const matched = suggestFieldMapping(h);
+      if (matched) {
+        suggestedMapping[String(idx)] = matched;
+      }
+    });
+
+    return {
+      headers,
+      sampleRows,
+      totalRows: rows.length,
+      detectedDelimiter,
+      suggestedMapping,
+    };
+  }
+
+  async validateImport(
+    tenantId: string,
+    payload: ImportValidatePayload,
+  ): Promise<ImportValidateResultDTO> {
+    const allRows = payload.rows;
+    if (allRows.length === 0) {
+      return {
+        totalRows: 0,
+        validCount: 0,
+        duplicateCount: 0,
+        errorCount: 0,
+        duplicates: [],
+        sampleValid: [],
+        errors: [],
+      };
+    }
+
+    const headers = payload.skipFirstRow ? allRows[0] : undefined;
+    const dataRows = payload.skipFirstRow ? allRows.slice(1) : allRows;
+
+    const existingRows = await withTenant(tenantId, async (tx) => {
+      return tx.query<WarehouseItemRow>(
+        `SELECT i.id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
+                i.min_stock, i.retail_price, i.cost_price,
+                COALESCE(SUM(b.remaining_quantity), 0) AS total_stock
+         FROM warehouse_items i
+         LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+         WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+         GROUP BY i.id`,
+        [tenantId],
+      );
+    });
+
+    const existingBySku = new Map<string, WarehouseItemRow>();
+    const existingByName = new Map<string, WarehouseItemRow>();
+
+    for (const item of existingRows) {
+      if (item.sku && item.sku.trim()) {
+        existingBySku.set(item.sku.trim().toLowerCase(), item);
+      }
+      if (item.name && item.name.trim()) {
+        existingByName.set(item.name.trim().toLowerCase(), item);
+      }
+    }
+
+    const duplicates: ImportDuplicateConflictDTO[] = [];
+    const sampleValid: ImportParsedItem[] = [];
+    const errors: { rowNumber: number; message: string }[] = [];
+    let validCount = 0;
+
+    dataRows.forEach((row, idx) => {
+      const rowNumber = (payload.skipFirstRow ? 2 : 1) + idx;
+      const parsed = extractRowFields(row, payload.mapping, headers);
+
+      if (!parsed.name) {
+        errors.push({
+          rowNumber,
+          message: "Не заполнено обязательное поле «Наименование»",
+        });
+        return;
+      }
+
+      const incomingItem: ImportParsedItem = {
+        rowNumber,
+        ...parsed,
+      };
+
+      let existingMatch: WarehouseItemRow | undefined;
+      let reason: "sku_match" | "name_match" | undefined;
+      let matchKey = "";
+
+      if (parsed.sku && existingBySku.has(parsed.sku.toLowerCase())) {
+        existingMatch = existingBySku.get(parsed.sku.toLowerCase());
+        reason = "sku_match";
+        matchKey = `sku:${parsed.sku.toLowerCase()}`;
+      } else if (existingByName.has(parsed.name.toLowerCase())) {
+        existingMatch = existingByName.get(parsed.name.toLowerCase());
+        reason = "name_match";
+        matchKey = `name:${parsed.name.toLowerCase()}`;
+      }
+
+      if (existingMatch && reason) {
+        duplicates.push({
+          rowNumber,
+          reason,
+          matchKey,
+          existing: {
+            id: existingMatch.id,
+            sku: existingMatch.sku,
+            name: existingMatch.name,
+            brand: existingMatch.brand ?? "",
+            category: existingMatch.category,
+            unit: existingMatch.unit,
+            costPrice: Number(existingMatch.cost_price ?? 0),
+            retailPrice: Number(existingMatch.retail_price ?? 0),
+            minStock: Number(existingMatch.min_stock ?? 0),
+            totalStock: Number(existingMatch.total_stock ?? 0),
+          },
+          incoming: incomingItem,
+        });
+      } else {
+        validCount++;
+        if (sampleValid.length < 10) {
+          sampleValid.push(incomingItem);
+        }
+      }
+    });
+
+    return {
+      totalRows: dataRows.length,
+      validCount,
+      duplicateCount: duplicates.length,
+      errorCount: errors.length,
+      duplicates,
+      sampleValid,
+      errors,
+    };
+  }
+
+  async commitImport(
+    tenantId: string,
+    payload: ImportCommitPayload,
+  ): Promise<ImportCommitResultDTO> {
+    const allRows = payload.rows;
+    if (allRows.length === 0) {
+      return { importedCount: 0, updatedCount: 0, skippedCount: 0, errorCount: 0 };
+    }
+
+    const headers = payload.skipFirstRow ? allRows[0] : undefined;
+    const dataRows = payload.skipFirstRow ? allRows.slice(1) : allRows;
+
+    return withTenant(tenantId, async (tx) => {
+      const existingRows = await tx.query<WarehouseItemRow>(
+        `SELECT id, sku, name, brand, category, unit, min_stock, retail_price, cost_price
+         FROM warehouse_items
+         WHERE tenant_id = $1 AND deleted_at IS NULL`,
+        [tenantId],
+      );
+
+      const existingBySku = new Map<string, WarehouseItemRow>();
+      const existingByName = new Map<string, WarehouseItemRow>();
+
+      for (const item of existingRows) {
+        if (item.sku && item.sku.trim()) {
+          existingBySku.set(item.sku.trim().toLowerCase(), item);
+        }
+        if (item.name && item.name.trim()) {
+          existingByName.set(item.name.trim().toLowerCase(), item);
+        }
+      }
+
+      let importedCount = 0;
+      let updatedCount = 0;
+      let skippedCount = 0;
+      let errorCount = 0;
+
+      for (let idx = 0; idx < dataRows.length; idx++) {
+        const row = dataRows[idx];
+        if (!row) continue;
+        const rowNumber = (payload.skipFirstRow ? 2 : 1) + idx;
+        const parsed = extractRowFields(row, payload.mapping, headers);
+
+        if (!parsed.name) {
+          errorCount++;
+          continue;
+        }
+
+        let existingMatch: WarehouseItemRow | undefined;
+        let matchKey = "";
+
+        if (parsed.sku && existingBySku.has(parsed.sku.toLowerCase())) {
+          existingMatch = existingBySku.get(parsed.sku.toLowerCase());
+          matchKey = `sku:${parsed.sku.toLowerCase()}`;
+        } else if (existingByName.has(parsed.name.toLowerCase())) {
+          existingMatch = existingByName.get(parsed.name.toLowerCase());
+          matchKey = `name:${parsed.name.toLowerCase()}`;
+        }
+
+        if (existingMatch) {
+          const res =
+            payload.resolutions?.[matchKey] ||
+            payload.resolutions?.[String(rowNumber)] ||
+            payload.defaultResolution ||
+            "skip";
+
+          if (res === "skip") {
+            skippedCount++;
+            continue;
+          }
+
+          if (res === "overwrite") {
+            await tx.query(
+              `UPDATE warehouse_items
+               SET name = $1, brand = $2, category = $3, unit = $4,
+                   cost_price = $5, retail_price = $6, min_stock = $7,
+                   updated_at = now()
+               WHERE tenant_id = $8 AND id = $9`,
+              [
+                parsed.name,
+                parsed.brand,
+                parsed.category,
+                parsed.unit,
+                parsed.costPrice,
+                parsed.retailPrice,
+                parsed.minStock,
+                tenantId,
+                existingMatch.id,
+              ],
+            );
+            updatedCount++;
+            continue;
+          }
+
+          // keep_both: fall through to insert
+        }
+
+        const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
+          `INSERT INTO warehouse_items
+             (tenant_id, sku, name, brand, category, unit, cost_price, retail_price, min_stock)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id, sku, name, brand, category, unit, cost_price, retail_price, min_stock`,
+          [
+            tenantId,
+            parsed.sku,
+            parsed.name,
+            parsed.brand,
+            parsed.category,
+            parsed.unit,
+            parsed.costPrice,
+            parsed.retailPrice,
+            parsed.minStock,
+          ],
+        );
+
+        if (parsed.sku) {
+          existingBySku.set(parsed.sku.toLowerCase(), inserted);
+        }
+        existingByName.set(parsed.name.toLowerCase(), inserted);
+        importedCount++;
+      }
+
+      return { importedCount, updatedCount, skippedCount, errorCount };
+    });
+  }
+
+  async bulkUpdateItems(
+    tenantId: string,
+    payload: BulkUpdateWarehouseItemsPayload,
+  ): Promise<{ updatedCount: number }> {
+    if (!payload.ids || payload.ids.length === 0) {
+      return { updatedCount: 0 };
+    }
+
+    return withTenant(tenantId, async (tx) => {
+      const updates: string[] = [];
+      const params: SqlParam[] = [tenantId, payload.ids];
+
+      const addParam = (val: SqlParam) => {
+        params.push(val);
+        return `$${params.length}`;
+      };
+
+      if (payload.category !== undefined) {
+        updates.push(`category = ${addParam(payload.category)}`);
+      }
+      if (payload.brand !== undefined) {
+        updates.push(`brand = ${addParam(payload.brand)}`);
+      }
+      if (payload.unit !== undefined) {
+        updates.push(`unit = ${addParam(payload.unit)}`);
+      }
+      if (payload.min_stock !== undefined) {
+        updates.push(`min_stock = ${addParam(payload.min_stock)}`);
+      }
+
+      if (payload.retail_price_action) {
+        const { mode, value } = payload.retail_price_action;
+        if (mode === "set") {
+          updates.push(`retail_price = ${addParam(Math.max(0, value))}`);
+        } else if (mode === "percent") {
+          const factor = addParam(1 + value / 100);
+          updates.push(`retail_price = ROUND(GREATEST(0, retail_price * ${factor})::numeric, 2)`);
+        } else if (mode === "delta") {
+          const delta = addParam(value);
+          updates.push(`retail_price = GREATEST(0, retail_price + ${delta})`);
+        }
+      }
+
+      if (payload.cost_price_action) {
+        const { mode, value } = payload.cost_price_action;
+        if (mode === "set") {
+          updates.push(`cost_price = ${addParam(Math.max(0, value))}`);
+        } else if (mode === "percent") {
+          const factor = addParam(1 + value / 100);
+          updates.push(`cost_price = ROUND(GREATEST(0, cost_price * ${factor})::numeric, 2)`);
+        } else if (mode === "delta") {
+          const delta = addParam(value);
+          updates.push(`cost_price = GREATEST(0, cost_price + ${delta})`);
+        }
+      }
+
+      if (updates.length === 0) {
+        return { updatedCount: 0 };
+      }
+
+      updates.push("updated_at = now()");
+
+      const res = await tx.query(
+        `UPDATE warehouse_items
+         SET ${updates.join(", ")}
+         WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+        params,
+      );
+
+      return { updatedCount: res.length };
+    });
+  }
+
+  async bulkDeleteItems(
+    tenantId: string,
+    payload: BulkDeleteWarehouseItemsPayload,
+  ): Promise<{ deletedCount: number; errors?: string[] }> {
+    if (!payload.ids || payload.ids.length === 0) {
+      return { deletedCount: 0 };
+    }
+
+    return withTenant(tenantId, async (tx) => {
+      const itemsWithStock = await tx.query<{ id: string; name: string; total_stock: string }>(
+        `SELECT i.id, i.name, COALESCE(SUM(b.remaining_quantity), 0) AS total_stock
+         FROM warehouse_items i
+         LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+         WHERE i.tenant_id = $1 AND i.id = ANY($2) AND i.deleted_at IS NULL
+         GROUP BY i.id
+         HAVING COALESCE(SUM(b.remaining_quantity), 0) > 0`,
+        [tenantId, payload.ids],
+      );
+
+      const blockedIds = new Set(itemsWithStock.map((i) => i.id));
+      const deletableIds = payload.ids.filter((id) => !blockedIds.has(id));
+
+      let deletedCount = 0;
+      if (deletableIds.length > 0) {
+        const res = await tx.query(
+          `UPDATE warehouse_items
+           SET deleted_at = now()
+           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+          [tenantId, deletableIds],
+        );
+        deletedCount = res.length;
+      }
+
+      const errors = itemsWithStock.map(
+        (i) => `Позиция «${i.name}» не может быть удалена, так как на складе числится остаток (${Number(i.total_stock)})`,
+      );
+
+      return { deletedCount, errors: errors.length > 0 ? errors : undefined };
     });
   }
 }
