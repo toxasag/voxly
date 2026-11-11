@@ -325,6 +325,7 @@ export interface RepairOrderRow {
   deal_notes?: string | null;
   deal_budget?: string | number | null;
   deal_stage_name?: string | null;
+  deal_payment_status?: string | null;
   company_id?: string | null;
   company_name?: string | null;
   company_inn?: string | null;
@@ -453,6 +454,7 @@ export interface RepairOrderDTO {
   dealNote?: string | null;
   dealBudget?: number | null;
   dealStageName?: string | null;
+  dealPaymentStatus?: RepairPaymentStatus | null;
   companyId?: string | null;
   companyName?: string | null;
   companyInn?: string | null;
@@ -520,6 +522,10 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
     dealNote: row.deal_notes ?? null,
     dealBudget: row.deal_budget !== undefined && row.deal_budget !== null ? Number(row.deal_budget) : null,
     dealStageName: row.deal_stage_name ?? null,
+    dealPaymentStatus:
+      (row.deal_payment_status as RepairPaymentStatus) ||
+      (row.payment_status as RepairPaymentStatus) ||
+      "unpaid",
     companyId: row.company_id ?? null,
     companyName: row.company_name ?? null,
     companyInn: row.company_inn ?? null,

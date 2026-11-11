@@ -286,6 +286,27 @@ export class RepairsService {
          d.title AS deal_title,
          d.budget AS deal_budget,
          st.name AS deal_stage_name,
+         CASE
+           WHEN d.id IS NULL THEN ro.payment_status
+           WHEN EXISTS (
+             SELECT 1 FROM transactions t
+             WHERE t.deal_id = d.id AND t.tenant_id = ro.tenant_id AND t.direction = 'income'
+           ) OR EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status = 'paid'
+           ) OR (
+             EXISTS (SELECT 1 FROM repair_orders ro2 WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'paid')
+             AND NOT EXISTS (SELECT 1 FROM repair_orders ro3 WHERE ro3.deal_id = d.id AND ro3.tenant_id = ro.tenant_id AND ro3.deleted_at IS NULL AND ro3.payment_status != 'paid')
+           ) THEN 'paid'
+           WHEN EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status IN ('sent', 'draft', 'overdue')
+           ) OR EXISTS (
+             SELECT 1 FROM repair_orders ro2
+             WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'invoiced'
+           ) THEN 'invoiced'
+           ELSE 'unpaid'
+         END AS deal_payment_status,
          COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
@@ -366,6 +387,27 @@ export class RepairsService {
          d.title AS deal_title,
          d.budget AS deal_budget,
          st.name AS deal_stage_name,
+         CASE
+           WHEN d.id IS NULL THEN ro.payment_status
+           WHEN EXISTS (
+             SELECT 1 FROM transactions t
+             WHERE t.deal_id = d.id AND t.tenant_id = ro.tenant_id AND t.direction = 'income'
+           ) OR EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status = 'paid'
+           ) OR (
+             EXISTS (SELECT 1 FROM repair_orders ro2 WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'paid')
+             AND NOT EXISTS (SELECT 1 FROM repair_orders ro3 WHERE ro3.deal_id = d.id AND ro3.tenant_id = ro.tenant_id AND ro3.deleted_at IS NULL AND ro3.payment_status != 'paid')
+           ) THEN 'paid'
+           WHEN EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status IN ('sent', 'draft', 'overdue')
+           ) OR EXISTS (
+             SELECT 1 FROM repair_orders ro2
+             WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'invoiced'
+           ) THEN 'invoiced'
+           ELSE 'unpaid'
+         END AS deal_payment_status,
          COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
@@ -1770,6 +1812,33 @@ export class RepairsService {
       }
 
       return toRepairNoteDTO({ ...row, deal_id: order.deal_id });
+    });
+  }
+
+  async deleteNote(tenantId: string, orderId: string, noteId: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<{ id: string; content: string; kind: string }>(
+        `SELECT id, content, kind FROM repair_notes
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+        [tenantId, orderId, noteId],
+      );
+
+      if (existing === null) return false;
+
+      await tx.query(
+        `DELETE FROM repair_notes
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+        [tenantId, orderId, noteId],
+      );
+
+      // Clean up synced note in CRM notes table if exists
+      await tx.query(
+        `DELETE FROM notes
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND body = $3`,
+        [tenantId, orderId, existing.content],
+      );
+
+      return true;
     });
   }
 

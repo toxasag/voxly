@@ -78,6 +78,7 @@ export interface RepairTicket {
   deal_note?: string | null;
   deal_budget?: number | null;
   deal_stage_name?: string | null;
+  deal_payment_status?: RepairPaymentStatus | null;
   company_id?: string | null;
   company_name?: string | null;
   company_inn?: string | null;
