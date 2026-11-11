@@ -2703,7 +2703,7 @@ export class RepairsService {
   async listServicesCatalog(tenantId: string): Promise<RepairServiceCatalogItemDTO[]> {
     return withTenant(tenantId, async (tx) => {
       const rows = await tx.query<RepairServiceCatalogRow>(
-        `SELECT id, tenant_id, name, default_price, created_at
+        `SELECT id, tenant_id, name, description, default_price, unit, duration_minutes, created_at
          FROM repair_services_catalog
          WHERE tenant_id = $1
          ORDER BY name ASC`,
@@ -2713,7 +2713,10 @@ export class RepairsService {
       return rows.map((r) => ({
         id: r.id,
         name: r.name,
+        description: r.description ?? "",
         defaultPrice: Number(r.default_price),
+        unit: r.unit ?? "усл",
+        durationMinutes: r.duration_minutes !== null && r.duration_minutes !== undefined ? Number(r.duration_minutes) : null,
         createdAt: toIso(r.created_at),
       }));
     });
@@ -2728,18 +2731,32 @@ export class RepairsService {
 
     return withTenant(tenantId, async (tx) => {
       const row = await tx.queryOneOrThrow<RepairServiceCatalogRow>(
-        `INSERT INTO repair_services_catalog (tenant_id, name, default_price)
-         VALUES ($1, $2, $3)
+        `INSERT INTO repair_services_catalog (tenant_id, name, description, default_price, unit, duration_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (tenant_id, name)
-         DO UPDATE SET default_price = EXCLUDED.default_price
-         RETURNING id, tenant_id, name, default_price, created_at`,
-        [tenantId, trimmed, payload.default_price ?? 0],
+         DO UPDATE SET default_price = EXCLUDED.default_price,
+                       description = COALESCE(EXCLUDED.description, repair_services_catalog.description),
+                       unit = COALESCE(EXCLUDED.unit, repair_services_catalog.unit),
+                       duration_minutes = COALESCE(EXCLUDED.duration_minutes, repair_services_catalog.duration_minutes),
+                       updated_at = now()
+         RETURNING id, tenant_id, name, description, default_price, unit, duration_minutes, created_at`,
+        [
+          tenantId,
+          trimmed,
+          payload.description?.trim() ?? "",
+          payload.default_price ?? 0,
+          payload.unit?.trim() ?? "усл",
+          payload.duration_minutes ?? null,
+        ],
       );
 
       return {
         id: row.id,
         name: row.name,
+        description: row.description ?? "",
         defaultPrice: Number(row.default_price),
+        unit: row.unit ?? "усл",
+        durationMinutes: row.duration_minutes !== null && row.duration_minutes !== undefined ? Number(row.duration_minutes) : null,
         createdAt: toIso(row.created_at),
       };
     });

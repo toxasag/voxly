@@ -41,7 +41,13 @@ export type ChannelSlug = (typeof CHANNEL_SLUGS)[number];
  * только тарифными позициями маркетплейса, и `requireModule` к ним не
  * применялся.
  */
-export const MODULE_SLUGS = ["service_center", "finance", "ai_bots", ...CHANNEL_SLUGS] as const;
+export const MODULE_SLUGS = [
+  "service_center",
+  "finance",
+  "ai_bots",
+  "products_services",
+  ...CHANNEL_SLUGS,
+] as const;
 
 export type ModuleSlug = (typeof MODULE_SLUGS)[number];
 

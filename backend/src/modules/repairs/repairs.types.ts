@@ -201,7 +201,10 @@ export const updateRepairSchema = z.object({
 
 export const createRepairServiceCatalogSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
+  description: z.string().max(2000).optional(),
   default_price: z.number().nonnegative("Price cannot be negative").default(0),
+  unit: z.string().max(30).optional(),
+  duration_minutes: z.number().int().nonnegative().nullable().optional(),
 });
 export type CreateRepairServiceCatalogPayload = z.infer<typeof createRepairServiceCatalogSchema>;
 
@@ -209,14 +212,20 @@ export interface RepairServiceCatalogRow {
   id: string;
   tenant_id: string;
   name: string;
+  description?: string | null;
   default_price: string;
+  unit?: string | null;
+  duration_minutes?: number | null;
   created_at: Date | string;
 }
 
 export interface RepairServiceCatalogItemDTO {
   id: string;
   name: string;
+  description: string;
   defaultPrice: number;
+  unit: string;
+  durationMinutes: number | null;
   createdAt: string;
 }
 

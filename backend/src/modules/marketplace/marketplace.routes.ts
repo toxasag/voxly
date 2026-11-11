@@ -135,6 +135,14 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
         unitLabel: row.unit_label,
         isMulti: row.is_multi,
         isBaseModule: row.slug === BASE_MODULE_SLUG,
+        included_in_plan:
+          row.slug === BASE_MODULE_SLUG ||
+          row.slug === "products_services" ||
+          (Number(row.base_price) === 0 && Number(row.unit_price) === 0),
+        includedInPlan:
+          row.slug === BASE_MODULE_SLUG ||
+          row.slug === "products_services" ||
+          (Number(row.base_price) === 0 && Number(row.unit_price) === 0),
         category: row.category,
         icon: row.icon,
         trialDays: isFreeCustomPlan ? 0 : row.trial_days,

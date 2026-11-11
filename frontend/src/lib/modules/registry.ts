@@ -8,6 +8,7 @@ import {
   Send,
   Store,
   Wrench,
+  PackagePlus,
   type LucideIcon,
 } from "lucide-react";
 
@@ -134,6 +135,13 @@ export const MODULE_REGISTRY: Record<ModuleSlug, ModuleRegistryEntry> = {
     href: "/modules/ai-bots",
     icon: Bot,
     permission: "ai_bots:read",
+  },
+  products_services: {
+    slug: "products_services",
+    label: "Услуги/Товары",
+    href: "/warehouse",
+    icon: PackagePlus,
+    permission: "deals:read",
   },
   ...CHANNEL_REGISTRY,
 };

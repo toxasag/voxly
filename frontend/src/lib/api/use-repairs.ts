@@ -330,7 +330,10 @@ export interface CreateRepairPayload {
 export interface RepairServiceCatalogItemDTO {
   id: string;
   name: string;
+  description?: string;
   defaultPrice: number;
+  unit?: string;
+  durationMinutes?: number | null;
   createdAt: string;
 }
 
@@ -662,17 +665,22 @@ export function useRepairServicesCatalog(): UseQueryResult<RepairServiceCatalogI
 export function useAddRepairServiceToCatalog(): UseMutationResult<
   RepairServiceCatalogItemDTO,
   ApiClientError,
-  { name: string; default_price?: number }
+  { name: string; description?: string; default_price?: number; unit?: string; duration_minutes?: number | null }
 > {
   const queryClient = useQueryClient();
 
-  return useMutation<RepairServiceCatalogItemDTO, ApiClientError, { name: string; default_price?: number }>({
+  return useMutation<
+    RepairServiceCatalogItemDTO,
+    ApiClientError,
+    { name: string; description?: string; default_price?: number; unit?: string; duration_minutes?: number | null }
+  >({
     mutationFn: async (payload) => {
       const res = await apiClient.post<RepairServiceCatalogItemDTO>(`${BASE_PATH}/catalog/services`, payload);
       return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.servicesCatalog });
+      void queryClient.invalidateQueries({ queryKey: ["services"] });
     },
   });
 }
