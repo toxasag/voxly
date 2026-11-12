@@ -35,4 +35,18 @@ describe("Inbox Omnichannel Page (Block 5.4)", () => {
     expect(screen.getAllByText("Елена Васильева").length).toBeGreaterThan(0);
     expect(screen.queryByText("MacBook Pro 16")).toBeNull();
   });
+
+  it("blurs active element when selecting a thread to prevent accidental input takeover", () => {
+    render(<InboxPage />);
+    const searchInput = screen.getByPlaceholderText(/Поиск по диалогам и контактам/i);
+    searchInput.focus();
+    expect(document.activeElement).toBe(searchInput);
+
+    const threadButton = screen.getAllByRole("button").find((btn) => btn.textContent?.includes("Алексей Смирнов"));
+    expect(threadButton).toBeDefined();
+    if (threadButton) {
+      fireEvent.click(threadButton);
+      expect(document.activeElement).not.toBe(searchInput);
+    }
+  });
 });

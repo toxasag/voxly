@@ -5,7 +5,7 @@ import { useParams, notFound } from "next/navigation";
 import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
-  Loader2, Pencil, Check, X, Phone, Mail, Briefcase, Tag, Hash,
+  Loader2, Pencil, Check, X, Phone, Mail, Briefcase,
   AlertCircle, ExternalLink, Clock, ShieldCheck, Users, NotebookPen,
   SlidersHorizontal,
 } from "lucide-react";
@@ -26,10 +26,11 @@ import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { RepairNotesSection } from "@/components/repairs/RepairNotesSection";
 import { TagPill, type TagColor } from "@/components/ui/tag";
+import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Guard } from "@/components/shared/Guard";
 import { isModuleInstalled } from "@/lib/context/tenant";
 import { useAuth } from "@/lib/auth/use-auth";
-import type { WorkItem, PartItem, RepairTicket, RepairStatus } from "@/lib/repairs/repairs.types";
+import type { RepairTicket, RepairStatus } from "@/lib/repairs/repairs.types";
 import { getRepairStatusLabel, getRepairStatusColors, EQUIPMENT_TYPES } from "@/lib/repairs/repairs.types";
 import {
   useRepair,
@@ -101,7 +102,7 @@ export default function RepairDetailPage() {
   const hasFinance = isModuleInstalled(displayTenant.installedModules, "finance");
   const [tab, setTab] = useState<DetailTab>("details");
 
-  const { data: detail, isLoading, isError, error } = useRepair(params.id);
+  const { data: detail, isLoading, isError, error, refetch: refetchRepair } = useRepair(params.id);
   const { data: works = [] } = useRepairWorks(params.id);
   const { data: parts = [] } = useRepairParts(params.id);
   const { data: teamData } = useTeamMembers();
@@ -326,6 +327,7 @@ export default function RepairDetailPage() {
         deal_note: detail.dealNote ?? null,
         deal_budget: detail.dealBudget ?? null,
         deal_stage_name: detail.dealStageName ?? null,
+        deal_payment_status: detail.dealPaymentStatus ?? detail.paymentStatus ?? "unpaid",
         company_id: detail.companyId ?? null,
         company_name: detail.companyName ?? null,
         company_inn: detail.companyInn ?? null,
@@ -394,10 +396,6 @@ export default function RepairDetailPage() {
     }
     notFound();
   }
-
-  const workTotal = works.reduce((s, w) => s + w.cost, 0);
-  const partsRetail = parts.reduce((s, p) => s + p.retailPrice * p.quantity, 0);
-  const grandTotal = workTotal + partsRetail;
 
   if (isLoading || !ticket) {
     return (
@@ -729,22 +727,18 @@ export default function RepairDetailPage() {
                           className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/20 transition-colors group"
                           title="Открыть сделку в CRM"
                         >
-                          <Briefcase className="h-3 w-3" />
+                          <Briefcase className="h-3 w-3 shrink-0" />
                           <span className="truncate">{ticket.deal_title}</span>
-                          <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                         </Link>
                       ) : (
                         <div className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
-                          <Briefcase className="h-3 w-3" />
+                          <Briefcase className="h-3 w-3 shrink-0" />
                           <span className="truncate">{ticket.deal_title}</span>
                         </div>
                       )}
-                      <div className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
-                        <Briefcase className="h-3 w-3" />
-                        <span className="truncate">{ticket.deal_title}</span>
-                      </div>
 
-                      <div className="flex items-center gap-2 mt-2 text-xs text-[#666666]">
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2 text-xs text-[#666666]">
                         {ticket.deal_stage_name && (
                           <span className="rounded bg-[#f0f0f0] px-1.5 py-0.5 text-[11px] text-[#666666]">
                             {ticket.deal_stage_name}
@@ -755,6 +749,23 @@ export default function RepairDetailPage() {
                             {formatCost(ticket.deal_budget)}
                           </span>
                         )}
+                        <StatusBadge
+                          variant={
+                            ticket.deal_payment_status === "paid"
+                              ? "success"
+                              : ticket.deal_payment_status === "invoiced"
+                                ? "warning"
+                                : "neutral"
+                          }
+                          size="sm"
+                          withDot
+                        >
+                          {ticket.deal_payment_status === "paid"
+                            ? "Оплачен"
+                            : ticket.deal_payment_status === "invoiced"
+                              ? "Выставлен счет"
+                              : "Не оплачен"}
+                        </StatusBadge>
                       </div>
                     </div>
                   ) : (
@@ -906,6 +917,26 @@ export default function RepairDetailPage() {
               )}
             </div>
 
+            {/* Defect Description Card */}
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2">
+              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
+                Неисправность со слов клиента
+              </span>
+
+              {!isEditing ? (
+                <p className="text-xs text-[#111111] leading-relaxed whitespace-pre-wrap">
+                  {ticket.defect_description || "Описание не указано."}
+                </p>
+              ) : (
+                <textarea
+                  rows={3}
+                  value={editForm.defectDescription}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, defectDescription: e.target.value }))}
+                  className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none resize-none leading-relaxed"
+                />
+              )}
+            </div>
+
             {/* Master Assignment Card */}
             <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2">
               <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
@@ -935,65 +966,6 @@ export default function RepairDetailPage() {
                   ))}
                 </select>
               </div>
-            </div>
-
-            {/* Cost Card */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2">
-              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
-                Финансы заказа
-              </span>
-
-              {!isEditing ? (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#666666]">Предв. стоимость</span>
-                    <span className="font-semibold text-[#111111] tabular-nums font-mono">
-                      {formatCost(ticket.estimated_cost)}
-                    </span>
-                  </div>
-                  {grandTotal > 0 && (
-                    <div className="flex items-center justify-between border-t border-[#f0f0f0] pt-2 text-xs">
-                      <span className="text-[#666666]">Итого по наряду</span>
-                      <span className="font-bold text-[#111111] tabular-nums font-mono text-[13px]">
-                        {formatCost(grandTotal)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  <label className="text-[11px] text-[#666666] mb-0.5 block">
-                    Предварительная стоимость (₽)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={editForm.estimatedCost}
-                    onChange={(e) => setEditForm((prev) => ({ ...prev, estimatedCost: e.target.value }))}
-                    className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none font-mono"
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Defect Description Card */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2">
-              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
-                Неисправность со слов клиента
-              </span>
-
-              {!isEditing ? (
-                <p className="text-xs text-[#111111] leading-relaxed whitespace-pre-wrap">
-                  {ticket.defect_description || "Описание не указано."}
-                </p>
-              ) : (
-                <textarea
-                  rows={3}
-                  value={editForm.defectDescription}
-                  onChange={(e) => setEditForm((prev) => ({ ...prev, defectDescription: e.target.value }))}
-                  className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none resize-none leading-relaxed"
-                />
-              )}
             </div>
           </div>
 
@@ -1182,11 +1154,33 @@ export default function RepairDetailPage() {
                             )}
                           </div>
 
-                          <div className="flex items-center gap-2 text-xs">
-                            <span className="text-[#888888]">Этап воронки:</span>
-                            <span className="rounded-[4px] bg-white border border-[#e5e5e5] px-2 py-0.5 text-[11px] font-medium text-[#111111]">
-                              {ticket.deal_stage_name || "Новый лид"}
-                            </span>
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1 border-t border-[#f0f0f0]">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[#888888]">Этап воронки:</span>
+                              <span className="rounded-[4px] bg-white border border-[#e5e5e5] px-2 py-0.5 text-[11px] font-medium text-[#111111]">
+                                {ticket.deal_stage_name || "Новый лид"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[#888888]">Статус оплаты:</span>
+                              <StatusBadge
+                                variant={
+                                  ticket.deal_payment_status === "paid"
+                                    ? "success"
+                                    : ticket.deal_payment_status === "invoiced"
+                                      ? "warning"
+                                      : "neutral"
+                                }
+                                size="sm"
+                                withDot
+                              >
+                                {ticket.deal_payment_status === "paid"
+                                  ? "Оплачен"
+                                  : ticket.deal_payment_status === "invoiced"
+                                    ? "Выставлен счет"
+                                    : "Не оплачен"}
+                              </StatusBadge>
+                            </div>
                           </div>
                         </div>
 
@@ -1435,12 +1429,17 @@ export default function RepairDetailPage() {
 
               {/* Вкладка 4: Финансы (агрегация работ/запчастей + создание счета) */}
               {tab === "finance" && (
-                <div className="space-y-6 max-w-2xl">
+                <div className="space-y-6 max-w-3xl">
                   <FinancialSummary
+                    repairOrderId={ticket.id}
                     workItems={ticket.work_items}
                     parts={ticket.parts_used}
                     hasFinanceModule={hasFinance}
-                    onGenerateInvoice={() => setInvoiceCreateOpen(true)}
+                    customerName={ticket.customer_name}
+                    customerPhone={ticket.customer_phone}
+                    dealId={ticket.deal_id}
+                    paymentStatus={ticket.payment_status}
+                    onRefresh={() => void refetchRepair()}
                   />
                 </div>
               )}

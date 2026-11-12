@@ -53,6 +53,7 @@ const MODULE_TABLES: Record<string, readonly string[]> = {
   // `ai_bots` работает на моках (M4.2.*) — своей таблицы пока нет. Пустой массив
   // осмысленнее отсутствия ключа: отключение проходит, очищать нечего.
   ai_bots: [],
+  products_services: [],
   telegram: ["channel_accounts"],
   whatsapp: ["channel_accounts"],
   max: ["channel_accounts"],

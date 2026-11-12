@@ -70,12 +70,13 @@ import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { DealContactHistoryTab } from "./DealContactHistoryTab";
 import { DealAnalyticsTab } from "./DealAnalyticsTab";
+import { DealProductsServicesTab } from "./DealProductsServicesTab";
 import { SourceMetadataTab } from "@/components/crm/shared/SourceMetadataTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
@@ -1361,10 +1362,10 @@ function HomeTab({
           <div className="space-y-0.5 py-0.5">
             <FieldRow icon={Calendar} label="Дата создания">
               <span title={fullDate(deal.createdAt)} className="text-[#111111]">
-                {timeAgo(deal.createdAt)}
+                {formatDateTime(deal.createdAt)}
               </span>
             </FieldRow>
-            <FieldRow icon={Bot} label="Создано">
+            <FieldRow icon={Bot} label="Кем создано">
               <span title={`Создано: ${creator !== undefined ? creator.fullName : "System"}`} className="inline-flex items-center gap-1.5 text-[#111111]">
                 <Bot className="h-3 w-3 text-[#888888]" />
                 <span>{creator !== undefined ? creator.fullName : "System"}</span>
@@ -2571,6 +2572,7 @@ export const DEAL_TAB_IDS = [
   "home",
   "chat",
   "repairs",
+  "products_services",
   "timeline",
   "analytics",
   "source",
@@ -2612,6 +2614,7 @@ export function dealTabContents(
       </Guard>
     ),
     repairs: <DealRepairsTab deal={deal} />,
+    products_services: <DealProductsServicesTab deal={deal} />,
     timeline: <RecordTimelineTab recordType="deal" recordId={deal.id} />,
     analytics: <DealAnalyticsTab deal={deal} />,
     source: <SourceMetadataTab deal={deal} />,

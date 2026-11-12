@@ -17,6 +17,7 @@ import {
   Tag,
   Trash2,
   User,
+  UserCheck,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -36,12 +37,13 @@ import {
   ContactAvatarCell,
   CreatorCell,
   PillBadge,
+  formatDateTwenty,
 } from "@/components/crm/shared/twenty-table-helpers";
 import { TagPill } from "@/components/ui/tag";
 import { CompanyCard } from "@/components/crm/companies/CompanyCard";
 import { useCompany, useCompanyStats } from "@/lib/api/use-companies";
 import { formatPhone } from "@/lib/utils/phone";
-import { timeAgo } from "@/lib/utils";
+import { formatDateTime, timeAgo } from "@/lib/utils";
 import { useRecordParam } from "@/lib/utils/use-record-param";
 import {
   DEFAULT_PAGE_SIZE,
@@ -322,8 +324,8 @@ function ContactsPageContent() {
     },
     {
       id: "created_by",
-      header: "Создано",
-      icon: Clock,
+      header: "Кем создано",
+      icon: UserCheck,
       width: 140,
       sortValue: (contact) => contact.createdByName ?? contact.createdBy ?? "",
       render: (contact) => (
@@ -393,15 +395,15 @@ function ContactsPageContent() {
       id: "created",
       header: "Дата создания",
       icon: Calendar,
-      width: 140,
+      width: 160,
       sortValue: (contact) => contact.createdAt,
       render: (contact) => (
         <RecordCellShell align="left">
           <span
-            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(contact.createdAt))}
-            className="text-[13px] text-[#111111]"
+            title={formatDateTime(contact.createdAt)}
+            className="text-[13px] text-[#111111] whitespace-nowrap font-normal"
           >
-            {timeAgo(contact.createdAt)}
+            {formatDateTwenty(contact.createdAt)}
           </span>
         </RecordCellShell>
       ),

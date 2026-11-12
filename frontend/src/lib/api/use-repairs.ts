@@ -200,6 +200,7 @@ export interface RepairOrderDTO {
   dealNote?: string | null;
   dealBudget?: number | null;
   dealStageName?: string | null;
+  dealPaymentStatus?: RepairPaymentStatus | null;
   companyId?: string | null;
   companyName?: string | null;
   companyInn?: string | null;
@@ -329,7 +330,10 @@ export interface CreateRepairPayload {
 export interface RepairServiceCatalogItemDTO {
   id: string;
   name: string;
+  description?: string;
   defaultPrice: number;
+  unit?: string;
+  durationMinutes?: number | null;
   createdAt: string;
 }
 
@@ -399,6 +403,7 @@ export interface CreatePartPayload {
   quantity?: number;
   retail_price: number;
   cost_price?: number;
+  add_to_purchase_request?: boolean;
 }
 
 export interface UpdatePartPayload {
@@ -660,17 +665,22 @@ export function useRepairServicesCatalog(): UseQueryResult<RepairServiceCatalogI
 export function useAddRepairServiceToCatalog(): UseMutationResult<
   RepairServiceCatalogItemDTO,
   ApiClientError,
-  { name: string; default_price?: number }
+  { name: string; description?: string; default_price?: number; unit?: string; duration_minutes?: number | null }
 > {
   const queryClient = useQueryClient();
 
-  return useMutation<RepairServiceCatalogItemDTO, ApiClientError, { name: string; default_price?: number }>({
+  return useMutation<
+    RepairServiceCatalogItemDTO,
+    ApiClientError,
+    { name: string; description?: string; default_price?: number; unit?: string; duration_minutes?: number | null }
+  >({
     mutationFn: async (payload) => {
       const res = await apiClient.post<RepairServiceCatalogItemDTO>(`${BASE_PATH}/catalog/services`, payload);
       return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.servicesCatalog });
+      void queryClient.invalidateQueries({ queryKey: ["services"] });
     },
   });
 }
@@ -1016,6 +1026,32 @@ export function useCreateNote(): UseMutationResult<RepairNoteDTO, ApiClientError
 
 export const useCreateRepairNote = useCreateNote;
 
+export function useDeleteRepairNote(): UseMutationResult<
+  { id: string; deleted: boolean },
+  ApiClientError,
+  { orderId: string; noteId: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { id: string; deleted: boolean },
+    ApiClientError,
+    { orderId: string; noteId: string }
+  >({
+    mutationFn: async ({ orderId, noteId }) => {
+      const res = await apiClient.delete<{ id: string; deleted: boolean }>(
+        `${BASE_PATH}/${orderId}/notes/${noteId}`,
+      );
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.notes(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["notes"] });
+    },
+  });
+}
+
 export function useCreatePhoto(): UseMutationResult<RepairPhotoDTO, ApiClientError, { orderId: string; payload: CreatePhotoPayload }> {
   const queryClient = useQueryClient();
 
@@ -1095,6 +1131,37 @@ export function useBatchDeleteRepairs(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
     },
+  });
+}
+
+export interface DealActDTO {
+  id: string;
+  ticketNumber: string;
+  dealId: string | null;
+  equipmentType: string;
+  equipmentBrand: string;
+  equipmentModel: string;
+  equipmentSerial: string;
+  customerName: string;
+  customerPhone: string;
+  status: string;
+  paymentStatus: string;
+  worksTotal: number;
+  partsTotal: number;
+  totalAmount: number;
+  isCurrent: boolean;
+  createdAt: string;
+}
+
+export function useDealActs(repairOrderId: string | null): UseQueryResult<DealActDTO[], ApiClientError> {
+  return useQuery<DealActDTO[], ApiClientError>({
+    queryKey: ["repairs", repairOrderId, "deal-acts"],
+    queryFn: async () => {
+      if (!repairOrderId) return [];
+      const res = await apiClient.get<DealActDTO[]>(`${BASE_PATH}/${repairOrderId}/deal-acts`);
+      return res.data;
+    },
+    enabled: Boolean(repairOrderId),
   });
 }
 
