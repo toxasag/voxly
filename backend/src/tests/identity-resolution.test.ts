@@ -99,6 +99,42 @@ describe("identity-resolution - extractNameFromText", () => {
     const res4 = extractNameFromText("Антон, 89150946944");
     expect(res4).toEqual({ firstName: "Антон", lastName: undefined });
   });
+
+  it("не извлекает банковские реквизиты, ИНН, КПП и счета как имена клиентов", () => {
+    const requisitionText = `Реквизиты счета
+
+Название организации
+ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ КАРЛЫГАНОВ ВЛАДЛЕН ВЛАДИМИРОВИЧ
+
+Юридический адрес организации
+140101, РОССИЯ, МОСКОВСКАЯ ОБЛ, ЛЮБЕРЕЦКИЙ Р-Н, П ЖИЛИНО-1
+
+ИНН
+972101305812
+
+ОГРН/ОГРНИП
+319774600395231
+
+Расчетный счет
+40802810400001350242
+
+Банк
+АО «ТБанк»
+
+ИНН банка
+7710140679
+
+БИК банка
+044525974`;
+
+    expect(extractNameFromText(requisitionText)).toBeNull();
+    expect(extractNameFromText("ИНН\n972101305812")).toBeNull();
+    expect(extractNameFromText("ИНН: 972101305812")).toBeNull();
+    expect(extractNameFromText("КПП 772101001")).toBeNull();
+    expect(extractNameFromText("БИК: 044525974")).toBeNull();
+    expect(extractNameFromText("Счет: 40802810400001350242")).toBeNull();
+    expect(extractNameFromText("Сумма: 50000 руб")).toBeNull();
+  });
 });
 
 describe("identity-resolution - isPlaceholderName", () => {
@@ -110,6 +146,16 @@ describe("identity-resolution - isPlaceholderName", () => {
     expect(isPlaceholderName("Тестер", "")).toBe(true);
     expect(isPlaceholderName("noname", "")).toBe(true);
     expect(isPlaceholderName("", "")).toBe(true);
+  });
+
+  it("распознает финансовые и бухгалтерские реквизиты как заглушки", () => {
+    expect(isPlaceholderName("Инн", "")).toBe(true);
+    expect(isPlaceholderName("ИНН", "")).toBe(true);
+    expect(isPlaceholderName("Кпп", "")).toBe(true);
+    expect(isPlaceholderName("Бик", "")).toBe(true);
+    expect(isPlaceholderName("Огрн", "")).toBe(true);
+    expect(isPlaceholderName("Реквизиты", "")).toBe(true);
+    expect(isPlaceholderName("Счет", "")).toBe(true);
   });
 
   it("не считает реальные имена заглушками", () => {
@@ -151,5 +197,21 @@ describe("identity-resolution - resolveContactIdentity Matrix", () => {
     expect(res).not.toBeNull();
     expect(res?.firstName).toBe("Наталья");
     expect(res?.lastName).toBe("Дюдяева");
+  });
+
+  it("не затирает имя отправителя реквизитами счета или ИНН", () => {
+    const res = resolveContactIdentity({
+      messageText: `Реквизиты счета\nНазвание организации\nИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ\nИНН\n972101305812`,
+      channelMetadata: {
+        senderName: "Даниил",
+      },
+      currentContact: {
+        firstName: "Даниил",
+      },
+    });
+
+    expect(res).not.toBeNull();
+    expect(res?.firstName).toBe("Даниил");
+    expect(res?.source).toBe("sender_field");
   });
 });
