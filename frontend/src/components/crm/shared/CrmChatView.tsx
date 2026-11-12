@@ -1016,23 +1016,71 @@ export function CrmChatView({
         ? messages
         : messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
 
-    // Дедупликация: исключаем одинаковые сообщения по ID и подряд идущие дубликаты (одинаковый текст, направление и интервал < 60 сек)
+    // Сортируем строго хронологически по дате создания
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+
+    // Многоуровневая дедупликация: ID сообщения, внешний ID мессенджера и одинаковое содержимое во временном окне
     const seenIds = new Set<string>();
+    const seenExternalIds = new Set<string>();
     const deduplicated: typeof messages = [];
 
-    for (const msg of filtered) {
+    for (const msg of sorted) {
       if (seenIds.has(msg.id)) continue;
       seenIds.add(msg.id);
 
-      const prev = deduplicated[deduplicated.length - 1];
-      if (
-        prev &&
-        prev.direction === msg.direction &&
-        prev.content.trim() === msg.content.trim() &&
-        Math.abs(new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 60_000
-      ) {
-        continue;
+      const externalId =
+        (msg.metadata as Record<string, unknown> | undefined)?.external_message_id != null
+          ? String((msg.metadata as Record<string, unknown>).external_message_id)
+          : null;
+      if (externalId) {
+        if (seenExternalIds.has(externalId)) continue;
+        seenExternalIds.add(externalId);
       }
+
+      const msgTime = new Date(msg.createdAt).getTime();
+      const trimmedContent = msg.content.trim();
+      const normChannel = normalizeChannel(msg.channel);
+
+      // Проверка на дубликат среди уже добавленных сообщений переписки
+      const isDuplicate = deduplicated.some((prev) => {
+        const prevTime = new Date(prev.createdAt).getTime();
+        const diffMs = Math.abs(msgTime - prevTime);
+
+        // 1. Одинаковое медиа-вложение в пределах суток
+        if (
+          msg.attachment &&
+          prev.attachment &&
+          msg.attachment === prev.attachment &&
+          diffMs < 24 * 60 * 60 * 1000
+        ) {
+          return true;
+        }
+
+        // 2. Одинаковый текст и направление сообщения
+        if (
+          prev.direction === msg.direction &&
+          prev.content.trim() === trimmedContent
+        ) {
+          const sameChannel =
+            normalizeChannel(prev.channel) === normChannel ||
+            (prev.direction === "neutral" && msg.direction === "neutral");
+
+          if (sameChannel) {
+            // Для содержательных сообщений (>10 символов) или системных событий — окно 12 часов
+            if (trimmedContent.length > 10 || msg.direction === "neutral") {
+              return diffMs < 12 * 60 * 60 * 1000;
+            }
+            // Для коротких реплик ("Да", "Ок", "+") — окно 10 минут
+            return diffMs < 10 * 60 * 1000;
+          }
+        }
+
+        return false;
+      });
+
+      if (isDuplicate) continue;
 
       deduplicated.push(msg);
     }

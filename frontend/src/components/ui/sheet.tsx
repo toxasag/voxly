@@ -22,6 +22,13 @@ interface SheetProps {
   isMaximized?: boolean;
 }
 
+function parseWidthToCss(w?: string): string {
+  if (!w) return "480px";
+  const match = w.match(/\[([^\]]+)\]/);
+  if (match) return match[1];
+  return w;
+}
+
 export function Sheet({
   open,
   onClose,
@@ -49,27 +56,33 @@ export function Sheet({
   if (!open) return null;
 
   const isRight = side === "right";
-  const widthClass = isMaximized
-    ? "w-full md:w-[92vw] max-w-[1600px]"
+  const desktopWidth = isMaximized
+    ? "min(92vw, 1600px)"
     : resizable
-      ? "w-full max-w-[94vw]"
-      : width;
-  const widthStyle = isMaximized
-    ? { width: "min(92vw, 1600px)" }
-    : resizable
-      ? { width: `min(94vw, ${liveWidth}px)` }
-      : undefined;
+      ? `min(94vw, ${liveWidth}px)`
+      : parseWidthToCss(width);
 
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-[0.5px]" onClick={onClose} />
+      {/* Затемняющий бэкдроп активен только на планшетах и десктопах; на мобильных панель полноэкранная */}
+      <div
+        className="hidden md:block absolute inset-0 bg-black/20 backdrop-blur-[0.5px]"
+        onClick={onClose}
+      />
       <div
         className={cn(
-          "absolute inset-y-0 flex h-full flex-col border-l border-[#e5e5e5] bg-white text-[#111111] shadow-2xl transition-[width] duration-150 ease-out",
-          isRight ? "right-0" : "left-0",
-          widthClass,
+          // Мобильный вид (< md): строгий полноэкранный режим без зазоров, отступов и скруглений
+          "fixed inset-0 z-50 flex h-[100dvh] w-full max-w-none flex-col border-none bg-white text-[#111111] shadow-none",
+          // Десктопный вид (>= md): боковая шторка с ресайзом, границей и тенями
+          "md:absolute md:inset-y-0 md:h-full md:shadow-2xl md:transition-[width] md:duration-150 md:ease-out",
+          isRight
+            ? "md:right-0 md:border-l md:border-[#e5e5e5]"
+            : "md:left-0 md:border-r md:border-[#e5e5e5]",
+          isMaximized
+            ? "md:w-[var(--sheet-desktop-width)] md:max-w-[1600px]"
+            : "md:w-[var(--sheet-desktop-width)] md:max-w-[94vw]",
         )}
-        style={widthStyle}
+        style={{ "--sheet-desktop-width": desktopWidth } as React.CSSProperties}
       >
         {resizable && !isMaximized && (
           <div
@@ -107,11 +120,18 @@ export function SheetHeader({
   onOpenFullPage,
 }: SheetHeaderProps) {
   return (
-    <div className="flex items-center justify-between border-b border-[#e5e5e5] px-6 py-3.5 bg-white shrink-0">
+    <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3 md:px-6 md:py-3.5 bg-white shrink-0">
       <div className="flex-1 min-w-0">{children}</div>
-      <div className="flex items-center gap-1 shrink-0 ml-3">
+      <div className="flex items-center gap-1 shrink-0 ml-2 md:ml-3">
         {onDelete !== undefined && (
-          <button type="button" onClick={onDelete} disabled={isDeleting} aria-label="Удалить запись" title="Удалить запись" className="rounded-[6px] p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 cursor-pointer">
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={isDeleting}
+            aria-label="Удалить запись"
+            title="Удалить запись"
+            className="flex h-8 w-8 items-center justify-center rounded-[6px] text-rose-500 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 cursor-pointer"
+          >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2m-1 0v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V6h10z" /></svg>
           </button>
         )}
@@ -122,7 +142,7 @@ export function SheetHeader({
             aria-label={isMaximized ? "Свернуть в стандартную ширину" : "Развернуть во всю ширину"}
             title={isMaximized ? "Свернуть в стандартную ширину" : "Развернуть во всю ширину"}
             className={cn(
-              "rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer",
+              "hidden md:inline-flex h-8 w-8 items-center justify-center rounded-[6px] text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer",
               isMaximized && "bg-[#4a38f5]/10 text-[#4a38f5] hover:bg-[#4a38f5]/20 hover:text-[#4a38f5]",
             )}
           >
@@ -139,13 +159,21 @@ export function SheetHeader({
             onClick={onOpenFullPage}
             aria-label="Открыть на отдельной странице"
             title="Открыть на отдельной странице"
-            className="rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+            className="flex h-8 w-8 items-center justify-center rounded-[6px] text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <ExternalLink className="h-4 w-4" />
           </button>
         )}
         {onClose && (
-          <button type="button" onClick={onClose} aria-label="Закрыть" title="Закрыть" className="rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"><X className="h-4 w-4" /></button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Закрыть"
+            title="Закрыть"
+            className="flex h-8 w-8 items-center justify-center rounded-[6px] text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
         )}
       </div>
     </div>
@@ -158,5 +186,5 @@ interface SheetContentProps {
 }
 
 export function SheetContent({ children, className }: SheetContentProps) {
-  return <div className={cn("flex-1 overflow-y-auto bg-white", className)}>{children}</div>;
+  return <div className={cn("flex-1 overflow-y-auto bg-white min-h-0", className)}>{children}</div>;
 }
