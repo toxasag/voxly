@@ -28,6 +28,7 @@ import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/cha
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import { widgetsRoutes } from "./modules/channels/widgets.routes.js";
+import { siteManagementRoutes, siteWebhookRoutes } from "./modules/channels/sites/sites.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import botAliasRoutes from "./modules/ai/bot-alias.routes.js";
@@ -106,6 +107,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         url.startsWith("/api/v1/public/track/") ||
         url.startsWith("/api/v1/public/chat/") ||
         url.startsWith("/api/v1/analytics/pre-chat-telemetry") ||
+        url.startsWith("/api/v1/webhooks/sites/") ||
+        url.startsWith("/api/webhooks/sites/") ||
         url.startsWith("/mascots/");
 
       if (isPublicRoute) {
@@ -150,7 +153,14 @@ export async function buildApp(): Promise<FastifyInstance> {
      * and both carry their own higher route-level limit (see auth.routes.ts), so
      * an unauthenticated caller cannot use them as an unbounded write path.
      */
-    allowList: (request) => WEBHOOK_PATHS.has((request.url ?? "").split("?")[0] ?? ""),
+    allowList: (request) => {
+      const u = (request.url ?? "").split("?")[0] ?? "";
+      return (
+        WEBHOOK_PATHS.has(u) ||
+        u.startsWith("/api/v1/webhooks/sites/") ||
+        u.startsWith("/api/webhooks/sites/")
+      );
+    },
   });
 
   // Secret comes from validated env — no inline fallback, so production can
@@ -180,6 +190,24 @@ export async function buildApp(): Promise<FastifyInstance> {
       fieldSize: 1024 * 100,
     },
   });
+
+  // Поддержка form-urlencoded для внешних вебхуков (Tilda, WordPress и др.)
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "string" },
+    (_req, body, done) => {
+      try {
+        const parsed: Record<string, string> = {};
+        const params = new URLSearchParams(body as string);
+        for (const [key, val] of params.entries()) {
+          parsed[key] = val;
+        }
+        done(null, parsed);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
 
   app.setErrorHandler(errorHandler);
 
@@ -244,6 +272,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(marketplaceRoutes, { prefix: "/api" });
   await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
   await app.register(analyticsRoutes, { prefix: "/api/analytics" });
+
+  // Интеграции внешних сайтов (Tilda, WordPress, Webflow, HTML-формы)
+  await app.register(siteManagementRoutes, { prefix: "/api/v1/channels/sites" });
+  await app.register(siteManagementRoutes, { prefix: "/api/channels/sites" });
+  await app.register(siteWebhookRoutes, { prefix: "/api/v1/webhooks/sites" });
+  await app.register(siteWebhookRoutes, { prefix: "/api/webhooks/sites" });
 
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.

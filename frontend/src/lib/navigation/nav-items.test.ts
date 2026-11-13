@@ -168,7 +168,7 @@ describe("visibleMainNav / visibleChannelNav", () => {
     const none = visibleChannelNav(new Set(), permissionSet("tenant:admin"));
     const one = visibleChannelNav(new Set(["telegram"]), permissionSet("tenant:admin"));
 
-    expect(none).toEqual([]);
-    expect(one.map((item) => item.moduleSlug)).toEqual(["telegram"]);
+    expect(none.map((item) => item.label)).toEqual(["Сайты"]);
+    expect(one.map((item) => item.label)).toEqual(["Сайты", "Telegram"]);
   });
 });
