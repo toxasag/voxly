@@ -853,6 +853,12 @@ export function CrmChatView({
   const [activeChannel, setActiveChannel] = useState<string>("all");
   const hasUserSelectedTabRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hasTriggeredTakeoverRef = useRef(false);
+
+  // Сброс флага ручного перехвата при переключении сущности/диалога
+  useEffect(() => {
+    hasTriggeredTakeoverRef.current = false;
+  }, [entityId]);
 
   const queryClient = useQueryClient();
 
@@ -871,6 +877,12 @@ export function CrmChatView({
   const messages = messagesQuery.data ?? [];
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
   const aiStatus = aiStatusQuery.data;
+
+  const isAiActive =
+    (aiStatus?.aiControl === "enabled" || aiStatus?.status === "enabled") &&
+    !aiStatus?.isPaused &&
+    aiStatus?.status !== "paused";
+  const isAiPaused = Boolean(aiStatus?.isPaused || aiStatus?.status === "paused");
 
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
@@ -1004,23 +1016,71 @@ export function CrmChatView({
         ? messages
         : messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
 
-    // Дедупликация: исключаем одинаковые сообщения по ID и подряд идущие дубликаты (одинаковый текст, направление и интервал < 60 сек)
+    // Сортируем строго хронологически по дате создания
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+
+    // Многоуровневая дедупликация: ID сообщения, внешний ID мессенджера и одинаковое содержимое во временном окне
     const seenIds = new Set<string>();
+    const seenExternalIds = new Set<string>();
     const deduplicated: typeof messages = [];
 
-    for (const msg of filtered) {
+    for (const msg of sorted) {
       if (seenIds.has(msg.id)) continue;
       seenIds.add(msg.id);
 
-      const prev = deduplicated[deduplicated.length - 1];
-      if (
-        prev &&
-        prev.direction === msg.direction &&
-        prev.content.trim() === msg.content.trim() &&
-        Math.abs(new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 60_000
-      ) {
-        continue;
+      const externalId =
+        (msg.metadata as Record<string, unknown> | undefined)?.external_message_id != null
+          ? String((msg.metadata as Record<string, unknown>).external_message_id)
+          : null;
+      if (externalId) {
+        if (seenExternalIds.has(externalId)) continue;
+        seenExternalIds.add(externalId);
       }
+
+      const msgTime = new Date(msg.createdAt).getTime();
+      const trimmedContent = msg.content.trim();
+      const normChannel = normalizeChannel(msg.channel);
+
+      // Проверка на дубликат среди уже добавленных сообщений переписки
+      const isDuplicate = deduplicated.some((prev) => {
+        const prevTime = new Date(prev.createdAt).getTime();
+        const diffMs = Math.abs(msgTime - prevTime);
+
+        // 1. Одинаковое медиа-вложение в пределах суток
+        if (
+          msg.attachment &&
+          prev.attachment &&
+          msg.attachment === prev.attachment &&
+          diffMs < 24 * 60 * 60 * 1000
+        ) {
+          return true;
+        }
+
+        // 2. Одинаковый текст и направление сообщения
+        if (
+          prev.direction === msg.direction &&
+          prev.content.trim() === trimmedContent
+        ) {
+          const sameChannel =
+            normalizeChannel(prev.channel) === normChannel ||
+            (prev.direction === "neutral" && msg.direction === "neutral");
+
+          if (sameChannel) {
+            // Для содержательных сообщений (>10 символов) или системных событий — окно 12 часов
+            if (trimmedContent.length > 10 || msg.direction === "neutral") {
+              return diffMs < 12 * 60 * 60 * 1000;
+            }
+            // Для коротких реплик ("Да", "Ок", "+") — окно 10 минут
+            return diffMs < 10 * 60 * 1000;
+          }
+        }
+
+        return false;
+      });
+
+      if (isDuplicate) continue;
 
       deduplicated.push(msg);
     }
@@ -1112,6 +1172,32 @@ export function CrmChatView({
     [aiControlMutation],
   );
 
+  // Ручной перехват диалога оператором при активности поля ввода (onFocus или набор текста)
+  const handleInputActivity = useCallback(() => {
+    // Не инициируем паузу, если AI не включен, уже на паузе, в процессе мутации или уже сработал триггер
+    if (
+      !isAiActive ||
+      isAiPaused ||
+      hasTriggeredTakeoverRef.current ||
+      aiControlMutation.isPending
+    ) {
+      return;
+    }
+
+    hasTriggeredTakeoverRef.current = true;
+    aiControlMutation.mutate(
+      { action: "pause" },
+      {
+        onSuccess: () => {
+          toast.info("AI-автопилот приостановлен на 1 час (ручной перехват)");
+        },
+        onError: () => {
+          hasTriggeredTakeoverRef.current = false;
+        },
+      },
+    );
+  }, [isAiActive, isAiPaused, aiControlMutation]);
+
   // Ручная синхронизация истории сообщений из подключенных каналов (MAX, Telegram)
   const handleSyncHistory = useCallback(async () => {
     try {
@@ -1152,12 +1238,6 @@ export function CrmChatView({
     return groups;
   }, [displayedMessages]);
 
-  const isAiActive =
-    (aiStatus?.aiControl === "enabled" || aiStatus?.status === "enabled") &&
-    !aiStatus?.isPaused &&
-    aiStatus?.status !== "paused";
-  const isAiPaused = Boolean(aiStatus?.isPaused || aiStatus?.status === "paused");
-
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}>
       {/* Шапка: статус AI-автопилота и управление */}
@@ -1181,7 +1261,8 @@ export function CrmChatView({
                 <span className="font-semibold text-emerald-700">AI Автопилот активен</span>
               ) : isAiPaused ? (
                 <span className="text-amber-700 font-medium">
-                  AI на паузе {aiStatus?.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
+                  AI на паузе {aiStatus?.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""}{" "}
+                  ({aiStatus?.pausedReason === "messenger_takeover" ? "ручной перехват (мессенджер)" : "ручной перехват"})
                 </span>
               ) : (
                 <span className="text-[#666666]">AI Автопилот выключен</span>
@@ -1707,7 +1788,13 @@ export function CrmChatView({
         <div className="rounded-[12px] border border-[#e5e5e5] bg-white shadow-2xs transition-colors focus-within:border-[#cccccc]">
           <TelegramComposer
             value={input}
-            onChange={setInput}
+            onChange={(val) => {
+              setInput(val);
+              if (val.trim().length > 0) {
+                handleInputActivity();
+              }
+            }}
+            onFocus={handleInputActivity}
             onSend={(attached) => void handleSend(attached)}
             isSending={sendMessageMutation.isPending}
             onAiDraft={handleGenerateAiDraft}

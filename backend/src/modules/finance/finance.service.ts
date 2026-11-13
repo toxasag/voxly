@@ -1,4 +1,11 @@
-import type { AccountDTO, CreateTransactionPayload, PnlDTO, TransactionDTO, TransferPayload } from "./finance.types.js";
+import type {
+  AccountDTO,
+  BatchPaymentPayload,
+  CreateTransactionPayload,
+  PnlDTO,
+  TransactionDTO,
+  TransferPayload,
+} from "./finance.types.js";
 import { query, queryOne, withTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 
@@ -53,6 +60,97 @@ export class FinanceService {
     });
   }
  }
+
+  async batchPayment(
+    tenantId: string,
+    _user: string,
+    payload: BatchPaymentPayload,
+  ): Promise<{ success: boolean; totalPaid: number; count: number }> {
+    return withTenant(tenantId, async (tx) => {
+      const account = await this.account(tx, tenantId, payload.cash_account_id);
+
+      let categoryName = "Оплата по наряд-заказу";
+      if (payload.category_id) {
+        const cat = await tx.queryOne<{ name: string }>(
+          `SELECT name FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, payload.category_id],
+        );
+        if (cat) categoryName = cat.name;
+      }
+
+      const orders = await tx.query<{
+        id: string;
+        ticket_number: string;
+        deal_id: string | null;
+        customer_name: string;
+        customer_phone: string;
+        estimated_cost: string | number;
+        final_cost: string | number | null;
+      }>(
+        `SELECT id, ticket_number, deal_id, customer_name, customer_phone, estimated_cost, final_cost
+         FROM repair_orders
+         WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+        [tenantId, payload.repair_order_ids],
+      );
+
+      if (orders.length === 0) {
+        throw new ValidationError("No valid repair orders found for payment");
+      }
+
+      let totalPaid = 0;
+
+      for (const order of orders) {
+        const worksTotalRow = await tx.queryOne<{ total: string }>(
+          `SELECT COALESCE(SUM(cost), 0)::text AS total FROM repair_works WHERE tenant_id = $1 AND repair_order_id = $2`,
+          [tenantId, order.id],
+        );
+        const partsTotalRow = await tx.queryOne<{ total: string }>(
+          `SELECT COALESCE(SUM(retail_price * quantity), 0)::text AS total FROM repair_parts WHERE tenant_id = $1 AND repair_order_id = $2`,
+          [tenantId, order.id],
+        );
+
+        let amount = Number(worksTotalRow?.total ?? 0) + Number(partsTotalRow?.total ?? 0);
+        if (amount <= 0) {
+          amount = Number(order.final_cost ?? order.estimated_cost ?? 0);
+        }
+
+        if (amount > 0) {
+          totalPaid += amount;
+          const desc = payload.description || `Оплата по акту ${order.ticket_number}`;
+          await tx.query(
+            `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, counterparty_name, deal_id, repair_order_id)
+             VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10)`,
+            [
+              tenantId,
+              account.id,
+              payload.category_id || null,
+              categoryName,
+              amount,
+              account.currency,
+              desc,
+              order.customer_name || "",
+              order.deal_id,
+              order.id,
+            ],
+          );
+        }
+
+        await tx.query(
+          `UPDATE repair_orders SET payment_status = 'paid', updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, order.id],
+        );
+      }
+
+      if (totalPaid > 0) {
+        await tx.query(
+          `UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, account.id, totalPaid],
+        );
+      }
+
+      return { success: true, totalPaid, count: orders.length };
+    });
+  }
 }
 
 export const financeService = new FinanceService();

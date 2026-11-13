@@ -196,18 +196,20 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
 
       const source = isOutbound ? "manager" : "client";
       const direction = isOutbound ? "outbound" : "inbound";
+      const externalMsgId = typeof key?.id === "string" ? key.id : null;
 
       const existing = await queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND channel = 'whatsapp'
            AND (
-             (attachment IS NOT NULL AND attachment = $3)
+             ($3::text IS NOT NULL AND metadata->>'external_message_id' = $3)
+             OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
              OR (
-               content = $4
+               content = $5 AND direction = $6
                AND (
-                 created_at BETWEEN $5::timestamptz - interval '60 seconds' AND $5::timestamptz + interval '60 seconds'
-                 OR (direction = $6 AND created_at > now() - interval '2 minutes')
+                 (created_at >= $7::timestamptz - interval '12 hours' AND created_at <= $7::timestamptz + interval '12 hours')
+                 OR created_at >= now() - interval '24 hours'
                )
              )
            )
@@ -215,10 +217,11 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
         [
           params.tenantId,
           params.dealId,
-          attachmentUrl ?? null,
+          externalMsgId,
+          attachmentUrl,
           text,
-          msgDate.toISOString(),
           direction,
+          msgDate.toISOString(),
         ],
       );
 
@@ -229,8 +232,8 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
 
       const [inserted] = await query<{ id: string }>(
         `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'whatsapp', $8, $9, $10, $11)
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'whatsapp', $8, $9, $10, $11::jsonb, $12)
          RETURNING id`,
         [
           params.tenantId,
@@ -243,6 +246,7 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
           isOutbound ? "sent" : "received",
           attachmentUrl,
           attachmentType,
+          JSON.stringify(externalMsgId ? { external_message_id: externalMsgId } : {}),
           msgDate.toISOString(),
         ],
       );
@@ -425,7 +429,7 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
           senderName: "Менеджер",
           attachment: attachmentUrl,
           attachmentType: attachmentType,
-          pauseMinutes: 30,
+          pauseMinutes: 60,
         }),
       );
       continue;

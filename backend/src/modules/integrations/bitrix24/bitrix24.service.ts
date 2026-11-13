@@ -254,7 +254,11 @@ export class Bitrix24Service {
   /**
    * Сохранение конфигурации вебхука Битрикс24.
    */
-  async saveConfig(tenantId: string, payload: UpdateBitrix24ConfigPayload): Promise<Bitrix24ConfigDTO> {
+  async saveConfig(
+    tenantId: string,
+    payload: UpdateBitrix24ConfigPayload,
+    options?: { syncNotificationChannels?: boolean; channelId?: string },
+  ): Promise<Bitrix24ConfigDTO> {
     const current = await this.getConfig(tenantId);
 
     const rawUrl = payload.webhook_url !== undefined ? payload.webhook_url.trim() : current.webhook_url;
@@ -334,8 +338,10 @@ export class Bitrix24Service {
       throw new AppError(500, "DB_ERROR", "Не удалось сохранить конфигурацию Битрикс24");
     }
 
-    // Синхронизируем tenant_notification_channels для сквозной поддержки списка каналов
-    if (rawUrl) {
+    // Синхронизируем tenant_notification_channels только когда это явно запрошено (например, при вызове legacy API)
+    // и НИКОГДА не перезаписываем каналы вслепую, если у тенанта настроено несколько каналов Битрикс24.
+    const shouldSync = options?.syncNotificationChannels ?? true;
+    if (shouldSync && rawUrl) {
       try {
         const extraMeta = {
           custom_source_id: customSourceId,
@@ -344,28 +350,48 @@ export class Bitrix24Service {
           send_utm_marks: sendUtmMarks,
           send_geo_data: sendGeoData,
         };
-        const existingChannel = await queryOne<{ id: string }>(
-          `SELECT id FROM tenant_notification_channels
-           WHERE tenant_id = $1 AND channel_type = 'bitrix24' AND destination = $2`,
-          [tenantId, rawUrl],
-        );
-        if (existingChannel) {
+
+        if (options?.channelId) {
+          // Если передан конкретный channelId, обновляем строго его
           await query(
             `UPDATE tenant_notification_channels
              SET extra_meta = tenant_notification_channels.extra_meta || $3,
-                 is_active = $4,
+                 destination = $4,
+                 is_active = $5,
                  updated_at = NOW()
              WHERE tenant_id = $1 AND id = $2`,
-            [tenantId, existingChannel.id, JSON.stringify(extraMeta), isEnabled],
+            [tenantId, options.channelId, JSON.stringify(extraMeta), rawUrl, isEnabled],
           );
         } else {
-          await query(
-            `INSERT INTO tenant_notification_channels (
-               tenant_id, channel_type, destination, extra_meta, is_active, is_verified
-             )
-             VALUES ($1, 'bitrix24', $2, $3, $4, true)`,
-            [tenantId, rawUrl, JSON.stringify(extraMeta), isEnabled],
+          // Вызов из legacy API: проверяем существующие каналы
+          const bitrixChannels = await query<{ id: string }>(
+            `SELECT id FROM tenant_notification_channels
+             WHERE tenant_id = $1 AND channel_type = 'bitrix24'`,
+            [tenantId],
           );
+
+          if (bitrixChannels.length === 1 && bitrixChannels[0]) {
+            // Ровно один канал — безопасно синхронизировать его
+            await query(
+              `UPDATE tenant_notification_channels
+               SET extra_meta = tenant_notification_channels.extra_meta || $3,
+                   destination = $4,
+                   is_active = $5,
+                   updated_at = NOW()
+               WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, bitrixChannels[0].id, JSON.stringify(extraMeta), rawUrl, isEnabled],
+            );
+          } else if (bitrixChannels.length === 0) {
+            // Каналов ещё нет — создаём первичный канал
+            await query(
+              `INSERT INTO tenant_notification_channels (
+                 tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+               )
+               VALUES ($1, 'bitrix24', $2, $3, $4, true)`,
+              [tenantId, rawUrl, JSON.stringify(extraMeta), isEnabled],
+            );
+          }
+          // При bitrixChannels.length > 1 НЕ перезаписываем каналы по destination!
         }
       } catch (syncErr) {
         console.warn(`[Bitrix24Service] Sync to tenant_notification_channels warning:`, syncErr);

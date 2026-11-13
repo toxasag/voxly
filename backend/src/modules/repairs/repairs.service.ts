@@ -9,6 +9,7 @@ import type {
   CreateRepairPayload,
   CreateRepairServiceCatalogPayload,
   CreateWorkPayload,
+  DealActDTO,
   EquipmentHistoryItemDTO,
   EquipmentSearchSerialResultDTO,
   RepairNoteRow,
@@ -285,6 +286,27 @@ export class RepairsService {
          d.title AS deal_title,
          d.budget AS deal_budget,
          st.name AS deal_stage_name,
+         CASE
+           WHEN d.id IS NULL THEN ro.payment_status
+           WHEN EXISTS (
+             SELECT 1 FROM transactions t
+             WHERE t.deal_id = d.id AND t.tenant_id = ro.tenant_id AND t.direction = 'income'
+           ) OR EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status = 'paid'
+           ) OR (
+             EXISTS (SELECT 1 FROM repair_orders ro2 WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'paid')
+             AND NOT EXISTS (SELECT 1 FROM repair_orders ro3 WHERE ro3.deal_id = d.id AND ro3.tenant_id = ro.tenant_id AND ro3.deleted_at IS NULL AND ro3.payment_status != 'paid')
+           ) THEN 'paid'
+           WHEN EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status IN ('sent', 'draft', 'overdue')
+           ) OR EXISTS (
+             SELECT 1 FROM repair_orders ro2
+             WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'invoiced'
+           ) THEN 'invoiced'
+           ELSE 'unpaid'
+         END AS deal_payment_status,
          COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
@@ -365,6 +387,27 @@ export class RepairsService {
          d.title AS deal_title,
          d.budget AS deal_budget,
          st.name AS deal_stage_name,
+         CASE
+           WHEN d.id IS NULL THEN ro.payment_status
+           WHEN EXISTS (
+             SELECT 1 FROM transactions t
+             WHERE t.deal_id = d.id AND t.tenant_id = ro.tenant_id AND t.direction = 'income'
+           ) OR EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status = 'paid'
+           ) OR (
+             EXISTS (SELECT 1 FROM repair_orders ro2 WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'paid')
+             AND NOT EXISTS (SELECT 1 FROM repair_orders ro3 WHERE ro3.deal_id = d.id AND ro3.tenant_id = ro.tenant_id AND ro3.deleted_at IS NULL AND ro3.payment_status != 'paid')
+           ) THEN 'paid'
+           WHEN EXISTS (
+             SELECT 1 FROM invoices i
+             WHERE i.deal_id = d.id AND i.tenant_id = ro.tenant_id AND i.status IN ('sent', 'draft', 'overdue')
+           ) OR EXISTS (
+             SELECT 1 FROM repair_orders ro2
+             WHERE ro2.deal_id = d.id AND ro2.tenant_id = ro.tenant_id AND ro2.deleted_at IS NULL AND ro2.payment_status = 'invoiced'
+           ) THEN 'invoiced'
+           ELSE 'unpaid'
+         END AS deal_payment_status,
          COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
@@ -1561,7 +1604,32 @@ export class RepairsService {
     await this.assertEditable(tenantId, orderId);
 
     return withTenant(tenantId, async (tx) => {
-      const partStatus = payload.status ?? (payload.warehouse_item_id ? "reserved" : "used");
+      // Проверка остатка на складе, если отключена продажа в минус
+      if (payload.warehouse_item_id) {
+        const settings = await warehouseService.getSettings(tenantId);
+        if (!settings.allowNegativeStock) {
+          const stockRow = await tx.queryOne<{ available: string | number }>(
+            `SELECT (
+               COALESCE((SELECT SUM(remaining_quantity) FROM warehouse_batches WHERE tenant_id = $1 AND item_id = $2), 0)
+               - COALESCE((SELECT SUM(quantity) FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = $2 AND status = 'reserved'), 0)
+             ) AS available`,
+            [tenantId, payload.warehouse_item_id],
+          );
+          const available = Number(stockRow?.available ?? 0);
+          if (available < payload.quantity) {
+            throw new ValidationError("Недостаточно товара на складе. Продажа в минус отключена.", {});
+          }
+        }
+      }
+
+      const partStatus =
+        payload.status ??
+        (payload.add_to_purchase_request
+          ? "needs_purchase"
+          : payload.warehouse_item_id
+            ? "reserved"
+            : "used");
+
       const row = await tx.queryOneOrThrow<RepairPartRow>(
         `INSERT INTO repair_parts
            (tenant_id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price)
@@ -1602,6 +1670,20 @@ export class RepairsService {
             `Резерв под наряд №${orderId.slice(0, 8)} (${payload.name})`,
           ],
         );
+      }
+
+      // Если установлен флаг «Добавить в заявку на закупку»
+      if (payload.add_to_purchase_request) {
+        await warehouseService.createPurchaseRequest(tenantId, null, {
+          repair_order_id: orderId,
+          item_id: payload.warehouse_item_id ?? undefined,
+          item_name: payload.name,
+          sku: payload.article ?? "",
+          quantity: payload.quantity,
+          unit: "шт",
+          estimated_price: payload.cost_price ?? 0,
+          comment: `Автоматически из наряда №${orderId.slice(0, 8)}`,
+        });
       }
 
       const result = toRepairPartDTO(row);
@@ -1730,6 +1812,33 @@ export class RepairsService {
       }
 
       return toRepairNoteDTO({ ...row, deal_id: order.deal_id });
+    });
+  }
+
+  async deleteNote(tenantId: string, orderId: string, noteId: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<{ id: string; content: string; kind: string }>(
+        `SELECT id, content, kind FROM repair_notes
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+        [tenantId, orderId, noteId],
+      );
+
+      if (existing === null) return false;
+
+      await tx.query(
+        `DELETE FROM repair_notes
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+        [tenantId, orderId, noteId],
+      );
+
+      // Clean up synced note in CRM notes table if exists
+      await tx.query(
+        `DELETE FROM notes
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND body = $3`,
+        [tenantId, orderId, existing.content],
+      );
+
+      return true;
     });
   }
 
@@ -2594,7 +2703,7 @@ export class RepairsService {
   async listServicesCatalog(tenantId: string): Promise<RepairServiceCatalogItemDTO[]> {
     return withTenant(tenantId, async (tx) => {
       const rows = await tx.query<RepairServiceCatalogRow>(
-        `SELECT id, tenant_id, name, default_price, created_at
+        `SELECT id, tenant_id, name, description, default_price, unit, duration_minutes, created_at
          FROM repair_services_catalog
          WHERE tenant_id = $1
          ORDER BY name ASC`,
@@ -2604,7 +2713,10 @@ export class RepairsService {
       return rows.map((r) => ({
         id: r.id,
         name: r.name,
+        description: r.description ?? "",
         defaultPrice: Number(r.default_price),
+        unit: r.unit ?? "усл",
+        durationMinutes: r.duration_minutes !== null && r.duration_minutes !== undefined ? Number(r.duration_minutes) : null,
         createdAt: toIso(r.created_at),
       }));
     });
@@ -2619,18 +2731,32 @@ export class RepairsService {
 
     return withTenant(tenantId, async (tx) => {
       const row = await tx.queryOneOrThrow<RepairServiceCatalogRow>(
-        `INSERT INTO repair_services_catalog (tenant_id, name, default_price)
-         VALUES ($1, $2, $3)
+        `INSERT INTO repair_services_catalog (tenant_id, name, description, default_price, unit, duration_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (tenant_id, name)
-         DO UPDATE SET default_price = EXCLUDED.default_price
-         RETURNING id, tenant_id, name, default_price, created_at`,
-        [tenantId, trimmed, payload.default_price ?? 0],
+         DO UPDATE SET default_price = EXCLUDED.default_price,
+                       description = COALESCE(EXCLUDED.description, repair_services_catalog.description),
+                       unit = COALESCE(EXCLUDED.unit, repair_services_catalog.unit),
+                       duration_minutes = COALESCE(EXCLUDED.duration_minutes, repair_services_catalog.duration_minutes),
+                       updated_at = now()
+         RETURNING id, tenant_id, name, description, default_price, unit, duration_minutes, created_at`,
+        [
+          tenantId,
+          trimmed,
+          payload.description?.trim() ?? "",
+          payload.default_price ?? 0,
+          payload.unit?.trim() ?? "усл",
+          payload.duration_minutes ?? null,
+        ],
       );
 
       return {
         id: row.id,
         name: row.name,
+        description: row.description ?? "",
         defaultPrice: Number(row.default_price),
+        unit: row.unit ?? "усл",
+        durationMinutes: row.duration_minutes !== null && row.duration_minutes !== undefined ? Number(row.duration_minutes) : null,
         createdAt: toIso(row.created_at),
       };
     });
@@ -2646,6 +2772,111 @@ export class RepairsService {
         [tenantId, id],
       );
       return { success: true, id };
+    });
+  }
+
+  async getDealActs(tenantId: string, repairOrderId: string): Promise<DealActDTO[]> {
+    const currentOrder = await queryOne<{
+      id: string;
+      deal_id: string | null;
+    }>(
+      `SELECT id, deal_id FROM repair_orders WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, repairOrderId],
+    );
+
+    if (!currentOrder) {
+      throw new NotFoundError("Repair order not found");
+    }
+
+    let rows: {
+      id: string;
+      ticket_number: string;
+      deal_id: string | null;
+      customer_id: string;
+      customer_name: string;
+      customer_phone: string;
+      equipment_type: string;
+      equipment_brand: string;
+      equipment_model: string;
+      equipment_serial: string;
+      status: string;
+      payment_status: string;
+      estimated_cost: number | string;
+      final_cost: number | string | null;
+      created_at: Date | string;
+    }[];
+
+    if (currentOrder.deal_id) {
+      rows = await query(
+        `SELECT id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
+                equipment_type, equipment_brand, equipment_model, equipment_serial,
+                status, payment_status, estimated_cost, final_cost, created_at
+         FROM repair_orders
+         WHERE tenant_id = $1 AND deal_id = $2 AND deleted_at IS NULL
+         ORDER BY created_at ASC`,
+        [tenantId, currentOrder.deal_id],
+      );
+    } else {
+      rows = await query(
+        `SELECT id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
+                equipment_type, equipment_brand, equipment_model, equipment_serial,
+                status, payment_status, estimated_cost, final_cost, created_at
+         FROM repair_orders
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, repairOrderId],
+      );
+    }
+
+    const orderIds = rows.map((r) => r.id);
+    const worksTotals = await query<{ repair_order_id: string; total: string }>(
+      `SELECT repair_order_id, COALESCE(SUM(cost), 0)::text AS total
+       FROM repair_works
+       WHERE tenant_id = $1 AND repair_order_id = ANY($2)
+       GROUP BY repair_order_id`,
+      [tenantId, orderIds],
+    );
+    const partsTotals = await query<{ repair_order_id: string; total: string }>(
+      `SELECT repair_order_id, COALESCE(SUM(retail_price * quantity), 0)::text AS total
+       FROM repair_parts
+       WHERE tenant_id = $1 AND repair_order_id = ANY($2)
+       GROUP BY repair_order_id`,
+      [tenantId, orderIds],
+    );
+
+    const worksMap = new Map<string, number>();
+    for (const w of worksTotals) {
+      worksMap.set(w.repair_order_id, Number(w.total));
+    }
+    const partsMap = new Map<string, number>();
+    for (const p of partsTotals) {
+      partsMap.set(p.repair_order_id, Number(p.total));
+    }
+
+    return rows.map((r) => {
+      const worksTotal = worksMap.get(r.id) ?? 0;
+      const partsTotal = partsMap.get(r.id) ?? 0;
+      let totalAmount = worksTotal + partsTotal;
+      if (totalAmount === 0) {
+        totalAmount = Number(r.final_cost ?? r.estimated_cost ?? 0);
+      }
+      return {
+        id: r.id,
+        ticketNumber: r.ticket_number,
+        dealId: r.deal_id,
+        equipmentType: r.equipment_type,
+        equipmentBrand: r.equipment_brand,
+        equipmentModel: r.equipment_model,
+        equipmentSerial: r.equipment_serial,
+        customerName: r.customer_name,
+        customerPhone: r.customer_phone,
+        status: r.status,
+        paymentStatus: r.payment_status || "unpaid",
+        worksTotal,
+        partsTotal,
+        totalAmount,
+        isCurrent: r.id === repairOrderId,
+        createdAt: toIso(r.created_at),
+      };
     });
   }
 }

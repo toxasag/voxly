@@ -13,8 +13,14 @@ import {
   User,
   History,
   Filter,
+  Trash2,
 } from "lucide-react";
-import { useRepairNotes, useCreateRepairNote, type RepairNoteDTO } from "@/lib/api/use-repairs";
+import {
+  useRepairNotes,
+  useCreateRepairNote,
+  useDeleteRepairNote,
+  type RepairNoteDTO,
+} from "@/lib/api/use-repairs";
 import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -38,8 +44,25 @@ export function RepairNotesSection({
 }: RepairNotesSectionProps) {
   const { data: notes = [], isLoading, isError, refetch } = useRepairNotes(orderId);
   const createMutation = useCreateRepairNote();
+  const deleteMutation = useDeleteRepairNote();
   const [content, setContent] = useState("");
   const [filter, setFilter] = useState<"all" | "notes" | "status">("all");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const handleDelete = (noteId: string): void => {
+    deleteMutation.mutate(
+      { orderId, noteId },
+      {
+        onSuccess: () => {
+          setConfirmDeleteId(null);
+          toast.success("Заметка удалена");
+        },
+        onError: (err) => {
+          toast.error(err.message || "Не удалось удалить заметку");
+        },
+      },
+    );
+  };
 
   const handleSubmit = (): void => {
     const trimmed = content.trim();
@@ -288,14 +311,48 @@ export function RepairNotesSection({
                     )}
                   </div>
 
-                  <div
-                    className="flex items-center gap-1 font-mono text-[11px] text-[#888888] tabular-nums"
-                    title={new Date(note.createdAt).toLocaleString("ru-RU")}
-                  >
-                    <Clock className="h-3 w-3" />
-                    <span>{formatDateTime(note.createdAt)}</span>
-                    <span className="text-[#cccccc] mx-1">·</span>
-                    <span className="text-[#888888] font-sans">{timeAgo(note.createdAt)}</span>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="flex items-center gap-1 font-mono text-[11px] text-[#888888] tabular-nums"
+                      title={new Date(note.createdAt).toLocaleString("ru-RU")}
+                    >
+                      <Clock className="h-3 w-3" />
+                      <span>{formatDateTime(note.createdAt)}</span>
+                      <span className="text-[#cccccc] mx-1">·</span>
+                      <span className="text-[#888888] font-sans">{timeAgo(note.createdAt)}</span>
+                    </div>
+
+                    {confirmDeleteId === note.id ? (
+                      <div className="flex items-center gap-1.5 rounded-[4px] border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px]">
+                        <span className="text-rose-700 font-medium">Удалить?</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(note.id)}
+                          disabled={deleteMutation.isPending}
+                          className="font-semibold text-rose-700 hover:text-rose-900 hover:underline cursor-pointer"
+                        >
+                          Да
+                        </button>
+                        <span className="text-rose-300">/</span>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="text-[#666666] hover:text-[#111111] cursor-pointer"
+                        >
+                          Отмена
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(note.id)}
+                        className="rounded-[4px] p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                        title="Удалить заметку"
+                        aria-label="Удалить заметку"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
