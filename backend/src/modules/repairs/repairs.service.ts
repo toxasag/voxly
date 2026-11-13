@@ -281,7 +281,17 @@ export class RepairsService {
          ro.id, ro.tenant_id, ro.ticket_number, ro.deal_id, ro.customer_id, ro.customer_name, ro.customer_phone,
          ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
          ro.package_contents, ro.package_contents_items, ro.appearance, ro.defect_description, ro.malfunctions, ro.defect_photos,
-         ro.additional_contacts, ro.status, ro.payment_status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
+         ro.additional_contacts, ro.status, ro.payment_status, ro.priority, ro.master_id, ro.master_name,
+         COALESCE(
+           ro.final_cost,
+           NULLIF(
+             (SELECT COALESCE(SUM(rw.cost), 0) FROM repair_works rw WHERE rw.tenant_id = ro.tenant_id AND rw.repair_order_id = ro.id) +
+             (SELECT COALESCE(SUM(rp.retail_price * rp.quantity), 0) FROM repair_parts rp WHERE rp.tenant_id = ro.tenant_id AND rp.repair_order_id = ro.id),
+             0
+           ),
+           ro.estimated_cost
+         ) AS estimated_cost,
+         ro.final_cost,
          ro.notes, ro.diagnostics, ro.received_at, ro.completed_at, ro.delivered_at, ro.created_at, ro.updated_at,
          d.title AS deal_title,
          d.budget AS deal_budget,
@@ -368,6 +378,24 @@ export class RepairsService {
     }
   }
 
+  async recalculateOrderCost(tenantId: string, orderId: string): Promise<number> {
+    const row = await queryOne<{ total: string }>(
+      `SELECT (
+         COALESCE((SELECT SUM(cost) FROM repair_works WHERE tenant_id = $1 AND repair_order_id = $2), 0) +
+         COALESCE((SELECT SUM(retail_price * quantity) FROM repair_parts WHERE tenant_id = $1 AND repair_order_id = $2), 0)
+       )::text AS total`,
+      [tenantId, orderId],
+    );
+    const total = parseFloat(row?.total ?? "0") || 0;
+    await query(
+      `UPDATE repair_orders
+       SET estimated_cost = $3, updated_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND (final_cost IS NULL OR final_cost = 0)`,
+      [tenantId, orderId, total],
+    );
+    return total;
+  }
+
   private async getOrderDealId(tenantId: string, orderId: string): Promise<string | null> {
     const row = await queryOne<{ deal_id: string | null }>(
       `SELECT deal_id FROM repair_orders WHERE tenant_id = $1 AND id = $2`,
@@ -382,7 +410,17 @@ export class RepairsService {
          ro.id, ro.tenant_id, ro.ticket_number, ro.deal_id, ro.customer_id, ro.customer_name, ro.customer_phone,
          ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
          ro.package_contents, ro.package_contents_items, ro.appearance, ro.defect_description, ro.malfunctions, ro.defect_photos,
-         ro.additional_contacts, ro.status, ro.payment_status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
+         ro.additional_contacts, ro.status, ro.payment_status, ro.priority, ro.master_id, ro.master_name,
+         COALESCE(
+           ro.final_cost,
+           NULLIF(
+             (SELECT COALESCE(SUM(rw.cost), 0) FROM repair_works rw WHERE rw.tenant_id = ro.tenant_id AND rw.repair_order_id = ro.id) +
+             (SELECT COALESCE(SUM(rp.retail_price * rp.quantity), 0) FROM repair_parts rp WHERE rp.tenant_id = ro.tenant_id AND rp.repair_order_id = ro.id),
+             0
+           ),
+           ro.estimated_cost
+         ) AS estimated_cost,
+         ro.final_cost,
          ro.notes, ro.diagnostics, ro.received_at, ro.completed_at, ro.delivered_at, ro.created_at, ro.updated_at,
          d.title AS deal_title,
          d.budget AS deal_budget,
@@ -1508,8 +1546,10 @@ export class RepairsService {
       );
 
       const result = toRepairWorkDTO(row);
-      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      void this.recalculateOrderCost(tenantId, orderId).then(() => {
+        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+        });
       });
       return result;
     });
@@ -1567,8 +1607,10 @@ export class RepairsService {
     );
 
     if (row !== null) {
-      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      void this.recalculateOrderCost(tenantId, orderId).then(() => {
+        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+        });
       });
     }
 
@@ -1584,8 +1626,10 @@ export class RepairsService {
     );
 
     if (row !== null) {
-      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      void this.recalculateOrderCost(tenantId, orderId).then(() => {
+        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+        });
       });
     }
 
@@ -1687,8 +1731,10 @@ export class RepairsService {
       }
 
       const result = toRepairPartDTO(row);
-      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      void this.recalculateOrderCost(tenantId, orderId).then(() => {
+        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+        });
       });
       return result;
     });
@@ -1731,8 +1777,10 @@ export class RepairsService {
     );
 
     if (row !== null) {
-      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      void this.recalculateOrderCost(tenantId, orderId).then(() => {
+        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+        });
       });
     }
 
@@ -1748,8 +1796,10 @@ export class RepairsService {
     );
 
     if (row !== null) {
-      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      void this.recalculateOrderCost(tenantId, orderId).then(() => {
+        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+        });
       });
     }
 

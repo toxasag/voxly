@@ -186,8 +186,16 @@ export const warehouseKeys = {
   items: (search?: string) => [...warehouseKeys.all, "items", search ?? ""] as const,
   batches: (itemId?: string) => [...warehouseKeys.all, "batches", itemId ?? ""] as const,
   movements: () => [...warehouseKeys.all, "movements"] as const,
-  purchases: (status?: string, orderId?: string) =>
-    [...warehouseKeys.all, "purchases", status ?? "", orderId ?? ""] as const,
+  purchases: (status?: string, orderId?: string) => {
+    const key = [...warehouseKeys.all, "purchases"] as string[];
+    if (status !== undefined || orderId !== undefined) {
+      key.push(status ?? "");
+      if (orderId !== undefined) {
+        key.push(orderId);
+      }
+    }
+    return key;
+  },
 };
 
 export function useWarehouseItems(search?: string) {
@@ -299,7 +307,7 @@ export function useCreatePurchaseRequest() {
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
     },
   });
 }
@@ -318,7 +326,7 @@ export function useUpdatePurchaseRequest() {
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
     },
   });
 }
