@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { query, queryOne, withTenant, runWithPlatformScope, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError, AppError } from "../../../plugins/errorHandler.js";
-import { normalizePhoneToE164, ContactDedupeService } from "../../crm/contacts/dedupe.service.js";
+import { normalizePhoneToE164 } from "../../crm/contacts/dedupe.service.js";
 import { ContactActivityService } from "../../crm/contacts/contact-activity.service.js";
 import { leadNotificationQueue } from "../../crm/leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
@@ -18,7 +18,6 @@ import type {
 const DEFAULT_API_BASE = process.env.API_BASE_URL || "https://api.getvoxly.ru";
 
 export class SitesService {
-  private dedupeService = new ContactDedupeService();
   private contactActivityService = new ContactActivityService();
 
   private toDTO(row: SiteIntegrationRow, apiBase: string = DEFAULT_API_BASE): SiteIntegrationDTO {
@@ -388,10 +387,31 @@ export class SitesService {
       let existingContact: ContactRow | null = null;
 
       if (canonicalPhone) {
-        const duplicates = await this.dedupeService.findDuplicatesByPhone(site.tenant_id, canonicalPhone);
-        if (duplicates.length > 0 && duplicates[0]) {
-          existingContact = duplicates[0];
-          contactId = existingContact.id;
+        const last10 = canonicalPhone.slice(-10);
+        const duplicate = await tx.queryOne<ContactRow>(
+          `SELECT * FROM contacts
+           WHERE tenant_id = $1
+             AND deleted_at IS NULL
+             AND (
+               phone = $2
+               OR phone LIKE '%' || $3
+               OR whatsapp = $2
+               OR whatsapp LIKE '%' || $3
+               OR (
+                 jsonb_typeof(additional_phones) = 'array'
+                 AND EXISTS (
+                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
+                   WHERE (p->>'number') LIKE '%' || $3
+                 )
+               )
+             )
+           ORDER BY created_at ASC
+           LIMIT 1`,
+          [site.tenant_id, canonicalPhone, last10],
+        );
+        if (duplicate) {
+          existingContact = duplicate;
+          contactId = duplicate.id;
         }
       }
 
@@ -493,7 +513,7 @@ export class SitesService {
 
       if (!pipelineId) {
         const defaultP = await tx.queryOne<{ id: string }>(
-          `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+          `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
           [site.tenant_id],
         );
         if (defaultP) pipelineId = defaultP.id;
@@ -522,7 +542,7 @@ export class SitesService {
                WHEN name ILIKE '%лид%' THEN 3
                ELSE 4
              END,
-             position ASC
+             sort_order ASC
            LIMIT 1`,
           [pipelineId],
         );
