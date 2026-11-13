@@ -147,7 +147,7 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
   };
 
   return (
-    <Sheet open={open} onClose={onClose} resizable isMaximized={isMaximized}>
+    <Sheet open={open} onClose={onClose} side="right" resizable isMaximized={isMaximized}>
       {cardView === "create_company" && deal.data ? (
         <DrawerCreateCompany
           deal={deal.data}

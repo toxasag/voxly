@@ -2,34 +2,64 @@
 
 import { memo, useMemo } from "react";
 import { TrendingUp, TrendingDown, DollarSign } from "lucide-react";
-import type { Transaction, TransactionCategory } from "@/lib/finance/finance.types";
-import { getCategoryLabel } from "@/lib/finance/finance.types";
+import type { Transaction } from "@/lib/finance/finance.types";
+import { useFinanceCategories } from "@/lib/api/use-invoices";
 import { cn } from "@/lib/utils";
 
 interface ProfitLossViewProps {
   transactions: Transaction[];
 }
 
-const INCOME_CATEGORIES: TransactionCategory[] = ["repair", "parts_sale", "other_income"];
-const EXPENSE_CATEGORIES: TransactionCategory[] = ["rent", "salary", "equipment", "marketing", "software", "taxes", "other_expense"];
-
 function formatCost(amount: number): string {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(amount);
 }
 
 export const ProfitLossView = memo(function ProfitLossView({ transactions }: ProfitLossViewProps) {
-  const { incomeByCategory, expenseByCategory, totalIncome, totalExpense, profit, margin } = useMemo(() => {
+  const { data: dbCategories = [] } = useFinanceCategories();
+
+  const { incomeByCategory, expenseByCategory, totalIncome, totalExpense, profit, margin, incomeCategories, expenseCategories } = useMemo(() => {
     const inc: Record<string, number> = {};
     const exp: Record<string, number> = {};
-    transactions.forEach(t => {
-      if (t.type === "income") inc[t.category] = (inc[t.category] ?? 0) + t.amount;
-      if (t.type === "expense") exp[t.category] = (exp[t.category] ?? 0) + t.amount;
+    const incCats = new Set<string>();
+    const expCats = new Set<string>();
+
+    dbCategories.forEach((c) => {
+      if (c.type === "income") {
+        incCats.add(c.name);
+        inc[c.name] = 0;
+      } else {
+        expCats.add(c.name);
+        exp[c.name] = 0;
+      }
     });
+
+    transactions.forEach((t) => {
+      const cat = t.category || "Прочие операции";
+      if (t.type === "income") {
+        incCats.add(cat);
+        inc[cat] = (inc[cat] ?? 0) + t.amount;
+      }
+      if (t.type === "expense") {
+        expCats.add(cat);
+        exp[cat] = (exp[cat] ?? 0) + t.amount;
+      }
+    });
+
     const totalInc = Object.values(inc).reduce((s, v) => s + v, 0);
     const totalExp = Object.values(exp).reduce((s, v) => s + v, 0);
     const p = totalInc - totalExp;
-    return { incomeByCategory: inc, expenseByCategory: exp, totalIncome: totalInc, totalExpense: totalExp, profit: p, margin: totalInc > 0 ? Math.round((p / totalInc) * 100) : 0 };
-  }, [transactions]);
+
+    return {
+      incomeByCategory: inc,
+      expenseByCategory: exp,
+      totalIncome: totalInc,
+      totalExpense: totalExp,
+      profit: p,
+      margin: totalInc > 0 ? Math.round((p / totalInc) * 100) : 0,
+      incomeCategories: Array.from(incCats),
+      expenseCategories: Array.from(expCats),
+    };
+  }, [dbCategories, transactions]);
 
   const maxValue = Math.max(totalIncome, totalExpense, 1);
 
@@ -55,16 +85,25 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions }: Pro
       <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
         <h3 className="text-sm font-semibold text-[#111111] mb-4">Структура доходов</h3>
         <div className="space-y-2.5">
-          {INCOME_CATEGORIES.map(cat => {
-            const val = incomeByCategory[cat] ?? 0;
-            const pct = totalIncome > 0 ? Math.round((val / totalIncome) * 100) : 0;
-            return (
-              <div key={cat} className="space-y-1">
-                <div className="flex items-center justify-between text-xs"><span className="text-[#666666]">{getCategoryLabel(cat)}</span><span className="text-[#111111] font-medium">{formatCost(val)} <span className="text-[#888888]">({pct}%)</span></span></div>
-                <div className="h-2 w-full rounded-full bg-[#f0f0f0] overflow-hidden"><div className="h-full rounded-full bg-emerald-600 transition-all duration-500" style={{ width: `${Math.max(1, (val / maxValue) * 100)}%` }} /></div>
-              </div>
-            );
-          })}
+          {incomeCategories.length === 0 ? (
+            <p className="text-xs text-[#888888]">Нет статей доходов</p>
+          ) : (
+            incomeCategories.map((cat) => {
+              const val = incomeByCategory[cat] ?? 0;
+              const pct = totalIncome > 0 ? Math.round((val / totalIncome) * 100) : 0;
+              return (
+                <div key={cat} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#666666] font-medium">{cat}</span>
+                    <span className="text-[#111111] font-medium font-mono">{formatCost(val)} <span className="text-[#888888] font-normal font-sans">({pct}%)</span></span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-[#f0f0f0] overflow-hidden">
+                    <div className="h-full rounded-full bg-emerald-600 transition-all duration-500" style={{ width: `${Math.max(val > 0 ? 1 : 0, (val / maxValue) * 100)}%` }} />
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -72,16 +111,25 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions }: Pro
       <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
         <h3 className="text-sm font-semibold text-[#111111] mb-4">Структура расходов</h3>
         <div className="space-y-2.5">
-          {EXPENSE_CATEGORIES.map(cat => {
-            const val = expenseByCategory[cat] ?? 0;
-            const pct = totalExpense > 0 ? Math.round((val / totalExpense) * 100) : 0;
-            return (
-              <div key={cat} className="space-y-1">
-                <div className="flex items-center justify-between text-xs"><span className="text-[#666666]">{getCategoryLabel(cat)}</span><span className="text-[#111111] font-medium">{formatCost(val)} <span className="text-[#888888]">({pct}%)</span></span></div>
-                <div className="h-2 w-full rounded-full bg-[#f0f0f0] overflow-hidden"><div className="h-full rounded-full bg-rose-600 transition-all duration-500" style={{ width: `${Math.max(1, (val / maxValue) * 100)}%` }} /></div>
-              </div>
-            );
-          })}
+          {expenseCategories.length === 0 ? (
+            <p className="text-xs text-[#888888]">Нет статей расходов</p>
+          ) : (
+            expenseCategories.map((cat) => {
+              const val = expenseByCategory[cat] ?? 0;
+              const pct = totalExpense > 0 ? Math.round((val / totalExpense) * 100) : 0;
+              return (
+                <div key={cat} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[#666666] font-medium">{cat}</span>
+                    <span className="text-[#111111] font-medium font-mono">{formatCost(val)} <span className="text-[#888888] font-normal font-sans">({pct}%)</span></span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-[#f0f0f0] overflow-hidden">
+                    <div className="h-full rounded-full bg-rose-600 transition-all duration-500" style={{ width: `${Math.max(val > 0 ? 1 : 0, (val / maxValue) * 100)}%` }} />
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </div>

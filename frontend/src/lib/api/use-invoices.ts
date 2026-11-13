@@ -168,6 +168,26 @@ export interface MarkInvoicePaidPayload {
   description?: string;
 }
 
+export interface FinanceCategoryDTO {
+  id: string;
+  name: string;
+  type: "income" | "expense";
+  parentId?: string | null;
+  createdAt: string;
+}
+
+export interface CreateFinanceCategoryPayload {
+  name: string;
+  type: "income" | "expense";
+  parent_id?: string | null;
+}
+
+export interface UpdateFinanceCategoryPayload {
+  name?: string;
+  type?: "income" | "expense";
+  parent_id?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------
@@ -175,6 +195,7 @@ export interface MarkInvoicePaidPayload {
 export const financeKeys = {
   all: ["finance"] as const,
   accounts: ["finance", "accounts"] as const,
+  categories: (type?: "income" | "expense") => ["finance", "categories", type] as const,
   transactions: (params: { limit?: number; offset?: number; type?: string; search?: string }) => ["finance", "transactions", params] as const,
   invoices: (params: { limit?: number; offset?: number; status?: string; search?: string; companyId?: string }) => ["finance", "invoices", params] as const,
   invoiceDetail: (id: string) => ["finance", "invoices", id] as const,
@@ -189,6 +210,18 @@ export function useAccounts(): UseQueryResult<AccountDTO[], ApiClientError> {
   return useQuery<AccountDTO[], ApiClientError>({
     queryKey: financeKeys.accounts,
     queryFn: async () => (await apiClient.get<AccountDTO[]>("/api/v1/finance/accounts")).data,
+  });
+}
+
+export function useFinanceCategories(type?: "income" | "expense"): UseQueryResult<FinanceCategoryDTO[], ApiClientError> {
+  return useQuery<FinanceCategoryDTO[], ApiClientError>({
+    queryKey: financeKeys.categories(type),
+    queryFn: async () => {
+      const res = await apiClient.get<FinanceCategoryDTO[]>("/api/v1/finance/categories", {
+        query: { type },
+      });
+      return res.data;
+    },
   });
 }
 
@@ -477,6 +510,60 @@ export function useSendInvoice(): UseMutationResult<
         { channel_type },
       );
       return res.data;
+    },
+  });
+}
+
+export function useCreateFinanceCategory(): UseMutationResult<
+  FinanceCategoryDTO,
+  ApiClientError,
+  CreateFinanceCategoryPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation<FinanceCategoryDTO, ApiClientError, CreateFinanceCategoryPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<FinanceCategoryDTO>("/api/v1/finance/categories", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["finance", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useUpdateFinanceCategory(): UseMutationResult<
+  FinanceCategoryDTO,
+  ApiClientError,
+  { id: string; payload: UpdateFinanceCategoryPayload }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<FinanceCategoryDTO, ApiClientError, { id: string; payload: UpdateFinanceCategoryPayload }>({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.patch<FinanceCategoryDTO>(`/api/v1/finance/categories/${id}`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["finance", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useDeleteFinanceCategory(): UseMutationResult<
+  { success: boolean },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean }, ApiClientError, string>({
+    mutationFn: async (id) => {
+      const res = await apiClient.delete<{ success: boolean }>(`/api/v1/finance/categories/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["finance", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }

@@ -147,6 +147,29 @@ export interface InvoiceDTO {
   lineItems: InvoiceItemDTO[];
 }
 
+export const createCategorySchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(100),
+  type: z.enum(["income", "expense"]),
+  parent_id: z.string().uuid().optional().nullable().or(z.literal("")),
+});
+
+export const updateCategorySchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  type: z.enum(["income", "expense"]).optional(),
+  parent_id: z.string().uuid().optional().nullable().or(z.literal("")),
+});
+
+export type CreateCategoryPayload = z.infer<typeof createCategorySchema>;
+export type UpdateCategoryPayload = z.infer<typeof updateCategorySchema>;
+
+export interface FinanceCategoryDTO {
+  id: string;
+  name: string;
+  type: "income" | "expense";
+  parentId: string | null;
+  createdAt: string;
+}
+
 export interface PnlCategoryDTO { categoryName: string; amount: number; percentage: number; }
 export interface PnlDTO {
   from: string; to: string; income: number; expenses: number; netProfit: number;

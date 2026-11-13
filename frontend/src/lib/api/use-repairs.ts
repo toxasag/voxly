@@ -433,6 +433,7 @@ export const DEFAULT_PAGE_SIZE = 25;
 
 export const repairKeys = {
   all: ["repairs"] as const,
+  lists: () => ["repairs", "list"] as const,
   list: (params: RepairsQueryParams) => ["repairs", "list", params] as const,
   detail: (id: string) => ["repairs", "detail", id] as const,
   totals: (id: string) => ["repairs", "totals", id] as const,
@@ -952,6 +953,7 @@ export function useDeleteWork(): UseMutationResult<{ id: string; deleted: boolea
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -969,6 +971,9 @@ export function useCreatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.parts(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -985,6 +990,8 @@ export function useUpdatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.parts(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -1001,6 +1008,8 @@ export function useDeletePart(): UseMutationResult<{ id: string; deleted: boolea
       void queryClient.invalidateQueries({ queryKey: repairKeys.parts(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

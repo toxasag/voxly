@@ -76,8 +76,8 @@ export function Sheet({
           // Десктопный вид (>= md): боковая шторка с ресайзом, границей и тенями
           "md:absolute md:inset-y-0 md:h-full md:shadow-2xl md:transition-[width] md:duration-150 md:ease-out",
           isRight
-            ? "md:right-0 md:border-l md:border-[#e5e5e5]"
-            : "md:left-0 md:border-r md:border-[#e5e5e5]",
+            ? "md:right-0 md:left-auto md:border-l md:border-[#e5e5e5]"
+            : "md:left-0 md:right-auto md:border-r md:border-[#e5e5e5]",
           isMaximized
             ? "md:w-[var(--sheet-desktop-width)] md:max-w-[1600px]"
             : "md:w-[var(--sheet-desktop-width)] md:max-w-[94vw]",

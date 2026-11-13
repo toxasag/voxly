@@ -4,9 +4,11 @@ import { FinanceService } from "./finance.service.js";
 import {
   batchPaymentSchema,
   createAccountSchema,
+  createCategorySchema,
   createTransactionSchema,
   pnlQuerySchema,
   transferSchema,
+  updateCategorySchema,
 } from "./finance.types.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 
@@ -53,6 +55,26 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     const p = batchPaymentSchema.parse(req.body);
     const r = await service.batchPayment(req.tenant_id, req.authUser.id, p);
     return reply.status(200).send({ data: r });
+  });
+  app.get("/categories", { onRequest: read }, async (req, reply) => {
+    const q = z.object({ type: z.enum(["income", "expense"]).optional() }).parse(req.query);
+    return reply.send({ data: await service.categories(req.tenant_id, q.type) });
+  });
+  app.post("/categories", { onRequest: write }, async (req, reply) => {
+    const p = createCategorySchema.parse(req.body);
+    const row = await service.createCategory(req.tenant_id, p);
+    return reply.status(201).send({ data: row });
+  });
+  app.patch("/categories/:id", { onRequest: write }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const p = updateCategorySchema.parse(req.body);
+    const row = await service.updateCategory(req.tenant_id, id, p);
+    return reply.send({ data: row });
+  });
+  app.delete("/categories/:id", { onRequest: write }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const success = await service.deleteCategory(req.tenant_id, id);
+    return reply.send({ success });
   });
   app.get("/pnl", { onRequest: read }, async (req, reply) => {
     const p = pnlQuerySchema.parse(req.query);
