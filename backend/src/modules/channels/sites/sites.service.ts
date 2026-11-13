@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import { query, queryOne, withTenant, runWithPlatformScope, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError, AppError } from "../../../plugins/errorHandler.js";
 import { normalizePhoneToE164 } from "../../crm/contacts/dedupe.service.js";
-import { ContactActivityService } from "../../crm/contacts/contact-activity.service.js";
 import { leadNotificationQueue } from "../../crm/leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
@@ -18,8 +17,6 @@ import type {
 const DEFAULT_API_BASE = process.env.API_BASE_URL || "https://api.getvoxly.ru";
 
 export class SitesService {
-  private contactActivityService = new ContactActivityService();
-
   private toDTO(row: SiteIntegrationRow, apiBase: string = DEFAULT_API_BASE): SiteIntegrationDTO {
     const base = apiBase.replace(/\/+$/, "");
     return {
@@ -660,30 +657,37 @@ export class SitesService {
 
       // 8. Фиксация события в таймлайне активности клиента
       if (contactId) {
-        await this.contactActivityService.recordActivity({
-          tenantId: site.tenant_id,
-          contactId,
-          dealId: deal.id,
-          activityChannel: "web_form",
-          activityKind: "form_submission",
-          title: rawFormName ? `Заявка с формы «${rawFormName}»` : `Заявка с сайта «${site.name}»`,
-          authorId: systemUserId,
-          authorName: "Интеграция сайта",
-          payload: {
-            domain: site.site_url || "",
-            pageUrl: pageUrl || "",
-            formName: rawFormName || "Заявка с сайта",
-            formFields: rawPayload,
-            touchpoints: {
-              referrer: pageUrl || undefined,
-              utmSource: utmSource || undefined,
-              utmMedium: utmMedium || undefined,
-              utmCampaign: utmCampaign || undefined,
-              utmContent: utmContent || undefined,
-              utmTerm: utmTerm || undefined,
-            },
-          },
-        });
+        await tx.query(
+          `INSERT INTO contact_activities (
+            tenant_id, contact_id, deal_id, activity_channel, activity_kind,
+            direction, title, author_id, author_name, occurred_at, payload
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10::jsonb)`,
+          [
+            site.tenant_id,
+            contactId,
+            deal.id,
+            "web_form",
+            "form_submission",
+            "inbound",
+            rawFormName ? `Заявка с формы «${rawFormName}»` : `Заявка с сайта «${site.name}»`,
+            systemUserId,
+            "Интеграция сайта",
+            JSON.stringify({
+              domain: site.site_url || "",
+              pageUrl: pageUrl || "",
+              formName: rawFormName || "Заявка с сайта",
+              formFields: rawPayload,
+              touchpoints: {
+                referrer: pageUrl || undefined,
+                utmSource: utmSource || undefined,
+                utmMedium: utmMedium || undefined,
+                utmCampaign: utmCampaign || undefined,
+                utmContent: utmContent || undefined,
+                utmTerm: utmTerm || undefined,
+              },
+            }),
+          ],
+        );
       }
 
       // 9. Обновление счетчика сайта
