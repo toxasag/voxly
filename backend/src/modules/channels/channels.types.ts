@@ -65,6 +65,35 @@ export function isValidDomain(domain: string): boolean {
   return DOMAIN_REGEX.test(norm);
 }
 
+export const widgetLocaleSchema = z.enum(["ru", "en"]);
+export type WidgetLocale = z.infer<typeof widgetLocaleSchema>;
+
+export const WIDGET_DEFAULT_STRINGS: Record<
+  WidgetLocale,
+  {
+    title: string;
+    greeting: string;
+    placeholder: string;
+    statusText: string;
+    badgeText: string;
+  }
+> = {
+  ru: {
+    title: "Онлайн-консультант",
+    greeting: "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.",
+    placeholder: "Введите ваш вопрос...",
+    statusText: "Онлайн",
+    badgeText: "Задайте вопрос",
+  },
+  en: {
+    title: "Chat with us",
+    greeting: "Hello! How can we help you today? Feel free to ask any question.",
+    placeholder: "Type your message...",
+    statusText: "Online",
+    badgeText: "Ask a question",
+  },
+};
+
 /**
  * Схема запроса клонирования (дублирования) виджета.
  * Принимает новый домен/адрес сайта, опциональное имя и опционального агента.
@@ -76,6 +105,7 @@ export const cloneChannelAccountSchema = z
     site_url: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
     domain: z.string().trim().min(1, "Укажите домен или адрес сайта").max(200).optional(),
     agent_id: z.string().uuid("agent_id должен быть валидным UUID").nullable().optional(),
+    locale: widgetLocaleSchema.optional(),
   })
   .refine((data) => Boolean(data.external_id || data.site_url || data.domain), {
     message: "Укажите адрес сайта или домен для нового виджета",

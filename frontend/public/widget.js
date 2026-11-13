@@ -128,6 +128,165 @@
     }
   }
 
+  // 3.01 Интернационализация и многоязычность (i18n: ru / en)
+  var I18N = {
+    ru: {
+      defaultTitle: 'Онлайн-консультант',
+      defaultGreeting: 'Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.',
+      defaultPlaceholder: 'Введите ваш вопрос...',
+      defaultStatus: 'Онлайн',
+      defaultSubOnline: 'В сети · Консультант онлайн',
+      defaultAiSubOnline: 'AI-ассистент онлайн',
+      defaultConsultantName: 'Консультант',
+      badgeDefault: 'Задайте вопрос',
+      typingText: 'печатает...',
+      sendBtnTitle: 'Отправить',
+      expandBtnTitle: 'Развернуть окно',
+      collapseBtnTitle: 'Свернуть окно',
+      closeBtnTitle: 'Закрыть окно',
+      attachBtnTitle: 'Прикрепить фото или документ',
+      attachPhoneLabel: 'Укажите телефон для прикрепления файла:',
+      attachPhonePlaceholder: '+7 (999) 000-00-00',
+      attachSubmitBtn: 'Выбрать файл',
+      attachCancelTitle: 'Отмена',
+      attachPhoneError: 'Пожалуйста, укажите действующий номер телефона.',
+      networkConnecting: 'Проблема со связью. Повторное подключение...',
+      networkRetryBtn: 'Повторить',
+      networkRetryCountdown: 'Проблема со связью. Повтор через {sec} сек...',
+      networkFailed: 'Не удалось связаться с сервером.',
+      networkSending: 'Отправка...',
+      consentText: 'Нажимая «Отправить», вы даете согласие на обработку персональных данных.',
+      fileUploadSizeLimit: 'Размер файла не должен превышать 20 МБ',
+      fileUploadLoading: 'Загрузка {name}...',
+      fileUploadError: 'Ошибка загрузки: {error}',
+      fileUploadFailedNetwork: 'Не удалось загрузить файл. Проверьте соединение с интернетом.',
+      emptyServerResponse: 'Пустой ответ сервера',
+      removeFileTitle: 'Удалить файл',
+      fileFallback: 'Файл',
+      previewAlt: 'Превью',
+      consultantAvatarAlt: 'Консультант',
+      photoAlt: 'Фотография',
+      documentFallback: 'Документ',
+      operatorNeededMsg: 'Спасибо за обращение! Мы зафиксировали заявку в CRM. Специалист свяжется с вами в ближайшее время.',
+      proactiveDefaultMsg: 'Я онлайн, спрашивайте, готов вам помочь',
+      bannerContinueIn: 'Продолжить в {label}',
+      bannerActionText: 'Перейти →',
+      bannerContinueInMulti: 'Продолжить в:',
+      waDefaultPreText: 'Здравствуйте! [ID:ref_{visitorId}]',
+      prechatTgTitle: 'Написать в Telegram',
+      prechatWaTitle: 'Написать в WhatsApp',
+      prechatTgSub: 'Свяжитесь с нами напрямую',
+      prechatWaSub: 'Ответим в течение 2 минут',
+      prechatTgCta: 'Перейти в Telegram',
+      prechatWaCta: 'Перейти в WhatsApp',
+      prechatPreviewLabel: 'Текст сообщения в чате:',
+      prechatPreviewTemplate: 'Здравствуйте! Меня зовут {name}. (код: vx-...)',
+      prechatYourName: '[Ваше имя]',
+      prechatNameLabel: 'Как к вам обращаться? *',
+      prechatNamePlaceholder: 'Например, Иван',
+      prechatNoteLabel: 'Тема или вопрос (необязательно)',
+      prechatNotePlaceholder: 'Например, консультация по ценам',
+      prechatFooterNote: 'Код диалога свяжет обращение с сайтом без потери истории и контактов',
+      prechatPreparing: 'Подготовка перехода...',
+      prechatDefaultVisitorName: 'Посетитель',
+      prechatCloseTitle: 'Закрыть',
+    },
+    en: {
+      defaultTitle: 'Chat with us',
+      defaultGreeting: 'Hello! How can we help you today? Feel free to ask any question.',
+      defaultPlaceholder: 'Type your message...',
+      defaultStatus: 'Online',
+      defaultSubOnline: 'Online · Assistant ready',
+      defaultAiSubOnline: 'AI Assistant online',
+      defaultConsultantName: 'Assistant',
+      badgeDefault: 'Ask a question',
+      typingText: 'typing...',
+      sendBtnTitle: 'Send',
+      expandBtnTitle: 'Expand window',
+      collapseBtnTitle: 'Collapse window',
+      closeBtnTitle: 'Close window',
+      attachBtnTitle: 'Attach photo or document',
+      attachPhoneLabel: 'Provide your phone to attach files:',
+      attachPhonePlaceholder: '+1 (555) 000-0000',
+      attachSubmitBtn: 'Choose file',
+      attachCancelTitle: 'Cancel',
+      attachPhoneError: 'Please provide a valid phone number.',
+      networkConnecting: 'Connection issue. Reconnecting...',
+      networkRetryBtn: 'Retry',
+      networkRetryCountdown: 'Connection issue. Retry in {sec} sec...',
+      networkFailed: 'Could not connect to server.',
+      networkSending: 'Sending...',
+      consentText: 'By clicking «Send», you agree to the processing of personal data.',
+      fileUploadSizeLimit: 'File size must not exceed 20 MB',
+      fileUploadLoading: 'Uploading {name}...',
+      fileUploadError: 'Upload error: {error}',
+      fileUploadFailedNetwork: 'Failed to upload file. Please check your internet connection.',
+      emptyServerResponse: 'Empty server response',
+      removeFileTitle: 'Delete file',
+      fileFallback: 'File',
+      previewAlt: 'Preview',
+      consultantAvatarAlt: 'Assistant',
+      photoAlt: 'Photo',
+      documentFallback: 'Document',
+      operatorNeededMsg: 'Thank you for reaching out! Your request has been recorded. Our team will contact you shortly.',
+      proactiveDefaultMsg: 'I am online, feel free to ask any questions!',
+      bannerContinueIn: 'Continue in {label}',
+      bannerActionText: 'Open →',
+      bannerContinueInMulti: 'Continue in:',
+      waDefaultPreText: 'Hello! [ID:ref_{visitorId}]',
+      prechatTgTitle: 'Chat in Telegram',
+      prechatWaTitle: 'Chat in WhatsApp',
+      prechatTgSub: 'Connect with us directly',
+      prechatWaSub: 'We will reply within 2 minutes',
+      prechatTgCta: 'Continue to Telegram',
+      prechatWaCta: 'Continue to WhatsApp',
+      prechatPreviewLabel: 'Message text in chat:',
+      prechatPreviewTemplate: 'Hello! My name is {name}. (code: vx-...)',
+      prechatYourName: '[Your name]',
+      prechatNameLabel: 'What is your name? *',
+      prechatNamePlaceholder: 'e.g., John',
+      prechatNoteLabel: 'Topic or question (optional)',
+      prechatNotePlaceholder: 'e.g., pricing questions',
+      prechatFooterNote: 'The conversation code connects your inquiry to this site',
+      prechatPreparing: 'Preparing redirect...',
+      prechatDefaultVisitorName: 'Visitor',
+      prechatCloseTitle: 'Close',
+    },
+  };
+
+  function normalizeLocale(raw) {
+    if (!raw || typeof raw !== 'string') return 'ru';
+    var lower = raw.trim().toLowerCase();
+    if (lower === 'en' || lower.startsWith('en-') || lower.startsWith('en_')) return 'en';
+    return 'ru';
+  }
+
+  function getScriptLocale() {
+    try {
+      var scr = getScriptElement();
+      if (scr) {
+        var attr = scr.getAttribute('data-locale') || scr.getAttribute('data-lang');
+        if (attr) return normalizeLocale(attr);
+      }
+    } catch (e) {}
+    return 'ru';
+  }
+
+  var currentLocale = getScriptLocale();
+
+  function t(key, params) {
+    var dict = I18N[currentLocale] || I18N.ru;
+    var str = dict[key] !== undefined ? dict[key] : (I18N.ru[key] !== undefined ? I18N.ru[key] : key);
+    if (params && typeof params === 'object') {
+      for (var p in params) {
+        if (Object.prototype.hasOwnProperty.call(params, p)) {
+          str = str.replace(new RegExp('\{' + p + '\}', 'g'), String(params[p]));
+        }
+      }
+    }
+    return str;
+  }
+
   // 3.1 Сбор метаданных текущей страницы (URL, title, pathname, referrer) с поддержкой iframe
   function getPageMetadata() {
     var pageUrl = '';
@@ -2406,6 +2565,31 @@
     var networkStatusEl = document.getElementById('getvoxly-network-status');
     var networkTextEl = document.getElementById('getvoxly-network-text');
     var networkRetryBtn = document.getElementById('getvoxly-network-retry');
+    var consentEl = win.querySelector('.getvoxly-consent');
+
+    function applyLocalizedChrome() {
+      if (bubble) bubble.title = t('defaultTitle');
+      if (badge && !badge.textContent) badge.textContent = t('badgeDefault');
+      if (headerName && !headerName.textContent) headerName.textContent = t('defaultTitle');
+      if (headerSub && !headerSub.textContent) headerSub.textContent = t('defaultSubOnline');
+      if (expandBtn) expandBtn.title = isExpanded ? t('collapseBtnTitle') : t('expandBtnTitle');
+      if (closeBtn) closeBtn.title = t('closeBtnTitle');
+      if (typingIndicator) typingIndicator.textContent = t('typingText');
+      if (attachBtn) attachBtn.title = t('attachBtnTitle');
+      if (attachCloseBtn) attachCloseBtn.title = t('attachCancelTitle');
+      if (attachSubmitBtn) attachSubmitBtn.textContent = t('attachSubmitBtn');
+      if (attachPhoneInput) attachPhoneInput.placeholder = t('attachPhonePlaceholder');
+      var attachGateLabel = win.querySelector('.getvoxly-attach-gate-text span');
+      if (attachGateLabel) attachGateLabel.textContent = t('attachPhoneLabel');
+      if (networkRetryBtn) networkRetryBtn.textContent = t('networkRetryBtn');
+      if (inputEl && (!inputEl.placeholder || inputEl.placeholder === 'Введите ваш вопрос...' || inputEl.placeholder === 'Type your message...')) {
+        inputEl.placeholder = t('defaultPlaceholder');
+      }
+      if (sendBtn) sendBtn.title = t('sendBtnTitle');
+      if (consentEl) consentEl.textContent = t('consentText');
+    }
+
+    applyLocalizedChrome();
 
     function showNetworkStatus(text, showRetry, onRetry) {
       if (!networkStatusEl) return;
@@ -2456,7 +2640,7 @@
     function showTypingIndicator(show, text) {
       if (!typingIndicator) return;
       if (show) {
-        typingIndicator.textContent = text || 'печатает...';
+        typingIndicator.textContent = text || t('typingText');
         typingIndicator.style.display = 'block';
         if (messagesContainer) {
           if (typingIndicator.parentNode !== messagesContainer) {
@@ -2520,17 +2704,17 @@
 
       var isImg = att.mimeType && att.mimeType.startsWith('image/');
       var thumbHtml = isImg
-        ? '<img src="' + att.url + '" class="getvoxly-preview-thumb" alt="Превью" />'
+        ? '<img src="' + att.url + '" class="getvoxly-preview-thumb" alt="' + t('previewAlt') + '" />'
         : '<div class="getvoxly-preview-thumb"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>';
 
       attachmentPreview.innerHTML =
         '<div class="getvoxly-preview-card">' +
           thumbHtml +
           '<div class="getvoxly-preview-info">' +
-            '<div class="getvoxly-preview-name" title="' + (att.filename || 'Файл') + '">' + (att.filename || 'Файл') + '</div>' +
+            '<div class="getvoxly-preview-name" title="' + (att.filename || t('fileFallback')) + '">' + (att.filename || t('fileFallback')) + '</div>' +
             '<div class="getvoxly-preview-size">' + formatBytes(att.sizeBytes) + '</div>' +
           '</div>' +
-          '<button class="getvoxly-preview-remove" id="getvoxly-preview-remove" title="Удалить файл" type="button">' +
+          '<button class="getvoxly-preview-remove" id="getvoxly-preview-remove" title="' + t('removeFileTitle') + '" type="button">' +
             '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>' +
           '</button>' +
         '</div>';
@@ -2578,7 +2762,7 @@
       var cleanDigits = phone.replace(/\D/g, '');
       if (cleanDigits.length < 10) {
         if (attachGateError) {
-          attachGateError.textContent = 'Пожалуйста, укажите действующий номер телефона.';
+          attachGateError.textContent = t('attachPhoneError');
           attachGateError.style.display = 'block';
         }
         if (attachPhoneInput) attachPhoneInput.focus();
@@ -2613,14 +2797,14 @@
         isExpanded = !isExpanded;
         if (isExpanded) {
           win.classList.add('is-expanded');
-          expandBtn.title = 'Свернуть окно';
+          expandBtn.title = t('collapseBtnTitle');
           var expIcon = expandBtn.querySelector('.getvoxly-icon-expand');
           var compIcon = expandBtn.querySelector('.getvoxly-icon-compress');
           if (expIcon) expIcon.style.display = 'none';
           if (compIcon) compIcon.style.display = 'block';
         } else {
           win.classList.remove('is-expanded');
-          expandBtn.title = 'Развернуть окно';
+          expandBtn.title = t('expandBtnTitle');
           var expIcon = expandBtn.querySelector('.getvoxly-icon-expand');
           var compIcon = expandBtn.querySelector('.getvoxly-icon-compress');
           if (expIcon) expIcon.style.display = 'block';
@@ -2644,7 +2828,7 @@
         if (!file) return;
 
         if (file.size > 20 * 1024 * 1024) {
-          alert('Размер файла не должен превышать 20 МБ');
+          alert(t('fileUploadSizeLimit'));
           fileInput.value = '';
           return;
         }
@@ -2653,7 +2837,7 @@
           attachmentPreview.innerHTML =
             '<div class="getvoxly-preview-card">' +
               '<div class="getvoxly-preview-thumb"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>' +
-              '<div class="getvoxly-preview-info"><div class="getvoxly-preview-name">Загрузка ' + file.name + '...</div></div>' +
+              '<div class="getvoxly-preview-info"><div class="getvoxly-preview-name">' + t('fileUploadLoading', { name: file.name }) + '</div></div>' +
             '</div>';
           attachmentPreview.style.display = 'block';
         }
@@ -2684,16 +2868,16 @@
               };
               renderAttachmentPreview(pendingAttachment);
             } else {
-              throw new Error('Пустой ответ сервера');
+              throw new Error(t('emptyServerResponse'));
             }
           } else {
             var errData = await res.json().catch(function () { return {}; });
-            alert('Ошибка загрузки: ' + (errData.error || 'не удалось загрузить файл'));
+            alert(t('fileUploadError', { error: errData.error || t('fileUploadFailedNetwork') }));
             renderAttachmentPreview(null);
             fileInput.value = '';
           }
         } catch (err) {
-          alert('Не удалось загрузить файл. Проверьте соединение с интернетом.');
+          alert(t('fileUploadFailedNetwork'));
           renderAttachmentPreview(null);
           fileInput.value = '';
         }
@@ -2807,7 +2991,7 @@
       }
       if (currentConfig.avatarType === 'photo' || (!currentConfig.avatarType && currentConfig.consultantAvatar)) {
         var miniUrl = resolveAssetUrl(currentConfig.consultantAvatar || '/miroslava.png');
-        return '<img src="' + miniUrl + '" alt="Консультант" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
+        return '<img src="' + miniUrl + '" alt="' + t('consultantAvatarAlt') + '" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
       }
       if (currentConfig.avatarType === 'mascot' && currentConfig._directionsUrl) {
         return '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
@@ -2842,7 +3026,7 @@
           var img = document.createElement('img');
           img.className = 'getvoxly-msg-img';
           img.src = attachment;
-          img.alt = 'Фотография';
+          img.alt = t('photoAlt');
           img.loading = 'lazy';
           link.appendChild(img);
           attContainer.appendChild(link);
@@ -2859,7 +3043,7 @@
           docLink.target = '_blank';
           docLink.rel = 'noopener noreferrer';
           docLink.download = '';
-          var rawName = (attachment.split('/').pop() || 'Документ').split('?')[0];
+          var rawName = (attachment.split('/').pop() || t('documentFallback')).split('?')[0];
           docLink.innerHTML =
             '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
             '<span>' + rawName + '</span>';
@@ -3248,9 +3432,9 @@
       var isTg = mType === 'telegram';
       var themeClass = isTg ? 'theme-telegram' : 'theme-whatsapp';
       var btnClass = isTg ? 'btn-telegram' : 'btn-whatsapp';
-      var titleText = isTg ? 'Написать в Telegram' : 'Написать в WhatsApp';
-      var subText = isTg ? 'Свяжитесь с нами напрямую' : 'Ответим в течение 2 минут';
-      var ctaText = isTg ? 'Перейти в Telegram' : 'Перейти в WhatsApp';
+      var titleText = isTg ? t('prechatTgTitle') : t('prechatWaTitle');
+      var subText = isTg ? t('prechatTgSub') : t('prechatWaSub');
+      var ctaText = isTg ? t('prechatTgCta') : t('prechatWaCta');
 
       var messengerIconSvg = isTg
         ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="#ffffff"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>'
@@ -3268,7 +3452,7 @@
                 '<div class="getvoxly-prechat-sub">' + subText + '</div>' +
               '</div>' +
             '</div>' +
-            '<button class="getvoxly-prechat-close" id="getvoxly-prechat-btn-close" type="button" title="Закрыть">' +
+            '<button class="getvoxly-prechat-close" id="getvoxly-prechat-btn-close" type="button" title="' + t('prechatCloseTitle') + '">' +
               '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
                 '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>' +
               '</svg>' +
@@ -3276,24 +3460,24 @@
           '</div>' +
           '<div class="getvoxly-prechat-body">' +
             '<div class="getvoxly-prechat-preview-box ' + themeClass + '">' +
-              '<div class="getvoxly-prechat-preview-label">Текст сообщения в чате:</div>' +
+              '<div class="getvoxly-prechat-preview-label">' + t('prechatPreviewLabel') + '</div>' +
               '<div id="getvoxly-prechat-preview-text">' +
-                'Здравствуйте! Меня зовут ' + (initialName || '<span style="opacity:0.6">[Ваше имя]</span>') + '. (код: vx-...)' +
+                t('prechatPreviewTemplate', { name: initialName || ('<span style="opacity:0.6">' + t('prechatYourName') + '</span>') }) +
               '</div>' +
             '</div>' +
             '<div class="getvoxly-prechat-field">' +
-              '<label class="getvoxly-prechat-label">Как к вам обращаться? *</label>' +
-              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-name" placeholder="Например, Иван" value="' + initialName + '" autocomplete="name" />' +
+              '<label class="getvoxly-prechat-label">' + t('prechatNameLabel') + '</label>' +
+              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-name" placeholder="' + t('prechatNamePlaceholder') + '" value="' + initialName + '" autocomplete="name" />' +
             '</div>' +
             '<div class="getvoxly-prechat-field">' +
-              '<label class="getvoxly-prechat-label">Тема или вопрос (необязательно)</label>' +
-              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-note" placeholder="Например, консультация по ценам" />' +
+              '<label class="getvoxly-prechat-label">' + t('prechatNoteLabel') + '</label>' +
+              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-note" placeholder="' + t('prechatNotePlaceholder') + '" />' +
             '</div>' +
             '<button class="getvoxly-prechat-submit ' + btnClass + '" id="getvoxly-prechat-btn-submit" type="button">' +
               messengerIconSvg + ' ' + ctaText +
             '</button>' +
             '<div class="getvoxly-prechat-footer-note">' +
-              'Код диалога свяжет обращение с сайтом без потери истории и контактов' +
+              t('prechatFooterNote') +
             '</div>' +
           '</div>' +
         '</div>';
@@ -3312,7 +3496,7 @@
         nameInput.addEventListener('input', function () {
           var val = (nameInput.value || '').trim();
           if (previewText) {
-            previewText.innerHTML = 'Здравствуйте! Меня зовут ' + (val || '<span style="opacity:0.6">[Ваше имя]</span>') + '. (код: vx-...)';
+            previewText.innerHTML = t('prechatPreviewTemplate', { name: val || ('<span style="opacity:0.6">' + t('prechatYourName') + '</span>') });
           }
         });
       }
@@ -3337,10 +3521,10 @@
           }
 
           submitBtn.disabled = true;
-          submitBtn.innerHTML = 'Подготовка перехода...';
+          submitBtn.innerHTML = t('prechatPreparing');
 
           var payload = {
-            name: clientName || 'Посетитель',
+            name: clientName || t('prechatDefaultVisitorName'),
             messenger: mType,
             channelAccountId: channelAccountId,
             sessionId: visitorId,
@@ -3469,6 +3653,10 @@
             return;
           }
           currentConfig = data;
+          if (data && (data.locale || data.language)) {
+            currentLocale = normalizeLocale(data.locale || data.language);
+          }
+          applyLocalizedChrome();
           sendTelemetry('init_success', data.mascotId || 'none');
 
           // Аккаунт активен: отображаем виджет на сайте
@@ -3546,7 +3734,7 @@
               }
 
               if (badgePhrases.length === 0) {
-                badgePhrases = ['Задайте вопрос'];
+                badgePhrases = [t('badgeDefault')];
               }
 
               var badgeCurrentIdx = 0;
@@ -3588,8 +3776,8 @@
           }
           if (headerSub) {
             headerSub.textContent = data.consultantName
-              ? (data.title || 'Онлайн-консультант')
-              : (data.isAiEnabled ? (data.botName || 'AI-ассистент онлайн') : 'В сети · Консультант онлайн');
+              ? (data.title || t('defaultTitle'))
+              : (data.isAiEnabled ? (data.botName || t('defaultAiSubOnline')) : t('defaultSubOnline'));
           }
 
           // Позиционирование (слева / справа)
@@ -3657,7 +3845,7 @@
             } else if (data.avatarType === 'photo' || (!data.avatarType && data.consultantAvatar)) {
               var headerAvatarUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
               var headerFallbackSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4ODg4ODgiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjciIHI9IjQiLz48L3N2Zz4=';
-              headerAvatarInner.innerHTML = '<img src="' + headerAvatarUrl + '" alt="Консультант" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;display:block;border-radius:50%;" onerror="this.onerror=null;this.src=\'' + headerFallbackSvg + '\';">';
+              headerAvatarInner.innerHTML = '<img src="' + headerAvatarUrl + '" alt="' + t('consultantAvatarAlt') + '" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;display:block;border-radius:50%;" onerror="this.onerror=null;this.src=\'' + headerFallbackSvg + '\';">';
             } else if (data.avatarType === 'mascot' && directionsUrl) {
               headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
             } else if (directionsUrl && !data.consultantAvatar) {
@@ -3767,8 +3955,8 @@
             wrapper.classList.add('has-pill');
             bubble.classList.add('is-pill');
             bubble.classList.remove('is-mascot', 'is-photo');
-            var pName = data.consultantName || data.title || 'Консультант';
-            var pStatus = data.statusText || 'Онлайн';
+            var pName = data.consultantName || data.title || t('defaultConsultantName');
+            var pStatus = data.statusText || t('defaultStatus');
             var avatarHtml = '';
 
             if (data.avatarType === 'icon') {
@@ -3813,7 +4001,7 @@
               bubble.classList.remove('is-pill', 'is-mascot');
               var circlePhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
               var circleFallbackSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjciIHI9IjQiLz48L3N2Zz4=';
-              bubbleIcon.innerHTML = '<div class="getvoxly-bubble-photo-wrap"><img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="' + (data.consultantName || 'Консультант') + '" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"></div><span class="getvoxly-bubble-dot"></span>';
+              bubbleIcon.innerHTML = '<div class="getvoxly-bubble-photo-wrap"><img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="' + (data.consultantName || t('consultantAvatarAlt')) + '" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"></div><span class="getvoxly-bubble-dot"></span>';
             } else if (data.avatarType === 'mascot' && directionsUrl) {
               bubble.classList.add('is-mascot');
               bubble.classList.remove('is-pill', 'is-photo');
@@ -3882,7 +4070,7 @@
                 linkHref += (linkHref.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
               } else if (b.type === 'whatsapp') {
                 var waSep = linkHref.indexOf('?') === -1 ? '?' : '&';
-                linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! [ID:ref_' + visitorId + ']');
+                linkHref += waSep + 'text=' + encodeURIComponent(t('waDefaultPreText', { visitorId: visitorId }));
               } else if (b.type === 'max') {
                 if (linkHref.indexOf('/u/') === -1) {
                   linkHref += (linkHref.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
@@ -3898,11 +4086,11 @@
                 iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>';
               }
 
-              var actionText = 'Перейти \u2192';
+              var actionText = t('bannerActionText');
               msgContainer.innerHTML = '<a href="' + linkHref + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-banner-single is-' + b.type + '">' +
                 '<div class="getvoxly-msg-banner-left">' +
                   iconSvg +
-                  '<span class="getvoxly-msg-banner-title">Продолжить в ' + b.label + '</span>' +
+                  '<span class="getvoxly-msg-banner-title">' + t('bannerContinueIn', { label: b.label }) + '</span>' +
                 '</div>' +
                 '<span class="getvoxly-msg-banner-action">' + actionText + '</span>' +
               '</a>';
@@ -3915,7 +4103,7 @@
                   href += (href.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
                 } else if (btn.type === 'whatsapp') {
                   var waSep2 = href.indexOf('?') === -1 ? '?' : '&';
-                  href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! [ID:ref_' + visitorId + ']');
+                  href += waSep2 + 'text=' + encodeURIComponent(t('waDefaultPreText', { visitorId: visitorId }));
                 } else if (btn.type === 'max') {
                   if (href.indexOf('/u/') === -1) {
                     href += (href.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
@@ -3933,7 +4121,7 @@
               }
 
               msgContainer.innerHTML = '<div class="getvoxly-msg-bar-multi">' +
-                '<span class="getvoxly-msg-bar-title">Продолжить в:</span>' +
+                '<span class="getvoxly-msg-bar-title">' + t('bannerContinueInMulti') + '</span>' +
                 '<div class="getvoxly-msg-buttons-row">' +
                   buttonsHtml +
                 '</div>' +
@@ -3959,7 +4147,7 @@
                   if (!isOpen) {
                     openWidget();
                   }
-                  var proMsg = data.proactiveMessage || 'Я онлайн, спрашивайте, готов вам помочь';
+                  var proMsg = data.proactiveMessage || t('proactiveDefaultMsg');
                   var lastMsg = hist.length > 0 ? hist[hist.length - 1] : null;
                   if (!lastMsg || lastMsg.text !== proMsg) {
                     saveAndRenderMessage(proMsg, false);
@@ -4125,7 +4313,7 @@
 
       if (currentAttachment) {
         clearTimeout(sendTimer);
-        showTypingIndicator(true, 'печатает...');
+        showTypingIndicator(true, t('typingText'));
         executeSendMessage(text, false, currentAttachment, currentAttachmentType, 0);
       } else {
         if (isBotResponding) {
@@ -4133,7 +4321,7 @@
         } else {
           messageBuffer.push(text);
           clearTimeout(sendTimer);
-          showTypingIndicator(true, 'печатает...');
+          showTypingIndicator(true, t('typingText'));
           sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
         }
       }
@@ -4145,7 +4333,7 @@
 
       if (!isDraft) {
         isBotResponding = true;
-        showTypingIndicator(true, 'печатает...');
+        showTypingIndicator(true, t('typingText'));
       }
       try {
         var detectedPhone = extractClientPhone(fullText);
@@ -4251,7 +4439,7 @@
               }
               var typingDelay = Math.min(Math.max(replyText.length * 6, 200), 700);
 
-              showTypingIndicator(true, 'печатает...');
+              showTypingIndicator(true, t('typingText'));
               await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
               showTypingIndicator(false);
 
@@ -4261,7 +4449,7 @@
               }
             }
           } else if (result && result.status === 'operator_needed') {
-            saveAndRenderMessage('Спасибо за обращение! Мы зафиксировали заявку в CRM. Специалист свяжется с вами в ближайшее время.', false);
+            saveAndRenderMessage(t('operatorNeededMsg'), false);
           }
         } else {
           throw new Error('HTTP ' + res.status);
@@ -4275,14 +4463,14 @@
             var delays = [3000, 6000, 10000];
             var delayMs = delays[retryCount] || 5000;
             var seconds = Math.round(delayMs / 1000);
-            showNetworkStatus('Проблема со связью. Повтор через ' + seconds + ' сек...', false);
+            showNetworkStatus(t('networkRetryCountdown', { sec: seconds }), false);
             setTimeout(function () {
               executeSendMessage(fullText, isDraft, attachment, attachmentType, retryCount + 1);
             }, delayMs);
             return;
           } else {
-            showNetworkStatus('Не удалось связаться с сервером.', true, function () {
-              showNetworkStatus('Отправка...', false);
+            showNetworkStatus(t('networkFailed'), true, function () {
+              showNetworkStatus(t('networkSending'), false);
               executeSendMessage(fullText, false, attachment, attachmentType, 0);
             });
           }
@@ -4296,7 +4484,7 @@
             messageBuffer = pendingQueueWhileReplying.slice();
             pendingQueueWhileReplying = [];
             clearTimeout(sendTimer);
-            showTypingIndicator(true, 'печатает...');
+            showTypingIndicator(true, t('typingText'));
             sendTimer = setTimeout(flushMessageBuffer, 3000);
           }
         }
@@ -4325,7 +4513,7 @@
 
         if (messageBuffer.length > 0 && !isBotResponding) {
           clearTimeout(sendTimer);
-          showTypingIndicator(true, 'печатает...');
+          showTypingIndicator(true, t('typingText'));
           sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
         }
 
