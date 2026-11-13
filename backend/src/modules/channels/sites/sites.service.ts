@@ -276,6 +276,20 @@ export class SitesService {
 
     // 3. Выполнение логики в RLS-контексте владельца сайта
     return withTenant(site.tenant_id, async (tx) => {
+      // Поиск пользователя арендатора для created_by (владелец либо первый активный сотрудник)
+      const fallbackUser = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM users
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+         ORDER BY (role = 'owner') DESC, created_at ASC
+         LIMIT 1`,
+        [site.tenant_id],
+      );
+
+      if (!fallbackUser) {
+        throw new AppError(500, "TENANT_USER_NOT_FOUND", "В организации нет активных пользователей для создания сделки");
+      }
+      const systemUserId = fallbackUser.id;
+
       // Поддержка кастомного маппинга полей
       const mapping = site.field_mapping || {};
       const mapField = (canonical: string): unknown => {
@@ -482,8 +496,8 @@ export class SitesService {
 
         const newContact = await tx.queryOneOrThrow<{ id: string }>(
           `INSERT INTO contacts
-             (tenant_id, first_name, last_name, phone, email, channel, source_metadata, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+             (tenant_id, first_name, last_name, phone, email, channel, source_metadata, notes, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
            RETURNING id`,
           [
             site.tenant_id,
@@ -494,6 +508,7 @@ export class SitesService {
             "web_form",
             JSON.stringify(sourceMetadata),
             rawComment ? `Комментарий: ${rawComment}` : null,
+            systemUserId,
           ],
         );
         contactId = newContact.id;
@@ -618,8 +633,8 @@ export class SitesService {
       const deal = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, title, description,
-            budget, currency, custom_fields, source_metadata, position)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)
+            budget, currency, custom_fields, source_metadata, position, created_by, owner_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $12)
          RETURNING *`,
         [
           site.tenant_id,
@@ -633,13 +648,14 @@ export class SitesService {
           JSON.stringify(extraFields),
           JSON.stringify(dealSourceMetadata),
           (first?.position ?? 1) - 1,
+          systemUserId,
         ],
       );
 
       await tx.query(
-        `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id)
-         VALUES ($1, $2, NULL, $3)`,
-        [site.tenant_id, deal.id, stageId],
+        `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+         VALUES ($1, $2, NULL, $3, $4)`,
+        [site.tenant_id, deal.id, stageId, systemUserId],
       );
 
       // 8. Фиксация события в таймлайне активности клиента
@@ -651,6 +667,8 @@ export class SitesService {
           activityChannel: "web_form",
           activityKind: "form_submission",
           title: rawFormName ? `Заявка с формы «${rawFormName}»` : `Заявка с сайта «${site.name}»`,
+          authorId: systemUserId,
+          authorName: "Интеграция сайта",
           payload: {
             domain: site.site_url || "",
             pageUrl: pageUrl || "",
