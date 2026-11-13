@@ -385,7 +385,7 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
    */
   app.patch("/:id/items/:itemId", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
-    const { itemId } = z.object({ itemId: z.string().uuid() }).parse(request.params);
+    const { itemId } = z.object({ itemId: z.string().min(1) }).parse(request.params);
     const body = updateDealItemSchema.parse(request.body);
     const result = await service.updateDealItem(request.tenant_id, id, itemId, body);
     return reply.send({ data: result.item, totalBudget: result.totalBudget });
@@ -396,7 +396,7 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
    */
   app.delete("/:id/items/:itemId", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
-    const { itemId } = z.object({ itemId: z.string().uuid() }).parse(request.params);
+    const { itemId } = z.object({ itemId: z.string().min(1) }).parse(request.params);
     const result = await service.deleteDealItem(request.tenant_id, id, itemId);
     return reply.send({ success: true, totalBudget: result.totalBudget });
   });

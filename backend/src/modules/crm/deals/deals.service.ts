@@ -1428,8 +1428,95 @@ export class DealsService {
       );
 
       const items = rows.map(toDealItemDTO);
-      const totalBudget = items.reduce((acc, curr) => acc + curr.totalAmount, 0);
-      return { items, totalBudget };
+
+      // Also fetch works from linked repair orders
+      const repairWorks = await tx.query<{
+        id: string;
+        order_id: string;
+        ticket_number: string;
+        description: string;
+        quantity: string | number;
+        unit_price: string | number;
+        cost: string | number;
+        created_at: Date;
+      }>(
+        `SELECT rw.id, ro.id AS order_id, ro.ticket_number, rw.description, rw.quantity, rw.unit_price, rw.cost, rw.created_at
+         FROM repair_works rw
+         JOIN repair_orders ro ON ro.id = rw.repair_order_id AND ro.tenant_id = rw.tenant_id
+         WHERE ro.tenant_id = $1 AND ro.deal_id = $2 AND ro.deleted_at IS NULL
+         ORDER BY rw.created_at ASC`,
+        [tenantId, dealId],
+      );
+
+      const workItems: DealItemDTO[] = repairWorks.map((rw) => {
+        const qty = Number(rw.quantity ?? 1);
+        const cost = Number(rw.cost ?? 0);
+        const unitPrice = Number(rw.unit_price ?? 0) || (qty > 0 ? cost / qty : cost);
+        return {
+          id: `repair-work-${rw.id}`,
+          dealId,
+          itemType: "service",
+          itemId: rw.id,
+          name: rw.description,
+          description: `Работа по наряду ${rw.ticket_number}`,
+          sku: "",
+          price: unitPrice,
+          quantity: qty,
+          unit: "усл",
+          discountPercent: 0,
+          discountAmount: 0,
+          totalAmount: cost,
+          sortOrder: 100,
+          createdAt: rw.created_at instanceof Date ? rw.created_at.toISOString() : String(rw.created_at),
+        };
+      });
+
+      // Also fetch parts from linked repair orders
+      const repairParts = await tx.query<{
+        id: string;
+        order_id: string;
+        ticket_number: string;
+        name: string;
+        article: string;
+        quantity: string | number;
+        retail_price: string | number;
+        cost_price: string | number;
+        created_at: Date;
+      }>(
+        `SELECT rp.id, ro.id AS order_id, ro.ticket_number, rp.name, rp.article, rp.quantity, rp.retail_price, rp.cost_price, rp.created_at
+         FROM repair_parts rp
+         JOIN repair_orders ro ON ro.id = rp.repair_order_id AND ro.tenant_id = rp.tenant_id
+         WHERE ro.tenant_id = $1 AND ro.deal_id = $2 AND ro.deleted_at IS NULL
+         ORDER BY rp.created_at ASC`,
+        [tenantId, dealId],
+      );
+
+      const partItems: DealItemDTO[] = repairParts.map((rp) => {
+        const qty = Number(rp.quantity ?? 1);
+        const retail = Number(rp.retail_price ?? 0);
+        const total = retail * qty;
+        return {
+          id: `repair-part-${rp.id}`,
+          dealId,
+          itemType: "product",
+          itemId: rp.id,
+          name: rp.name,
+          description: `Запчасть по наряду ${rp.ticket_number}`,
+          sku: rp.article ?? "",
+          price: retail,
+          quantity: qty,
+          unit: "шт",
+          discountPercent: 0,
+          discountAmount: 0,
+          totalAmount: total,
+          sortOrder: 200,
+          createdAt: rp.created_at instanceof Date ? rp.created_at.toISOString() : String(rp.created_at),
+        };
+      });
+
+      const allItems = [...items, ...workItems, ...partItems];
+      const totalBudget = allItems.reduce((acc, curr) => acc + curr.totalAmount, 0);
+      return { items: allItems, totalBudget };
     });
   }
 
@@ -1498,6 +1585,9 @@ export class DealsService {
     itemId: string,
     payload: UpdateDealItemPayload,
   ): Promise<{ item: DealItemDTO; totalBudget: number }> {
+    if (itemId.startsWith("repair-")) {
+      throw new ValidationError("Услуги и запчасти из наряда редактируются в наряде СЦ", {});
+    }
     return withTenant(tenantId, async (tx) => {
       const existing = await tx.queryOne<DealItemRow>(
         `SELECT * FROM deal_items WHERE tenant_id = $1 AND deal_id = $2 AND id = $3`,
@@ -1563,6 +1653,9 @@ export class DealsService {
     dealId: string,
     itemId: string,
   ): Promise<{ success: boolean; totalBudget: number }> {
+    if (itemId.startsWith("repair-")) {
+      throw new ValidationError("Услуги и запчасти из наряда удаляются в наряде СЦ", {});
+    }
     return withTenant(tenantId, async (tx) => {
       await tx.query(
         `DELETE FROM deal_items WHERE tenant_id = $1 AND deal_id = $2 AND id = $3`,
