@@ -160,121 +160,129 @@ export class FinanceService {
   // ---------------------------------------------------------------------------
 
   async categories(tenantId: string, type?: "income" | "expense"): Promise<FinanceCategoryDTO[]> {
-    interface CatRow {
-      id: string;
-      name: string;
-      type: "income" | "expense";
-      parent_id: string | null;
-      created_at: Date | string;
-    }
-    const rows = await query<CatRow>(
-      `SELECT id, name, type, parent_id, created_at
-       FROM finance_categories
-       WHERE tenant_id = $1 AND ($2::text IS NULL OR type = $2)
-       ORDER BY name ASC`,
-      [tenantId, type ?? null],
-    );
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      type: r.type,
-      parentId: r.parent_id,
-      createdAt: iso(r.created_at),
-    }));
+    return withTenant(tenantId, async (tx) => {
+      interface CatRow {
+        id: string;
+        name: string;
+        type: "income" | "expense";
+        parent_id: string | null;
+        created_at: Date | string;
+      }
+      const rows = await tx.query<CatRow>(
+        `SELECT id, name, type, parent_id, created_at
+         FROM finance_categories
+         WHERE tenant_id = $1 AND ($2::text IS NULL OR type = $2)
+         ORDER BY name ASC`,
+        [tenantId, type ?? null],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        parentId: r.parent_id,
+        createdAt: iso(r.created_at),
+      }));
+    });
   }
 
   async createCategory(tenantId: string, p: CreateCategoryPayload): Promise<FinanceCategoryDTO> {
-    interface CatRow {
-      id: string;
-      name: string;
-      type: "income" | "expense";
-      parent_id: string | null;
-      created_at: Date | string;
-    }
-    const parentId = p.parent_id && p.parent_id.trim().length > 0 ? p.parent_id : null;
-    const row = await queryOne<CatRow>(
-      `INSERT INTO finance_categories (tenant_id, name, type, parent_id)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, name, type, parent_id, created_at`,
-      [tenantId, p.name.trim(), p.type, parentId],
-    );
-    if (!row) throw new Error("Category creation failed");
-    return {
-      id: row.id,
-      name: row.name,
-      type: row.type,
-      parentId: row.parent_id,
-      createdAt: iso(row.created_at),
-    };
+    return withTenant(tenantId, async (tx) => {
+      interface CatRow {
+        id: string;
+        name: string;
+        type: "income" | "expense";
+        parent_id: string | null;
+        created_at: Date | string;
+      }
+      const parentId = p.parent_id && p.parent_id.trim().length > 0 ? p.parent_id : null;
+      const row = await tx.queryOne<CatRow>(
+        `INSERT INTO finance_categories (tenant_id, name, type, parent_id)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, name, type, parent_id, created_at`,
+        [tenantId, p.name.trim(), p.type, parentId],
+      );
+      if (!row) throw new Error("Category creation failed");
+      return {
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        parentId: row.parent_id,
+        createdAt: iso(row.created_at),
+      };
+    });
   }
 
   async updateCategory(tenantId: string, id: string, p: UpdateCategoryPayload): Promise<FinanceCategoryDTO> {
-    interface CatRow {
-      id: string;
-      name: string;
-      type: "income" | "expense";
-      parent_id: string | null;
-      created_at: Date | string;
-    }
-    const assignments: string[] = [];
-    const params: (string | null)[] = [tenantId, id];
+    return withTenant(tenantId, async (tx) => {
+      interface CatRow {
+        id: string;
+        name: string;
+        type: "income" | "expense";
+        parent_id: string | null;
+        created_at: Date | string;
+      }
+      const assignments: string[] = [];
+      const params: (string | null)[] = [tenantId, id];
 
-    if (p.name !== undefined) {
-      params.push(p.name.trim());
-      assignments.push(`name = $${params.length}`);
-    }
-    if (p.type !== undefined) {
-      params.push(p.type);
-      assignments.push(`type = $${params.length}`);
-    }
-    if (p.parent_id !== undefined) {
-      const parentId = p.parent_id && p.parent_id.trim().length > 0 ? p.parent_id : null;
-      params.push(parentId);
-      assignments.push(`parent_id = $${params.length}`);
-    }
+      if (p.name !== undefined) {
+        params.push(p.name.trim());
+        assignments.push(`name = $${params.length}`);
+      }
+      if (p.type !== undefined) {
+        params.push(p.type);
+        assignments.push(`type = $${params.length}`);
+      }
+      if (p.parent_id !== undefined) {
+        const parentId = p.parent_id && p.parent_id.trim().length > 0 ? p.parent_id : null;
+        params.push(parentId);
+        assignments.push(`parent_id = $${params.length}`);
+      }
 
-    if (assignments.length === 0) {
-      const existing = await queryOne<CatRow>(
-        `SELECT id, name, type, parent_id, created_at FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, id],
+      if (assignments.length === 0) {
+        const existing = await tx.queryOne<CatRow>(
+          `SELECT id, name, type, parent_id, created_at FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, id],
+        );
+        if (!existing) throw new NotFoundError("Category not found");
+        return {
+          id: existing.id,
+          name: existing.name,
+          type: existing.type,
+          parentId: existing.parent_id,
+          createdAt: iso(existing.created_at),
+        };
+      }
+
+      const row = await tx.queryOne<CatRow>(
+        `UPDATE finance_categories
+         SET ${assignments.join(", ")}
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING id, name, type, parent_id, created_at`,
+        params,
       );
-      if (!existing) throw new NotFoundError("Category not found");
+      if (!row) throw new NotFoundError("Category not found");
       return {
-        id: existing.id,
-        name: existing.name,
-        type: existing.type,
-        parentId: existing.parent_id,
-        createdAt: iso(existing.created_at),
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        parentId: row.parent_id,
+        createdAt: iso(row.created_at),
       };
-    }
-
-    const row = await queryOne<CatRow>(
-      `UPDATE finance_categories
-       SET ${assignments.join(", ")}
-       WHERE tenant_id = $1 AND id = $2
-       RETURNING id, name, type, parent_id, created_at`,
-      params,
-    );
-    if (!row) throw new NotFoundError("Category not found");
-    return {
-      id: row.id,
-      name: row.name,
-      type: row.type,
-      parentId: row.parent_id,
-      createdAt: iso(row.created_at),
-    };
+    });
   }
 
   async deleteCategory(tenantId: string, id: string): Promise<boolean> {
-    await query(
-      `UPDATE transactions SET category_id = NULL WHERE tenant_id = $1 AND category_id = $2`,
-      [tenantId, id],
-    );
-    const row = await queryOne<{ id: string }>(
-      `DELETE FROM finance_categories WHERE tenant_id = $1 AND id = $2 RETURNING id`,
-      [tenantId, id],
-    );
-    return row !== null;
+    return withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `UPDATE transactions SET category_id = NULL WHERE tenant_id = $1 AND category_id = $2`,
+        [tenantId, id],
+      );
+      const row = await tx.queryOne<{ id: string }>(
+        `DELETE FROM finance_categories WHERE tenant_id = $1 AND id = $2 RETURNING id`,
+        [tenantId, id],
+      );
+      return row !== null;
+    });
   }
 }
 
