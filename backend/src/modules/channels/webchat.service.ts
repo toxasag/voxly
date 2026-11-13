@@ -427,10 +427,26 @@ export class WebchatService {
         : (typeof creds.proactiveDelaySeconds === "string" && parseInt(creds.proactiveDelaySeconds, 10) > 0
             ? parseInt(creds.proactiveDelaySeconds, 10)
             : 10);
+    const locale: "ru" | "en" =
+      creds.locale === "en" || creds.language === "en" ? "en" : "ru";
+
+    const defaultTitle = locale === "en" ? (tenant?.name ?? "Chat with us") : (tenant?.name ?? "Онлайн-консультант");
+    const defaultGreeting =
+      locale === "en"
+        ? "Hello! How can we help you today? Feel free to ask any question."
+        : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.";
+    const defaultPlaceholder = locale === "en" ? "Type your message..." : "Введите ваш вопрос...";
+    const defaultStatusText = locale === "en" ? "Online" : "Онлайн";
+    const defaultBadgeText = locale === "en" ? "Ask a question" : "Задайте вопрос";
+    const defaultProactiveMessage =
+      locale === "en"
+        ? "Hello! I am online, feel free to ask any questions!"
+        : "Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.";
+
     const proactiveMessage =
       typeof creds.proactiveMessage === "string" && creds.proactiveMessage.trim().length > 0
         ? creds.proactiveMessage.trim()
-        : "Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.";
+        : defaultProactiveMessage;
 
     const badgeEnabled = creds.badgeEnabled !== undefined ? Boolean(creds.badgeEnabled) : true;
 
@@ -449,7 +465,7 @@ export class WebchatService {
     }
 
     if (badgeTexts.length === 0) {
-      badgeTexts = ["Задайте вопрос"];
+      badgeTexts = [defaultBadgeText];
     }
 
     const badgeRotateIntervalSec =
@@ -541,18 +557,6 @@ export class WebchatService {
         : customMascotDirections
           ? "custom"
           : "drone";
-
-    const locale: "ru" | "en" =
-      creds.locale === "en" || creds.language === "en" ? "en" : "ru";
-
-    const defaultTitle = locale === "en" ? (tenant?.name ?? "Chat with us") : (tenant?.name ?? "Онлайн-консультант");
-    const defaultGreeting =
-      locale === "en"
-        ? "Hello! How can we help you today? Feel free to ask any question."
-        : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.";
-    const defaultPlaceholder = locale === "en" ? "Type your message..." : "Введите ваш вопрос...";
-    const defaultStatusText = locale === "en" ? "Online" : "Онлайн";
-    const defaultBadgeText = locale === "en" ? "Ask a question" : "Задайте вопрос";
 
     return {
       id: account.id,
