@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
+  Globe,
   ArrowLeft,
   ArrowUpDown,
   Bot,
@@ -224,8 +225,15 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   const [theme, setTheme] = useState<"dark" | "light" | "auto">(
     initialCreds.theme === "light" ? "light" : initialCreds.theme === "dark" ? "dark" : "auto",
   );
+  const [locale, setLocale] = useState<"ru" | "en">(
+    initialCreds.locale === "en" || initialCreds.language === "en" ? "en" : "ru",
+  );
   const [title, setTitle] = useState<string>(
-    typeof initialCreds.title === "string" ? initialCreds.title : "Онлайн-консультант",
+    typeof initialCreds.title === "string"
+      ? initialCreds.title
+      : initialCreds.locale === "en" || initialCreds.language === "en"
+        ? "Chat with us"
+        : "Онлайн-консультант",
   );
   const [greeting, setGreeting] = useState<string>(
     typeof initialCreds.greeting === "string"
@@ -495,6 +503,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
       {
         id: account.id,
         credentials: {
+          locale,
+          language: locale,
           accentColor,
           theme,
           title,
@@ -1333,6 +1343,126 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
               <p className="mt-1 text-[11px] text-[#888888]">
                 Отображается в шапке окна чата и перед сообщениями посетителям сайта.
               </p>
+            </div>
+          </div>
+
+          {/* Язык и локализация виджета (i18n) */}
+          <div className="space-y-4 rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Globe className="h-4 w-4 text-[#4a38f5]" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
+                  Язык интерфейса виджета
+                </h2>
+              </div>
+              <span className="rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-2 py-0.5 text-[11px] font-mono font-medium text-[#666666]">
+                {locale === "en" ? "English (EN)" : "Русский (RU)"}
+              </span>
+            </div>
+            <p className="text-xs text-[#666666]">
+              Определяет язык всех служебных кнопок, подсказок, системных уведомлений и окон на клиентском сайте.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Русский */}
+              <button
+                type="button"
+                onClick={() => {
+                  setLocale("ru");
+                  if (title === "Chat with us") setTitle("Онлайн-консультант");
+                  if (greeting === "Hello! How can we help you today? Feel free to ask any question.") {
+                    setGreeting("Здравствуйте! Чем я могу вам помочь?");
+                  }
+                  if (placeholder === "Type your message...") setPlaceholder("Напишите сообщение...");
+                  if (statusText === "Online") setStatusText("Онлайн");
+                  if (badgeTextsInput.trim() === "Ask a question") setBadgeTextsInput("Задайте вопрос");
+                }}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl border p-3 text-left transition-all cursor-pointer",
+                  locale === "ru"
+                    ? "border-[#4a38f5] bg-white text-[#111111] ring-2 ring-[#4a38f5] shadow-xs"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f5f5f5] text-base">
+                  🇷🇺
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[#111111]">Русский</span>
+                    {locale === "ru" && <Check className="h-3.5 w-3.5 text-[#4a38f5] stroke-[3]" />}
+                  </div>
+                  <span className="text-[11px] text-[#888888] leading-tight block mt-0.5">
+                    Стандартные фразы RU
+                  </span>
+                </div>
+              </button>
+
+              {/* English */}
+              <button
+                type="button"
+                onClick={() => {
+                  setLocale("en");
+                  if (title === "Онлайн-консультант" || !title) setTitle("Chat with us");
+                  if (greeting === "Здравствуйте! Чем я могу вам помочь?" || greeting === "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу." || !greeting) {
+                    setGreeting("Hello! How can we help you today? Feel free to ask any question.");
+                  }
+                  if (placeholder === "Напишите сообщение..." || placeholder === "Введите ваш вопрос..." || !placeholder) {
+                    setPlaceholder("Type your message...");
+                  }
+                  if (statusText === "Онлайн" || !statusText) setStatusText("Online");
+                  if (badgeTextsInput.trim() === "Задайте вопрос" || !badgeTextsInput.trim()) setBadgeTextsInput("Ask a question");
+                }}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl border p-3 text-left transition-all cursor-pointer",
+                  locale === "en"
+                    ? "border-[#4a38f5] bg-white text-[#111111] ring-2 ring-[#4a38f5] shadow-xs"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f5f5f5] text-base">
+                  🇬🇧
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[#111111]">English</span>
+                    {locale === "en" && <Check className="h-3.5 w-3.5 text-[#4a38f5] stroke-[3]" />}
+                  </div>
+                  <span className="text-[11px] text-[#888888] leading-tight block mt-0.5">
+                    English widget UI (EN)
+                  </span>
+                </div>
+              </button>
+            </div>
+
+            <div className="rounded-lg border border-[#fef08a] bg-[#fefce8] p-3 text-xs text-[#854d0e] flex items-center justify-between gap-2">
+              <span>
+                {locale === "en"
+                  ? "Widgets with locale: 'en' display English chrome, consent notices, and pre-chat modals on client websites."
+                  : "Виджеты с локалью 'ru' отображают русский интерфейс, согласие на обработку данных и модалы."}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (locale === "en") {
+                    setTitle("Chat with us");
+                    setGreeting("Hello! How can we help you today? Feel free to ask any question.");
+                    setPlaceholder("Type your message...");
+                    setStatusText("Online");
+                    setBadgeTextsInput("Ask a question");
+                  } else {
+                    setTitle("Онлайн-консультант");
+                    setGreeting("Здравствуйте! Чем я могу вам помочь?");
+                    setPlaceholder("Напишите сообщение...");
+                    setStatusText("Онлайн");
+                    setBadgeTextsInput("Задайте вопрос");
+                  }
+                  toast.success(locale === "en" ? "English text templates applied" : "Русские шаблоны текста применены");
+                }}
+                className="shrink-0 font-medium text-[#4a38f5] underline hover:text-[#3d2ee0]"
+              >
+                {locale === "en" ? "Reset to English defaults" : "Сбросить к русским фразам"}
+              </button>
             </div>
           </div>
 
@@ -2567,7 +2697,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                           className="max-w-[80%] rounded-2xl rounded-tr-sm p-2.5 leading-relaxed text-white shadow-sm"
                           style={{ backgroundColor: accentColor }}
                         >
-                          Здравствуйте! Хочу уточнить детали тарифа.
+                          {locale === "en" ? "Hello! I would like to learn more about the pricing plans." : "Здравствуйте! Хочу уточнить детали тарифа."}
                         </div>
                       </div>
                     </div>
@@ -2626,7 +2756,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       title="Нажмите, чтобы открыть чат"
                     >
                       <span className="text-center">
-                        {parsedBadgeTexts[previewBadgeIdx % parsedBadgeTexts.length] || "Задайте вопрос"}
+                        {parsedBadgeTexts[previewBadgeIdx % parsedBadgeTexts.length] || (locale === "en" ? "Ask a question" : "Задайте вопрос")}
                       </span>
                       {/* Стрелочка speech-bubble */}
                       <span

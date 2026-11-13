@@ -33,6 +33,8 @@ export interface WebchatAccountInfo {
   botName: string;
   isAiEnabled: boolean;
   status: string;
+  locale?: "ru" | "en";
+  language?: "ru" | "en";
   accentColor?: string;
   theme?: "dark" | "light";
   title?: string;
@@ -540,25 +542,39 @@ export class WebchatService {
           ? "custom"
           : "drone";
 
+    const locale: "ru" | "en" =
+      creds.locale === "en" || creds.language === "en" ? "en" : "ru";
+
+    const defaultTitle = locale === "en" ? (tenant?.name ?? "Chat with us") : (tenant?.name ?? "Онлайн-консультант");
+    const defaultGreeting =
+      locale === "en"
+        ? "Hello! How can we help you today? Feel free to ask any question."
+        : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.";
+    const defaultPlaceholder = locale === "en" ? "Type your message..." : "Введите ваш вопрос...";
+    const defaultStatusText = locale === "en" ? "Online" : "Онлайн";
+    const defaultBadgeText = locale === "en" ? "Ask a question" : "Задайте вопрос";
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
       label: account.label,
-      tenantName: tenant?.name ?? "Онлайн-консультант",
-      botName: agent?.name ?? "AI-ассистент",
+      locale,
+      language: locale,
+      tenantName: tenant?.name ?? (locale === "en" ? "Online Assistant" : "Онлайн-консультант"),
+      botName: agent?.name ?? (locale === "en" ? "AI Assistant" : "AI-ассистент"),
       isAiEnabled: agent !== null && agent.status === "active",
       status: account.status,
       accentColor: typeof creds.accentColor === "string" ? creds.accentColor : "#f59e0b",
       theme: creds.theme === "light" ? "light" : "dark",
-      title: typeof creds.title === "string" && creds.title.trim().length > 0 ? creds.title.trim() : (tenant?.name ?? "Онлайн-консультант"),
-      greeting: typeof creds.greeting === "string" && creds.greeting.trim().length > 0 ? creds.greeting.trim() : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.",
-      placeholder: typeof creds.placeholder === "string" ? creds.placeholder : "Введите ваш вопрос...",
+      title: typeof creds.title === "string" && creds.title.trim().length > 0 ? creds.title.trim() : defaultTitle,
+      greeting: typeof creds.greeting === "string" && creds.greeting.trim().length > 0 ? creds.greeting.trim() : defaultGreeting,
+      placeholder: typeof creds.placeholder === "string" && creds.placeholder.trim().length > 0 ? creds.placeholder.trim() : defaultPlaceholder,
       position: creds.position === "bottom-left" ? "bottom-left" : "bottom-right",
       launcherStyle: creds.launcherStyle === "pill" ? "pill" : "circle",
       statusText:
         typeof creds.statusText === "string" && creds.statusText.trim().length > 0
           ? creds.statusText.trim()
-          : "Онлайн",
+          : defaultStatusText,
       showMessengerBanner,
       messengerBannerMode,
       singleTarget,
@@ -577,7 +593,7 @@ export class WebchatService {
       proactiveDelaySeconds,
       proactiveMessage,
       badgeEnabled,
-      badgeText: badgeTexts[0] || "Задайте вопрос",
+      badgeText: badgeTexts[0] || defaultBadgeText,
       badgeTexts,
       badgeRotateIntervalSec,
       badgeIntervalSeconds: badgeRotateIntervalSec,

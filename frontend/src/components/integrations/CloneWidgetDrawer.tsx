@@ -55,6 +55,7 @@ export function CloneWidgetDrawer({
   const [siteDomain, setSiteDomain] = useState("");
   const [widgetLabel, setWidgetLabel] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedLocale, setSelectedLocale] = useState<"ru" | "en">("ru");
   const [domainError, setDomainError] = useState<string | null>(null);
 
   const domainInputRef = useRef<HTMLInputElement>(null);
@@ -69,6 +70,8 @@ export function CloneWidgetDrawer({
       setSiteDomain("");
       setWidgetLabel(`${sourceAccount.label} (Копия)`);
       setSelectedAgentId(sourceAccount.boundAgentId ?? "");
+      const sCreds = (sourceAccount.credentials ?? {}) as Record<string, unknown>;
+      setSelectedLocale(sCreds.locale === "en" || sCreds.language === "en" ? "en" : "ru");
       setDomainError(null);
 
       // Автофокус на поле ввода домена после монтирования/анимации шторки
@@ -125,6 +128,7 @@ export function CloneWidgetDrawer({
         external_id: normalizedDomain,
         label: widgetLabel.trim() || `${sourceAccount.label} (Копия)`,
         agent_id: selectedAgentId ? selectedAgentId : null,
+        locale: selectedLocale,
       },
       {
         onSuccess: (clonedAccount) => {
@@ -293,6 +297,42 @@ export function CloneWidgetDrawer({
             />
             <p className="mt-1 text-xs text-[#888888]">
               Название отображается в списке виджетов, чатах и карточках сделок.
+            </p>
+          </div>
+
+          {/* Язык интерфейса виджета */}
+          <div>
+            <label className="block text-xs font-semibold text-[#111111]">
+              Язык интерфейса нового виджета
+            </label>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedLocale("ru")}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-lg border py-2 text-xs font-medium transition-colors",
+                  selectedLocale === "ru"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <span>🇷🇺</span> Русский (RU)
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedLocale("en")}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-lg border py-2 text-xs font-medium transition-colors",
+                  selectedLocale === "en"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <span>🇬🇧</span> English (EN)
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-[#888888]">
+              Язык служебных надписей, кнопок и системных уведомлений в чате на сайте.
             </p>
           </div>
 

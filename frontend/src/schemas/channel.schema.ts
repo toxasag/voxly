@@ -38,6 +38,38 @@ export const updateChannelAccountSchema = z
 
 export type UpdateChannelAccountValues = z.infer<typeof updateChannelAccountSchema>;
 
+export const widgetLocaleSchema = z.enum(["ru", "en"]);
+export type WidgetLocale = z.infer<typeof widgetLocaleSchema>;
+
+export const WIDGET_DEFAULT_STRINGS: Record<
+  WidgetLocale,
+  {
+    title: string;
+    greeting: string;
+    placeholder: string;
+    statusText: string;
+    badgeText: string;
+    disclaimer: string;
+  }
+> = {
+  ru: {
+    title: "Онлайн-консультант",
+    greeting: "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.",
+    placeholder: "Введите ваш вопрос...",
+    statusText: "Онлайн",
+    badgeText: "Задайте вопрос",
+    disclaimer: "Нажимая «Отправить», вы даете согласие на обработку персональных данных.",
+  },
+  en: {
+    title: "Chat with us",
+    greeting: "Hello! How can we help you today? Feel free to ask any question.",
+    placeholder: "Type your message...",
+    statusText: "Online",
+    badgeText: "Ask a question",
+    disclaimer: "By clicking «Send», you agree to the processing of personal data.",
+  },
+};
+
 /**
  * Клонирование существующего виджета под новый сайт.
  * Домен очищается и валидируется, название по умолчанию формируется с суффиксом (Копия).
@@ -57,6 +89,7 @@ export const cloneChannelAccountSchema = z.object({
       return cleaned.length > 0;
     }, "Укажите корректный адрес сайта"),
   agent_id: z.string().uuid("Некорректный ID агента").nullable().optional(),
+  locale: widgetLocaleSchema.optional(),
 });
 
 export type CloneChannelAccountValues = z.infer<typeof cloneChannelAccountSchema>;
