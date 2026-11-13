@@ -201,7 +201,10 @@ export const updateRepairSchema = z.object({
 
 export const createRepairServiceCatalogSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
+  description: z.string().max(2000).optional(),
   default_price: z.number().nonnegative("Price cannot be negative").default(0),
+  unit: z.string().max(30).optional(),
+  duration_minutes: z.number().int().nonnegative().nullable().optional(),
 });
 export type CreateRepairServiceCatalogPayload = z.infer<typeof createRepairServiceCatalogSchema>;
 
@@ -209,14 +212,20 @@ export interface RepairServiceCatalogRow {
   id: string;
   tenant_id: string;
   name: string;
+  description?: string | null;
   default_price: string;
+  unit?: string | null;
+  duration_minutes?: number | null;
   created_at: Date | string;
 }
 
 export interface RepairServiceCatalogItemDTO {
   id: string;
   name: string;
+  description: string;
   defaultPrice: number;
+  unit: string;
+  durationMinutes: number | null;
   createdAt: string;
 }
 
@@ -251,6 +260,7 @@ export const createPartSchema = z.object({
   retail_price: z.number().nonnegative("Retail price cannot be negative"),
   cost_price: z.number().nonnegative("Cost price cannot be negative").default(0),
   status: z.enum(["used", "reserved", "needs_purchase"]).optional().default("used"),
+  add_to_purchase_request: z.boolean().optional().default(false),
 });
 
 export const updatePartSchema = createPartSchema.partial();
@@ -324,6 +334,7 @@ export interface RepairOrderRow {
   deal_notes?: string | null;
   deal_budget?: string | number | null;
   deal_stage_name?: string | null;
+  deal_payment_status?: string | null;
   company_id?: string | null;
   company_name?: string | null;
   company_inn?: string | null;
@@ -452,6 +463,7 @@ export interface RepairOrderDTO {
   dealNote?: string | null;
   dealBudget?: number | null;
   dealStageName?: string | null;
+  dealPaymentStatus?: RepairPaymentStatus | null;
   companyId?: string | null;
   companyName?: string | null;
   companyInn?: string | null;
@@ -519,6 +531,10 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
     dealNote: row.deal_notes ?? null,
     dealBudget: row.deal_budget !== undefined && row.deal_budget !== null ? Number(row.deal_budget) : null,
     dealStageName: row.deal_stage_name ?? null,
+    dealPaymentStatus:
+      (row.deal_payment_status as RepairPaymentStatus) ||
+      (row.payment_status as RepairPaymentStatus) ||
+      "unpaid",
     companyId: row.company_id ?? null,
     companyName: row.company_name ?? null,
     companyInn: row.company_inn ?? null,
@@ -716,6 +732,26 @@ export interface EquipmentSearchSerialResultDTO {
   historyCount: number;
   history: EquipmentHistoryItemDTO[];
 }
+
+export interface DealActDTO {
+  id: string;
+  ticketNumber: string;
+  dealId: string | null;
+  equipmentType: string;
+  equipmentBrand: string;
+  equipmentModel: string;
+  equipmentSerial: string;
+  customerName: string;
+  customerPhone: string;
+  status: string;
+  paymentStatus: string;
+  worksTotal: number;
+  partsTotal: number;
+  totalAmount: number;
+  isCurrent: boolean;
+  createdAt: string;
+}
+
 
 /** Sums works and parts into the order's money breakdown. */
 export function calculateTotals(

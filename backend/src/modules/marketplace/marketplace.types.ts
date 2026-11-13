@@ -58,6 +58,8 @@ export interface MarketplaceModuleDTO {
    * разошлось бы с бэкендом при первом изменении состава.
    */
   isBaseModule: boolean;
+  included_in_plan?: boolean;
+  includedInPlan?: boolean;
   category: string;
   icon: string;
   trialDays: number;

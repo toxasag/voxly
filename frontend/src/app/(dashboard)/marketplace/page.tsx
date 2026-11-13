@@ -25,6 +25,8 @@ import {
   ToggleRight,
   Users,
   Wrench,
+  Boxes,
+  PackagePlus,
   type LucideIcon,
 } from "lucide-react";
 import { Guard } from "@/components/shared/Guard";
@@ -59,6 +61,8 @@ const ICONS: Record<string, LucideIcon> = {
   Store,
   Instagram,
   Puzzle,
+  Boxes,
+  PackagePlus,
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -71,6 +75,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 /** Подпись тарифа: модель расчёта различается, одной строкой не описать. */
 function priceCaption(module: MarketplaceModuleDTO): string {
+  if (module.slug === "products_services") {
+    return "0 ₽/мес — включено в тариф Базовая CRM";
+  }
   if (module.isFreeCustomPlan || (module.basePrice === 0 && module.unitPrice === 0)) {
     if (module.billingKind === "per_seat") {
       return "0 ₽/мес — все пользователи включены";
@@ -242,6 +249,11 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
           <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
             <Check className="h-3 w-3" />
             Включено в ваш тариф
+          </span>
+        ) : module.slug === "products_services" ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+            <Check className="h-3 w-3" />
+            Базовый тариф
           </span>
         ) : module.includedUnits > 0 ? (
           <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">

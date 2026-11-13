@@ -208,7 +208,22 @@ export async function syncMaxDialogHistory(opts: {
     for (const msg of target.messages) {
       const text = (msg.text || "").trim();
       if (!text) continue;
-      const msgDate = msg.date ? new Date(msg.date * 1000) : new Date();
+
+      const rawDate: unknown = msg.date;
+      let msgDate: Date;
+      if (typeof rawDate === "number" && rawDate > 0) {
+        msgDate = new Date(rawDate > 1e11 ? rawDate : rawDate * 1000);
+      } else if (typeof rawDate === "string" && rawDate.trim()) {
+        const num = Number(rawDate);
+        if (!isNaN(num) && num > 0) {
+          msgDate = new Date(num > 1e11 ? num : num * 1000);
+        } else {
+          const d = new Date(rawDate);
+          msgDate = isNaN(d.getTime()) ? new Date() : d;
+        }
+      } else {
+        msgDate = new Date();
+      }
 
       let attachmentUrl: string | null = null;
       let attachmentType: string | null = null;
@@ -232,17 +247,32 @@ export async function syncMaxDialogHistory(opts: {
       const source = msg.out ? "manager" : "client";
       const direction = msg.out ? "outbound" : "inbound";
       const senderName = msg.out ? "Менеджер" : (target.firstName || opts.senderName || "Клиент MAX");
+      const externalMsgId = msg.id != null ? String(msg.id) : null;
 
       const existing = await queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
-           AND content = $3
            AND (
-             (created_at >= $4::timestamptz - interval '60 seconds' AND created_at <= $4::timestamptz + interval '60 seconds')
-             OR (direction = $5 AND created_at > now() - interval '2 minutes')
+             ($3::text IS NOT NULL AND metadata->>'external_message_id' = $3)
+             OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
+             OR (
+               content = $5 AND direction = $6 AND channel = 'max'
+               AND (
+                 (created_at >= $7::timestamptz - interval '12 hours' AND created_at <= $7::timestamptz + interval '12 hours')
+                 OR created_at >= now() - interval '24 hours'
+               )
+             )
            )
          LIMIT 1`,
-        [opts.tenantId, opts.dealId, text, msgDate.toISOString(), direction],
+        [
+          opts.tenantId,
+          opts.dealId,
+          externalMsgId,
+          attachmentUrl,
+          text,
+          direction,
+          msgDate.toISOString(),
+        ],
       );
 
       if (existing) {
@@ -261,8 +291,8 @@ export async function syncMaxDialogHistory(opts: {
 
       const [inserted] = await query<{ id: string }>(
         `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11)
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11::jsonb, $12)
          RETURNING id`,
         [
           opts.tenantId,
@@ -275,6 +305,7 @@ export async function syncMaxDialogHistory(opts: {
           msg.out ? "sent" : "neutral",
           attachmentUrl,
           attachmentType,
+          JSON.stringify(externalMsgId ? { external_message_id: externalMsgId } : {}),
           msgDate.toISOString(),
         ],
       );

@@ -15,6 +15,7 @@ import {
   Sparkles,
   GitMerge,
   Boxes,
+  PackagePlus,
   type LucideIcon,
 } from "lucide-react";
 
@@ -84,12 +85,11 @@ export const MODULE_NAV: NavItem[] = [
     permission: entry.permission,
   })),
   {
-    label: "Склад",
+    label: "Услуги/Товары",
     href: "/warehouse",
-    icon: Boxes,
+    icon: PackagePlus,
     always: false,
-    moduleSlug: "service_center",
-    permission: "service_center:read",
+    moduleSlug: "products_services",
   },
 ];
 
@@ -190,6 +190,9 @@ export function isNavItemVisible(
   }
 
   if (item.always || item.moduleSlug === undefined) return true;
+  if (item.href === "/warehouse") {
+    return installedSlugs.has("products_services") || installedSlugs.has("service_center");
+  }
   return installedSlugs.has(item.moduleSlug);
 }
 

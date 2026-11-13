@@ -454,3 +454,73 @@ export interface DealContactHistoryDTO {
   timeline: DealContactTimelineItemDTO[];
 }
 
+export const createDealItemSchema = z.object({
+  item_type: z.enum(["product", "service"]),
+  item_id: z.string().uuid().nullable().optional(),
+  name: z.string().min(1, "Наименование обязательно").max(255),
+  description: z.string().max(2000).optional().default(""),
+  sku: z.string().max(100).optional().default(""),
+  price: z.number().nonnegative("Цена не может быть отрицательной").default(0),
+  quantity: z.number().positive("Количество должно быть больше 0").default(1),
+  unit: z.string().max(30).optional().default("шт"),
+  discount_percent: z.number().min(0).max(100).optional().default(0),
+  discount_amount: z.number().nonnegative().optional().default(0),
+  sort_order: z.number().int().optional().default(0),
+});
+
+export type CreateDealItemPayload = z.infer<typeof createDealItemSchema>;
+
+export const updateDealItemSchema = z.object({
+  name: z.string().min(1).max(255).optional(),
+  description: z.string().max(2000).optional(),
+  sku: z.string().max(100).optional(),
+  price: z.number().nonnegative().optional(),
+  quantity: z.number().positive().optional(),
+  unit: z.string().max(30).optional(),
+  discount_percent: z.number().min(0).max(100).optional(),
+  discount_amount: z.number().nonnegative().optional(),
+  sort_order: z.number().int().optional(),
+});
+
+export type UpdateDealItemPayload = z.infer<typeof updateDealItemSchema>;
+
+export interface DealItemRow {
+  id: string;
+  tenant_id: string;
+  deal_id: string;
+  item_type: "product" | "service";
+  item_id: string | null;
+  name: string;
+  description: string | null;
+  sku: string | null;
+  price: string | number;
+  quantity: string | number;
+  unit: string | null;
+  discount_percent: string | number;
+  discount_amount: string | number;
+  total_amount: string | number;
+  sort_order: number;
+  created_at: Date | string;
+  updated_at?: Date | string;
+}
+
+export interface DealItemDTO {
+  id: string;
+  dealId: string;
+  itemType: "product" | "service";
+  itemId: string | null;
+  name: string;
+  description: string;
+  sku: string;
+  price: number;
+  quantity: number;
+  unit: string;
+  discountPercent: number;
+  discountAmount: number;
+  totalAmount: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+

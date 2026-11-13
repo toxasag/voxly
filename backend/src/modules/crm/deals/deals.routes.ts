@@ -4,10 +4,12 @@ import { DealsService } from "./deals.service.js";
 import { DealMessagingService } from "./deal-messaging.service.js";
 import { mediaEnrichmentService } from "../media/media-enrichment.service.js";
 import {
+  createDealItemSchema,
   createDealMessageSchema,
   createDealSchema,
   createStageSchema,
   moveDealStageSchema,
+  updateDealItemSchema,
   updateDealSchema,
   updateStageSchema,
 } from "./deals.types.js";
@@ -353,5 +355,49 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.status(201).send({ data: feedback });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Deal Items (Услуги/Товары в сделке)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Список прикрепленных товаров и услуг к сделке + расчет итоговой суммы.
+   */
+  app.get("/:id/items", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await service.listDealItems(request.tenant_id, id);
+    return reply.send({ data: result.items, totalBudget: result.totalBudget });
+  });
+
+  /**
+   * Добавление позиции (товара или услуги) в сделку с автопересчетом бюджета сделки.
+   */
+  app.post("/:id/items", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = createDealItemSchema.parse(request.body);
+    const result = await service.addDealItem(request.tenant_id, id, body);
+    return reply.status(201).send({ data: result.item, totalBudget: result.totalBudget });
+  });
+
+  /**
+   * Обновление количества, цены или скидки позиции в сделке.
+   */
+  app.patch("/:id/items/:itemId", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { itemId } = z.object({ itemId: z.string().uuid() }).parse(request.params);
+    const body = updateDealItemSchema.parse(request.body);
+    const result = await service.updateDealItem(request.tenant_id, id, itemId, body);
+    return reply.send({ data: result.item, totalBudget: result.totalBudget });
+  });
+
+  /**
+   * Удаление позиции из сделки с автопересчетом бюджета сделки.
+   */
+  app.delete("/:id/items/:itemId", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { itemId } = z.object({ itemId: z.string().uuid() }).parse(request.params);
+    const result = await service.deleteDealItem(request.tenant_id, id, itemId);
+    return reply.send({ success: true, totalBudget: result.totalBudget });
   });
 }

@@ -39,6 +39,7 @@ import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import partnerRoutes from "./modules/partner/partner.routes.js";
 import { warehouseRoutes } from "./modules/warehouse/warehouse.routes.js";
+import { servicesRoutes } from "./modules/services/services.routes.js";
 import { printTemplatesRoutes } from "./modules/print-templates/print-templates.routes.js";
 import notificationChannelsRoutes from "./modules/notifications/notification-channels.routes.js";
 import bitrix24Routes from "./modules/integrations/bitrix24/bitrix24.routes.js";
@@ -232,11 +233,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dictionariesRoutes, { prefix: "/api/dictionaries" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
   await app.register(warehouseRoutes, { prefix: "/api/v1/warehouse" });
+  await app.register(servicesRoutes, { prefix: "/api/v1/services" });
+  await app.register(servicesRoutes, { prefix: "/api/services" });
   await app.register(printTemplatesRoutes, { prefix: "/api/v1/print-templates" });
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
+  await app.register(marketplaceRoutes, { prefix: "/api/marketplace" });
+  await app.register(marketplaceRoutes, { prefix: "/api" });
   await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
   await app.register(analyticsRoutes, { prefix: "/api/analytics" });
 

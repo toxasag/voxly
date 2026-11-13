@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { RepairsService } from "./repairs.service.js";
+import { InvoicesService } from "../finance/invoices.service.js";
 import { innLookupService } from "../integrations/inn-lookup.service.js";
 import {
   changePaymentStatusSchema,
@@ -360,6 +361,19 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: totals });
   });
 
+  app.get("/:id/deal-acts", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const acts = await service.getDealActs(request.tenant_id, id);
+    return reply.send({ data: acts });
+  });
+
+  app.get("/:id/invoices", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const invoicesService = new InvoicesService();
+    const invoices = await invoicesService.forRepair(request.tenant_id, id);
+    return reply.send({ data: invoices });
+  });
+
   // -------------------------------------------------------------------------
   // Works
   // -------------------------------------------------------------------------
@@ -471,6 +485,15 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     );
 
     return reply.status(201).send({ data: note });
+  });
+
+  app.delete("/:id/notes/:itemId", { onRequest: canWrite }, async (request, reply) => {
+    const { id, itemId } = nestedParamsSchema.parse(request.params);
+    const deleted = await service.deleteNote(request.tenant_id, id, itemId);
+
+    if (!deleted) throw new NotFoundError("Note not found");
+
+    return reply.send({ data: { id: itemId, deleted: true } });
   });
 
   app.get("/:id/photos", { onRequest: canRead }, async (request, reply) => {

@@ -378,6 +378,109 @@ export function useMarkInvoicePaid(): UseMutationResult<InvoiceDTO, ApiClientErr
   });
 }
 
+export interface CreateInvoiceFromActsPayload {
+  repair_order_ids: string[];
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  company_address?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  deal_id?: string;
+  due_date?: string;
+  vat_rate?: number;
+  currency?: string;
+  notes?: string;
+}
+
+export interface BatchPaymentPayload {
+  repair_order_ids: string[];
+  cash_account_id: string;
+  category_id?: string;
+  description?: string;
+}
+
+export interface SendInvoicePayload {
+  channel_type: "telegram" | "whatsapp" | "all";
+}
+
+export function useRepairInvoices(repairOrderId: string | null): UseQueryResult<InvoiceDTO[], ApiClientError> {
+  return useQuery<InvoiceDTO[], ApiClientError>({
+    queryKey: ["repairs", repairOrderId, "invoices"],
+    queryFn: async () => {
+      if (!repairOrderId) return [];
+      const res = await apiClient.get<InvoiceDTO[]>(`/api/v1/repairs/${repairOrderId}/invoices`);
+      return res.data;
+    },
+    enabled: Boolean(repairOrderId),
+  });
+}
+
+export function useCreateInvoiceFromActs(): UseMutationResult<
+  InvoiceDTO,
+  ApiClientError,
+  CreateInvoiceFromActsPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation<InvoiceDTO, ApiClientError, CreateInvoiceFromActsPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<InvoiceDTO>("/api/v1/invoices/from-repairs", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBatchPayment(): UseMutationResult<
+  { success: boolean; totalPaid: number; count: number },
+  ApiClientError,
+  BatchPaymentPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { success: boolean; totalPaid: number; count: number },
+    ApiClientError,
+    BatchPaymentPayload
+  >({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ success: boolean; totalPaid: number; count: number }>(
+        "/api/v1/finance/payments/batch",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useSendInvoice(): UseMutationResult<
+  { success: boolean; channels: string[]; message: string },
+  ApiClientError,
+  { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+> {
+  return useMutation<
+    { success: boolean; channels: string[]; message: string },
+    ApiClientError,
+    { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+  >({
+    mutationFn: async ({ id, channel_type }) => {
+      const res = await apiClient.post<{ success: boolean; channels: string[]; message: string }>(
+        `/api/v1/invoices/${id}/send`,
+        { channel_type },
+      );
+      return res.data;
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

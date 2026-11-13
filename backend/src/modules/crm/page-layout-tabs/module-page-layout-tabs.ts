@@ -45,6 +45,16 @@ export const MODULE_PAGE_LAYOUT_TABS: Readonly<Record<string, readonly ModulePag
       requiredPermission: "finance:read",
     },
   ],
+  products_services: [
+    {
+      objectType: "deal",
+      tabKey: "products_services",
+      title: "Услуги/Товары",
+      icon: "PackagePlus",
+      position: 19,
+      requiredPermission: "deals:read",
+    },
+  ],
 };
 
 export function tabsForModule(slug: string): readonly ModulePageLayoutTabSpec[] {

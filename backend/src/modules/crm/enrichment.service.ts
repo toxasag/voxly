@@ -354,24 +354,41 @@ export class CrmEnrichmentService {
         const dummyHeader = isDummy ? "⚠️ Внимание: номер определен как фиктивный/тестовый!\n" : "";
         const auditMessage = `${dummyHeader}Результат проверки мессенджеров для +${phoneDigits}:\n• ${tgLabel}\n• ${waLabel}\n• ${maxLabel}`;
 
-        await query(
-          `INSERT INTO deal_messages
-             (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, metadata)
-           VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral', $4::jsonb)`,
-          [
-            tenantId,
-            targetDealId,
-            auditMessage,
-            JSON.stringify({
-              event: "messenger_verification",
-              phone: `+${phoneDigits}`,
-              isFake: isDummy,
-              telegram: tgRes?.exists ?? false,
-              whatsapp: waRes?.exists ?? false,
-              max: maxRes?.exists ?? false,
-            }),
-          ],
+        const auditMeta = JSON.stringify({
+          event: "messenger_verification",
+          phone: `+${phoneDigits}`,
+          isFake: isDummy,
+          telegram: tgRes?.exists ?? false,
+          whatsapp: waRes?.exists ?? false,
+          max: maxRes?.exists ?? false,
+        });
+
+        const existingAudit = await queryOne<{ id: string }>(
+          `SELECT id FROM deal_messages
+           WHERE tenant_id = $1 AND deal_id = $2
+             AND source = 'system'
+             AND metadata->>'event' = 'messenger_verification'
+             AND metadata->>'phone' = $3
+             AND created_at >= now() - interval '24 hours'
+           LIMIT 1`,
+          [tenantId, targetDealId, `+${phoneDigits}`],
         );
+
+        if (existingAudit) {
+          await query(
+            `UPDATE deal_messages
+             SET content = $1, metadata = $2::jsonb
+             WHERE id = $3 AND tenant_id = $4`,
+            [auditMessage, auditMeta, existingAudit.id, tenantId],
+          );
+        } else {
+          await query(
+            `INSERT INTO deal_messages
+               (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, metadata)
+             VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral', $4::jsonb)`,
+            [tenantId, targetDealId, auditMessage, auditMeta],
+          );
+        }
       }
     } catch {
       // Ошибки логирования аудита не блокируют возврат результата

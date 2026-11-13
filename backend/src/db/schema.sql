@@ -1003,6 +1003,10 @@ VALUES
    'Контакты, компании, сделки с Kanban-воронкой и хронологией общения.',
    600, 'per_seat', 600, 200, 10, 'пользователь', false, 'crm', 'Users', 14,
    ARRAY['Контакты и компании', 'Воронка сделок', 'Задачи', 'Хронология и чат'], 10),
+  ('products_services', 'Услуги/Товары',
+   'Единый каталог товаров и справочник услуг, остатки и номенклатура, прикрепление позиций к сделкам с авторасчётом бюджета.',
+   0, 'flat', 0, 0, 0, '', false, 'crm', 'PackagePlus', 0,
+   ARRAY['Справочник услуг с описанием', 'Складской учёт товаров', 'Позиции в сделках', 'Авторасчёт бюджета сделки'], 15),
   ('service_center', 'Сервисный центр',
    'Наряд-заказы, диагностика, учёт работ и запчастей.',
    500, 'flat', 500, 0, 0, '', false, 'service', 'Wrench', 14,
@@ -1343,6 +1347,7 @@ CREATE INDEX IF NOT EXISTS idx_deals_tenant_id ON deals(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_tenant_id ON deal_messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_channel_account_id ON deal_messages(channel_account_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_metadata_gin ON deal_messages USING gin (metadata);
+CREATE INDEX IF NOT EXISTS idx_deal_messages_external_id ON deal_messages (tenant_id, deal_id, (metadata->>'external_message_id')) WHERE (metadata->>'external_message_id') IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_contacts_telegram_chat_id ON contacts(tenant_id, telegram_chat_id) WHERE telegram_chat_id IS NOT NULL;
 -- Поиск контакта по любому из его номеров и мессенджеров идёт по JSONB: без GIN
 -- crm-pipeline читал бы таблицу целиком на каждое входящее сообщение.
@@ -1627,6 +1632,7 @@ CREATE TABLE IF NOT EXISTS warehouse_items (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   sku TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL,
+  brand TEXT NOT NULL DEFAULT '',
   category TEXT NOT NULL DEFAULT '',
   unit TEXT NOT NULL DEFAULT 'шт',
   min_stock NUMERIC(10, 2) NOT NULL DEFAULT 0,
@@ -1679,11 +1685,22 @@ CREATE TABLE IF NOT EXISTS warehouse_movements (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Складской учет: Настройки
+CREATE TABLE IF NOT EXISTS warehouse_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  allow_negative_stock BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_warehouse_settings_tenant UNIQUE (tenant_id)
+);
+
 -- Складской учет: Заявки на закупку
 CREATE TABLE IF NOT EXISTS purchase_requests (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  supplier_order_id UUID,
   item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
   item_name TEXT NOT NULL,
   sku TEXT NOT NULL DEFAULT '',
@@ -1695,6 +1712,39 @@ CREATE TABLE IF NOT EXISTS purchase_requests (
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Складской учет: Заказы поставщикам
+CREATE TABLE IF NOT EXISTS supplier_orders (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  order_number TEXT NOT NULL,
+  supplier_name TEXT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'draft',
+  total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  cash_account_id UUID REFERENCES cash_accounts(id) ON DELETE SET NULL,
+  finance_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  paid_at TIMESTAMPTZ,
+  received_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_order_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  supplier_order_id UUID NOT NULL REFERENCES supplier_orders(id) ON DELETE CASCADE,
+  purchase_request_id UUID REFERENCES purchase_requests(id) ON DELETE SET NULL,
+  item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  item_name TEXT NOT NULL,
+  sku TEXT NOT NULL DEFAULT '',
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  unit TEXT NOT NULL DEFAULT 'шт',
+  price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  total_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Конструктор печатных документов
@@ -1751,6 +1801,13 @@ CREATE TABLE IF NOT EXISTS print_template_settings (
   show_parts_table BOOLEAN NOT NULL DEFAULT true,
   show_completion_signatures BOOLEAN NOT NULL DEFAULT true,
   show_completion_stamp BOOLEAN NOT NULL DEFAULT true,
+  bank_name TEXT NOT NULL DEFAULT '',
+  bik TEXT NOT NULL DEFAULT '',
+  corr_account TEXT NOT NULL DEFAULT '',
+  settlement_account TEXT NOT NULL DEFAULT '',
+  company_kpp TEXT NOT NULL DEFAULT '',
+  director_name TEXT NOT NULL DEFAULT '',
+  accountant_name TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT uq_print_template_settings_tenant UNIQUE (tenant_id)
@@ -1769,6 +1826,57 @@ CREATE TABLE IF NOT EXISTS tenant_feature_quotas (
   CONSTRAINT uq_tenant_feature_quotas UNIQUE (tenant_id, feature_key)
 );
 CREATE INDEX IF NOT EXISTS idx_tenant_feature_quotas_tenant ON tenant_feature_quotas(tenant_id);
+
+-- Связь счетов на оплату со множеством наряд-заказов (актов ремонта) сделки
+CREATE TABLE IF NOT EXISTS invoice_repair_orders (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  invoice_id UUID NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_invoice_repair_orders UNIQUE (tenant_id, invoice_id, repair_order_id)
+);
+CREATE INDEX IF NOT EXISTS idx_invoice_repair_orders_repair ON invoice_repair_orders (tenant_id, repair_order_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_repair_orders_invoice ON invoice_repair_orders (tenant_id, invoice_id);
+
+-- Справочник услуг
+CREATE TABLE IF NOT EXISTS repair_services_catalog (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  default_price NUMERIC NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT 'усл',
+  duration_minutes INT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_repair_services_catalog_tenant ON repair_services_catalog (tenant_id, name);
+
+-- Позиции в сделках (товары и услуги)
+CREATE TABLE IF NOT EXISTS deal_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('product', 'service')),
+  item_id UUID NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  sku TEXT NOT NULL DEFAULT '',
+  price NUMERIC NOT NULL DEFAULT 0,
+  quantity NUMERIC NOT NULL DEFAULT 1,
+  unit TEXT NOT NULL DEFAULT 'шт',
+  discount_percent NUMERIC NOT NULL DEFAULT 0,
+  discount_amount NUMERIC NOT NULL DEFAULT 0,
+  total_amount NUMERIC NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_deal_items_tenant_deal ON deal_items (tenant_id, deal_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_deal_items_item_id ON deal_items (tenant_id, item_id) WHERE item_id IS NOT NULL;
+
 
 
 
