@@ -114,6 +114,15 @@ export default async function bitrix24Routes(app: FastifyInstance): Promise<void
   });
 
   /**
+   * POST /replay-failed
+   * Повторная отправка всех неотправленных (зависших/ошибочных) сделок в Битрикс24.
+   */
+  app.post("/replay-failed", { onRequest: admin }, async (request, reply) => {
+    const result = await bitrix24Service.replayFailedSyncs(request.tenant_id);
+    return reply.send({ data: result, ...result });
+  });
+
+  /**
    * POST /retry/:id
    * Повторная отправка сделки в Битрикс24 по ID лога или ID сделки.
    */

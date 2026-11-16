@@ -613,6 +613,22 @@ export class LeadNotificationQueueService {
             } catch {}
           } else if (b24Result.skipped) {
             console.log(`[BullMQ] Lead ${lead.id} skipped for Bitrix24 channel ${b24Ch.id} (${b24Result.reason || "skipped"})`);
+          } else if (!b24Result.success) {
+            console.warn(`[BullMQ] Lead ${lead.id} failed export to Bitrix24 channel ${b24Ch.id}: ${b24Result.error}`);
+            try {
+              await query(
+                `UPDATE tenant_notification_channels
+                 SET extra_meta = extra_meta || $3::jsonb, updated_at = NOW()
+                 WHERE tenant_id = $1 AND id = $2`,
+                [
+                  tenantId,
+                  b24Ch.id,
+                  JSON.stringify({
+                    last_error: b24Result.error || "Ошибка экспорта в Битрикс24",
+                  }),
+                ],
+              );
+            } catch {}
           }
         }
       } else {

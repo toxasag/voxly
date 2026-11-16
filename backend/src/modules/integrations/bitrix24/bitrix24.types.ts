@@ -56,8 +56,22 @@ export interface SimpleWidgetDTO {
   id: string;
   name: string;
   site_domain: string;
+  site_name?: string | null;
+  site_url?: string | null;
   status: string;
   created_at?: string;
+}
+
+export interface ReplayFailedSyncsResult {
+  processed: number;
+  success: number;
+  failed: number;
+  results: Array<{
+    dealId: string;
+    success: boolean;
+    leadId?: string | number;
+    error?: string;
+  }>;
 }
 
 export interface Bitrix24PhoneEntry {

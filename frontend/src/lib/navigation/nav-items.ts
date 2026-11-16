@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Sparkles,
   GitMerge,
+  Globe,
   Boxes,
   PackagePlus,
   type LucideIcon,
@@ -94,14 +95,22 @@ export const MODULE_NAV: NavItem[] = [
 ];
 
 /** Каналы связи — отдельный блок сайдбара, как «Управление платформой». */
-export const CHANNEL_NAV: NavItem[] = CHANNEL_ENTRIES.map((entry) => ({
-  label: entry.label,
-  href: entry.href,
-  icon: entry.icon,
-  always: false,
-  moduleSlug: entry.slug,
-  permission: entry.permission,
-}));
+export const CHANNEL_NAV: NavItem[] = [
+  {
+    label: "Сайты",
+    href: "/channels/sites",
+    icon: Globe,
+    always: true,
+  },
+  ...CHANNEL_ENTRIES.map((entry) => ({
+    label: entry.label,
+    href: entry.href,
+    icon: entry.icon,
+    always: false,
+    moduleSlug: entry.slug,
+    permission: entry.permission,
+  })),
+];
 
 /** Маркетплейс входит в базовый тариф: без него отключённый модуль не вернуть. */
 export const MARKETPLACE_NAV: NavItem = {

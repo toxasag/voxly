@@ -24,6 +24,7 @@ const PROTECTED_PREFIXES = [
   "/finance",
   "/inbox",
   "/marketing",
+  "/channels",
   // Каналы связи. Без этого префикса страница открывалась бы без сессии: гейт
   // `<Guard>` живёт в браузере и не заменяет проверку до рендера.
   "/integrations",
