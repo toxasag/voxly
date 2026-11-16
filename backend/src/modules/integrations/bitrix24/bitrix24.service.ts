@@ -669,6 +669,7 @@ export class Bitrix24Service {
     let payload: Bitrix24LeadAddRequest | null = null;
     let resolvedSource: LeadSource | "manual" = "manual";
     let effectiveWidgetId: string | null = null;
+    let contactId: string | null = null;
 
     try {
       effectiveWidgetId = leadData.sourceWidgetId ||
@@ -837,9 +838,23 @@ export class Bitrix24Service {
         }
       }
 
-      // 3. Получение названия и домена виджета из базы
+      // 3. Получение названия, домена виджета и contact_id из базы
       let widgetLabel: string | null = null;
       let widgetDomain: string | null = null;
+      contactId = null;
+
+      try {
+        const dRow = await queryOne<{ contact_id: string }>(
+          `SELECT contact_id FROM deals WHERE id = $1 AND tenant_id = $2`,
+          [leadData.leadId, tenantId],
+        );
+        if (dRow?.contact_id) {
+          contactId = dRow.contact_id;
+        }
+      } catch {
+        // non-blocking
+      }
+
       if (effectiveWidgetId) {
         try {
           const wRow = await queryOne<{ label: string; external_id: string }>(
@@ -1085,25 +1100,28 @@ export class Bitrix24Service {
         });
 
         // Запись ошибки в timeline активности сделки
-        try {
-          await query(
-            `INSERT INTO contact_activities (
-               tenant_id, deal_id, activity_channel, activity_kind, direction, title, payload
-             )
-             VALUES ($1, $2, 'bitrix24', 'crm_export', 'outbound', $3, $4)`,
-            [
-              tenantId,
-              leadData.leadId,
-              "Ошибка экспорта в Битрикс24",
-              JSON.stringify({
-                status: "error",
-                error: errorText,
-                webhook_url: targetUrl,
-                widget_id: effectiveWidgetId,
-              }),
-            ],
-          );
-        } catch {}
+        if (contactId) {
+          try {
+            await query(
+              `INSERT INTO contact_activities (
+                 tenant_id, contact_id, deal_id, activity_channel, activity_kind, direction, title, payload
+               )
+               VALUES ($1, $2, $3, 'bitrix24', 'crm_export', 'outbound', $4, $5)`,
+              [
+                tenantId,
+                contactId,
+                leadData.leadId,
+                "Ошибка экспорта в Битрикс24",
+                JSON.stringify({
+                  status: "error",
+                  error: errorText,
+                  webhook_url: targetUrl,
+                  widget_id: effectiveWidgetId,
+                }),
+              ],
+            );
+          } catch {}
+        }
 
         return { success: false, error: errorText };
       }
@@ -1125,26 +1143,29 @@ export class Bitrix24Service {
         });
 
         // Запись успешной синхронизации в timeline активности сделки
-        try {
-          await query(
-            `INSERT INTO contact_activities (
-               tenant_id, deal_id, activity_channel, activity_kind, direction, title, payload
-             )
-             VALUES ($1, $2, 'bitrix24', 'crm_export', 'outbound', $3, $4)`,
-            [
-              tenantId,
-              leadData.leadId,
-              `Экспорт в Битрикс24 (Лид #${data.result})`,
-              JSON.stringify({
-                status: "success",
-                bitrix_lead_id: String(data.result),
-                webhook_url: targetUrl,
-                custom_source_id: effectiveSourceId,
-                widget_id: effectiveWidgetId,
-              }),
-            ],
-          );
-        } catch {}
+        if (contactId) {
+          try {
+            await query(
+              `INSERT INTO contact_activities (
+                 tenant_id, contact_id, deal_id, activity_channel, activity_kind, direction, title, payload
+               )
+               VALUES ($1, $2, $3, 'bitrix24', 'crm_export', 'outbound', $4, $5)`,
+              [
+                tenantId,
+                contactId,
+                leadData.leadId,
+                `Экспорт в Битрикс24 (Лид #${data.result})`,
+                JSON.stringify({
+                  status: "success",
+                  bitrix_lead_id: String(data.result),
+                  webhook_url: targetUrl,
+                  custom_source_id: effectiveSourceId,
+                  widget_id: effectiveWidgetId,
+                }),
+              ],
+            );
+          } catch {}
+        }
 
         // Сохранение внешнего ID лида в custom_fields сделки
         try {
@@ -1215,25 +1236,28 @@ export class Bitrix24Service {
       });
 
       // Запись сбоя в timeline активности сделки
-      try {
-        await query(
-          `INSERT INTO contact_activities (
-             tenant_id, deal_id, activity_channel, activity_kind, direction, title, payload
-           )
-           VALUES ($1, $2, 'bitrix24', 'crm_export', 'outbound', $3, $4)`,
-          [
-            tenantId,
-            leadData.leadId,
-            "Сбой отправки в Битрикс24",
-            JSON.stringify({
-              status: "error",
-              error: errorMsg,
-              webhook_url: targetUrl,
-              widget_id: effectiveWidgetId,
-            }),
-          ],
-        );
-      } catch {}
+      if (contactId) {
+        try {
+          await query(
+            `INSERT INTO contact_activities (
+               tenant_id, contact_id, deal_id, activity_channel, activity_kind, direction, title, payload
+             )
+             VALUES ($1, $2, $3, 'bitrix24', 'crm_export', 'outbound', $4, $5)`,
+            [
+              tenantId,
+              contactId,
+              leadData.leadId,
+              "Сбой отправки в Битрикс24",
+              JSON.stringify({
+                status: "error",
+                error: errorMsg,
+                webhook_url: targetUrl,
+                widget_id: effectiveWidgetId,
+              }),
+            ],
+          );
+        } catch {}
+      }
 
       return { success: false, error: errorMsg };
     }
