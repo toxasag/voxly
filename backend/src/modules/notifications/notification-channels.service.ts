@@ -17,25 +17,32 @@ import {
 import type { LeadSource } from "../integrations/bitrix24/bitrix24.types.js";
 import type {
   CreateNotificationChannelPayload,
+  EnrichedWidgetMeta,
   NotificationChannelDTO,
   NotificationChannelRow,
   NotificationChannelType,
 } from "./notification-channels.types.js";
 
-function toDTO(row: NotificationChannelRow): NotificationChannelDTO {
+function toDTO(row: NotificationChannelRow & { widgets?: EnrichedWidgetMeta[] }): NotificationChannelDTO {
+  const meta = row.extra_meta ?? {};
+  const widgets = Array.isArray(meta.enriched_widgets)
+    ? (meta.enriched_widgets as EnrichedWidgetMeta[])
+    : row.widgets;
+
   return {
     id: row.id,
     tenant_id: row.tenant_id,
     channel_type: row.channel_type,
     destination: row.destination,
     target_value: row.destination,
-    extra_meta: row.extra_meta ?? {},
+    extra_meta: meta,
     is_active: row.is_active,
     is_verified: row.is_verified,
     created_at:
       row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
     updated_at:
       row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+    widgets: widgets ?? [],
   };
 }
 
@@ -186,6 +193,38 @@ export class NotificationChannelsService {
           // Игнорируем ошибку уникальности или гонки
         }
       }
+    }
+
+    // Обогащение каналов метаданными виджетов и сайтов
+    try {
+      const widgets = await bitrix24Service.getTenantWidgets(tenantId);
+      const widgetMap = new Map(widgets.map((w) => [w.id, w]));
+
+      for (const row of rows) {
+        if (row.channel_type === "bitrix24") {
+          const meta = row.extra_meta || {};
+          const selectedWidgetIds = Array.isArray(meta.selected_widget_ids)
+            ? (meta.selected_widget_ids as string[])
+            : [];
+          const enrichedWidgets: EnrichedWidgetMeta[] = selectedWidgetIds
+            .map((id) => widgetMap.get(id))
+            .filter((w): w is (typeof widgets)[number] => Boolean(w))
+            .map((w) => ({
+              id: w.id,
+              name: w.name,
+              site_domain: w.site_domain,
+              site_name: w.site_name,
+              site_url: w.site_url,
+            }));
+
+          row.extra_meta = {
+            ...meta,
+            enriched_widgets: enrichedWidgets,
+          };
+        }
+      }
+    } catch (enrichErr) {
+      console.warn("[NotificationChannels] Failed to enrich channel widgets:", enrichErr);
     }
 
     return rows.map(toDTO);
