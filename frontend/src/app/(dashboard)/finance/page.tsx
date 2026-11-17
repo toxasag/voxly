@@ -52,7 +52,8 @@ function toTransaction(dto: TransactionDTO): Transaction {
     linked_entity_id: dto.dealId ?? dto.repairOrderId ?? dto.invoiceId,
     linked_entity_type: dto.dealId ? "deal" : dto.repairOrderId ? "repair" : dto.invoiceId ? "invoice" : null,
     linked_entity_label: null,
-    counterparty: "",
+    counterparty: dto.counterpartyName ?? "",
+    counterparty_inn: dto.counterpartyInn ?? "",
   };
 }
 
@@ -101,9 +102,16 @@ function FinancePageContent() {
   const [invoiceViewTarget, setInvoiceViewTarget] = useState<Invoice | null>(null);
   const [categoriesModalOpen, setCategoriesModalOpen] = useState(false);
   const searchParams = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("search") ?? "");
+  const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
 
   const { data: accounts = [], isLoading: accountsLoading } = useAccounts();
-  const { data: transactionsData, isLoading: txLoading, isError: txError } = useTransactions({ limit: 25, offset: 0 });
+  const { data: transactionsData, isLoading: txLoading, isError: txError } = useTransactions({
+    limit: 100,
+    offset: 0,
+    search: searchQuery || undefined,
+    type: filterType !== "all" ? filterType : undefined,
+  });
   const { data: invoicesData, isLoading: invLoading, isError: invError } = useInvoices({ limit: 25, offset: 0 });
   const { data: pnlData } = usePnl();
 
@@ -251,7 +259,18 @@ function FinancePageContent() {
         </div>
 
         {/* Tab Content */}
-        {tab === "transactions" && <TransactionsTable transactions={transactions} searchQuery={searchParams.get("search") ?? ""} onSearchChange={() => {}} filterType={"all"} onFilterTypeChange={() => {}} isLoading={txLoading} isError={txError} error={txError ? new Error("Failed to load transactions") : null} />}
+        {tab === "transactions" && (
+          <TransactionsTable
+            transactions={transactions}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            filterType={filterType}
+            onFilterTypeChange={setFilterType}
+            isLoading={txLoading}
+            isError={txError}
+            error={txError ? new Error("Failed to load transactions") : null}
+          />
+        )}
         {tab === "invoices" && (
           <RecordTable
             rows={invoices}
@@ -270,7 +289,13 @@ function FinancePageContent() {
         {tab === "pnl" && <ProfitLossView transactions={transactions} />}
 
         {/* Modals */}
-        <CreateTransactionModal open={txModalOpen} onClose={() => setTxModalOpen(false)} onSubmit={handleCreateTransaction} accounts={accounts} />
+        <CreateTransactionModal
+          open={txModalOpen}
+          onClose={() => setTxModalOpen(false)}
+          onSubmit={handleCreateTransaction}
+          accounts={accounts}
+          onOpenCategories={() => setCategoriesModalOpen(true)}
+        />
         <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSubmit={handleTransfer} accounts={accounts} />
         <InvoiceCreateModal open={invoiceCreateOpen} onClose={() => setInvoiceCreateOpen(false)} onSubmit={handleCreateInvoice} />
         <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewTarget(null)} />

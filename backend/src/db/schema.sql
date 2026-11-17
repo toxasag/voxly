@@ -730,6 +730,7 @@ CREATE TABLE IF NOT EXISTS cash_accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  account_type TEXT NOT NULL DEFAULT 'cash',
   currency TEXT NOT NULL DEFAULT 'RUB',
   balance NUMERIC NOT NULL DEFAULT 0,
   is_default BOOLEAN NOT NULL DEFAULT false,
