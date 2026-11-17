@@ -460,6 +460,7 @@ export interface ExportWarehouseItemsPayload {
 export interface ImportParseResultDTO {
   headers: string[];
   sampleRows: string[][];
+  rows?: string[][];
   totalRows: number;
   detectedDelimiter?: string;
   suggestedMapping: Record<string, string>;
@@ -520,11 +521,18 @@ export interface ImportCommitPayload {
   defaultResolution?: "overwrite" | "skip";
 }
 
+export interface ImportErrorDetailDTO {
+  rowNumber: number;
+  reason: string;
+}
+
 export interface ImportCommitResultDTO {
   importedCount: number;
   updatedCount: number;
   skippedCount: number;
   errorCount: number;
+  total?: number;
+  errors?: ImportErrorDetailDTO[];
 }
 
 export interface PriceAdjustmentAction {

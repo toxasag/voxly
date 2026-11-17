@@ -91,7 +91,10 @@ export const LANGUAGE_MIRRORING_DIRECTIVE = `
    - Even if the system prompt, instructions, company name, knowledge base, retrieved facts, or previous dialogue history are in Russian, you are STRICTLY FORBIDDEN from answering in Russian when the user writes in English or any other language!
    - You MUST instantly switch your response language to match the user's latest incoming message.
    - If knowledge base facts are in Russian, automatically translate them into the user's language accurately and fluently.
-3. This rule overrides all other rules, templates, and few-shots in this prompt.
+3. OUTPUT FORMAT:
+   Always return strictly valid JSON with keys "message1" and "message2":
+   {"message1": "...", "message2": "", "handoff_required": false, "session_pause": false}
+4. This rule overrides all other rules, templates, and few-shots in this prompt.
 </critical_language_mirroring_policy>
 `.trim();
 
@@ -232,6 +235,25 @@ export function parseAgentReply(raw: string): AgentReply | null {
       if (message !== null) messages.push(message);
     }
 
+    // Если модель вернула альтернативные ключи ("response", "reply", "message", "text", "answer", "messages")
+    if (messages.length === 0) {
+      if (Array.isArray(record.messages)) {
+        for (const item of record.messages.slice(0, MAX_MESSAGES)) {
+          const m = normaliseMessage(item);
+          if (m !== null) messages.push(m);
+        }
+      } else {
+        const altKeys = ["response", "reply", "message", "text", "answer", "content"];
+        for (const key of altKeys) {
+          const m = normaliseMessage(record[key]);
+          if (m !== null) {
+            messages.push(m);
+            break;
+          }
+        }
+      }
+    }
+
     if (messages.length > 0) {
       return {
         messages,
@@ -241,12 +263,12 @@ export function parseAgentReply(raw: string): AgentReply | null {
     }
   }
 
-  // 1. Попытка извлечь message1..4 регулярным выражением (если JSON был оборван или поврежден)
+  // 1. Попытка извлечь message1..4 или альтернативные ключи регулярным выражением (если JSON был оборван или поврежден)
   const regexMessages: string[] = [];
-  const msgRegex = /"message([1-4])"\s*:\s*"((?:[^"\\]|\\.)*?)(?:"|,\s*"|$)/g;
+  const msgRegex = /"(?:message[1-4]|response|reply|text|answer)"\s*:\s*"((?:[^"\\]|\\.)*?)(?:"|,\s*"|$)/gi;
   let match: RegExpExecArray | null;
   while ((match = msgRegex.exec(raw)) !== null) {
-    const val = match[2];
+    const val = match[1];
     if (val && val.trim().length > 0) {
       const unescaped = val
         .replace(/\\n/g, "\n")
@@ -287,9 +309,9 @@ export function parseAgentReply(raw: string): AgentReply | null {
   }
 
   // 3. Страховка от вывода сырого куска JSON клиенту (если начинается с {):
-  if (cleanedText.startsWith("{") || cleanedText.includes('"message1"')) {
+  if (cleanedText.startsWith("{") || cleanedText.includes('"message1"') || cleanedText.includes('"response"')) {
     const cleanFallback = cleanedText
-      .replace(/^[{\s]*"message[1-4]"\s*:\s*"?/i, "")
+      .replace(/^[{\s]*"(?:message[1-4]|response|reply|text|answer)"\s*:\s*"?/i, "")
       .replace(/["\s}]*$/i, "")
       .replace(/\\n/g, "\n")
       .replace(/\\"/g, '"')

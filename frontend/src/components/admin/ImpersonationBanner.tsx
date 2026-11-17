@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import { LogOut, ShieldAlert, Loader2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth/use-auth";
 import {
   readImpersonationBackup,
@@ -14,6 +15,7 @@ import {
 
 export function ImpersonationBanner() {
   const pathname = usePathname();
+  const queryClient = useQueryClient();
   const { user, tenant, impersonator } = useAuth();
   const [backup, setBackup] = useState<ImpersonationBackup | null>(null);
   const [isExiting, setIsExiting] = useState(false);
@@ -41,8 +43,7 @@ export function ImpersonationBanner() {
   // когда сессия не является имперсонированной (impersonator === null)
   const isPlatformAdminWorkspace =
     !impersonator &&
-    user?.platform_role === "platform_owner" &&
-    (tenant?.slug === "voxly" || tenant?.tenantName?.toLowerCase().includes("platform"));
+    user?.platform_role === "platform_owner";
 
   // Определяем, находится ли партнер в своем личном кабинете партнера
   const isPartnerOwnWorkspace =
@@ -58,16 +59,10 @@ export function ImpersonationBanner() {
   // и серверный токен подтверждает, что режим имперсонации завершен (!impersonator)
   useEffect(() => {
     if (!impersonator && (isPlatformAdminWorkspace || isPartnerOwnWorkspace) && backup) {
-      if (
-        backup.impersonatedTenantSlug &&
-        tenant?.slug &&
-        tenant.slug !== backup.impersonatedTenantSlug
-      ) {
-        clearImpersonationBackup();
-        setBackup(null);
-      }
+      clearImpersonationBackup();
+      setBackup(null);
     }
-  }, [impersonator, isPlatformAdminWorkspace, isPartnerOwnWorkspace, backup, tenant?.slug]);
+  }, [impersonator, isPlatformAdminWorkspace, isPartnerOwnWorkspace, backup]);
 
   // Если в своем собственном кабинете и не в режиме имперсонации — скрываем
   if (isPlatformAdminWorkspace || isPartnerOwnWorkspace) {
@@ -83,16 +78,34 @@ export function ImpersonationBanner() {
     if (isExiting) return;
     setIsExiting(true);
 
+    // Сброс и полная очистка клиентского кэша TanStack Query без риска утечки данных между клиентами
+    try {
+      queryClient.clear();
+    } catch {
+      // Игнорируем ошибки кэша при размонтировании
+    }
+
     try {
       const res = await restoreAdminSessionDetailed();
-      if (res.success && res.targetUrl) {
-        window.location.href = res.targetUrl;
-        return;
+      const target = res.targetUrl || getPlatformAdminUrl(undefined, backup);
+      try {
+        const currentUrl = new URL(window.location.href);
+        const destUrl = new URL(target, window.location.origin);
+        if (currentUrl.origin !== destUrl.origin || currentUrl.pathname !== destUrl.pathname) {
+          window.location.href = target;
+          return;
+        }
+        if (destUrl.hash) {
+          window.location.hash = destUrl.hash;
+        }
+        window.location.reload();
+      } catch {
+        window.location.href = target;
       }
-      window.location.href = getPlatformAdminUrl(undefined, backup);
     } catch (err) {
       console.error("Ошибка возврата в сессию администратора/партнера:", err);
-      window.location.href = getPlatformAdminUrl(undefined, backup);
+      const target = getPlatformAdminUrl(undefined, backup);
+      window.location.href = target;
     }
   };
 
@@ -103,16 +116,14 @@ export function ImpersonationBanner() {
 
   const returnLabel = isExiting
     ? "Возвращение..."
-    : isPartner
-    ? "Вернуться в кабинет партнёра"
-    : "Вернуться в свой аккаунт";
+    : "Вернуться в главный кабинет";
 
   const adminDisplayName =
     impersonator?.name ||
     impersonator?.email ||
     backup?.adminUserName ||
     backup?.adminUserEmail ||
-    "администратора";
+    "";
 
   const clientTenantName =
     tenant?.tenantName ||
@@ -120,11 +131,6 @@ export function ImpersonationBanner() {
     tenant?.slug ||
     backup?.impersonatedTenantSlug ||
     "клиента";
-
-  const clientUserEmail =
-    user?.email ||
-    backup?.impersonatedUserEmail ||
-    "";
 
   return (
     <aside
@@ -135,20 +141,21 @@ export function ImpersonationBanner() {
     >
       <div className="flex items-center gap-2 text-xs">
         <ShieldAlert className="h-4 w-4 shrink-0 text-[#854d0e]" />
-        <span className="font-semibold">
-          {isPartner ? "Режим просмотра клиента:" : "Режим просмотра клиента:"}
-        </span>
-        <span className="font-medium text-[#713f12]">
-          вы вошли в организацию{" "}
-          <strong className="underline underline-offset-2">
+        <span className="font-semibold text-[#854d0e]">
+          Вы находитесь в кабинете клиента:{" "}
+          <strong className="underline underline-offset-2 text-[#713f12]">
             {clientTenantName}
           </strong>
-          {clientUserEmail ? ` (${clientUserEmail})` : ""}{" "}
-          от лица <span className="font-semibold">{adminDisplayName}</span>
+          .
         </span>
-        <span className="hidden text-[11px] opacity-80 xl:inline">
-          — действия в CRM применяются от лица этой организации
+        <span className="font-medium text-[#713f12]">
+          Все действия логируются.
         </span>
+        {adminDisplayName && (
+          <span className="hidden text-[11px] opacity-75 xl:inline">
+            (Оператор: {adminDisplayName})
+          </span>
+        )}
       </div>
 
       <button

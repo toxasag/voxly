@@ -180,28 +180,53 @@ export function clearImpersonationBackup(): void {
 /**
  * Returns the absolute or relative URL to the platform admin tenants page.
  * If currently on a tenant subdomain (e.g. remtoua.getvoxly.ru), navigates
- * to https://voxly.getvoxly.ru/admin/tenants.
+ * to https://getvoxly.ru/admin/tenants (or b.adminOriginHost).
  */
 export function getPlatformAdminUrl(token?: string, backup?: ImpersonationBackup | null): string {
   if (!isBrowser()) return "/admin/tenants";
 
   const { hostname, protocol, port } = window.location;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return "/admin/tenants";
-
-  const labels = hostname.split(".");
-  if (labels.length < 2) return "/admin/tenants";
-
-  const parent = labels.length >= 3 ? labels.slice(1).join(".") : labels.join(".");
   const suffix = port ? `:${port}` : "";
   const b = backup !== undefined ? backup : readImpersonationBackup();
-  const platformPrefix = b?.adminOriginHost?.split(".")[0]?.split(":")[0] || "voxly";
 
-  const targetPath =
-    b?.isPartner && !b?.isPlatformOwner
-      ? b?.adminOriginPath || "/partner"
-      : "/admin/tenants";
+  const isPartner = Boolean(b?.isPartner && !b?.isPlatformOwner);
+  const targetPath = isPartner
+    ? b?.adminOriginPath || "/partner"
+    : b?.adminOriginPath || "/admin/tenants";
 
-  const base = `${protocol}//${platformPrefix}.${parent}${suffix}${targetPath}`;
+  // IP address or single-label host (e.g. localhost)
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || !hostname.includes(".")) {
+    const base = `${targetPath}`;
+    return token ? `${base}#restore_token=${encodeURIComponent(token)}` : base;
+  }
+
+  const labels = hostname.split(".");
+  // On tenant subdomain (e.g. remtoua.getvoxly.ru), parent is "getvoxly.ru". On apex (getvoxly.ru), parent is "getvoxly.ru".
+  const parent = labels.length >= 3 ? labels.slice(1).join(".") : hostname;
+
+  let targetHost = "";
+
+  if (b?.adminOriginHost) {
+    // Sanitize any previously corrupted double-prefix like getvoxly.getvoxly.ru
+    let cleaned = b.adminOriginHost.replace(/^getvoxly\.getvoxly\.ru/i, "getvoxly.ru");
+    // If it was stored as just a bare subdomain prefix (no dot), resolve it against parent
+    if (!cleaned.includes(".")) {
+      cleaned = `${cleaned}.${parent}`;
+    }
+    targetHost = cleaned;
+  } else if (labels.length >= 3) {
+    // Navigating from a tenant subdomain back to platform apex
+    targetHost = `${parent}${suffix}`;
+  } else {
+    // Already on platform domain
+    targetHost = `${hostname}${suffix}`;
+  }
+
+  if (port && !targetHost.includes(":")) {
+    targetHost = `${targetHost}:${port}`;
+  }
+
+  const base = `${protocol}//${targetHost}${targetPath}`;
   if (token) {
     return `${base}#restore_token=${encodeURIComponent(token)}`;
   }
@@ -219,8 +244,8 @@ export interface RestoreSessionResult {
  * 1. Отправляет запрос на бэкенд (/api/v1/auth/revert-impersonation), чтобы сервер обновил
  *    долгоживущие HttpOnly cookies (getvoxly_refresh) на общем домене .getvoxly.ru.
  * 2. Записывает свежие токены в localStorage и cookie getvoxly_auth_token.
- * 3. Сохраняет свежие токены в бэкап (не уничтожает его раньше времени, чтобы при навигации
- *    на исходный домен гейты гарантированно имели доступ к правам).
+ * 3. Немедленно очищает бэкап имперсонации (clearImpersonationBackup), чтобы завершить
+ *    режим имперсонации и предотвратить зацикливание проверок.
  * 4. Формирует целевой URL с handoff токена в hash fragment (#restore_token=...) для
  *    немедленного применения в origin storage целевого домена.
  */
@@ -232,15 +257,33 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
 
   // 1. Полноценная серверная ротация с выставлением HttpOnly cookie
   try {
-    const res = await apiClient.post<{
-      access_token?: string;
-      refresh_token?: string;
-      accessToken?: string;
-      refreshToken?: string;
-    }>("/api/v1/auth/revert-impersonation", {
+    const payload = {
       admin_refresh_token: backup?.refreshToken || undefined,
       admin_access_token: backup?.accessToken || undefined,
-    });
+    };
+
+    let res: {
+      data?: {
+        access_token?: string;
+        refresh_token?: string;
+        accessToken?: string;
+        refreshToken?: string;
+      };
+    } = {};
+
+    if (backup?.isPartner && !backup?.isPlatformOwner) {
+      try {
+        res = await apiClient.post("/api/v1/partner/revert-tenant", payload);
+      } catch {
+        res = await apiClient.post("/api/v1/auth/revert-impersonation", payload);
+      }
+    } else {
+      try {
+        res = await apiClient.post("/api/v1/auth/revert-impersonation", payload);
+      } catch {
+        res = await apiClient.post("/api/v1/partner/revert-tenant", payload);
+      }
+    }
 
     const newAccessToken = res.data?.access_token ?? res.data?.accessToken;
     const newRefreshToken = res.data?.refresh_token ?? res.data?.refreshToken;
@@ -251,14 +294,10 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
         refreshToken: newRefreshToken,
       });
 
-      // Обновляем бэкап свежими токенами администратора или партнера если он был
-      if (backup) {
-        writeImpersonationBackup({
-          ...backup,
-          accessToken: newAccessToken,
-          refreshToken: newRefreshToken,
-        });
-      }
+      // Сессия администратора успешно восстановлена.
+      // Немедленно очищаем бэкап имперсонации, чтобы выйти из режима просмотра клиента,
+      // исключить зацикливание PlatformOwnerGuard и скрыть баннер имперсонации.
+      clearImpersonationBackup();
 
       const targetUrl = getPlatformAdminUrl(newAccessToken, backup);
       return { success: true, accessToken: newAccessToken, targetUrl };
@@ -274,6 +313,7 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
         accessToken: backup.accessToken,
         refreshToken: backup.refreshToken || backup.accessToken,
       });
+      clearImpersonationBackup();
       const targetUrl = getPlatformAdminUrl(backup.accessToken, backup);
       return { success: true, accessToken: backup.accessToken, targetUrl };
     } catch (err) {

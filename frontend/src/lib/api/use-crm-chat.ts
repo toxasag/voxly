@@ -11,7 +11,14 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 
 export type ChatMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot" | "system";
 export type ChatMessageDirection = "inbound" | "outbound" | "neutral";
-export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
+export type ChatDeliveryStatus =
+  | "neutral"
+  | "pending"
+  | "sent"
+  | "delivered"
+  | "read"
+  | "failed"
+  | "received";
 
 export interface AudioTranscriptMetadata {
   text: string;
@@ -31,9 +38,19 @@ export interface DocumentInfoMetadata {
   error?: string;
 }
 
+export interface MessageTranslationMetadata {
+  ru?: string;
+  source_lang?: string;
+  translated_at?: string;
+  [lang: string]: string | undefined;
+}
+
 export interface DealMessageMetadata {
   transcript?: AudioTranscriptMetadata;
   document_info?: DocumentInfoMetadata;
+  translations?: Record<string, string>;
+  translation?: MessageTranslationMetadata;
+  detected_lang?: string;
   [key: string]: unknown;
 }
 
@@ -52,6 +69,8 @@ export interface ChatMessageDTO {
   metadata?: DealMessageMetadata | null;
   deliveryStatus: ChatDeliveryStatus;
   deliveryError: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
   createdAt: string;
 }
 
@@ -396,6 +415,103 @@ export function useSyncContactChatHistory(contactId: string): UseMutationResult<
   });
 }
 
+export function useTranslateMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      messageId,
+      targetLang = "ru",
+      force = false,
+    }: {
+      messageId: string;
+      targetLang?: string;
+      force?: boolean;
+    }) => {
+      const res = await apiClient.post<{
+        data: {
+          id: string;
+          translatedText: string | null;
+          sourceLang: string;
+          targetLang: string;
+          cached: boolean;
+        };
+      }>(`/api/v1/crm/messages/${messageId}/translate`, { targetLang, force });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["crm-chat"] });
+      queryClient.invalidateQueries({ queryKey: ["deal-messages"] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Presence & Read Receipts
+// ---------------------------------------------------------------------------
+
+export interface PresenceDTO {
+  entityType: "deal" | "contact" | "user";
+  entityId: string;
+  isOnline: boolean;
+  lastSeenAt: string | null;
+  statusText?: string;
+}
+
+export function usePresence(
+  entityType: CrmChatEntityType | "user",
+  entityId: string,
+): UseQueryResult<PresenceDTO, ApiClientError> {
+  return useQuery({
+    queryKey: ["crm-chat", "presence", entityType, entityId],
+    queryFn: async () => {
+      const res = await apiClient.get<PresenceDTO>(
+        `/api/v1/crm/chat/presence?entityType=${entityType}&entityId=${entityId}`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(entityId && entityId.length > 0),
+    refetchInterval: 12_000,
+  });
+}
+
+export function useMarkMessagesRead(): UseMutationResult<
+  { updatedCount: number; messageIds: string[] },
+  ApiClientError,
+  { dealId?: string; contactId?: string; messageIds?: string[] }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ updatedCount: number; messageIds: string[] }>(
+        "/api/v1/crm/chat/read",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      if (vars.dealId) {
+        void qc.invalidateQueries({ queryKey: crmChatKeys.deal.messages(vars.dealId) });
+      }
+      if (vars.contactId) {
+        void qc.invalidateQueries({ queryKey: crmChatKeys.contact.messages(vars.contactId) });
+      }
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
+    },
+  });
+}
+
+export function useSendPresenceHeartbeat(): UseMutationResult<{ ok: boolean }, ApiClientError, void> {
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<{ ok: boolean }>(
+        "/api/v1/crm/chat/presence/heartbeat",
+        {},
+      );
+      return res.data;
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Унифицированный хук чата для CrmChatView
 // ---------------------------------------------------------------------------
@@ -432,6 +548,9 @@ export function useCrmChat({ entityType, entityId, live = true }: UseCrmChatOpti
   const dealSyncHistory = useSyncDealChatHistory(isDeal ? entityId : "");
   const contactSyncHistory = useSyncContactChatHistory(!isDeal ? entityId : "");
 
+  const presenceQuery = usePresence(entityType, entityId);
+  const markReadMutation = useMarkMessagesRead();
+
   return {
     messagesQuery: isDeal ? dealMessages : contactMessages,
     sendFromOptionsQuery: isDeal ? dealSendFrom : contactSendFrom,
@@ -440,5 +559,7 @@ export function useCrmChat({ entityType, entityId, live = true }: UseCrmChatOpti
     aiControlMutation: isDeal ? dealAiControl : contactAiControl,
     aiDraftMutation: isDeal ? dealAiDraft : contactAiDraft,
     syncHistoryMutation: isDeal ? dealSyncHistory : contactSyncHistory,
+    presenceQuery,
+    markReadMutation,
   };
 }

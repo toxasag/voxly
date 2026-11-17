@@ -8,11 +8,14 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  Info,
   Loader2,
   Mail,
+  MessageCircle,
   Phone,
   PlusCircle,
   RotateCcw,
+  Send,
   Sparkles,
   Trash2,
   User,
@@ -25,6 +28,7 @@ import {
   useCompanyInnLookup,
   type ClientLookupDealDTO,
   type ClientLookupResultDTO,
+  type ClientMessengerSourceDTO,
 } from "@/lib/api/use-repairs";
 import { formatAsYouType, formatPhone } from "@/lib/utils/phone";
 import { cn } from "@/lib/utils";
@@ -261,7 +265,12 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     }
   };
 
+  const handleApplySuggestedName = (name: string) => {
+    form.setValue("customer_name", name, { shouldValidate: true, shouldDirty: true });
+  };
+
   const hasClientFound = Boolean(lookupData?.found && lookupData?.client);
+  const hasMessengerProfiles = Boolean(lookupData?.sources && lookupData.sources.length > 0);
   const activeDeals: ClientLookupDealDTO[] = lookupData?.activeDeals ?? [];
   const digitsCount = phoneInput.replace(/\D/g, "").length;
 
@@ -276,9 +285,16 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
           <span className="text-[13px] font-semibold text-[#111111]">Клиент и сделка</span>
         </div>
 
-        {/* Индикатор статуса клиента в CRM */}
+        {/* Индикатор статуса клиента в CRM и мессенджерах */}
         <div className="flex items-center gap-2">
-          {isLookupLoading && (
+          {isLookupLoading && digitsCount >= 10 && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-[#4a38f5] font-medium">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+              Поиск по базам мессенджеров...
+            </span>
+          )}
+
+          {isLookupLoading && digitsCount < 10 && (
             <span className="inline-flex items-center gap-1.5 text-xs text-[#888888]">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
               Поиск в CRM...
@@ -292,14 +308,21 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
             </span>
           )}
 
-          {!isLookupLoading && !hasClientFound && digitsCount >= 10 && (
+          {!isLookupLoading && !hasClientFound && hasMessengerProfiles && (
+            <span className="inline-flex items-center gap-1 rounded-[4px] bg-indigo-50 px-2 py-0.5 text-xs font-medium text-[#4a38f5] border border-indigo-200">
+              <Sparkles className="h-3 w-3 text-[#4a38f5]" />
+              Найден в мессенджерах
+            </span>
+          )}
+
+          {!isLookupLoading && !hasClientFound && !hasMessengerProfiles && digitsCount >= 10 && (
             <span className="inline-flex items-center gap-1 rounded-[4px] bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 border border-amber-200">
               <UserPlus className="h-3 w-3" />
               Новый клиент
             </span>
           )}
 
-          {(hasClientFound || customerName || phoneInput) && (
+          {(hasClientFound || hasMessengerProfiles || customerName || phoneInput) && (
             <button
               type="button"
               onClick={handleClearCustomer}
@@ -399,6 +422,83 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
           )}
         </div>
       </div>
+
+      {/* Авто-ресерч и подсказка обогащения данных по мессенджерам */}
+      {isLookupLoading && digitsCount >= 10 && (
+        <div className="flex items-center gap-2 rounded-[6px] border border-indigo-100 bg-indigo-50/50 px-3 py-2 text-xs text-[#4a38f5]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 text-[#4a38f5]" />
+          <span>Поиск по базам мессенджеров (Telegram, WhatsApp, MAX)...</span>
+        </div>
+      )}
+
+      {!isLookupLoading && Boolean(lookupData?.suggestedName || (lookupData?.sources && lookupData.sources.length > 0)) && (
+        <div className="rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-5 w-5 items-center justify-center rounded-[4px] bg-[#4a38f5]/10 text-[#4a38f5]">
+                <Sparkles className="h-3 w-3" />
+              </div>
+              <span className="text-xs text-[#111111]">
+                {lookupData?.suggestedName ? (
+                  <>
+                    Найдено имя: <strong className="font-semibold text-[#111111]">{lookupData.suggestedName}</strong>
+                  </>
+                ) : (
+                  "Найдены профили в мессенджерах"
+                )}
+              </span>
+            </div>
+
+            {lookupData?.suggestedName && customerName !== lookupData.suggestedName && (
+              <button
+                type="button"
+                onClick={() => handleApplySuggestedName(lookupData.suggestedName!)}
+                className="inline-flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+              >
+                <Check className="h-3 w-3" />
+                Подставить ФИО
+              </button>
+            )}
+          </div>
+
+          {lookupData?.sources && lookupData.sources.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-[#f0f0f0]">
+              <span className="text-[11px] font-medium text-[#666666]">Источники:</span>
+              {lookupData.sources.map((src, i) => (
+                <span
+                  key={`${src.channel}-${i}`}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-[4px] border px-2 py-0.5 text-[11px] font-medium",
+                    src.channel === "telegram" && "bg-sky-50 text-sky-700 border-sky-200",
+                    src.channel === "whatsapp" && "bg-emerald-50 text-emerald-700 border-emerald-200",
+                    src.channel === "max" && "bg-indigo-50 text-[#4a38f5] border-indigo-200",
+                    src.channel === "crm" && "bg-slate-50 text-slate-700 border-slate-200",
+                  )}
+                >
+                  {src.channel === "telegram" && <Send className="h-3 w-3" />}
+                  {src.channel === "whatsapp" && <MessageCircle className="h-3 w-3" />}
+                  {src.channel === "max" && <Sparkles className="h-3 w-3" />}
+                  {src.channel === "crm" && <UserCheck className="h-3 w-3" />}
+                  <span>
+                    {src.channel === "telegram" && "Telegram"}
+                    {src.channel === "whatsapp" && "WhatsApp"}
+                    {src.channel === "max" && "MAX"}
+                    {src.channel === "crm" && "CRM"}
+                    {src.username ? `: @${src.username}` : (src.name && src.name !== "Telegram" ? `: ${src.name}` : "")}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!isLookupLoading && !hasClientFound && (!lookupData?.sources || lookupData.sources.length === 0) && digitsCount >= 10 && (
+        <div className="flex items-center gap-2 rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] px-3 py-2 text-xs text-[#666666]">
+          <Info className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+          <span>Клиент не найден в Telegram / WhatsApp / MAX. Введите ФИО вручную</span>
+        </div>
+      )}
 
       {/* Множественные контакты для связи */}
       <div className="space-y-2 pt-1 border-t border-[#f0f0f0]">

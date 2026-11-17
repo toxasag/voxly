@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { ShieldAlert, Loader2, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/lib/auth/use-auth";
@@ -26,21 +26,32 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
   const { user, isLoading, isAuthenticated } = useAuth();
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
+  const hasTriggeredRef = useRef(false);
 
   const backup = typeof window !== "undefined" ? readImpersonationBackup() : null;
   const isPlatformOwner = user?.platform_role === "platform_owner";
 
   useEffect(() => {
-    if (isLoading || isPlatformOwner || isRestoring || restoreFailed) return;
+    if (isLoading || isPlatformOwner || isRestoring || restoreFailed || hasTriggeredRef.current) return;
 
     if (backup) {
+      hasTriggeredRef.current = true;
       setIsRestoring(true);
       void restoreAdminSessionDetailed().then((res) => {
-        if (res.success) {
-          if (res.targetUrl && typeof window !== "undefined" && !window.location.href.includes(res.targetUrl)) {
-            window.location.href = res.targetUrl;
-          } else {
+        if (res.success && res.targetUrl && typeof window !== "undefined") {
+          try {
+            const currentUrl = new URL(window.location.href);
+            const destUrl = new URL(res.targetUrl, window.location.origin);
+            if (currentUrl.origin !== destUrl.origin || currentUrl.pathname !== destUrl.pathname) {
+              window.location.href = res.targetUrl;
+              return;
+            }
+            if (destUrl.hash) {
+              window.location.hash = destUrl.hash;
+            }
             window.location.reload();
+          } catch {
+            window.location.href = res.targetUrl;
           }
         } else {
           setRestoreFailed(true);

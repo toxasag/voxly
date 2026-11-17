@@ -260,7 +260,15 @@ export function toDealDTO(row: DealRow): DealDTO {
  * причину в `delivery_error`: неотправленное сообщение обязано отличаться в
  * таймлайне от отправленного, иначе менеджер ждёт ответа на то, что не ушло.
  */
-export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed", "received"]);
+export const deliveryStatusSchema = z.enum([
+  "neutral",
+  "pending",
+  "sent",
+  "delivered",
+  "read",
+  "failed",
+  "received",
+]);
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
 
 export interface AudioTranscriptMetadata {
@@ -281,9 +289,19 @@ export interface DocumentInfoMetadata {
   error?: string;
 }
 
+export interface MessageTranslationMetadata {
+  ru?: string;
+  source_lang?: string;
+  translated_at?: string;
+  [lang: string]: string | undefined;
+}
+
 export interface DealMessageMetadata {
   transcript?: AudioTranscriptMetadata;
   document_info?: DocumentInfoMetadata;
+  translations?: Record<string, string>;
+  translation?: MessageTranslationMetadata;
+  detected_lang?: string;
   [key: string]: unknown;
 }
 
@@ -302,6 +320,8 @@ export interface DealMessageRow {
   metadata?: Record<string, unknown> | null;
   delivery_status: string;
   delivery_error: string | null;
+  delivered_at?: Date | string | null;
+  read_at?: Date | string | null;
   created_at: Date | string;
 }
 
@@ -319,6 +339,8 @@ export interface DealMessageDTO {
   metadata: DealMessageMetadata;
   deliveryStatus: DeliveryStatus;
   deliveryError: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
   createdAt: string;
 }
 
@@ -343,6 +365,8 @@ export function toDealMessageDTO(row: DealMessageRow): DealMessageDTO {
     metadata: (row.metadata as DealMessageMetadata) ?? {},
     deliveryStatus: toDeliveryStatus(row.delivery_status),
     deliveryError: row.delivery_error,
+    deliveredAt: row.delivered_at ? toIso(row.delivered_at) : null,
+    readAt: row.read_at ? toIso(row.read_at) : null,
     createdAt: toIso(row.created_at),
   };
 }

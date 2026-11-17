@@ -5,6 +5,7 @@ import { normalizePhoneToE164 } from "../../crm/contacts/dedupe.service.js";
 import { leadNotificationQueue } from "../../crm/leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
+import { CrmEnrichmentService } from "../../crm/enrichment.service.js";
 import type { ContactRow } from "../../crm/contacts/contacts.types.js";
 import type { DealRow } from "../../crm/deals/deals.types.js";
 import type {
@@ -704,6 +705,18 @@ export class SitesService {
       void leadNotificationQueue.checkAndTriggerNotification(site.tenant_id, deal.id);
       void notificationQueue.dispatchLeadCreated({ tenantId: site.tenant_id, dealId: deal.id });
       void conversionDispatcher.handleDealCreated({ tenantId: site.tenant_id, dealId: deal.id });
+
+      // 11. Автоматическое кросс-канальное обогащение контакта по номеру (Telegram, WhatsApp, MAX)
+      if (contactId && canonicalPhone && canonicalPhone.replace(/\D/g, "").length >= 10) {
+        const enrichment = new CrmEnrichmentService();
+        void enrichment
+          .enrichContact(site.tenant_id, contactId, {
+            phoneOverride: canonicalPhone,
+            channels: ["telegram", "max", "whatsapp"],
+            dealId: deal.id,
+          })
+          .catch(() => {});
+      }
 
       return {
         status: "ok",

@@ -267,6 +267,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [liveModules, currentTenantId]);
 
   const applySession = useCallback((dto: UserProfileDTO & { access_token?: string; refresh_token?: string }) => {
+    // Сохраняем текущие токены администратора/партнера ДО того, как writeTokens перезапишет их токенами клиента
+    const currentAccessTokenBeforeWrite = readAccessToken();
+    const currentRefreshTokenBeforeWrite = readRefreshToken();
+
     if (dto.access_token && dto.refresh_token) {
       writeTokens({ accessToken: dto.access_token, refreshToken: dto.refresh_token });
     }
@@ -274,14 +278,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (dto.impersonator) {
       const existing = readImpersonationBackup();
       if (!existing) {
+        const isPlatformOwner = dto.impersonator.platform_role === "platform_owner";
+        const adminHost = isPlatformOwner
+          ? "getvoxly.ru"
+          : `${dto.impersonator.tenant_slug}.getvoxly.ru`;
+
         writeImpersonationBackup({
-          accessToken: readAccessToken() || "",
+          accessToken: currentAccessTokenBeforeWrite || dto.access_token || "",
+          refreshToken: currentRefreshTokenBeforeWrite || dto.refresh_token || "",
           adminUserEmail: dto.impersonator.email,
           adminUserName: dto.impersonator.name,
-          adminOriginHost: `${dto.impersonator.tenant_slug}.getvoxly.ru`,
-          adminOriginPath: dto.impersonator.platform_role === "platform_owner" ? "/admin/tenants" : "/partner",
+          adminOriginHost: adminHost,
+          adminOriginPath: isPlatformOwner ? "/admin/tenants" : "/partner",
           isPartner: Boolean(dto.impersonator.is_partner || dto.impersonator.role === "partner"),
-          isPlatformOwner: dto.impersonator.platform_role === "platform_owner",
+          isPlatformOwner,
           impersonatedTenantSlug: dto.tenant.slug,
           impersonatedTenantName: dto.tenant.name,
           impersonatedUserEmail: dto.user.email,

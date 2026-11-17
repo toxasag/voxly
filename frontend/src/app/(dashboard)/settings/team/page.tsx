@@ -3,10 +3,17 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import {
+  Check,
+  Copy,
   CreditCard,
+  ExternalLink,
   Loader2,
   Mail,
+  MessageCircle,
   MoreVertical,
+  Phone,
+  RotateCw,
+  Send,
   ShieldCheck,
   Trash2,
   UserPlus,
@@ -20,17 +27,28 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { InviteMemberModal } from "@/components/settings/InviteMemberModal";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuPortal,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
   ROLE_LABELS,
   seatsCaption,
   useChangeMemberRole,
   useRemoveMember,
   useResendInvite,
+  useRevokeInvite,
   useTeam,
   type AssignableRole,
+  type PendingInviteDTO,
   type TeamMemberDTO,
 } from "@/lib/api/use-team";
 import { userInitials } from "@/lib/api/use-tenant-users";
-import { cn } from "@/lib/utils";
+import { cn, formatPhone } from "@/lib/utils";
 import type { Permission } from "@/types";
 
 function formatDate(iso: string): string {
@@ -41,7 +59,16 @@ function formatDate(iso: string): string {
   }).format(new Date(iso));
 }
 
-/** Меню действий строки. Держит открытым только одну строку за раз. */
+function formatDateTime(iso: string): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+/** Меню действий строки активного сотрудника. */
 function MemberActions({
   member,
   assignableRoles,
@@ -49,7 +76,6 @@ function MemberActions({
   onChangeRole,
   onChangePermissions,
   onRemove,
-  onResend,
   isBusy,
 }: {
   member: TeamMemberDTO;
@@ -58,105 +84,87 @@ function MemberActions({
   onChangeRole: (role: AssignableRole) => void;
   onChangePermissions: (permissions: Permission[]) => void;
   onRemove: () => void;
-  onResend: () => void;
   isBusy: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-
-  // Владельца и себя менять нельзя — те же правила, что на сервере. Кнопка
-  // скрывается, а не блокируется: неактивный элемент без объяснения выглядит
-  // как поломка.
   if (member.isOwner || member.isSelf) {
-    return <span className="text-xs text-slate-600">{member.isSelf ? "Это вы" : "Владелец"}</span>;
+    return <span className="text-xs text-[#888888]">{member.isSelf ? "Это вы" : "Владелец"}</span>;
   }
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        disabled={isBusy}
-        aria-label={`Действия для ${member.fullName}`}
-        aria-expanded={open}
-        className="rounded-[6px] p-1.5 text-[#888888] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40"
-      >
-        {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
-      </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          disabled={isBusy}
+          aria-label={`Действия для ${member.fullName}`}
+          className="rounded-[6px] p-1.5 text-[#888888] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40 cursor-pointer"
+        >
+          {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
+        </button>
+      </DropdownMenuTrigger>
 
-      {open && (
-        <>
-          {/* Клик вне меню закрывает его: без этого оно оставалось бы висеть. */}
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
-
-          <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-lg">
-            <p className="border-b border-[#e5e5e5] px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#888888]">
-              Изменить роль
-            </p>
-            {assignableRoles.map((role) => (
-              <button
-                key={role}
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  if (role !== member.role) onChangeRole(role);
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-[#fafafa]",
-                  role === member.role ? "font-medium text-[#4a38f5]" : "text-[#111111]",
-                )}
-              >
-                {ROLE_LABELS[role]}
-                {role === member.role && <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />}
-              </button>
-            ))}
-
-            {availablePermissions.map((permission) => (
-              <button
-                key={permission}
-                type="button"
-                onClick={() => {
-                  const next = member.permissions.includes(permission)
-                    ? member.permissions.filter((item) => item !== permission)
-                    : [...member.permissions, permission];
-                  setOpen(false);
-                  onChangePermissions(next);
-                }}
-                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[11px] text-[#666666] hover:bg-[#fafafa]"
-              >
-                <span>{permission}</span>
-                {member.permissions.includes(permission) && <ShieldCheck className="h-3 w-3 text-[#4a38f5]" />}
-              </button>
-            ))}
-
-            {member.status === "invited" && (
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  onResend();
-                }}
-                className="flex w-full items-center gap-2 border-t border-[#e5e5e5] px-3 py-2 text-left text-xs text-sky-700 transition-colors hover:bg-sky-50"
-              >
-                <Mail className="h-3.5 w-3.5" />
-                Отправить приглашение снова
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onRemove();
+      <DropdownMenuPortal>
+        <DropdownMenuContent
+          align="end"
+          side="bottom"
+          sideOffset={4}
+          avoidCollisions={true}
+          collisionPadding={12}
+          className="w-56"
+        >
+          <DropdownMenuLabel>Изменить роль</DropdownMenuLabel>
+          {assignableRoles.map((role) => (
+            <DropdownMenuItem
+              key={role}
+              onSelect={() => {
+                if (role !== member.role) onChangeRole(role);
               }}
-              className="flex w-full items-center gap-2 border-t border-[#e5e5e5] px-3 py-2 text-left text-xs text-rose-600 transition-colors hover:bg-rose-50"
+              className={cn(
+                "flex w-full items-center justify-between",
+                role === member.role ? "font-medium text-[#4a38f5]" : "text-[#111111]",
+              )}
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              Удалить сотрудника
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+              <span>{ROLE_LABELS[role]}</span>
+              {role === member.role && <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />}
+            </DropdownMenuItem>
+          ))}
+
+          {availablePermissions.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Точечные права</DropdownMenuLabel>
+              {availablePermissions.map((permission) => {
+                const hasPermission = member.permissions.includes(permission);
+                return (
+                  <DropdownMenuItem
+                    key={permission}
+                    onSelect={() => {
+                      const next = hasPermission
+                        ? member.permissions.filter((item) => item !== permission)
+                        : [...member.permissions, permission];
+                      onChangePermissions(next);
+                    }}
+                    className="flex w-full items-center justify-between text-[11px] text-[#666666]"
+                  >
+                    <span>{permission}</span>
+                    {hasPermission && <ShieldCheck className="h-3 w-3 text-[#4a38f5]" />}
+                  </DropdownMenuItem>
+                );
+              })}
+            </>
+          )}
+
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            danger
+            icon={Trash2}
+            onSelect={onRemove}
+          >
+            Удалить сотрудника
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenuPortal>
+    </DropdownMenu>
   );
 }
 
@@ -165,10 +173,13 @@ function TeamContent() {
   const changeRole = useChangeMemberRole();
   const removeMember = useRemoveMember();
   const resend = useResendInvite();
+  const revoke = useRevokeInvite();
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<TeamMemberDTO | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<PendingInviteDTO | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
 
   const handleChangeRole = useCallback(
     async (member: TeamMemberDTO, role: AssignableRole) => {
@@ -199,16 +210,55 @@ function TeamContent() {
     },
     [changeRole],
   );
-  const handleResend = useCallback(
-    async (member: TeamMemberDTO) => {
-      setBusyId(member.id);
+
+  const handleCopyInviteLink = useCallback(
+    async (invite: PendingInviteDTO) => {
+      if (invite.inviteUrl) {
+        try {
+          await navigator.clipboard.writeText(invite.inviteUrl);
+          setCopiedInviteId(invite.id);
+          toast.success("Ссылка приглашения скопирована в буфер обмена");
+          setTimeout(() => setCopiedInviteId(null), 2500);
+          return;
+        } catch {
+          // fallback to resend below
+        }
+      }
+
+      setBusyId(invite.id);
       try {
-        const result = await resend.mutateAsync({ id: member.id });
-        if (result.inviteUrl !== null) {
-          await navigator.clipboard?.writeText(result.inviteUrl);
+        const result = await resend.mutateAsync({ id: invite.id });
+        if (result.inviteUrl) {
+          await navigator.clipboard.writeText(result.inviteUrl);
+          setCopiedInviteId(invite.id);
           toast.success("Ссылка обновлена и скопирована в буфер обмена");
+          setTimeout(() => setCopiedInviteId(null), 2500);
         } else {
-          toast.success(`Приглашение отправлено повторно на ${member.email}`);
+          toast.success(`Приглашение отправлено повторно`);
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось получить ссылку");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [resend],
+  );
+
+  const handleResendInvite = useCallback(
+    async (invite: PendingInviteDTO) => {
+      setBusyId(invite.id);
+      try {
+        const result = await resend.mutateAsync({ id: invite.id });
+        if (result.inviteUrl) {
+          await navigator.clipboard.writeText(result.inviteUrl);
+          toast.success(
+            result.emailSent
+              ? `Приглашение отправлено на ${invite.email}, ссылка скопирована в буфер`
+              : "Ссылка приглашения обновлена и скопирована в буфер обмена",
+          );
+        } else {
+          toast.success(`Приглашение отправлено повторно на ${invite.email ?? invite.phone}`);
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось отправить приглашение");
@@ -219,15 +269,31 @@ function TeamContent() {
     [resend],
   );
 
+  const handleRevokeInvite = useCallback(async () => {
+    if (revokeTarget === null) return;
+    setBusyId(revokeTarget.id);
+    try {
+      await revoke.mutateAsync({ id: revokeTarget.id });
+      toast.success(`Приглашение для «${revokeTarget.name}» отозвано`);
+      setRevokeTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось отозвать приглашение");
+    } finally {
+      setBusyId(null);
+    }
+  }, [revoke, revokeTarget]);
+
   const handleRemove = useCallback(async () => {
     if (removeTarget === null) return;
-
+    setBusyId(removeTarget.id);
     try {
       await removeMember.mutateAsync({ id: removeTarget.id });
       toast.success(`${removeTarget.fullName} удалён из компании`);
       setRemoveTarget(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить сотрудника");
+    } finally {
+      setBusyId(null);
     }
   }, [removeMember, removeTarget]);
 
@@ -248,7 +314,7 @@ function TeamContent() {
         <button
           type="button"
           onClick={() => void refetch()}
-          className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa]"
+          className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] cursor-pointer"
         >
           Повторить
         </button>
@@ -257,9 +323,12 @@ function TeamContent() {
   }
 
   const { members, seats, assignableRoles, availablePermissions } = data;
+  const pendingInvites = data.invites ?? [];
+  const activeMembers = members.filter((m) => m.status === "active");
 
   return (
     <div className="space-y-6">
+      {/* Шапка страницы */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-[#111111]">Сотрудники компании</h1>
@@ -277,15 +346,14 @@ function TeamContent() {
         <button
           type="button"
           onClick={() => setInviteOpen(true)}
-          className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+          className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] cursor-pointer"
         >
           <UserPlus className="h-4 w-4" />
           Пригласить сотрудника
         </button>
       </div>
 
-      {/* Занятые места и стоимость следующего — чтобы решение о приглашении
-          принималось со знанием цены, а не после факта. */}
+      {/* Метрики занятости мест */}
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
           <div className="flex items-center gap-2">
@@ -321,111 +389,311 @@ function TeamContent() {
             <div className="rounded-[6px] bg-emerald-50 p-1.5">
               <ShieldCheck className="h-4 w-4 text-emerald-700" />
             </div>
-            <span className="text-xs font-medium text-[#666666]">Активных</span>
+            <span className="text-xs font-medium text-[#666666]">Активных / Приглашено</span>
           </div>
           <p className="mt-2 text-2xl font-bold text-[#111111] tabular-nums font-mono">
-            {members.filter((m) => m.status === "active").length}
-            {members.some((m) => m.status === "invited") && (
-              <span className="text-sm font-normal text-[#888888]">
-                {" "}
-                · {members.filter((m) => m.status === "invited").length} приглашено
-              </span>
-            )}
+            {activeMembers.length}
+            <span className="text-sm font-normal text-[#888888]">
+              {" "}
+              · {pendingInvites.length} в ожидании
+            </span>
           </p>
         </div>
       </div>
 
-      {members.length === 0 ? (
-        <EmptyState
-          icon={Users}
-          title="В компании пока только вы"
-          description="Пригласите сотрудников, чтобы работать вместе."
-          action={
-            <button
-              type="button"
-              onClick={() => setInviteOpen(true)}
-              className="rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs hover:bg-[#3d2ee0]"
-            >
-              Пригласить сотрудника
-            </button>
-          }
-        />
-      ) : (
-        <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
-                  Имя
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
-                  E-mail
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
-                  Роль
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
-                  Статус
-                </th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-[#666666]">
-                  Действия
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#f0f0f0]">
-              {members.map((member) => (
-                <tr key={member.id} className="transition-colors hover:bg-[#fafafa]">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f0f0f0] text-xs font-semibold text-[#111111]">
-                        {userInitials(member.fullName)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-[#111111]">
-                          {member.fullName}
-                        </p>
-                        <p className="text-xs text-[#666666]">
-                          {member.status === "invited"
-                            ? member.invitedAt !== null
-                              ? `приглашён ${formatDate(member.invitedAt)}`
-                              : "приглашён"
-                            : `с ${formatDate(member.createdAt)}`}
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-[#666666]">{member.email}</td>
-                  <td className="px-4 py-3">
-                    <span className="text-sm text-[#111111]">{ROLE_LABELS[member.role]}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge
-                      variant={member.status === "active" ? "success" : "warning"}
-                      size="sm"
-                    >
-                      {member.status === "active" ? "Активен" : "Приглашён"}
-                    </StatusBadge>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end">
-                      <MemberActions
-                        member={member}
-                        assignableRoles={assignableRoles}
-                        availablePermissions={availablePermissions}
-                        isBusy={busyId === member.id}
-                        onChangeRole={(role) => void handleChangeRole(member, role)}
-                        onChangePermissions={(permissions) => void handleChangePermissions(member, permissions)}
-                        onRemove={() => setRemoveTarget(member)}
-                        onResend={() => void handleResend(member)}
-                      />
-                    </div>
-                  </td>
+      {/* =====================================================================
+          СЕКЦИЯ: ОЖИДАЮЩИЕ ПРИГЛАШЕНИЯ (ОМНИКАНАЛЬНЫЙ АУДИТ)
+          ===================================================================== */}
+      {pendingInvites.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-[#111111]">Ожидающие приглашения</h2>
+              <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                {pendingInvites.length}
+              </span>
+            </div>
+            <p className="text-xs text-[#888888]">
+              Сотрудники получат доступ сразу после активации ссылки
+            </p>
+          </div>
+
+          <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Получатель
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Роль
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Отправлено
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Статус доставки
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-[#666666]">
+                    Действия
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[#f0f0f0]">
+                {pendingInvites.map((invite) => {
+                  const isBusy = busyId === invite.id;
+                  const isCopied = copiedInviteId === invite.id;
+
+                  return (
+                    <tr key={invite.id} className="transition-colors hover:bg-[#fafafa]">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-50 text-xs font-semibold text-amber-700">
+                            {userInitials(invite.name)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-[#111111]">
+                              {invite.name}
+                            </p>
+                            <p className="flex items-center gap-1.5 text-xs text-[#666666]">
+                              {invite.email ? (
+                                <>
+                                  <Mail className="h-3 w-3 text-[#888888]" />
+                                  <span>{invite.email}</span>
+                                </>
+                              ) : invite.phone ? (
+                                <>
+                                  <Phone className="h-3 w-3 text-[#888888]" />
+                                  <span className="font-mono">{formatPhone(invite.phone)}</span>
+                                </>
+                              ) : (
+                                <span>По ссылке</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span className="text-xs font-medium text-[#111111]">
+                          {ROLE_LABELS[invite.role] ?? invite.role}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3 text-xs text-[#666666]">
+                        {formatDateTime(invite.createdAt)}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        {invite.isExpired ? (
+                          <StatusBadge variant="warning" size="sm">
+                            Истекло
+                          </StatusBadge>
+                        ) : invite.deliveryStatus === "failed" ? (
+                          <div className="flex items-center gap-1.5" title={invite.deliveryError ?? "Ошибка SMTP"}>
+                            <StatusBadge variant="destructive" size="sm">
+                              Ошибка доставки
+                            </StatusBadge>
+                          </div>
+                        ) : invite.deliveryStatus === "sent" ? (
+                          <StatusBadge variant="success" size="sm">
+                            Письмо отправлено
+                          </StatusBadge>
+                        ) : invite.phone ? (
+                          <StatusBadge variant="info" size="sm">
+                            По номеру
+                          </StatusBadge>
+                        ) : (
+                          <StatusBadge variant="neutral" size="sm">
+                            Ссылка создана
+                          </StatusBadge>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {/* Скопировать ссылку */}
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyInviteLink(invite)}
+                            disabled={isBusy}
+                            title="Скопировать ссылку приглашения"
+                            className="flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            {isCopied ? (
+                              <>
+                                <Check className="h-3 w-3 text-emerald-600" />
+                                <span className="text-emerald-700">Скопировано</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3 w-3 text-[#666666]" />
+                                <span>Ссылка</span>
+                              </>
+                            )}
+                          </button>
+
+                          {/* Поделиться в Telegram */}
+                          {invite.telegramShareUrl && (
+                            <a
+                              href={invite.telegramShareUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Отправить приглашение в Telegram"
+                              className="rounded-[6px] border border-sky-200 bg-sky-50/60 p-1.5 text-sky-700 hover:bg-sky-100 transition-colors"
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+
+                          {/* Поделиться в WhatsApp */}
+                          {invite.whatsappShareUrl && (
+                            <a
+                              href={invite.whatsappShareUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Отправить приглашение в WhatsApp"
+                              className="rounded-[6px] border border-emerald-200 bg-emerald-50/60 p-1.5 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                            >
+                              <MessageCircle className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+
+                          {/* Повторить отправку */}
+                          <button
+                            type="button"
+                            onClick={() => void handleResendInvite(invite)}
+                            disabled={isBusy}
+                            title="Отправить повторно"
+                            className="rounded-[6px] p-1.5 text-[#666666] hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            {isBusy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RotateCw className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+
+                          {/* Отозвать */}
+                          <button
+                            type="button"
+                            onClick={() => setRevokeTarget(invite)}
+                            disabled={isBusy}
+                            title="Отозвать приглашение"
+                            className="rounded-[6px] p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700 transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
+
+      {/* =====================================================================
+          СЕКЦИЯ: ДЕЙСТВУЮЩИЕ СОТРУДНИКИ
+          ===================================================================== */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-[#111111]">Действующие сотрудники</h2>
+            <span className="rounded-full bg-[#f0f0f0] px-2 py-0.5 text-xs font-semibold text-[#666666]">
+              {activeMembers.length}
+            </span>
+          </div>
+        </div>
+
+        {activeMembers.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="В компании пока только вы"
+            description="Пригласите сотрудников, чтобы работать вместе над сделками и клиентами."
+            action={
+              <button
+                type="button"
+                onClick={() => setInviteOpen(true)}
+                className="rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs hover:bg-[#3d2ee0] cursor-pointer"
+              >
+                Пригласить сотрудника
+              </button>
+            }
+          />
+        ) : (
+          <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Имя
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Контакт
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Роль
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
+                    Статус
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-[#666666]">
+                    Действия
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#f0f0f0]">
+                {activeMembers.map((member) => (
+                  <tr key={member.id} className="transition-colors hover:bg-[#fafafa]">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f0f0f0] text-xs font-semibold text-[#111111]">
+                          {userInitials(member.fullName)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-[#111111]">
+                            {member.fullName}
+                          </p>
+                          <p className="text-xs text-[#666666]">
+                            с {formatDate(member.createdAt)}
+                          </p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-[#666666]">
+                      {member.email ?? (member.phone ? formatPhone(member.phone) : "—")}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm text-[#111111]">{ROLE_LABELS[member.role] ?? member.role}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge variant="success" size="sm">
+                        Активен
+                      </StatusBadge>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end">
+                        <MemberActions
+                          member={member}
+                          assignableRoles={assignableRoles}
+                          availablePermissions={availablePermissions}
+                          isBusy={busyId === member.id}
+                          onChangeRole={(role) => void handleChangeRole(member, role)}
+                          onChangePermissions={(permissions) => void handleChangePermissions(member, permissions)}
+                          onRemove={() => setRemoveTarget(member)}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <p className="text-xs text-slate-500">
         Стоимость мест и состав модулей —{" "}
@@ -435,6 +703,7 @@ function TeamContent() {
         .
       </p>
 
+      {/* Модальное окно приглашения */}
       <InviteMemberModal
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
@@ -442,6 +711,7 @@ function TeamContent() {
         assignableRoles={assignableRoles}
       />
 
+      {/* Диалог подтверждения удаления сотрудника */}
       <ConfirmDialog
         open={removeTarget !== null}
         onClose={() => setRemoveTarget(null)}
@@ -455,6 +725,22 @@ function TeamContent() {
         confirmLabel="Удалить"
         variant="destructive"
         isPending={removeMember.isPending}
+      />
+
+      {/* Диалог подтверждения отзыва приглашения */}
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={handleRevokeInvite}
+        title="Отозвать приглашение?"
+        description={
+          revokeTarget === null
+            ? undefined
+            : `Приглашение для «${revokeTarget.name}» (${revokeTarget.email ?? revokeTarget.phone}) будет аннулировано. Ссылка перестанет действовать.`
+        }
+        confirmLabel="Отозвать"
+        variant="destructive"
+        isPending={revoke.isPending}
       />
     </div>
   );

@@ -5,9 +5,10 @@ import {
   Briefcase, Building2, CalendarClock, Check, ChevronUp, CircleSlash,
   Copy, GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
   Phone, Plus, ShieldAlert, Star, Tag, UserCircle2, UserRound, AlertTriangle, MapPin,
+  RefreshCw, Sparkles,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
-import { contactFullName, useUpdateContact, useFindDuplicateContacts } from "@/lib/api/use-contacts";
+import { contactFullName, useUpdateContact, useFindDuplicateContacts, useEnrichContact } from "@/lib/api/use-contacts";
 import { useCompanies, useCompany, useUpdateCompany } from "@/lib/api/use-companies";
 import { ContactMergeModal } from "@/components/crm/contacts/ContactMergeModal";
 import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
@@ -119,12 +120,27 @@ export const ContactCard = memo(function ContactCard({
   contact, onClose, onEdit, onDelete, isDeleting = false, onOpenCompany, onOpenDeal,
 }: ContactCardProps) {
   const update = useUpdateContact();
+  const enrichMutation = useEnrichContact();
   const [editing, setEditing] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
 
   const duplicatesQuery = useFindDuplicateContacts(contact.phone, contact.id);
   const duplicates = duplicatesQuery.data ?? [];
   const [targetDuplicate, setTargetDuplicate] = useState<ContactDTO | null>(null);
+
+  const handleEnrich = useCallback(async () => {
+    try {
+      const res = await enrichMutation.mutateAsync(contact.id);
+      const fields = res.enrichedFields;
+      if (fields && fields.length > 0) {
+        toast.success(`Обогащено полей: ${fields.length} (${fields.join(", ")})`);
+      } else {
+        toast.info("Проверка мессенджеров завершена (новых данных не найдено)");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Ошибка при проверке мессенджеров");
+    }
+  }, [enrichMutation, contact.id]);
 
   /**
    * Черновики составных полей.
@@ -407,6 +423,120 @@ export const ContactCard = memo(function ContactCard({
           </button>
         </div>
       )}
+
+      {/* Статус проверки мессенджеров и обогащения */}
+      {(() => {
+        const enrichmentData = contact.customFields?.enrichment as
+          | {
+              status?: string;
+              checked_at?: string;
+              channels?: {
+                telegram?: { exists: boolean; username?: string | null };
+                whatsapp?: { exists: boolean };
+                max?: { exists: boolean; username?: string | null };
+              };
+              enriched_fields?: string[];
+            }
+          | undefined;
+
+        const hasTg = Boolean(
+          contact.telegramUsername ||
+            contact.telegramChatId ||
+            contact.socials.some((s) => s.kind === "telegram") ||
+            enrichmentData?.channels?.telegram?.exists,
+        );
+        const hasWa = Boolean(
+          contact.whatsapp || enrichmentData?.channels?.whatsapp?.exists,
+        );
+        const hasMax = Boolean(
+          contact.socials.some((s) => s.kind === "max") ||
+            enrichmentData?.channels?.max?.exists,
+        );
+
+        return (
+          <div className="mx-4 mb-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 text-xs shadow-2xs">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1.5 font-medium text-[#111111]">
+                <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+                <span>Мессенджеры и профиль</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleEnrich}
+                disabled={enrichMutation.isPending}
+                title="Проверить наличие Telegram, WhatsApp и MAX"
+                className="flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3 w-3 text-[#666666]",
+                    enrichMutation.isPending && "animate-spin",
+                  )}
+                />
+                <span>
+                  {enrichMutation.isPending ? "Проверка..." : "Проверить"}
+                </span>
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Telegram */}
+              <div
+                className={cn(
+                  "flex items-center gap-1 rounded-[6px] border px-2 py-0.5 text-[11px]",
+                  hasTg
+                    ? "border-sky-200 bg-sky-50 text-sky-800"
+                    : "border-[#e5e5e5] bg-white text-[#888888]",
+                )}
+              >
+                <span className="font-semibold">Telegram:</span>
+                <span>
+                  {contact.telegramUsername
+                    ? `@${contact.telegramUsername.replace(/^@/, "")}`
+                    : hasTg
+                      ? "Активен"
+                      : "Не найден"}
+                </span>
+              </div>
+
+              {/* WhatsApp */}
+              <div
+                className={cn(
+                  "flex items-center gap-1 rounded-[6px] border px-2 py-0.5 text-[11px]",
+                  hasWa
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-[#e5e5e5] bg-white text-[#888888]",
+                )}
+              >
+                <span className="font-semibold">WhatsApp:</span>
+                <span>{hasWa ? "Активен" : "Не найден"}</span>
+              </div>
+
+              {/* MAX */}
+              <div
+                className={cn(
+                  "flex items-center gap-1 rounded-[6px] border px-2 py-0.5 text-[11px]",
+                  hasMax
+                    ? "border-violet-200 bg-violet-50 text-violet-800"
+                    : "border-[#e5e5e5] bg-white text-[#888888]",
+                )}
+              >
+                <span className="font-semibold">MAX:</span>
+                <span>
+                  {contact.socials.find((s) => s.kind === "max")?.value ||
+                    (hasMax ? "Найден" : "Не найден")}
+                </span>
+              </div>
+            </div>
+
+            {enrichmentData?.checked_at && (
+              <div className="mt-1.5 text-[10px] text-[#888888]">
+                Проверено: {formatDateTime(enrichmentData.checked_at)}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 1. ФИО */}
       <RecordFieldGroup title="ФИО">
@@ -946,34 +1076,46 @@ export const ContactCard = memo(function ContactCard({
         onDelete={onDelete}
         isDeleting={isDeleting}
         headerActions={
-          duplicates.length > 0 ? (
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => {
-                setTargetDuplicate(duplicates[0]);
-                setMergeOpen(true);
-              }}
-              title={`Объединить дубликаты (${duplicates.length})`}
-              className="flex items-center gap-1.5 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2 py-1 text-xs font-medium text-[#854d0e] hover:bg-[#fef9c3] transition-colors cursor-pointer"
+              onClick={handleEnrich}
+              disabled={enrichMutation.isPending}
+              title="Проверить наличие Telegram, WhatsApp, MAX и обогатить профиль"
+              className="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50 cursor-pointer shadow-2xs"
             >
-              <GitMerge className="h-3.5 w-3.5" />
-              <span>Слияние ({duplicates.length})</span>
+              <Sparkles className={cn("h-3.5 w-3.5 text-[#4a38f5]", enrichMutation.isPending && "animate-spin")} />
+              <span className="hidden sm:inline">{enrichMutation.isPending ? "Проверка..." : "Обогатить"}</span>
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setTargetDuplicate(null);
-                setMergeOpen(true);
-              }}
-              aria-label="Объединить контакт"
-              title="Объединить с дубликатом"
-              className="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
-            >
-              <GitMerge className="h-3.5 w-3.5 text-[#666666]" />
-              <span className="hidden sm:inline">Слияние</span>
-            </button>
-          )
+            {duplicates.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTargetDuplicate(duplicates[0]);
+                  setMergeOpen(true);
+                }}
+                title={`Объединить дубликаты (${duplicates.length})`}
+                className="flex items-center gap-1.5 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2 py-1 text-xs font-medium text-[#854d0e] hover:bg-[#fef9c3] transition-colors cursor-pointer"
+              >
+                <GitMerge className="h-3.5 w-3.5" />
+                <span>Слияние ({duplicates.length})</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setTargetDuplicate(null);
+                  setMergeOpen(true);
+                }}
+                aria-label="Объединить контакт"
+                title="Объединить с дубликатом"
+                className="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+              >
+                <GitMerge className="h-3.5 w-3.5 text-[#666666]" />
+                <span className="hidden sm:inline">Слияние</span>
+              </button>
+            )}
+          </div>
         }
         ariaLabel={`Карточка контакта: ${contactFullName(contact)}`}
       />
