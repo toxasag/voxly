@@ -29,6 +29,7 @@ import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
+import { messageTranslationService } from "../translation/message-translation.service.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
@@ -786,6 +787,14 @@ export class DealsService {
           payload.metadata ? JSON.stringify(payload.metadata) : "{}",
         ],
       );
+
+      if (row && payload.direction === "inbound" && payload.content) {
+        messageTranslationService.autoTranslateIfForeign({
+          tenantId,
+          messageId: row.id,
+          content: payload.content,
+        });
+      }
 
       return toDealMessageDTO(row);
     });

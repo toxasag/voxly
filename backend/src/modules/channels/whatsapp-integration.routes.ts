@@ -8,6 +8,7 @@ import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
 import { chatEventBus } from "../crm/chat/chat-events.js";
+import { messageTranslationService } from "../crm/translation/message-translation.service.js";
 import { getEnv } from "../../config/env.js";
 import { safeEqual } from "../../services/credentials-cipher.js";
 
@@ -253,6 +254,13 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
 
       if (inserted) {
         insertedCount++;
+        if (!isOutbound && text) {
+          messageTranslationService.autoTranslateIfForeign({
+            tenantId: params.tenantId,
+            messageId: inserted.id,
+            content: text,
+          });
+        }
         chatEventBus.emitChatEvent({
           type: "message_created",
           tenantId: params.tenantId,

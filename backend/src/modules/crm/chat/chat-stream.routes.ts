@@ -78,7 +78,7 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
         messages = await query(
           `SELECT id, deal_id, channel_account_id, source, direction, sender_name,
                   content, channel, attachment, attachment_type, delivery_status,
-                  delivery_error, created_at
+                  delivery_error, metadata, created_at
            FROM deal_messages
            WHERE tenant_id = $1 AND deal_id = $2 AND created_at > $3
            ORDER BY created_at ASC
@@ -89,7 +89,7 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
         messages = await query(
           `SELECT id, deal_id, channel_account_id, source, direction, sender_name,
                   content, channel, attachment, attachment_type, delivery_status,
-                  delivery_error, created_at
+                  delivery_error, metadata, created_at
            FROM deal_messages
            WHERE tenant_id = $1 AND deal_id = $2
            ORDER BY created_at DESC
@@ -101,7 +101,7 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
       messages = await query(
         `SELECT id, deal_id, channel_account_id, source, direction, sender_name,
                 content, channel, attachment, attachment_type, delivery_status,
-                delivery_error, created_at
+                delivery_error, metadata, created_at
          FROM deal_messages
          WHERE tenant_id = $1 AND ($2::timestamptz IS NULL OR created_at > $2::timestamptz)
          ORDER BY created_at DESC

@@ -281,9 +281,19 @@ export interface DocumentInfoMetadata {
   error?: string;
 }
 
+export interface MessageTranslationMetadata {
+  ru?: string;
+  source_lang?: string;
+  translated_at?: string;
+  [lang: string]: string | undefined;
+}
+
 export interface DealMessageMetadata {
   transcript?: AudioTranscriptMetadata;
   document_info?: DocumentInfoMetadata;
+  translations?: Record<string, string>;
+  translation?: MessageTranslationMetadata;
+  detected_lang?: string;
   [key: string]: unknown;
 }
 

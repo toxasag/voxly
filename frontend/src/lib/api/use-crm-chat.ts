@@ -31,9 +31,19 @@ export interface DocumentInfoMetadata {
   error?: string;
 }
 
+export interface MessageTranslationMetadata {
+  ru?: string;
+  source_lang?: string;
+  translated_at?: string;
+  [lang: string]: string | undefined;
+}
+
 export interface DealMessageMetadata {
   transcript?: AudioTranscriptMetadata;
   document_info?: DocumentInfoMetadata;
+  translations?: Record<string, string>;
+  translation?: MessageTranslationMetadata;
+  detected_lang?: string;
   [key: string]: unknown;
 }
 
@@ -392,6 +402,36 @@ export function useSyncContactChatHistory(contactId: string): UseMutationResult<
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: crmChatKeys.contact.messages(contactId) });
       void qc.invalidateQueries({ queryKey: crmChatKeys.contact.sendFromOptions(contactId) });
+    },
+  });
+}
+
+export function useTranslateMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      messageId,
+      targetLang = "ru",
+      force = false,
+    }: {
+      messageId: string;
+      targetLang?: string;
+      force?: boolean;
+    }) => {
+      const res = await apiClient.post<{
+        data: {
+          id: string;
+          translatedText: string | null;
+          sourceLang: string;
+          targetLang: string;
+          cached: boolean;
+        };
+      }>(`/api/v1/crm/messages/${messageId}/translate`, { targetLang, force });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["crm-chat"] });
+      queryClient.invalidateQueries({ queryKey: ["deal-messages"] });
     },
   });
 }

@@ -23,6 +23,7 @@ import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import { ConversionDispatcherService } from "../analytics/conversion-dispatcher.service.js";
 import type { VisitorGeoData } from "../../services/geo-enrichment.service.js";
+import { messageTranslationService } from "./translation/message-translation.service.js";
 
 // Профиль и проверка бота объявлены в `channel-identity.ts` вместе с раскладкой по полям,
 // но реэкспортируются здесь: транспорт получает их вместе с типом входящего
@@ -979,10 +980,11 @@ export class CrmPipelineService {
 
       if (!existingMsg) {
         const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
-        await tx.query(
+        const insertedMsg = await tx.queryOne<{ id: string }>(
           `INSERT INTO deal_messages
              (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id`,
           [
             input.tenantId,
             dealId,
@@ -997,6 +999,14 @@ export class CrmPipelineService {
             input.attachmentType ?? null,
           ],
         );
+
+        if (insertedMsg?.id) {
+          messageTranslationService.autoTranslateIfForeign({
+            tenantId: input.tenantId,
+            messageId: insertedMsg.id,
+            content: contentText,
+          });
+        }
       }
 
       // Обновляем таймстамп активности сделки для поднятия в канбане/списке

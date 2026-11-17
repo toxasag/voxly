@@ -20,6 +20,7 @@ import {
   ExternalLink,
   FileSpreadsheet,
   FileText,
+  Languages,
   Loader2,
   MessageCircle,
   Paperclip,
@@ -874,6 +875,42 @@ export function CrmChatView({
     [queryClient, entityType, entityId],
   );
 
+  const [translatingIds, setTranslatingIds] = useState<Set<string>>(new Set());
+  const [hiddenTranslationIds, setHiddenTranslationIds] = useState<Set<string>>(new Set());
+
+  const handleTranslateMessage = useCallback(
+    async (messageId: string, force = false) => {
+      setTranslatingIds((prev) => new Set(prev).add(messageId));
+      try {
+        await apiClient.post(`/api/v1/crm/messages/${messageId}/translate`, { targetLang: "ru", force });
+        queryClient.invalidateQueries({ queryKey: ["crm-chat", entityType, entityId] });
+        queryClient.invalidateQueries({ queryKey: ["deal-messages", entityId] });
+        toast.success("Перевод обновлен");
+      } catch {
+        toast.error("Не удалось перевести сообщение");
+      } finally {
+        setTranslatingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(messageId);
+          return next;
+        });
+      }
+    },
+    [queryClient, entityType, entityId],
+  );
+
+  const toggleTranslationHidden = useCallback((messageId: string) => {
+    setHiddenTranslationIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
+
   const messages = messagesQuery.data ?? [];
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
   const aiStatus = aiStatusQuery.data;
@@ -1573,6 +1610,84 @@ export function CrmChatView({
                                 {renderChatMessageContent(cleanedContent)}
                               </div>
                             )}
+
+                            {/* Автоматический перевод входящего и иноязычного сообщения на русский язык */}
+                            {(() => {
+                              if (isDummyContent || !trimmedContent) return null;
+                              const translatedRu = message.metadata?.translations?.ru || message.metadata?.translation?.ru;
+                              const rawSourceLang = (message.metadata?.detected_lang || message.metadata?.translation?.source_lang || "").toString();
+                              const sourceLangUpper = rawSourceLang ? rawSourceLang.toUpperCase() : "";
+                              const isTranslating = translatingIds.has(message.id);
+                              const isHidden = hiddenTranslationIds.has(message.id);
+
+                              const cyrillicCount = (cleanedContent.match(/[\u0400-\u04FF]/g) || []).length;
+                              const foreignCount = (cleanedContent.match(/[a-zA-Z\u0E00-\u0E7F\u4E00-\u9FFF]/g) || []).length;
+                              const isForeign = foreignCount >= 3 && foreignCount > cyrillicCount;
+
+                              if (translatedRu) {
+                                return (
+                                  <div className="mt-2 pt-2 border-t border-[#e5e5e5]/80 text-[13px]">
+                                    <div className="flex items-center justify-between gap-1.5 text-[11px] text-[#666666] mb-1 select-none">
+                                      <div className="flex items-center gap-1 font-medium text-[#4a38f5]">
+                                        <Languages className="h-3.5 w-3.5" />
+                                        <span>Перевод на русский{sourceLangUpper ? ` (с ${sourceLangUpper})` : ""}:</span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleTranslateMessage(message.id, true)}
+                                          disabled={isTranslating}
+                                          className="text-[10px] text-[#888888] hover:text-[#4a38f5] transition-colors disabled:opacity-50"
+                                          title="Перевести повторно"
+                                        >
+                                          {isTranslating ? "Переводим..." : "Обновить"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleTranslationHidden(message.id)}
+                                          className="text-[10px] text-[#888888] hover:text-[#111111] transition-colors"
+                                          title={isHidden ? "Показать перевод" : "Скрыть перевод"}
+                                        >
+                                          {isHidden ? "Показать" : "Скрыть"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {!isHidden && (
+                                      <div className="rounded-[6px] bg-[#fbfbfb] px-2.5 py-1.5 text-[#111111] leading-relaxed border border-[#e5e5e5] shadow-2xs">
+                                        {translatedRu}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              if (isForeign) {
+                                return (
+                                  <div className="mt-1.5 pt-1.5 border-t border-[#e5e5e5]/50">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTranslateMessage(message.id, false)}
+                                      disabled={isTranslating}
+                                      className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-[11px] font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors disabled:opacity-50"
+                                    >
+                                      {isTranslating ? (
+                                        <>
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                          <span>Переводим на русский...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Languages className="h-3 w-3" />
+                                          <span>Перевести на русский</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                );
+                              }
+
+                              return null;
+                            })()}
 
                             {info && (() => {
                               if (info.isAudio) {
