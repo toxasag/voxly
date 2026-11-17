@@ -76,6 +76,25 @@ export const MULTI_MESSAGE_INSTRUCTION = `
 - Всегда определяй язык сообщения собеседника и отвечай СТРОГО на том же языке (если клиент пишет по-английски — отвечай на английском, если по-русски — на русском, если на другом языке — отвечай на языке клиента);
 - Никогда не переключайся принудительно на русский язык, если клиент обратился на другом языке.`.trim();
 
+/**
+ * Непререкаемый системный закон зеркалирования языка (Language Mirroring).
+ * Добавляется в самый конец системного промпта агента наивысшим приоритетом.
+ */
+export const LANGUAGE_MIRRORING_DIRECTIVE = `
+<critical_language_mirroring_policy>
+# КРИТИЧЕСКИЙ СИСТЕМНЫЙ ЗАКОН ЯЗЫКА ОБЩЕНИЯ (LANGUAGE MIRRORING — HIGHEST OVERRIDING PRIORITY):
+1. Always respond in the EXACT SAME language used by the user in their message (mirror the user's language).
+   - If the user writes in Russian -> your entire response ("message1", "message2") MUST be in Russian.
+   - If the user writes in English -> your entire response ("message1", "message2") MUST be in English.
+   - If the user writes in Spanish, German, French, Chinese, Thai, Turkish, Kazakh, or any other language -> respond in that exact language.
+2. ABSOLUTE BAN ON RUSSIAN LANGUAGE INERTIA:
+   - Even if the system prompt, instructions, company name, knowledge base, retrieved facts, or previous dialogue history are in Russian, you are STRICTLY FORBIDDEN from answering in Russian when the user writes in English or any other language!
+   - You MUST instantly switch your response language to match the user's latest incoming message.
+   - If knowledge base facts are in Russian, automatically translate them into the user's language accurately and fluently.
+3. This rule overrides all other rules, templates, and few-shots in this prompt.
+</critical_language_mirroring_policy>
+`.trim();
+
 export interface AgentReply {
   /** От одного до четырех непустых сообщений в порядке отправки. */
   messages: string[];
@@ -391,11 +410,13 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
   // 2. Интерполируем переменные в агентском промпте
   let interpolated = interpolatePromptVariables(input.agentPrompt, effectiveVariables);
 
-  // Runtime-защита: заменяем устаревшую директиву жесткого русского языка на Language Mirroring, если встречается в сохраненных промптах
-  interpolated = interpolated.replace(
-    /-\s*Пиши простым,\s*живым русским языком мессенджеров\.\s*Обращение\s*—\s*на\s*«вы»\s*\(со строчной буквы\)\./g,
-    `- ЯЗЫК ОБЩЕНИЯ (LANGUAGE MIRRORING): Всегда определяй язык сообщения собеседника и отвечай СТРОГО на том же языке (если клиент пишет по-английски — отвечай на английском, если по-русски — на русском, если на другом языке — на языке клиента). Никогда не переключайся принудительно на русский при общении на иностранном языке.\n- Пиши простым, живым языком мессенджеров. Обращение — вежливое и естественное для языка общения (в русском — на «вы» со строчной буквы).`,
-  );
+  // Runtime-защита: заменяем любые устаревшие директивы жесткого русского языка на Language Mirroring
+  interpolated = interpolated
+    .replace(
+      /-\s*Пиши простым,\s*живым русским языком мессенджеров\.\s*Обращение\s*—\s*на\s*«вы»\s*\(со строчной буквы\)\./g,
+      `- ЯЗЫК ОБЩЕНИЯ (LANGUAGE MIRRORING): Всегда определяй язык сообщения собеседника и отвечай СТРОГО на том же языке (если клиент пишет по-английски — отвечай на английском, если по-русски — на русском, если на другом языке — на языке клиента). Никогда не переключайся принудительно на русский при общении на иностранном языке.\n- Пиши простым, живым языком мессенджеров. Обращение — вежливое и естественное для языка общения (в русском — на «вы» со строчной буквы).`,
+    )
+    .replace(/(?:отвечай\s+(?:строго\s+)?по-русски|только\s+на\s+русском\s+языке)/gi, "отвечай строго на языке собеседника (Language Mirroring)");
 
   const parts = [interpolated.trim()];
 
@@ -403,7 +424,7 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
   if (input.knowledgeBaseMd && input.knowledgeBaseMd.trim().length > 0) {
     parts.push(
       [
-        "ШПАРГАЛКА И УТВЕРЖДЕННЫЕ ПРАВИЛА АГЕНТА (Markdown, наивысший приоритет):",
+        "ШПАРГАЛКА И УТВЕРЖДЕННЫЕ ПРАВИЛА АГЕНТА (Markdown):",
         input.knowledgeBaseMd.trim(),
       ].join("\n\n"),
     );
@@ -423,6 +444,10 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
   if (!interpolated.includes("message1") || !interpolated.includes("message2")) {
     parts.push(MULTI_MESSAGE_INSTRUCTION);
   }
+
+  // НАИВЫСШИЙ ПРИОРИТЕТ: директива Language Mirroring всегда добавляется в самый конец
+  // системного промпта, перекрывая языковую инерцию любых других секций и кастомных настроек
+  parts.push(LANGUAGE_MIRRORING_DIRECTIVE);
 
   return parts.join("\n\n");
 }

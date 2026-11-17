@@ -21,6 +21,7 @@ import {
   normalizeChannelType,
   getChannelLimit,
 } from "./message-refiner.service.js";
+import { detectMessageLanguage } from "./language-detector.js";
 
 // ---------------------------------------------------------------------------
 // Пайплайн ответа агента на входящее сообщение клиента.
@@ -359,7 +360,7 @@ export class AgentPipelineService {
               profileParts.push(`Имя клиента: ${fullName}`);
               profileParts.push(`Имя клиента УЖЕ известно (${contactRow.first_name}). Обязательно обращайся к нему по имени и КАТЕГОРИЧЕСКИ НЕ СПРАШИВАЙ его имя повторно!`);
             } else {
-              profileParts.push(`Имя клиента пока неизвестно. Представься сам (Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}) и вежливо спроси суть его задачи: «Подскажите, какой вопрос хотите решить?». Не трать отдельный вопрос на выяснение имени клиента.`);
+              profileParts.push(`Имя клиента пока неизвестно. Представься сам на языке клиента (в русском: «Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}», в английском: "Hello! My name is {{consultant.name}}, manager at {{tenant.name}}") и вежливо спроси суть его задачи на языке клиента: «Подскажите, какой вопрос хотите решить?» / "How can I help you today?". Не трать отдельный вопрос на выяснение имени клиента.`);
             }
             if (contactRow.phone) profileParts.push(`Телефон: ${contactRow.phone}`);
             if (contactRow.notes && contactRow.notes.trim()) profileParts.push(`Заметки менеджера: ${contactRow.notes.trim()}`);
@@ -648,17 +649,46 @@ export class AgentPipelineService {
         })),
       });
 
-      const userContent = retrievedFacts
-        ? `${retrievedFacts}\n\n${effectiveUserText}`
-        : effectiveUserText;
+      const userLang = detectMessageLanguage(effectiveUserText, {
+        pageUrl: effectivePageContext.pageUrl,
+        pageTitle: effectivePageContext.pageTitle,
+      });
+
+      // Собираем сообщения для чат-модели с поддержкой роли system для переключения языка
+      const chatMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+        { role: "system", content: systemPrompt },
+        ...conversationHistory,
+      ];
+
+      // Динамический переключатель языка при смене языка в ходе диалога:
+      // Если клиент переключился на другой язык относительно предыдущей истории,
+      // вставляем явную директиву, предотвращающую авторегрессионную инерцию.
+      const historyHasDifferentLanguage = conversationHistory.some((m) => {
+        if (userLang.lang === "en") return /[\u0400-\u04FF]/.test(m.content);
+        if (userLang.lang === "ru") return /[a-zA-Z]{4,}/.test(m.content);
+        return false;
+      });
+
+      if (historyHasDifferentLanguage && userLang.lang !== "other") {
+        chatMessages.push({
+          role: "system",
+          content: `[LANGUAGE SWITCH DIRECTIVE]: The user's incoming message is in ${userLang.label.toUpperCase()}. Even though previous turns were in another language, you MUST respond to this message strictly in ${userLang.label.toUpperCase()}.`,
+        });
+      }
+
+      let userContent = retrievedFacts
+        ? `${retrievedFacts}\n\n[USER INCOMING MESSAGE]:\n${effectiveUserText}`
+        : `[USER INCOMING MESSAGE]:\n${effectiveUserText}`;
+
+      if (userLang.directive) {
+        userContent += `\n\n[CRITICAL LANGUAGE DIRECTIVE]: ${userLang.directive}`;
+      }
+
+      chatMessages.push({ role: "user", content: userContent });
 
       const completion = await this.chat.complete({
         model: GATEWAY_MODEL[model] ?? model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...conversationHistory,
-          { role: "user", content: userContent },
-        ],
+        messages: chatMessages,
         temperature: Number(agent.temperature),
         maxTokens: agent.max_tokens,
         jsonMode: true,
@@ -738,6 +768,48 @@ export class AgentPipelineService {
         // Если модель разбила ответ на несколько частей, объединяем в одну связную реплику.
         if (reply.messages.length > 1) {
           reply.messages = [reply.messages.join(" ")];
+        }
+
+        // Серверный предохранитель Language Mirroring (Defense-in-depth):
+        // Если клиент написал на английском/латинице, а модель ответила на русском (кириллица),
+        // или наоборот — автоматически переводим ответ в целевой язык клиента перед отправкой.
+        const replyHasCyrillic = reply.messages.some((m) => /[\u0400-\u04FF]/.test(m));
+        const replyHasLatin = reply.messages.some((m) => /[a-zA-Z]{3,}/.test(m));
+
+        if (userLang.lang === "en" && replyHasCyrillic) {
+          this.log.warn(
+            { agentId: agent.id, userText: effectiveUserText, originalMessages: reply.messages },
+            "[AgentPipeline] Language guard triggered: user asked in English but agent replied in Russian. Auto-translating to English...",
+          );
+          try {
+            const translated = await this.translateMessages({
+              messages: reply.messages,
+              targetLanguage: "natural English",
+              tenantId: input.tenantId,
+            });
+            if (translated && translated.length > 0) {
+              reply.messages = translated;
+            }
+          } catch (translateErr) {
+            this.log.error({ err: translateErr }, "[AgentPipeline] Failed to auto-translate language mismatch");
+          }
+        } else if (userLang.lang === "ru" && !replyHasCyrillic && replyHasLatin) {
+          this.log.warn(
+            { agentId: agent.id, userText: effectiveUserText, originalMessages: reply.messages },
+            "[AgentPipeline] Language guard triggered: user asked in Russian but agent replied in English. Auto-translating to Russian...",
+          );
+          try {
+            const translated = await this.translateMessages({
+              messages: reply.messages,
+              targetLanguage: "живой русский язык",
+              tenantId: input.tenantId,
+            });
+            if (translated && translated.length > 0) {
+              reply.messages = translated;
+            }
+          } catch (translateErr) {
+            this.log.error({ err: translateErr }, "[AgentPipeline] Failed to auto-translate language mismatch");
+          }
         }
       }
 
@@ -1107,9 +1179,18 @@ export class AgentPipelineService {
       })),
     });
 
-    const userMessageContent = retrievedFacts
-      ? `${retrievedFacts}\n\n${effectiveMessage}`
-      : effectiveMessage;
+    const userLang = detectMessageLanguage(effectiveMessage, {
+      pageUrl: effectivePageContext.pageUrl,
+      pageTitle: effectivePageContext.pageTitle,
+    });
+
+    let userMessageContent = retrievedFacts
+      ? `${retrievedFacts}\n\n[USER INCOMING MESSAGE]:\n${effectiveMessage}`
+      : `[USER INCOMING MESSAGE]:\n${effectiveMessage}`;
+
+    if (userLang.directive) {
+      userMessageContent += `\n\n[CRITICAL LANGUAGE DIRECTIVE]: ${userLang.directive}`;
+    }
 
     chatMessages.push({ role: "user", content: userMessageContent });
 
@@ -1177,6 +1258,39 @@ export class AgentPipelineService {
     }
 
     if (messages.length > 0) {
+      const replyHasCyrillic = messages.some((m) => /[\u0400-\u04FF]/.test(m));
+      const replyHasLatin = messages.some((m) => /[a-zA-Z]{3,}/.test(m));
+
+      if (userLang.lang === "en" && replyHasCyrillic) {
+        try {
+          const translated = await this.translateMessages({
+            messages,
+            targetLanguage: "natural English",
+            tenantId: input.tenantId,
+          });
+          if (translated && translated.length > 0) {
+            messages = translated;
+          }
+        } catch (translateErr) {
+          this.log.error({ err: translateErr }, "[AgentPipeline] Failed to auto-translate language mismatch in test chat");
+        }
+      } else if (userLang.lang === "ru" && !replyHasCyrillic && replyHasLatin) {
+        try {
+          const translated = await this.translateMessages({
+            messages,
+            targetLanguage: "живой русский язык",
+            tenantId: input.tenantId,
+          });
+          if (translated && translated.length > 0) {
+            messages = translated;
+          }
+        } catch (translateErr) {
+          this.log.error({ err: translateErr }, "[AgentPipeline] Failed to auto-translate language mismatch in test chat");
+        }
+      }
+    }
+
+    if (messages.length > 0) {
       const channelType = normalizeChannelType(input.channelType);
       const channelLimit = getChannelLimit(channelType);
       const refinedMessages: string[] = [];
@@ -1236,4 +1350,45 @@ export class AgentPipelineService {
     };
   }
 
+  /**
+   * Быстрый отказоустойчивый переводчик сообщений при несовпадении языка (Language Guard).
+   */
+  private async translateMessages(params: {
+    messages: string[];
+    targetLanguage: string;
+    tenantId?: string;
+  }): Promise<string[]> {
+    try {
+      const completion = await this.chat.complete({
+        model: "gemini/gemini-3.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert customer service translator.
+Translate the following chat messages into ${params.targetLanguage}.
+Rules:
+1. Preserve the exact meaning, polite tone, and any markdown links [text](url).
+2. Return STRICT JSON: { "messages": ["translated message 1", ...] }
+3. No commentary, markdown wrappers or preamble.`,
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ messages: params.messages }),
+          },
+        ],
+        temperature: 0.1,
+        maxTokens: 512,
+        jsonMode: true,
+        tenantId: params.tenantId,
+      });
+
+      const parsed = JSON.parse(completion.content) as { messages?: string[] };
+      if (Array.isArray(parsed.messages) && parsed.messages.length > 0) {
+        return parsed.messages.filter((m) => typeof m === "string" && m.trim().length > 0);
+      }
+    } catch (err) {
+      this.log.warn({ err }, "[AgentPipeline] Translation helper error");
+    }
+    return params.messages;
+  }
 }

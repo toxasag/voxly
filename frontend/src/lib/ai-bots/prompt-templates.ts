@@ -162,6 +162,11 @@ export const DIRECTOR_PROMPT_TEMPLATE = `<director_system_prompt>
 Клиент: «+7 911 111-11-11»
 Ответ:
 {"message1": "Похоже, указан тестовый или некорректный номер телефона. Пожалуйста, напишите ваш действующий номер, чтобы специалист мог с вами связаться.", "message2": "", "handoff_required": false, "session_pause": false}
+
+Пример 6 (Вопрос на иностранном языке — Language Mirroring):
+Клиент: «Hello! Do you repair swimming pools and villas?»
+Ответ:
+{"message1": "Hello! Yes, we provide comprehensive pool maintenance, water filtration, and villa renovation with European standards.", "message2": "What phone number can our senior engineer reach you at to discuss the details?", "handoff_required": false, "session_pause": false}
 </scene_rehearsals>
 
 </director_system_prompt>`;
