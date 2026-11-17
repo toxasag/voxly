@@ -20,7 +20,7 @@ export interface UpdateTenantQuotasPayload {
   quotas: Array<{
     feature_key: string;
     is_unlimited: boolean;
-    max_limit?: number;
+    max_limit?: number | null;
   }>;
 }
 

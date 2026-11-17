@@ -288,12 +288,23 @@ export class ChannelsService {
         }
       }
 
+      const requestedLocale =
+        payload.credentials && (payload.credentials.locale === "en" || payload.credentials.language === "en")
+          ? "en"
+          : "ru";
+
       const defaultCredentials = channel === "webchat" ? {
         accentColor: "#F59E0B",
         theme: "auto",
-        title: "Онлайн-консультант",
-        greeting: "Здравствуйте! Чем я могу вам помочь?",
-        placeholder: "Напишите сообщение...",
+        locale: requestedLocale,
+        language: requestedLocale,
+        title: requestedLocale === "en" ? "Chat with us" : "Онлайн-консультант",
+        greeting:
+          requestedLocale === "en"
+            ? "Hello! How can we help you today? Feel free to ask any question."
+            : "Здравствуйте! Чем я могу вам помочь?",
+        placeholder: requestedLocale === "en" ? "Type your message..." : "Напишите сообщение...",
+        statusText: requestedLocale === "en" ? "Online" : "Онлайн",
         position: "bottom-right",
         showTelegramBanner: false,
       } : {};
@@ -392,6 +403,11 @@ export class ChannelsService {
       const clonedCredentials = source.credentials
         ? (JSON.parse(JSON.stringify(source.credentials)) as Record<string, unknown>)
         : {};
+
+      if (payload.locale) {
+        clonedCredentials.locale = payload.locale;
+        clonedCredentials.language = payload.locale;
+      }
 
       // 6. Создаем новую изолированную запись с новым UUID через create()
       return this.create(tenantId, channel, {

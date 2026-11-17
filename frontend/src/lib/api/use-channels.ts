@@ -135,6 +135,7 @@ export interface CloneChannelAccountPayload {
   external_id: string;
   label?: string;
   agent_id?: string | null;
+  locale?: "ru" | "en";
 }
 
 export function useCloneChannelAccount(

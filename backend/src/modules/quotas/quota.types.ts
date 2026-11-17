@@ -76,7 +76,7 @@ export interface TenantQuotaItemDTO {
 export const quotaItemUpdateSchema = z.object({
   feature_key: z.string().min(1),
   is_unlimited: z.boolean(),
-  max_limit: z.number().int().min(-1).optional(),
+  max_limit: z.number().int().min(-1).nullable().optional(),
 });
 
 export const updateTenantQuotasSchema = z.object({

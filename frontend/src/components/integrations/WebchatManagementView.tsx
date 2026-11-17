@@ -63,6 +63,7 @@ export function WebchatManagementView({
   const [newSiteLabel, setNewSiteLabel] = useState("");
   const [newSiteDomain, setNewSiteDomain] = useState("");
   const [newSiteAgentId, setNewSiteAgentId] = useState<string>("");
+  const [newSiteLocale, setNewSiteLocale] = useState<"ru" | "en">("ru");
 
   const createAccount = useCreateChannelAccount("webchat");
   const updateAccount = useUpdateChannelAccount("webchat");
@@ -237,7 +238,18 @@ export function WebchatManagementView({
                         <Globe className="h-5 w-5" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-[#111111]">{acc.label}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-[#111111]">{acc.label}</h3>
+                          {Boolean(acc.credentials?.locale === "en" || acc.credentials?.language === "en") ? (
+                            <span className="inline-flex items-center gap-1 rounded-[4px] border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                              🇬🇧 EN
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-1.5 py-0.5 text-[10px] font-medium text-[#666666]">
+                              🇷🇺 RU
+                            </span>
+                          )}
+                        </div>
                         <p className="flex items-center gap-1.5 text-xs text-[#666666]">
                           <span>{acc.externalId}</span>
                           <span
@@ -452,6 +464,36 @@ export function WebchatManagementView({
                   placeholder="myshop.ru"
                   className="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-[#666666]">Язык интерфейса виджета</label>
+                <div className="mt-1 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewSiteLocale("ru")}
+                    className={cn(
+                      "flex items-center justify-center gap-2 rounded-lg border py-2 text-xs font-medium transition-colors",
+                      newSiteLocale === "ru"
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                        : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                    )}
+                  >
+                    <span>🇷🇺</span> Русский (RU)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewSiteLocale("en")}
+                    className={cn(
+                      "flex items-center justify-center gap-2 rounded-lg border py-2 text-xs font-medium transition-colors",
+                      newSiteLocale === "en"
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                        : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                    )}
+                  >
+                    <span>🇬🇧</span> English (EN)
+                  </button>
+                </div>
               </div>
 
               <div>

@@ -136,10 +136,10 @@ describe("agent-reply - interpolatePromptVariables", () => {
 
   it("содержит правильный текст для website_context и reviews_and_reputation в SAFE_DEFAULTS", () => {
     expect(SAFE_DEFAULTS["website_context"]).toBe(
-      "Ориентируйся на факты и отзывы, приведённые в блоке актуальной базы знаний выше.",
+      "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",
     );
     expect(SAFE_DEFAULTS["reviews_and_reputation"]).toBe(
-      "Ориентируйся на факты и отзывы, приведённые в блоке актуальной базы знаний выше.",
+      "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",
     );
   });
 });
@@ -187,6 +187,23 @@ message2: вопрос
     expect(prompt).toContain("ВЫДЕРЖКИ ИЗ ДОКУМЕНТОВ КОМПАНИИ");
     expect(prompt).toContain("[1] Из «faq.txt»:\nДоставка 3 дня.");
     expect(prompt).toContain("ФОРМАТ ОТВЕТА — СТРОГО JSON");
+  });
+
+  it("автоматически заменяет устаревшую директиву жесткого русского языка на Language Mirroring", () => {
+    const legacyPrompt = `
+<director_system_prompt>
+<style_and_formatting>
+- Пиши простым, живым русским языком мессенджеров. Обращение — на «вы» (со строчной буквы).
+</style_and_formatting>
+</director_system_prompt>
+    `.trim();
+
+    const prompt = buildSystemPrompt({
+      agentPrompt: legacyPrompt,
+    });
+
+    expect(prompt).toContain("LANGUAGE MIRRORING");
+    expect(prompt).not.toContain("живым русским языком");
   });
 });
 
@@ -259,6 +276,6 @@ describe("agent-reply - 6 Crash-Test Scenarios Simulation", () => {
     // Ни один шаблонный ус не должен остаться
     expect(built).not.toMatch(/\{\{[a-z_.]+\}\}/);
     expect(built).toContain("ведущий специалист");
-    expect(built).toContain("Ориентируйся на факты и отзывы, приведённые в блоке актуальной базы знаний выше.");
+    expect(built).toContain("Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.");
   });
 });
