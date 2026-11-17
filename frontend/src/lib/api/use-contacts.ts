@@ -353,24 +353,23 @@ export interface EnrichContactResult {
 }
 
 export function useEnrichContact(): UseMutationResult<
-  { data: EnrichContactResult; contact?: ContactDTO },
+  EnrichContactResult,
   ApiClientError,
   string
 > {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (contactId: string) =>
-      apiClient.post<{ data: EnrichContactResult; contact?: ContactDTO }>(
+  return useMutation<EnrichContactResult, ApiClientError, string>({
+    mutationFn: async (contactId: string) => {
+      const res = await apiClient.post<EnrichContactResult>(
         `${BASE_PATH}/${contactId}/enrich`,
         {},
-      ),
-    onSuccess: (res, contactId) => {
+      );
+      return res.data;
+    },
+    onSuccess: (_, contactId) => {
       void queryClient.invalidateQueries({ queryKey: contactKeys.all });
       void queryClient.invalidateQueries({ queryKey: contactKeys.detail(contactId) });
-      if (res.contact) {
-        queryClient.setQueryData(contactKeys.detail(contactId), res.contact);
-      }
     },
   });
 }
