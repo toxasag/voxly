@@ -980,45 +980,51 @@ export class CrmPipelineService {
         [input.tenantId, dealId, contentText, input.attachment ?? null, input.channel],
       );
 
-      if (!existingMsg) {
-        const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
-        const insertedMsg = await tx.queryOne<{ id: string }>(
-          `INSERT INTO deal_messages
-             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING id`,
-          [
-            input.tenantId,
-            dealId,
-            nullIfBlank(input.channelAccountId),
-            "client",
-            "inbound",
-            input.senderName,
-            contentText,
-            input.channel,
-            deliveryStatus,
-            input.attachment ?? null,
-            input.attachmentType ?? null,
-          ],
+        // Вставляем входящее сообщение
+        let inboundMessageId: string | null = null;
+        if (!existingMsg) {
+          const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
+          const insertedMsg = await tx.queryOne<{ id: string }>(
+            `INSERT INTO deal_messages
+               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id`,
+            [
+              input.tenantId,
+              dealId,
+              nullIfBlank(input.channelAccountId),
+              "client",
+              "inbound",
+              input.senderName,
+              contentText,
+              input.channel,
+              deliveryStatus,
+              input.attachment ?? null,
+              input.attachmentType ?? null,
+            ],
+          );
+          if (insertedMsg?.id) {
+            inboundMessageId = insertedMsg.id;
+          }
+        }
+
+        // Обновляем таймстамп активности сделки для поднятия в канбане/списке
+        await tx.query(
+          `UPDATE deals SET updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+          [dealId, input.tenantId],
         );
 
-        if (insertedMsg?.id) {
-          messageTranslationService.autoTranslateIfForeign({
-            tenantId: input.tenantId,
-            messageId: insertedMsg.id,
-            content: contentText,
-          });
-        }
+        return { contactId, dealId, isNewContact, isNewDeal, inboundMessageId, inboundMessageContent: contentText };
+      });
+
+      // Автоматический перевод иноязычного входящего сообщения запускается строго ПОСЛЕ коммита транзакции
+      if (result.inboundMessageId && result.inboundMessageContent) {
+        messageTranslationService.autoTranslateIfForeign({
+          tenantId: input.tenantId,
+          messageId: result.inboundMessageId,
+          content: result.inboundMessageContent,
+        });
       }
-
-      // Обновляем таймстамп активности сделки для поднятия в канбане/списке
-      await tx.query(
-        `UPDATE deals SET updated_at = now() WHERE id = $1 AND tenant_id = $2`,
-        [dealId, input.tenantId],
-      );
-
-      return { contactId, dealId, isNewContact, isNewDeal };
-    });
 
     // Фиксируем активность контакта (онлайн-присутствие)
     if (result.contactId) {

@@ -757,7 +757,7 @@ export class DealsService {
     payload: CreateDealMessagePayload,
     deliveryStatus: DeliveryStatus = "neutral",
   ): Promise<DealMessageDTO> {
-    return withTenant(tenantId, async (tx) => {
+    const dto = await withTenant(tenantId, async (tx) => {
       const deal = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         [tenantId, dealId],
@@ -789,16 +789,18 @@ export class DealsService {
         ],
       );
 
-      if (row && payload.direction === "inbound" && payload.content) {
-        messageTranslationService.autoTranslateIfForeign({
-          tenantId,
-          messageId: row.id,
-          content: payload.content,
-        });
-      }
-
       return toDealMessageDTO(row);
     });
+
+    if (payload.direction === "inbound" && payload.content && dto.id) {
+      messageTranslationService.autoTranslateIfForeign({
+        tenantId,
+        messageId: dto.id,
+        content: payload.content,
+      });
+    }
+
+    return dto;
   }
 
   /**
