@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useMemo } from "react";
 import { User, Building2, Search, X, Check, Plus, Loader2 } from "lucide-react";
 import { useCounterparties, type CounterpartyContact, type CounterpartyCompany } from "@/lib/api/use-invoices";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface CounterpartyComboboxProps {
   value: string;
@@ -29,20 +30,8 @@ export function CounterpartyCombobox({
   const contacts = data?.contacts ?? [];
   const companies = data?.companies ?? [];
 
-  // Close on outside click
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isOpen]);
+  // Close on outside click or Escape
+  useClickOutside(containerRef, () => setIsOpen(false), isOpen);
 
   const handleSelectContact = (c: CounterpartyContact) => {
     onChange(c.name, "");

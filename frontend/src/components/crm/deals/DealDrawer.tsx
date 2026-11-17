@@ -78,6 +78,18 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
   const [showPersonalConfirm, setShowPersonalConfirm] = useState(false);
 
   useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [moreMenuOpen]);
+
+  useEffect(() => {
     setCardView("deal");
   }, [dealId, open]);
 

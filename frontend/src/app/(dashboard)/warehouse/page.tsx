@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, Suspense } from "react";
+import { useState, useMemo, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
@@ -31,6 +31,7 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import { Guard } from "@/components/shared/Guard";
 import { useAuth } from "@/lib/auth/use-auth";
 import { useServices } from "@/lib/api/use-services";
@@ -125,6 +126,8 @@ function WarehouseContent() {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
+  useClickOutside(exportDropdownRef, () => setExportDropdownOpen(false), exportDropdownOpen);
 
   // Настройки склада (продажа в минус)
   const { data: warehouseSettings } = useWarehouseSettings();
@@ -403,7 +406,7 @@ function WarehouseContent() {
           </div>
 
           {/* Экспорт */}
-          <div className="relative">
+          <div ref={exportDropdownRef} className="relative">
             <button
               type="button"
               onClick={() => setExportDropdownOpen((prev) => !prev)}

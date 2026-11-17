@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ArrowUpRight,
   Bot,
@@ -53,6 +53,18 @@ export function ContactDrawerCard({
   const [activeTab, setActiveTab] = useState("home");
   const [isFavorite, setIsFavorite] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [moreMenuOpen]);
 
   // Секции аккордеона
   const [generalOpen, setGeneralOpen] = useState(true);

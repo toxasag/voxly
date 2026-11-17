@@ -173,6 +173,18 @@ function PrintDropdownMenu({
 
   const { data: visibleTemplates = [] } = usePrintTemplates({ visibleOnly: true });
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
+
   const toggleOpen = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isOpen) {
@@ -326,6 +338,18 @@ function RepairNotePopoverCell({ ticket }: { ticket: RepairTicket }) {
       setDraft(noteText);
     }
   }, [noteText, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
 
   const handleOpen = (e: React.MouseEvent) => {
     e.stopPropagation();
