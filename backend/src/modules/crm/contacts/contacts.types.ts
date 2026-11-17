@@ -107,6 +107,7 @@ export const createContactSchema = z.object({
   notes: z.string().max(4000).optional().or(z.literal("")),
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
+  merge_if_duplicate: z.boolean().optional(),
 });
 
 export const updateContactSchema = createContactSchema.partial();

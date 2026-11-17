@@ -323,14 +323,52 @@ export class CrmEnrichmentService {
                  ) || ')',
                  updated_at = now()
              WHERE contact_id = $2 AND tenant_id = $3
-               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%')`,
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%' OR title ILIKE 'Заявка от Без имени%')`,
             [resolvedFullName, contactId, tenantId],
           );
         }
       });
     }
 
-    // 5. Логируем результаты верификации мессенджеров в таймлайн сделки
+    // 4.5. Сохраняем статус и результаты обогащения в custom_fields
+    const enrichmentMeta = {
+      status: "completed",
+      checked_at: new Date().toISOString(),
+      channels: {
+        telegram: {
+          exists: tgRes?.exists ?? false,
+          username: tgRes?.username ?? null,
+          userId: tgRes?.userId ?? null,
+          error: tgRes?.error ?? null,
+        },
+        max: {
+          exists: maxRes?.exists ?? false,
+          username: maxRes?.username ?? null,
+          userId: maxRes?.userId ?? null,
+          error: maxRes?.error ?? null,
+        },
+        whatsapp: {
+          exists: waRes?.exists ?? false,
+          phone: waRes?.exists ? `+${phoneDigits}` : null,
+          error: waRes?.error ?? null,
+        },
+      },
+      enriched_fields: enrichedFields,
+    };
+
+    try {
+      await query(
+        `UPDATE contacts
+         SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{enrichment}', $1::jsonb),
+             updated_at = now()
+         WHERE id = $2 AND tenant_id = $3`,
+        [JSON.stringify(enrichmentMeta), contactId, tenantId],
+      );
+    } catch {
+      // Игнорируем ошибку обновления custom_fields
+    }
+
+    // 5. Логируем результаты верификации мессенджеров в таймлайн сделки и активность контакта
     try {
       let targetDealId = options?.dealId;
       if (!targetDealId) {

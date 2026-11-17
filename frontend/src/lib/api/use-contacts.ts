@@ -341,6 +341,38 @@ export function useContactLookup(
     enabled: Boolean(phone && phone.trim().replace(/[^\d+]/g, "").length >= 4),
   });
 }
+
+export interface EnrichContactResult {
+  contactId: string;
+  phone: string;
+  ok: boolean;
+  enrichedFields: string[];
+  channelsChecked: string[];
+  error?: string;
+}
+
+export function useEnrichContact(): UseMutationResult<
+  { data: EnrichContactResult; contact?: ContactDTO },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (contactId: string) =>
+      apiClient.post<{ data: EnrichContactResult; contact?: ContactDTO }>(
+        `${BASE_PATH}/${contactId}/enrich`,
+        {},
+      ),
+    onSuccess: (res, contactId) => {
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      void queryClient.invalidateQueries({ queryKey: contactKeys.detail(contactId) });
+      if (res.contact) {
+        queryClient.setQueryData(contactKeys.detail(contactId), res.contact);
+      }
+    },
+  });
+}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
