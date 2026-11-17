@@ -6,16 +6,17 @@ import { toast } from "sonner";
 import { CheckCircle2, Loader2, MessageSquare, QrCode, RefreshCw } from "lucide-react";
 
 import { useWhatsappQrStatus, useWhatsappStartQr } from "@/lib/api/use-whatsapp-auth";
-import { channelKeys } from "@/lib/api/use-channels";
+import { channelKeys, type ChannelAccountDTO } from "@/lib/api/use-channels";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 
 interface ConnectWhatsappModalProps {
   open: boolean;
   onClose: () => void;
+  initialAccount?: ChannelAccountDTO | null;
 }
 
-export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProps) {
-  const [label, setLabel] = useState("Основной");
+export function ConnectWhatsappModal({ open, onClose, initialAccount }: ConnectWhatsappModalProps) {
+  const [label, setLabel] = useState(initialAccount?.label || "Основной");
   const [instanceName, setInstanceName] = useState<string | null>(null);
   const [qrBase64, setQrBase64] = useState<string | null>(null);
   const startedRef = useRef(false);
@@ -54,16 +55,17 @@ export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProp
   useEffect(() => {
     if (open && !startedRef.current) {
       startedRef.current = true;
-      setLabel("Основной");
+      const initialLabel = initialAccount?.label || "Основной";
+      setLabel(initialLabel);
       setInstanceName(null);
       setQrBase64(null);
-      handleStart("Основной");
+      handleStart(initialLabel);
     } else if (!open) {
       startedRef.current = false;
       setInstanceName(null);
       setQrBase64(null);
     }
-  }, [open, handleStart]);
+  }, [open, initialAccount, handleStart]);
 
   // Обновляем QR при получении из статуса
   useEffect(() => {
@@ -88,7 +90,7 @@ export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProp
           </div>
           <div>
             <h2 id="connect-whatsapp-title" className="text-sm font-semibold text-[#111111]">
-              Подключить WhatsApp
+              {initialAccount ? `Авторизация: ${initialAccount.label}` : "Подключить WhatsApp"}
             </h2>
             <p className="text-[11px] text-[#666666]">
               Авторизация личного или бизнес-номера через QR-код

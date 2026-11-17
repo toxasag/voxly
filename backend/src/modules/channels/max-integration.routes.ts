@@ -10,6 +10,7 @@ import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
 import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
 import { chatEventBus } from "../crm/chat/chat-events.js";
+import { messageTranslationService } from "../crm/translation/message-translation.service.js";
 
 /**
  * INC-113: никогда не записывать номер подключенного аккаунта оператора
@@ -313,6 +314,13 @@ export async function syncMaxDialogHistory(opts: {
         void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, inserted.id).catch(() => {});
       }
       if (inserted) {
+        if (!msg.out && text) {
+          messageTranslationService.autoTranslateIfForeign({
+            tenantId: opts.tenantId,
+            messageId: inserted.id,
+            content: text,
+          });
+        }
         chatEventBus.emitChatEvent({
           type: "message_created",
           tenantId: opts.tenantId,

@@ -23,6 +23,9 @@ import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import { ConversionDispatcherService } from "../analytics/conversion-dispatcher.service.js";
 import type { VisitorGeoData } from "../../services/geo-enrichment.service.js";
+import { messageTranslationService } from "./translation/message-translation.service.js";
+import { presenceService } from "./chat/presence.service.js";
+import { chatEventBus } from "./chat/chat-events.js";
 
 // Профиль и проверка бота объявлены в `channel-identity.ts` вместе с раскладкой по полям,
 // но реэкспортируются здесь: транспорт получает их вместе с типом входящего
@@ -977,36 +980,88 @@ export class CrmPipelineService {
         [input.tenantId, dealId, contentText, input.attachment ?? null, input.channel],
       );
 
-      if (!existingMsg) {
-        const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
+        // Вставляем входящее сообщение
+        let inboundMessageId: string | null = null;
+        if (!existingMsg) {
+          const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
+          const insertedMsg = await tx.queryOne<{ id: string }>(
+            `INSERT INTO deal_messages
+               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id`,
+            [
+              input.tenantId,
+              dealId,
+              nullIfBlank(input.channelAccountId),
+              "client",
+              "inbound",
+              input.senderName,
+              contentText,
+              input.channel,
+              deliveryStatus,
+              input.attachment ?? null,
+              input.attachmentType ?? null,
+            ],
+          );
+          if (insertedMsg?.id) {
+            inboundMessageId = insertedMsg.id;
+          }
+        }
+
+        // Обновляем таймстамп активности сделки для поднятия в канбане/списке
         await tx.query(
-          `INSERT INTO deal_messages
-             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [
-            input.tenantId,
-            dealId,
-            nullIfBlank(input.channelAccountId),
-            "client",
-            "inbound",
-            input.senderName,
-            contentText,
-            input.channel,
-            deliveryStatus,
-            input.attachment ?? null,
-            input.attachmentType ?? null,
-          ],
+          `UPDATE deals SET updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+          [dealId, input.tenantId],
         );
+
+        return { contactId, dealId, isNewContact, isNewDeal, inboundMessageId, inboundMessageContent: contentText };
+      });
+
+      // Автоматический перевод иноязычного входящего сообщения запускается строго ПОСЛЕ коммита транзакции
+      if (result.inboundMessageId && result.inboundMessageContent) {
+        messageTranslationService.autoTranslateIfForeign({
+          tenantId: input.tenantId,
+          messageId: result.inboundMessageId,
+          content: result.inboundMessageContent,
+        });
       }
 
-      // Обновляем таймстамп активности сделки для поднятия в канбане/списке
-      await tx.query(
-        `UPDATE deals SET updated_at = now() WHERE id = $1 AND tenant_id = $2`,
-        [dealId, input.tenantId],
-      );
+    // Фиксируем активность контакта (онлайн-присутствие)
+    if (result.contactId) {
+      void presenceService.recordContactActivity(input.tenantId, result.contactId, result.dealId);
+    }
 
-      return { contactId, dealId, isNewContact, isNewDeal };
-    });
+    // При ответе клиента все предшествующие исходящие сообщения считаются доставленными и прочитанными
+    if (result.dealId) {
+      void (async () => {
+        try {
+          const updated = await query<{ id: string }>(
+            `UPDATE deal_messages
+             SET delivery_status = 'read',
+                 read_at = COALESCE(read_at, now()),
+                 delivered_at = COALESCE(delivered_at, now())
+             WHERE tenant_id = $1 AND deal_id = $2
+               AND direction = 'outbound'
+               AND delivery_status IN ('sent', 'delivered')
+             RETURNING id`,
+            [input.tenantId, result.dealId],
+          );
+          if (updated.length > 0) {
+            chatEventBus.emitChatEvent({
+              type: "delivery_updated",
+              tenantId: input.tenantId,
+              dealId: result.dealId,
+              data: {
+                messageIds: updated.map((m) => m.id),
+                status: "read",
+                readAt: new Date().toISOString(),
+              },
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } catch {}
+      })();
+    }
 
     // Асинхронные уведомления и выжимка только если создана или найдена сделка (не бот, не личный контакт)
     if (result.dealId) {

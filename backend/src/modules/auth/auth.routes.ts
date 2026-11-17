@@ -960,11 +960,16 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
         impersonatorUser?.is_partner === true ||
         impersonatorUser?.role === "partner";
 
-      const isTargetChildOfPartner =
-        (targetTenant.parent_tenant_id !== null && targetTenant.parent_tenant_id === partnerTenantId) ||
-        (targetTenant.owner_partner_id !== null && targetTenant.owner_partner_id === partnerTenantId);
+      let isTargetChildOfPartner = false;
+      if (partnerTenantId && targetTenant.id && isPartner) {
+        const check = await queryOne<{ is_descendant: boolean }>(
+          `SELECT is_tenant_descendant($1, $2) AS is_descendant`,
+          [partnerTenantId, targetTenant.id],
+        );
+        isTargetChildOfPartner = Boolean(check?.is_descendant && partnerTenantId !== targetTenant.id);
+      }
 
-      if (!isPlatformOwner && !(isPartner && isTargetChildOfPartner)) {
+      if (!isPlatformOwner && !isTargetChildOfPartner) {
         throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
       }
 
