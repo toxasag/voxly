@@ -1,4 +1,4 @@
-import { withTenant } from "../../../db/client.js";
+import { withTenant, type TransactionClient } from "../../../db/client.js";
 import { getRedisClient, isRedisAvailable } from "../../../infrastructure/redis.js";
 import { chatEventBus } from "./chat-events.js";
 
@@ -180,7 +180,7 @@ export class PresenceService {
   }
 
   private async resolveContactPresenceTx(
-    tx: any,
+    tx: TransactionClient,
     tenantId: string,
     contactId: string,
     dealIdForContext?: string,
