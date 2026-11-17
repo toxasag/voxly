@@ -7,6 +7,7 @@ import {
   readImpersonationBackup,
   writeImpersonationBackup,
   clearImpersonationBackup,
+  restoreAdminSessionDetailed,
 } from "@/lib/auth/impersonation";
 import { tenantPortalUrl } from "@/lib/auth/tenant-host";
 import type { AuthTokensDTO } from "@/lib/auth/use-auth";
@@ -52,6 +53,7 @@ export async function switchWorkspace(
   userName?: string,
   isPartner?: boolean,
   isPlatformOwner?: boolean,
+  isTargetParent?: boolean,
 ): Promise<void> {
   const normTarget = targetSlug.trim().toLowerCase();
   const normCurrent = currentSlug.trim().toLowerCase();
@@ -64,18 +66,61 @@ export async function switchWorkspace(
 
   const originPrefix = existingBackup?.adminOriginHost?.split(".")[0]?.split(":")[0]?.toLowerCase();
 
-  // Если возвращаемся назад в исходный портал (например, voxly или личный портал партнера) и у нас есть исходная сессия:
-  if (existingBackup && (normTarget === "voxly" || (originPrefix && normTarget === originPrefix))) {
-    writeTokens({
-      accessToken: existingBackup.accessToken,
-      refreshToken: existingBackup.refreshToken || existingBackup.accessToken,
-    });
-    const returnPath = existingBackup.isPartner && !existingBackup.isPlatformOwner ? "/partner" : "/crm/contacts";
-    const targetUrl = tenantPortalUrl(normTarget, returnPath);
-    const redirectUrl = targetUrl.includes("://")
-      ? `${targetUrl}#restore_token=${encodeURIComponent(existingBackup.accessToken)}`
-      : targetUrl;
-    window.location.href = redirectUrl;
+  // Если цель - родительское пространство или исходный кабинет администратора/партнера
+  if (
+    isTargetParent ||
+    (existingBackup && (normTarget === "voxly" || (originPrefix && normTarget === originPrefix)))
+  ) {
+    if (existingBackup) {
+      try {
+        const res = await restoreAdminSessionDetailed();
+        if (res.success && res.targetUrl) {
+          window.location.href = res.targetUrl;
+          return;
+        }
+      } catch (err) {
+        console.warn("restoreAdminSessionDetailed не удался, пробуем альтернативный возврат:", err);
+      }
+    }
+
+    try {
+      const revertRes = await apiClient.post<AuthTokensDTO>("/api/v1/partner/revert-tenant", {
+        admin_refresh_token: existingBackup?.refreshToken,
+        admin_access_token: existingBackup?.accessToken,
+      });
+      if (revertRes.data?.access_token) {
+        writeTokens({
+          accessToken: revertRes.data.access_token,
+          refreshToken: revertRes.data.refresh_token || revertRes.data.access_token,
+        });
+        clearImpersonationBackup();
+        const targetUrl = tenantPortalUrl(normTarget, "/partner");
+        window.location.href = targetUrl;
+        return;
+      }
+    } catch {
+      // Игнорируем и пробуем следующий шаг
+    }
+
+    try {
+      const res = await apiClient.post<AuthTokensDTO>(`/api/v1/auth/impersonate`, { slug: normTarget });
+      if (res.data?.access_token) {
+        writeTokens({
+          accessToken: res.data.access_token,
+          refreshToken: res.data.refresh_token || res.data.access_token,
+        });
+        clearImpersonationBackup();
+        const targetUrl = tenantPortalUrl(normTarget, "/partner");
+        window.location.href = targetUrl;
+        return;
+      }
+    } catch {
+      // Игнорируем и переходим к прямому переходу
+    }
+
+    // Если всё остальное не вернуло токен, совершаем прямой переход на домен родителя
+    const targetUrl = tenantPortalUrl(normTarget, "/partner");
+    window.location.href = targetUrl;
     return;
   }
 
