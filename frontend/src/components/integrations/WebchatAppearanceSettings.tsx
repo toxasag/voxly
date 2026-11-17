@@ -31,6 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { AvatarUpload } from "@/components/shared/AvatarUpload";
 import type { ChannelAccountDTO } from "@/lib/api/use-channels";
 import { useChannelAccounts, useUpdateChannelAccount } from "@/lib/api/use-channels";
 import {
@@ -130,44 +131,6 @@ const AVATAR_PRESETS = [
     avatar: "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150&auto=format&fit=crop&q=80",
   },
 ];
-
-async function resizeImageFile(file: File, maxSize: number = 256): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
-        if (width > height) {
-          if (width > maxSize) {
-            height = Math.round((height * maxSize) / width);
-            width = maxSize;
-          }
-        } else {
-          if (height > maxSize) {
-            width = Math.round((width * maxSize) / height);
-            height = maxSize;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(e.target?.result as string);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.88));
-      };
-      img.onerror = () => reject(new Error("Не удалось прочитать изображение"));
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = () => reject(new Error("Не удалось загрузить файл"));
-    reader.readAsDataURL(file);
-  });
-}
 
 function TelegramIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -295,9 +258,6 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   const [consultantAvatar, setConsultantAvatar] = useState<string>(
     typeof initialCreds.consultantAvatar === "string" ? initialCreds.consultantAvatar : "",
   );
-  const [showAvatarUrlInput, setShowAvatarUrlInput] = useState<boolean>(false);
-  const [isUploadingAvatar, setIsUploadingAvatar] = useState<boolean>(false);
-  const avatarFileInputRef = useRef<HTMLInputElement>(null);
 
   // Баннер перехода в мессенджеры (Telegram, WhatsApp, MAX)
   const [showMessengerBanner, setShowMessengerBanner] = useState<boolean>(
@@ -479,24 +439,6 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
     }
   }, [savedSuccess]);
 
-  const handleAvatarFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsUploadingAvatar(true);
-      const dataUrl = await resizeImageFile(file, 256);
-      setConsultantAvatar(dataUrl);
-    } catch {
-      // Игнорируем ошибку чтения файла
-    } finally {
-      setIsUploadingAvatar(false);
-      if (avatarFileInputRef.current) {
-        avatarFileInputRef.current.value = "";
-      }
-    }
-  };
-
   const handleSave = () => {
     setSaveError(null);
     updateAccount.mutate(
@@ -536,6 +478,9 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           // Консультант и маскот
           consultantName: consultantName.trim(),
           consultantAvatar: consultantAvatar.trim(),
+          avatarUrl: consultantAvatar.trim(),
+          botAvatar: consultantAvatar.trim(),
+          logoUrl: consultantAvatar.trim(),
           avatarType,
           mascotId,
           customMascotDirections: customDirections,
@@ -1193,93 +1138,19 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             {avatarType === "photo" && (
               <div className="mt-3 space-y-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-4">
                 <div>
-                  <label className="text-xs font-medium text-[#666666]">Фото сотрудника (аватар)</label>
-                  <div className="mt-2 flex items-center gap-4">
-                    {/* Круглая миниатюра аватара */}
-                    <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#e5e5e5] bg-white shadow-xs">
-                      {consultantAvatar ? (
-                        <img
-                          src={consultantAvatar}
-                          alt={consultantName || "Консультант"}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <User className="h-6 w-6 text-[#888888]" />
-                      )}
-                      {consultantAvatar && (
-                        <button
-                          type="button"
-                          onClick={() => setConsultantAvatar("")}
-                          className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 transition-opacity hover:opacity-100 cursor-pointer"
-                          title="Удалить фото"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="space-y-1.5 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          type="file"
-                          ref={avatarFileInputRef}
-                          accept="image/*"
-                          onChange={handleAvatarFileSelect}
-                          className="hidden"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => avatarFileInputRef.current?.click()}
-                          disabled={isUploadingAvatar}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] hover:border-[#cccccc] hover:bg-[#fafafa] transition-colors cursor-pointer"
-                        >
-                          {isUploadingAvatar ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
-                          ) : (
-                            <Upload className="h-3.5 w-3.5 text-[#666666]" />
-                          )}
-                          <span>Загрузить своё фото</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setShowAvatarUrlInput((v) => !v)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
-                        >
-                          <Link2 className="h-3.5 w-3.5 text-[#666666]" />
-                          <span>{showAvatarUrlInput ? "Скрыть URL" : "Указать ссылку"}</span>
-                        </button>
-
-                        {consultantAvatar && (
-                          <button
-                            type="button"
-                            onClick={() => setConsultantAvatar("")}
-                            className="inline-flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 transition-colors p-1 cursor-pointer"
-                            title="Сбросить фото"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            <span>Удалить</span>
-                          </button>
-                        )}
-                      </div>
-
-                      {showAvatarUrlInput && (
-                        <div className="pt-1">
-                          <input
-                            type="text"
-                            value={consultantAvatar}
-                            onChange={(e) => setConsultantAvatar(e.target.value)}
-                            placeholder="https://example.com/avatar.jpg"
-                            className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
-                          />
-                        </div>
-                      )}
-
-                      <p className="text-[11px] text-[#888888]">
-                        PNG, JPG или WebP. Рекомендуется квадратное фото с чётким лицом.
-                      </p>
-                    </div>
-                  </div>
+                  <AvatarUpload
+                    value={consultantAvatar}
+                    onChange={(val) => setConsultantAvatar(val)}
+                    onRemove={() => setConsultantAvatar("")}
+                    name={consultantName}
+                    label="Фото сотрудника (аватар)"
+                    hint="PNG, JPG или WebP. Рекомендуется квадратное фото с чётким лицом."
+                    shape="circle"
+                    size="md"
+                    allowUrl
+                    uploadToBackend
+                    deleteSubject="сотрудника"
+                  />
 
                   {/* Готовые пресеты аватаров */}
                   <div className="mt-3 pt-3 border-t border-[#e5e5e5]">

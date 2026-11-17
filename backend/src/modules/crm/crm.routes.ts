@@ -13,6 +13,36 @@ import { timelineRoutes } from "./timeline/timeline.routes.js";
 import { inboxRoutes } from "./inbox/inbox.routes.js";
 import { leadsRoutes } from "./leads/leads.routes.js";
 
+// Загрузка вложений (документы, фото, видео, аудио) для CRM и медиа
+export const handleUpload = async (request: FastifyRequest, reply: FastifyReply) => {
+  const file = await request.file();
+  if (!file) {
+    return reply.status(400).send({ error: "Файл не прикреплен" });
+  }
+
+  const buffer = await file.toBuffer();
+  if (buffer.length === 0) {
+    return reply.status(400).send({ error: "Пустой файл" });
+  }
+
+  const mediaService = new ChatMediaService();
+  const stored = await mediaService.storeBuffer({
+    buffer,
+    originalName: file.filename || `file_${Date.now()}`,
+    mimeType: file.mimetype || "application/octet-stream",
+    tenantId: request.tenant_id,
+  });
+
+  return reply.send({
+    data: {
+      url: stored.url,
+      filename: stored.filename,
+      mimeType: stored.mimeType,
+      sizeBytes: stored.sizeBytes,
+    },
+  });
+};
+
 /**
  * Core CRM route group, mounted at /api/v1/crm by app.ts.
  *
@@ -37,38 +67,10 @@ export default async function crmRoutes(app: FastifyInstance): Promise<void> {
   await app.register(inboxRoutes, { prefix: "/inbox" });
   await app.register(leadsRoutes, { prefix: "/leads" });
 
-  // Загрузка вложений (документы, фото, видео, аудио) для чатов CRM
-  const handleUpload = async (request: FastifyRequest, reply: FastifyReply) => {
-    const file = await request.file();
-    if (!file) {
-      return reply.status(400).send({ error: "Файл не прикреплен" });
-    }
-
-    const buffer = await file.toBuffer();
-    if (buffer.length === 0) {
-      return reply.status(400).send({ error: "Пустой файл" });
-    }
-
-    const mediaService = new ChatMediaService();
-    const stored = await mediaService.storeBuffer({
-      buffer,
-      originalName: file.filename || `file_${Date.now()}`,
-      mimeType: file.mimetype || "application/octet-stream",
-      tenantId: request.tenant_id,
-    });
-
-    return reply.send({
-      data: {
-        url: stored.url,
-        filename: stored.filename,
-        mimeType: stored.mimeType,
-        sizeBytes: stored.sizeBytes,
-      },
-    });
-  };
-
+  // Загрузка вложений (документы, фото, видео, аудио) для чатов CRM и аватаров
   app.post("/upload", handleUpload);
   app.post("/chat/upload", handleUpload);
+  app.post("/v1/upload", handleUpload);
 
   // Транскрибация аудиосообщения
   app.post("/messages/:id/transcribe", async (request, reply) => {
