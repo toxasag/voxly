@@ -114,6 +114,13 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: result });
   });
 
+  // GET /repairs/lookup-client — alias for client-lookup with messenger enrichment
+  app.get("/lookup-client", { onRequest: canRead }, async (request, reply) => {
+    const params = clientLookupQuerySchema.parse(request.query);
+    const result = await service.clientLookup(request.tenant_id, params);
+    return reply.send({ data: result });
+  });
+
   // GET /repairs/dictionaries — retrieve service center dictionary lists
   app.get("/dictionaries", { onRequest: canRead }, async (request, reply) => {
     const dictionaries = await service.getDictionaries(request.tenant_id);
