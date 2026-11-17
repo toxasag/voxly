@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useParams, notFound } from "next/navigation";
 import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
@@ -38,7 +38,9 @@ import {
   useRepairWorks,
   useRepairParts,
   useUpdateRepair,
+  useRepairMasters,
   useSearchEquipmentBySerial,
+  type RepairMasterDTO,
 } from "@/lib/api/use-repairs";
 import { useTeamMembers } from "@/lib/api/use-team";
 import { cn } from "@/lib/utils";
@@ -105,8 +107,20 @@ export default function RepairDetailPage() {
   const { data: detail, isLoading, isError, error, refetch: refetchRepair } = useRepair(params.id);
   const { data: works = [] } = useRepairWorks(params.id);
   const { data: parts = [] } = useRepairParts(params.id);
+  const { data: mastersData } = useRepairMasters();
   const { data: teamData } = useTeamMembers();
-  const teamMembers = teamData?.members ?? [];
+  const teamMembers: RepairMasterDTO[] = useMemo(() => {
+    if (mastersData && mastersData.length > 0) return mastersData;
+    return (teamData?.members ?? [])
+      .filter((m) => m.status === "active" && m.role !== "viewer")
+      .map((m) => ({
+        id: m.id,
+        fullName: m.fullName,
+        email: m.email,
+        phone: m.phone,
+        role: m.role,
+      }));
+  }, [mastersData, teamData]);
 
   const changeStatusMutation = useChangeRepairStatus();
   const updateMutation = useUpdateRepair();

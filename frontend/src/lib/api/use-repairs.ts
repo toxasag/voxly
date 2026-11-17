@@ -604,6 +604,25 @@ export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, 
   });
 }
 
+export interface RepairMasterDTO {
+  id: string;
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+}
+
+export function useRepairMasters(): UseQueryResult<RepairMasterDTO[], ApiClientError> {
+  return useQuery<RepairMasterDTO[], ApiClientError>({
+    queryKey: [...repairKeys.all, "masters"],
+    queryFn: async () => {
+      const res = await apiClient.get<RepairMasterDTO[]>(`${BASE_PATH}/masters`);
+      return res.data;
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useBrands(): UseQueryResult<DictionaryItemDTO[], ApiClientError> {
   return useQuery<DictionaryItemDTO[], ApiClientError>({
     queryKey: dictionaryKeys.brands(),

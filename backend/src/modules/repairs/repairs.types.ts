@@ -91,6 +91,7 @@ export const createRepairSchema = z.object({
   customer_phone: z.string().min(5, "Customer phone is required").max(30),
   customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
   additional_contacts: z.array(additionalContactSchema).optional(),
+  is_company: z.boolean().optional(),
   company_id: optionalUuid,
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: z.string().optional().or(z.literal("")),
@@ -118,6 +119,23 @@ export const createRepairSchema = z.object({
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative("Estimated cost cannot be negative").default(0),
   notes: z.string().max(4000).optional().or(z.literal("")),
+}).superRefine((data, ctx) => {
+  const isCompany = Boolean(
+    data.is_company ||
+    (data.company_inn && data.company_inn.trim()) ||
+    (data.company_ogrn && data.company_ogrn.trim()) ||
+    (data.company_bik && data.company_bik.trim()) ||
+    (data.company_account_number && data.company_account_number.trim()) ||
+    (data.company_legal_address && data.company_legal_address.trim())
+  );
+
+  if (isCompany && (!data.company_name || !data.company_name.trim())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Укажите название компании",
+      path: ["company_name"],
+    });
+  }
 });
 
 export const equipmentIntakeItemSchema = z.object({
@@ -146,6 +164,7 @@ export const createBatchRepairSchema = z.object({
   customer_phone: z.string().min(5, "Customer phone is required").max(30),
   customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
   additional_contacts: z.array(additionalContactSchema).optional(),
+  is_company: z.boolean().optional(),
   company_id: optionalUuid,
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: z.string().optional().or(z.literal("")),
@@ -161,8 +180,33 @@ export const createBatchRepairSchema = z.object({
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative().default(0),
   notes: z.string().max(4000).optional().or(z.literal("")),
+}).superRefine((data, ctx) => {
+  const isCompany = Boolean(
+    data.is_company ||
+    (data.company_inn && data.company_inn.trim()) ||
+    (data.company_ogrn && data.company_ogrn.trim()) ||
+    (data.company_bik && data.company_bik.trim()) ||
+    (data.company_account_number && data.company_account_number.trim()) ||
+    (data.company_legal_address && data.company_legal_address.trim())
+  );
+
+  if (isCompany && (!data.company_name || !data.company_name.trim())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Укажите название компании",
+      path: ["company_name"],
+    });
+  }
 });
 export type CreateBatchRepairPayload = z.infer<typeof createBatchRepairSchema>;
+
+export interface RepairMasterDTO {
+  id: string;
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+}
 
 export const renameDictionaryItemSchema = z.object({
   name: z.string().min(1, "Наименование не может быть пустым").max(200),

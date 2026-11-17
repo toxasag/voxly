@@ -13,6 +13,7 @@ import type {
   DealActDTO,
   EquipmentHistoryItemDTO,
   EquipmentSearchSerialResultDTO,
+  RepairMasterDTO,
   RepairNoteRow,
   RepairOrderDTO,
   RepairOrderDetailDTO,
@@ -569,6 +570,18 @@ export class RepairsService {
       let dealId = payload.deal_id ? payload.deal_id.trim() : "";
       let companyId: string | null = payload.company_id ? payload.company_id.trim() : null;
 
+      const isCompanyRequested = Boolean(
+        payload.is_company ||
+        (payload.company_inn && payload.company_inn.trim()) ||
+        (payload.company_ogrn && payload.company_ogrn.trim()) ||
+        (payload.company_bik && payload.company_bik.trim()) ||
+        (payload.company_account_number && payload.company_account_number.trim()) ||
+        (payload.company_legal_address && payload.company_legal_address.trim())
+      );
+      if (isCompanyRequested && (!payload.company_name || !payload.company_name.trim())) {
+        throw new ValidationError("Укажите название компании", { company_name: ["Укажите название компании"] });
+      }
+
       // 0. Обработка реквизитов компании (дедупликация по ИНН или названию)
       if (!companyId && payload.company_inn && payload.company_inn.trim()) {
         const inn = payload.company_inn.trim();
@@ -880,6 +893,18 @@ export class RepairsService {
       let customerId = payload.customer_id ? payload.customer_id.trim() : "";
       let dealId = payload.deal_id ? payload.deal_id.trim() : "";
       let companyId: string | null = payload.company_id ? payload.company_id.trim() : null;
+
+      const isCompanyRequested = Boolean(
+        payload.is_company ||
+        (payload.company_inn && payload.company_inn.trim()) ||
+        (payload.company_ogrn && payload.company_ogrn.trim()) ||
+        (payload.company_bik && payload.company_bik.trim()) ||
+        (payload.company_account_number && payload.company_account_number.trim()) ||
+        (payload.company_legal_address && payload.company_legal_address.trim())
+      );
+      if (isCompanyRequested && (!payload.company_name || !payload.company_name.trim())) {
+        throw new ValidationError("Укажите название компании", { company_name: ["Укажите название компании"] });
+      }
 
       // 0. Обработка компании
       if (!companyId && payload.company_inn && payload.company_inn.trim()) {
@@ -2983,6 +3008,47 @@ export class RepairsService {
         isCurrent: r.id === repairOrderId,
         createdAt: toIso(r.created_at),
       };
+    });
+  }
+
+  /**
+   * Retrieves active masters (employees) of the tenant for assignment in repair orders.
+   * Only includes active users (activated_at IS NOT NULL, deleted_at IS NULL)
+   * with eligible roles ('owner', 'admin', 'technician', 'manager').
+   */
+  async listMasters(tenantId: string): Promise<RepairMasterDTO[]> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{
+        id: string;
+        name: string;
+        email: string | null;
+        phone: string | null;
+        role: string;
+      }>(
+        `SELECT id, name, email, phone, role
+         FROM users
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND activated_at IS NOT NULL
+           AND role IN ('owner', 'admin', 'technician', 'manager')
+         ORDER BY
+           CASE role
+             WHEN 'technician' THEN 0
+             WHEN 'admin' THEN 1
+             WHEN 'owner' THEN 2
+             ELSE 3
+           END,
+           name ASC`,
+        [tenantId],
+      );
+
+      return rows.map((r) => ({
+        id: r.id,
+        fullName: r.name,
+        email: r.email,
+        phone: r.phone,
+        role: r.role,
+      }));
     });
   }
 }

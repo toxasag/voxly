@@ -28,6 +28,7 @@ export const createRepairSchema = z.object({
   customer_phone: z.string().min(5, "Phone is required").max(30),
   customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
   additional_contacts: z.array(additionalContactSchema).optional().default([]),
+  is_company: z.boolean().optional(),
   company_id: z.string().optional().or(z.literal("")),
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: digitsOnly([10, 12], "ИНН").optional().or(z.literal("")),
@@ -53,13 +54,35 @@ export const createRepairSchema = z.object({
     .number({ invalid_type_error: "Cost must be a number" })
     .min(0, "Cost must be positive"),
   notes: z.string().max(1000).optional(),
-}).refine(
-  (data) => (data.malfunctions && data.malfunctions.length > 0) || (data.defect_description && data.defect_description.trim().length >= 3),
-  {
-    message: "Укажите хотя бы одну заявленную неисправность",
-    path: ["malfunctions"],
-  },
-);
+}).superRefine((data, ctx) => {
+  const hasMalfunction =
+    (data.malfunctions && data.malfunctions.length > 0) ||
+    (data.defect_description && data.defect_description.trim().length >= 3);
+  if (!hasMalfunction) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Укажите хотя бы одну заявленную неисправность",
+      path: ["malfunctions"],
+    });
+  }
+
+  const isCompany = Boolean(
+    data.is_company ||
+    (data.company_inn && data.company_inn.trim()) ||
+    (data.company_ogrn && data.company_ogrn.trim()) ||
+    (data.company_bik && data.company_bik.trim()) ||
+    (data.company_account_number && data.company_account_number.trim()) ||
+    (data.company_legal_address && data.company_legal_address.trim())
+  );
+
+  if (isCompany && (!data.company_name || !data.company_name.trim())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Укажите название компании",
+      path: ["company_name"],
+    });
+  }
+});
 
 export type CreateRepairPayload = z.infer<typeof createRepairSchema>;
 
