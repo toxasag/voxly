@@ -43,8 +43,7 @@ export function ImpersonationBanner() {
   // когда сессия не является имперсонированной (impersonator === null)
   const isPlatformAdminWorkspace =
     !impersonator &&
-    user?.platform_role === "platform_owner" &&
-    (tenant?.slug === "voxly" || tenant?.tenantName?.toLowerCase().includes("platform"));
+    user?.platform_role === "platform_owner";
 
   // Определяем, находится ли партнер в своем личном кабинете партнера
   const isPartnerOwnWorkspace =
@@ -60,16 +59,10 @@ export function ImpersonationBanner() {
   // и серверный токен подтверждает, что режим имперсонации завершен (!impersonator)
   useEffect(() => {
     if (!impersonator && (isPlatformAdminWorkspace || isPartnerOwnWorkspace) && backup) {
-      if (
-        backup.impersonatedTenantSlug &&
-        tenant?.slug &&
-        tenant.slug !== backup.impersonatedTenantSlug
-      ) {
-        clearImpersonationBackup();
-        setBackup(null);
-      }
+      clearImpersonationBackup();
+      setBackup(null);
     }
-  }, [impersonator, isPlatformAdminWorkspace, isPartnerOwnWorkspace, backup, tenant?.slug]);
+  }, [impersonator, isPlatformAdminWorkspace, isPartnerOwnWorkspace, backup]);
 
   // Если в своем собственном кабинете и не в режиме имперсонации — скрываем
   if (isPlatformAdminWorkspace || isPartnerOwnWorkspace) {
@@ -94,14 +87,25 @@ export function ImpersonationBanner() {
 
     try {
       const res = await restoreAdminSessionDetailed();
-      if (res.success && res.targetUrl) {
-        window.location.href = res.targetUrl;
-        return;
+      const target = res.targetUrl || getPlatformAdminUrl(undefined, backup);
+      try {
+        const currentUrl = new URL(window.location.href);
+        const destUrl = new URL(target, window.location.origin);
+        if (currentUrl.origin !== destUrl.origin || currentUrl.pathname !== destUrl.pathname) {
+          window.location.href = target;
+          return;
+        }
+        if (destUrl.hash) {
+          window.location.hash = destUrl.hash;
+        }
+        window.location.reload();
+      } catch {
+        window.location.href = target;
       }
-      window.location.href = getPlatformAdminUrl(undefined, backup);
     } catch (err) {
       console.error("Ошибка возврата в сессию администратора/партнера:", err);
-      window.location.href = getPlatformAdminUrl(undefined, backup);
+      const target = getPlatformAdminUrl(undefined, backup);
+      window.location.href = target;
     }
   };
 

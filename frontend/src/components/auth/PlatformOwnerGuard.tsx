@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { Loader2, ShieldOff, ArrowLeft, ExternalLink, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth/use-auth";
@@ -24,21 +24,32 @@ export function PlatformOwnerGuard({ children }: { children: React.ReactNode }) 
   const { user, isLoading, logout } = useAuth();
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
+  const hasTriggeredRef = useRef(false);
 
   const backup = typeof window !== "undefined" ? readImpersonationBackup() : null;
   const isPlatformOwner = user?.platform_role === "platform_owner";
 
   useEffect(() => {
-    if (isLoading || isPlatformOwner || isRestoring || restoreFailed) return;
+    if (isLoading || isPlatformOwner || isRestoring || restoreFailed || hasTriggeredRef.current) return;
 
     if (backup) {
+      hasTriggeredRef.current = true;
       setIsRestoring(true);
       void restoreAdminSessionDetailed().then((res) => {
-        if (res.success) {
-          if (res.targetUrl && typeof window !== "undefined" && !window.location.href.includes(res.targetUrl)) {
-            window.location.href = res.targetUrl;
-          } else {
+        if (res.success && res.targetUrl && typeof window !== "undefined") {
+          try {
+            const currentUrl = new URL(window.location.href);
+            const destUrl = new URL(res.targetUrl, window.location.origin);
+            if (currentUrl.origin !== destUrl.origin || currentUrl.pathname !== destUrl.pathname) {
+              window.location.href = res.targetUrl;
+              return;
+            }
+            if (destUrl.hash) {
+              window.location.hash = destUrl.hash;
+            }
             window.location.reload();
+          } catch {
+            window.location.href = res.targetUrl;
           }
         } else {
           setRestoreFailed(true);
@@ -86,7 +97,21 @@ export function PlatformOwnerGuard({ children }: { children: React.ReactNode }) 
               onClick={() => {
                 setIsRestoring(true);
                 void restoreAdminSessionDetailed().then((res) => {
-                  window.location.href = res.targetUrl || getPlatformAdminUrl();
+                  const target = res.targetUrl || getPlatformAdminUrl();
+                  try {
+                    const currentUrl = new URL(window.location.href);
+                    const destUrl = new URL(target, window.location.origin);
+                    if (currentUrl.origin !== destUrl.origin || currentUrl.pathname !== destUrl.pathname) {
+                      window.location.href = target;
+                      return;
+                    }
+                    if (destUrl.hash) {
+                      window.location.hash = destUrl.hash;
+                    }
+                    window.location.reload();
+                  } catch {
+                    window.location.href = target;
+                  }
                 });
               }}
               className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0]"
@@ -106,11 +131,11 @@ export function PlatformOwnerGuard({ children }: { children: React.ReactNode }) 
 
           {isTenantSubdomain && (
             <a
-              href="https://voxly.getvoxly.ru/admin/tenants"
+              href={getPlatformAdminUrl()}
               className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa]"
             >
               <ExternalLink className="h-3.5 w-3.5" />
-              Перейти на voxly.getvoxly.ru
+              Перейти в панель платформы
             </a>
           )}
 
