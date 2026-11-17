@@ -239,6 +239,66 @@ export class WhatsappEvolutionService {
     };
   }
 
+  /** Форматирование человекочитаемой ошибки Evolution API для оператора CRM */
+  formatEvoError(raw: unknown, number?: string): string {
+    const formattedPhone = number ? (number.startsWith("+") ? number : `+${number}`) : "";
+    if (!raw) return "Ошибка отправки WhatsApp";
+
+    // Обработка прямого массива статусов (например, [{ jid: ..., exists: false, number: ... }])
+    if (Array.isArray(raw)) {
+      const item = raw[0];
+      if (item && typeof item === "object") {
+        if ("exists" in item && (item as { exists?: boolean }).exists === false) {
+          return `Номер ${formattedPhone || (item as { number?: string }).number || ""} не зарегистрирован в WhatsApp. Написать первым нельзя.`;
+        }
+      }
+    }
+
+    // Если raw — объект с вложенным response / message
+    if (typeof raw === "object" && raw !== null) {
+      const record = raw as Record<string, unknown>;
+      const resp = record.response;
+      if (typeof resp === "object" && resp !== null) {
+        const respMsg = (resp as Record<string, unknown>).message;
+        if (Array.isArray(respMsg)) {
+          const first = respMsg[0];
+          if (typeof first === "object" && first !== null && (first as Record<string, unknown>).exists === false) {
+            return `Номер ${formattedPhone || ""} не зарегистрирован в WhatsApp. Написать первым нельзя.`;
+          }
+          if (typeof first === "string") {
+            try {
+              const parsed = JSON.parse(first);
+              if (parsed?.exists === false) {
+                return `Номер ${formattedPhone || parsed?.number || ""} не зарегистрирован в WhatsApp. Написать первым нельзя.`;
+              }
+            } catch {
+              // не JSON
+            }
+          }
+        }
+      }
+    }
+
+    const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+    if (str.includes('"exists":false') || str.includes('"exists": false')) {
+      return `Номер ${formattedPhone} не зарегистрирован в WhatsApp. Написать первым нельзя.`;
+    }
+    if (str.includes("Connection Closed") || str.includes("not connected") || str.includes("DISCONNECTED")) {
+      return "Подключение WhatsApp не активно (проверьте статус в настройках каналов).";
+    }
+
+    // Попытка извлечь осмысленный текст ошибки
+    if (typeof raw === "object" && raw !== null) {
+      const rec = raw as Record<string, unknown>;
+      const directMsg = rec.message || rec.error;
+      if (typeof directMsg === "string" && directMsg.length > 0) {
+        return directMsg;
+      }
+    }
+
+    return "Ошибка отправки WhatsApp: номер недоступен или сервис временно не отвечает";
+  }
+
   /** Отправка текстового сообщения через Evolution API */
   async sendTextMessage(
     instanceName: string,
@@ -255,7 +315,7 @@ export class WhatsappEvolutionService {
     });
 
     if (!res.ok) {
-      return { ok: false, error: res.json?.response?.message || "Ошибка отправки WhatsApp" };
+      return { ok: false, error: this.formatEvoError(res.json, cleanNumber) };
     }
 
     return { ok: true, messageId: res.json?.key?.id };
@@ -318,12 +378,7 @@ export class WhatsappEvolutionService {
     });
 
     if (!res.ok) {
-      const errMsg =
-        res.json?.response?.message ||
-        res.json?.message ||
-        res.json?.error ||
-        "Ошибка отправки медиа в WhatsApp";
-      return { ok: false, error: errMsg };
+      return { ok: false, error: this.formatEvoError(res.json, cleanNumber) };
     }
 
     return { ok: true, messageId: res.json?.key?.id };

@@ -1109,6 +1109,12 @@ export function CrmChatView({
       let uploadedAttachmentUrl: string | undefined;
       let uploadedAttachmentType: string | undefined;
 
+      // Проверка доступности выбранного аккаунта отправки
+      if (selectedOption && !selectedOption.available) {
+        toast.error(selectedOption.unavailableReason || "Выбранный канал недоступен для этого контакта");
+        return;
+      }
+
       if (attached) {
         try {
           const uploadRes = await uploadMediaMutation.mutateAsync(attached.file);
@@ -1121,7 +1127,7 @@ export function CrmChatView({
       }
 
       try {
-        await sendMessageMutation.mutateAsync({
+        const sentMsg = await sendMessageMutation.mutateAsync({
           content: text || (attached ? attached.name : "Вложение"),
           channel,
           channel_account_id: channelAccountId || undefined,
@@ -1130,6 +1136,9 @@ export function CrmChatView({
           attachment: uploadedAttachmentUrl,
           attachment_type: uploadedAttachmentType,
         });
+        if (sentMsg && "deliveryStatus" in sentMsg && sentMsg.deliveryStatus === "failed") {
+          toast.error(sentMsg.deliveryError || "Ошибка отправки сообщения клиенту");
+        }
         setInput("");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");

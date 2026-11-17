@@ -67,13 +67,15 @@ export class DealMessagingService {
    */
   async getSendFromOptions(tenantId: string, dealId: string): Promise<SendFromOptionDTO[]> {
     const contactRows = await query<{
+      contact_id: string | null;
       telegram_chat_id: string | null;
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
       socials?: ContactSocialJson[];
     }>(
-      `SELECT c.telegram_chat_id::text AS telegram_chat_id,
+      `SELECT d.contact_id,
+              c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
               c.phone,
@@ -84,7 +86,9 @@ export class DealMessagingService {
       [tenantId, dealId],
     );
 
+    const hasContact = Boolean(contactRows[0]?.contact_id);
     const contact = contactRows[0] ?? {
+      contact_id: null,
       telegram_chat_id: null,
       telegram_username: null,
       whatsapp: null,
@@ -117,24 +121,26 @@ export class DealMessagingService {
       let available = false;
       let unavailableReason: string | undefined;
 
-      if (acc.channel === "telegram") {
+      if (!hasContact) {
+        unavailableReason = "К сделке не привязан контакт";
+      } else if (acc.channel === "telegram") {
         if (contact.telegram_chat_id || contact.telegram_username || contact.phone) {
           available = true;
         } else {
-          unavailableReason = "У контакта не указан Telegram или номер телефона";
+          unavailableReason = "У контакта не указан Telegram (@username) или номер телефона";
         }
       } else if (acc.channel === "whatsapp") {
         if (contact.whatsapp || contact.phone) {
           available = true;
         } else {
-          unavailableReason = "У контакта не указан телефон для WhatsApp";
+          unavailableReason = "У контакта не указан номер телефона для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
         const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
         if (contact.phone || hasMaxSocial) {
           available = true;
         } else {
-          unavailableReason = "У контакта не указан телефон для MAX";
+          unavailableReason = "У контакта не указан номер телефона для MAX";
         }
       } else {
         available = true;
@@ -254,7 +260,7 @@ export class DealMessagingService {
     if (route === null) {
       return {
         ok: false,
-        reason: "У сделки нет контакта с адресом в этом канале",
+        reason: "У сделки нет контакта или адрес в выбранном канале не указан",
       };
     }
 

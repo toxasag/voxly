@@ -71,6 +71,7 @@ export interface TelegramPhoneResolveResult {
 export type TelegramPhoneResolver = (
   tenantId: string,
   phoneDigits: string,
+  options?: { deleteContactAfter?: boolean; firstName?: string; lastName?: string },
 ) => Promise<TelegramPhoneResolveResult>;
 
 export interface TelegramHistorySyncParams {
@@ -117,9 +118,10 @@ export function registerTelegramPhoneResolver(resolver: TelegramPhoneResolver): 
 export async function resolveTelegramPhone(
   tenantId: string,
   phoneDigits: string,
+  options?: { deleteContactAfter?: boolean; firstName?: string; lastName?: string },
 ): Promise<TelegramPhoneResolveResult | null> {
   if (!telegramPhoneResolver) return null;
-  return telegramPhoneResolver(tenantId, phoneDigits);
+  return telegramPhoneResolver(tenantId, phoneDigits, options);
 }
 
 /** Транспорт объявляет себя отправителем канала при старте процесса. */
