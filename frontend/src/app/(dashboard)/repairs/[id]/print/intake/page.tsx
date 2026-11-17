@@ -168,13 +168,17 @@ export default function RepairIntakePrintPage() {
           </div>
           <div style={{ textAlign: "right", fontSize: "11px", lineHeight: "1.4", color: "#111111" }}>
             <div style={{ fontWeight: 700, fontSize: "13px" }}>
-              {settings?.companyName || "Ремонт инструмента ИП Сагайдак А.Г."}
+              {settings?.companyName || "Сервисный центр"}
             </div>
-            <div>{settings?.companyAddress || "Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214"}</div>
-            <div>
-              тел. {settings?.companyPhone || "+7 977 628 20 49"}
-              {settings?.workingHours ? ` ${settings.workingHours}` : " Пн-Пт 10:00-19:00"}
-            </div>
+            {settings?.companyAddress ? <div>{settings.companyAddress}</div> : null}
+            {settings?.companyPhone ? (
+              <div>
+                тел. {settings.companyPhone}
+                {settings?.workingHours ? ` ${settings.workingHours}` : ""}
+              </div>
+            ) : settings?.workingHours ? (
+              <div>{settings.workingHours}</div>
+            ) : null}
             {settings?.companyWebsite ? (
               <div style={{ fontWeight: 700, marginTop: "2px" }}>САЙТ: {settings.companyWebsite}</div>
             ) : null}

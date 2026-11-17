@@ -5,11 +5,12 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   User, Phone, Mail, MessageCircle, Hash, Building2, Loader2, FileText, Tag, AlertCircle,
-  Linkedin, Briefcase,
+  Linkedin, Briefcase, MapPin,
 } from "lucide-react";
 import { createContactSchema, type CreateContactPayload } from "@/schemas/contact.schema";
 import { ApiClientError } from "@/lib/api/apiClient";
 import { useCompanies } from "@/lib/api/use-companies";
+import { useFindDuplicateContacts, contactFullName } from "@/lib/api/use-contacts";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
 import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
@@ -52,6 +53,8 @@ const EMPTY_VALUES: CreateContactPayload = {
   company_id: "",
   channel: "telegram",
   linkedin_link: "",
+  city: "",
+  address: "",
   notes: "",
   custom_fields: {},
 };
@@ -69,6 +72,8 @@ const FORM_FIELDS = new Set<keyof CreateContactPayload>([
   "company_id",
   "channel",
   "linkedin_link",
+  "city",
+  "address",
   "notes",
   "custom_fields",
 ]);
@@ -142,6 +147,9 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
   }, [open, form, initial]);
 
   const phones = form.watch("phones") ?? [];
+  const primaryPhone = phones[0]?.number;
+  const duplicatesQuery = useFindDuplicateContacts(primaryPhone);
+  const duplicates = duplicatesQuery.data ?? [];
   const socials = form.watch("socials") ?? [];
   const companyId = form.watch("company_id") ?? "";
   const emailVal = form.watch("email") ?? "";
@@ -234,6 +242,17 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
               error={messageOf(errors.phones)}
             />
 
+            {duplicates.length > 0 && (
+              <div className="rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] flex items-center justify-between shadow-2xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-[#854d0e]" />
+                  <span className="truncate">
+                    Контакт с таким номером уже есть в базе: <strong>{contactFullName(duplicates[0])}</strong>
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <label className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
                 <Mail className="h-3 w-3 text-[#888888]" /> E-mail адреса
@@ -313,6 +332,36 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
                 className={cn(INPUT_CLASS, errors.linkedin_link ? "border-rose-500" : "border-[#e5e5e5]")}
               />
               {errors.linkedin_link && <p className="text-xs text-rose-600">{errors.linkedin_link.message}</p>}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="contact-city" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                  <Building2 className="h-3 w-3 text-[#888888]" /> Город
+                </label>
+                <input
+                  id="contact-city"
+                  type="text"
+                  placeholder="Укажите город"
+                  {...form.register("city")}
+                  className={cn(INPUT_CLASS, errors.city ? "border-rose-500" : "border-[#e5e5e5]")}
+                />
+                {errors.city && <p className="text-xs text-rose-600">{errors.city.message}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="contact-address" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                  <MapPin className="h-3 w-3 text-[#888888]" /> Адрес
+                </label>
+                <input
+                  id="contact-address"
+                  type="text"
+                  placeholder="Улица, дом, офис"
+                  {...form.register("address")}
+                  className={cn(INPUT_CLASS, errors.address ? "border-rose-500" : "border-[#e5e5e5]")}
+                />
+                {errors.address && <p className="text-xs text-rose-600">{errors.address.message}</p>}
+              </div>
             </div>
 
             <fieldset className="space-y-3 rounded-[8px] border border-[#e5e5e5] p-3.5">

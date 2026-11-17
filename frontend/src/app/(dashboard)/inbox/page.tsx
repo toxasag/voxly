@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { DialogueFeedbackModal } from "@/components/ai-bots/DialogueFeedbackModal";
 import { useInboxThreads, type InboxThreadDTO } from "@/lib/api/use-inbox";
+import { usePresence } from "@/lib/api/use-crm-chat";
 
 function formatThreadTime(iso: string): string {
   try {
@@ -112,8 +113,11 @@ export default function InboxPage() {
   }, [threads, selectedDealId]);
 
   const unreadCount = useMemo(() => {
-    return threads.filter((t) => t.unreadCount > 0 || t.lastDirection === "inbound").length;
+    return threads.filter((t) => t.unreadCount > 0).length;
   }, [threads]);
+
+  const activePresenceQuery = usePresence("deal", activeThread?.dealId ?? "");
+  const isActiveOnline = Boolean(activePresenceQuery.data?.isOnline);
 
   const handleSelectThread = (thread: InboxThreadDTO) => {
     // Сбрасываем фокус с поля ввода перед переключением диалога, исключая паразитный onFocus
@@ -278,7 +282,7 @@ export default function InboxPage() {
               threads.map((thread) => {
                 const isSelected = activeThread?.dealId === thread.dealId;
                 const channelBadge = getChannelBadge(thread.channel);
-                const needsReply = thread.unreadCount > 0 || thread.lastDirection === "inbound";
+                const needsReply = thread.unreadCount > 0;
 
                 return (
                   <button
@@ -372,8 +376,16 @@ export default function InboxPage() {
                     <ChevronLeft className="h-5 w-5" />
                   </button>
 
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f0f0f0] text-xs font-semibold text-[#111111] shrink-0">
-                    {activeThread.contactName.charAt(0).toUpperCase() || "К"}
+                  <div className="relative shrink-0">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f0f0f0] text-xs font-semibold text-[#111111]">
+                      {activeThread.contactName.charAt(0).toUpperCase() || "К"}
+                    </div>
+                    {isActiveOnline && (
+                      <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                      </span>
+                    )}
                   </div>
 
                   <div className="min-w-0">
@@ -381,8 +393,15 @@ export default function InboxPage() {
                       <span className="truncate text-sm font-semibold text-[#111111]">
                         {activeThread.contactName}
                       </span>
+                      {isActiveOnline ? (
+                        <span className="text-xs font-medium text-emerald-700">В сети</span>
+                      ) : activePresenceQuery.data?.lastSeenAt ? (
+                        <span className="text-[11px] text-[#666666]">
+                          {formatThreadTime(activePresenceQuery.data.lastSeenAt)}
+                        </span>
+                      ) : null}
                       {activeThread.contactPhone && (
-                        <span className="hidden sm:inline text-xs text-[#666666] font-mono">
+                        <span className="hidden sm:inline text-xs text-[#888888] font-mono">
                           {activeThread.contactPhone}
                         </span>
                       )}

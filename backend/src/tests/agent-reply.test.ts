@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   SAFE_DEFAULTS,
   buildSystemPrompt,
+  buildRetrievedFactsContext,
   interpolatePromptVariables,
   parseAgentReply,
+  LANGUAGE_MIRRORING_DIRECTIVE,
 } from "../modules/ai/agent-reply.js";
 
 describe("agent-reply - parseAgentReply", () => {
@@ -161,32 +163,35 @@ message2: вопрос
 
     const prompt = buildSystemPrompt({
       agentPrompt,
-      contextChunks: [{ filename: "price.md", content: "Замена масла: 2000 руб." }],
       variables: {
         "tenant.name": "АвтоЛидер",
         "consultant.name": "Михаил",
         "consultant.role": "мастер-приёмщик",
       },
+    });
+
+    const facts = buildRetrievedFactsContext({
+      contextChunks: [{ filename: "price.md", content: "Замена масла: 2000 руб." }],
       crmPatterns: [{ customerQuery: "Есть запись на пятницу?", agentReply: "Да, свободно на 14:00 и 16:30." }],
     });
 
     expect(prompt).toContain("Ты — Михаил, мастер-приёмщик компании АвтоЛидер.");
-    expect(prompt).toContain("[1] Из «price.md»:\nЗамена масла: 2000 руб.");
-    expect(prompt).toContain("Клиент: «Есть запись на пятницу?»");
-    expect(prompt).toContain("Успешный ответ: «Да, свободно на 14:00 и 16:30.»");
+    expect(prompt).toContain(LANGUAGE_MIRRORING_DIRECTIVE);
+    expect(facts).toContain("price.md");
+    expect(facts).toContain("Замена масла: 2000 руб.");
+    expect(facts).toContain("Есть запись на пятницу?");
+    expect(facts).toContain("Да, свободно на 14:00 и 16:30.");
   });
 
-  it("добавляет контекст документов в конец, если плейсхолдера {{knowledge_base_context}} нет", () => {
+  it("добавляет формат ответа и директиву зеркалирования языка в конец системного промпта", () => {
     const legacyPrompt = "Ты менеджер отдела продаж. Отвечай вежливо.";
     const prompt = buildSystemPrompt({
       agentPrompt: legacyPrompt,
-      contextChunks: [{ filename: "faq.txt", content: "Доставка 3 дня." }],
     });
 
     expect(prompt).toContain("Ты менеджер отдела продаж. Отвечай вежливо.");
-    expect(prompt).toContain("ВЫДЕРЖКИ ИЗ ДОКУМЕНТОВ КОМПАНИИ");
-    expect(prompt).toContain("[1] Из «faq.txt»:\nДоставка 3 дня.");
     expect(prompt).toContain("ФОРМАТ ОТВЕТА — СТРОГО JSON");
+    expect(prompt).toContain(LANGUAGE_MIRRORING_DIRECTIVE);
   });
 
   it("автоматически заменяет устаревшую директиву жесткого русского языка на Language Mirroring", () => {

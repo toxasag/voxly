@@ -19,7 +19,7 @@ export type TeamMemberStatus = "active" | "invited";
 export interface TeamMemberDTO {
   id: string;
   fullName: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   role: Role;
   permissions: Permission[];
@@ -30,6 +30,25 @@ export interface TeamMemberDTO {
   invitedAt: string | null;
   activatedAt: string | null;
   createdAt: string;
+}
+
+export interface PendingInviteDTO {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  name: string;
+  role: Role;
+  roleLabel: string;
+  token: string | null;
+  inviteUrl: string | null;
+  telegramShareUrl: string | null;
+  whatsappShareUrl: string | null;
+  status: "pending" | "accepted" | "expired" | "revoked";
+  deliveryStatus: "sent" | "failed" | "pending";
+  deliveryError: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  isExpired: boolean;
 }
 
 export interface SeatUsageDTO {
@@ -52,6 +71,7 @@ export type AssignableRole = Exclude<Role, "owner" | "partner">;
 
 export interface TeamListDTO {
   members: TeamMemberDTO[];
+  invites?: PendingInviteDTO[];
   seats: SeatUsageDTO;
   assignableRoles: AssignableRole[];
   availablePermissions: Permission[];
@@ -77,6 +97,7 @@ export interface TenantInfoDTO {
 
 export const teamKeys = {
   list: ["tenant", "team"] as const,
+  invites: ["tenant", "team", "invites"] as const,
   info: ["tenant", "info"] as const,
 };
 
@@ -107,6 +128,14 @@ export function useTeam(): UseQueryResult<TeamListDTO, ApiClientError> {
   });
 }
 
+/** Список ожидающих приглашений (омниканальный аудит). */
+export function usePendingInvites(): UseQueryResult<PendingInviteDTO[], ApiClientError> {
+  return useQuery({
+    queryKey: teamKeys.invites,
+    queryFn: async () => (await apiClient.get<PendingInviteDTO[]>("/api/v1/tenant/team/invites")).data,
+  });
+}
+
 /** План, статус и остаток пробного периода аккаунта. */
 export function useTenantInfo(): UseQueryResult<TenantInfoDTO, ApiClientError> {
   return useQuery({
@@ -118,15 +147,18 @@ export function useTenantInfo(): UseQueryResult<TenantInfoDTO, ApiClientError> {
 
 export interface InviteResultDTO {
   member: TeamMemberDTO;
+  invite?: PendingInviteDTO;
   seats: SeatUsageDTO;
   emailSent: boolean;
-  /** Одноразовая ссылка только когда SMTP не доставил письмо. */
   inviteUrl: string | null;
+  telegramShareUrl?: string | null;
+  whatsappShareUrl?: string | null;
 }
 
 export interface InvitePayload {
   name: string;
-  email: string;
+  email?: string | null;
+  phone?: string | null;
   role: AssignableRole;
   /** Согласие на платное место сверх включённых. */
   confirm_extra_seat?: boolean;
@@ -142,6 +174,7 @@ function useTeamMutationInvalidation(): () => void {
 
   return () => {
     void queryClient.invalidateQueries({ queryKey: teamKeys.list });
+    void queryClient.invalidateQueries({ queryKey: teamKeys.invites });
     void queryClient.invalidateQueries({ queryKey: tenantUserKeys.all });
     void queryClient.invalidateQueries({ queryKey: marketplaceKeys.billing });
     void queryClient.invalidateQueries({ queryKey: marketplaceKeys.modules });
@@ -154,6 +187,7 @@ export function useInviteMember(): UseMutationResult<InviteResultDTO, ApiClientE
   return useMutation<InviteResultDTO, ApiClientError, InvitePayload>({
     mutationFn: async (payload) =>
       (await apiClient.post<InviteResultDTO>("/api/v1/tenant/team/invite", payload)).data,
+    onSuccess: invalidate,
   });
 }
 
@@ -185,9 +219,27 @@ export function useRemoveMember(): UseMutationResult<
   });
 }
 
+export function useRevokeInvite(): UseMutationResult<
+  { seats: SeatUsageDTO },
+  ApiClientError,
+  { id: string }
+> {
+  const invalidate = useTeamMutationInvalidation();
+
+  return useMutation({
+    mutationFn: async ({ id }) =>
+      (await apiClient.delete<{ seats: SeatUsageDTO }>(`/api/v1/tenant/team/invites/${id}`)).data,
+    onSuccess: invalidate,
+  });
+}
+
 export interface ResendInviteResult {
   emailSent: boolean;
   inviteUrl: string | null;
+  telegramShareUrl?: string | null;
+  whatsappShareUrl?: string | null;
+  deliveryStatus?: "sent" | "failed" | "pending";
+  deliveryError?: string | null;
 }
 
 export function useResendInvite(): UseMutationResult<
@@ -195,9 +247,12 @@ export function useResendInvite(): UseMutationResult<
   ApiClientError,
   { id: string }
 > {
+  const invalidate = useTeamMutationInvalidation();
+
   return useMutation<ResendInviteResult, ApiClientError, { id: string }>({
     mutationFn: async ({ id }) =>
       (await apiClient.post<ResendInviteResult>(`/api/v1/tenant/team/${id}/resend`, {})).data,
+    onSuccess: invalidate,
   });
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import {
   FileText,
   Type,
@@ -19,8 +19,20 @@ import {
   Star,
   RotateCcw,
   Plus,
+  Eye,
+  EyeOff,
+  Camera,
+  UploadCloud,
+  Loader2,
+  SlidersHorizontal,
+  Receipt,
+  Sparkles,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { AvatarCropModal } from "@/components/settings/AvatarCropModal";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { loadImageFile, releaseImage, AvatarError } from "@/lib/utils/avatar";
+import { toast } from "sonner";
 import type {
   PrintLayoutConfig,
   PrintSectionType,
@@ -54,6 +66,8 @@ interface VisualPrintInspectorProps {
   onCreateTemplate?: () => void;
   onCloneTemplate?: () => void;
   onSetDefaultTemplate?: (id: string) => void;
+  onToggleVisibility?: (id: string) => void;
+  onDuplicateTemplate?: (id: string) => void;
   onDeleteTemplate?: (id: string) => void;
   onResetToPreset?: () => void;
 }
@@ -69,9 +83,78 @@ export function VisualPrintInspector({
   onCreateTemplate,
   onCloneTemplate,
   onSetDefaultTemplate,
+  onToggleVisibility,
+  onDuplicateTemplate,
   onDeleteTemplate,
   onResetToPreset,
 }: VisualPrintInspectorProps) {
+  // Logo upload & crop state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isProcessingLogo, setIsProcessingLogo] = useState(false);
+  const [removeLogoOpen, setRemoveLogoOpen] = useState(false);
+  const [cropSource, setCropSource] = useState<{ image: HTMLImageElement; url: string } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Logo handlers
+  const handleLogoFile = useCallback(async (file: File | undefined) => {
+    if (!file) return;
+    setIsProcessingLogo(true);
+    try {
+      const loaded = await loadImageFile(file);
+      setCropSource(loaded);
+    } catch (err) {
+      toast.error(err instanceof AvatarError ? err.message : "Не удалось прочитать файл логотипа");
+    } finally {
+      setIsProcessingLogo(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, []);
+
+  const handleLogoCropApply = useCallback(
+    (dataUri: string) => {
+      onChangeConfig({
+        ...config,
+        header: {
+          ...config.header,
+          logoUrl: dataUri,
+        },
+      });
+      toast.success("Логотип обновлен");
+      if (cropSource) releaseImage(cropSource.url);
+      setCropSource(null);
+    },
+    [config, onChangeConfig, cropSource],
+  );
+
+  const handleRemoveLogo = useCallback(() => {
+    onChangeConfig({
+      ...config,
+      header: {
+        ...config.header,
+        logoUrl: "",
+      },
+    });
+    toast.success("Логотип удален");
+    setRemoveLogoOpen(false);
+  }, [config, onChangeConfig]);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    void handleLogoFile(file);
+  };
   // Typed section update helpers
   const updateTheme = (patch: Partial<PrintLayoutConfig["theme"]>) =>
     onChangeConfig({ ...config, theme: { ...config.theme, ...patch } });
@@ -120,6 +203,167 @@ export function VisualPrintInspector({
     else if (section === "tearOffTicket") updateTearOffTicket(patch as Partial<PrintLayoutConfig["tearOffTicket"]>);
   }
 
+  const DOC_TYPE_LABELS: Record<string, string> = {
+    work_order: "Акт приема",
+    repair_order: "Заказ-наряд",
+    completion_act: "Акт вып. работ",
+    receipt: "Товарный чек",
+    warranty_ticket: "Гарантийный талон",
+  };
+
+  const systemTemplates = templatesList.filter((t) => !t.isCustom);
+  const customTemplates = templatesList.filter((t) => t.isCustom);
+
+  const renderTemplateCard = (tpl: PrintTemplateDTO) => {
+    const isSelected = currentTemplate?.id === tpl.id;
+    const docLabel = DOC_TYPE_LABELS[tpl.documentType] || tpl.documentType;
+
+    return (
+      <div
+        key={tpl.id}
+        onClick={() => onSelectTemplate?.(tpl)}
+        className={cn(
+          "group relative rounded-[8px] border p-3 bg-white transition-all cursor-pointer",
+          isSelected
+            ? "border-[#4a38f5] ring-2 ring-[#4a38f5]/20 bg-[#4a38f5]/[0.02] shadow-xs"
+            : "border-[#e5e5e5] hover:border-[#cccccc] hover:bg-[#fafafa]/50",
+        )}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            {/* Badges row */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+              <span className="rounded-[4px] bg-[#f0f0f0] text-[#555555] px-1.5 py-0.5 text-[10px] font-medium">
+                {docLabel}
+              </span>
+              <span
+                className={cn(
+                  "rounded-[4px] px-1.5 py-0.5 text-[10px] font-medium",
+                  tpl.isCustom
+                    ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                    : "bg-[#e5e5e5] text-[#555555]",
+                )}
+              >
+                {tpl.isCustom ? "Пользовательский" : "Системный"}
+              </span>
+              {tpl.isDefault && (
+                <span className="flex items-center gap-0.5 rounded-[4px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-semibold">
+                  <Check className="h-2.5 w-2.5" />
+                  Основной
+                </span>
+              )}
+              {tpl.isHidden && (
+                <span className="flex items-center gap-0.5 rounded-[4px] bg-amber-50 text-[#854d0e] border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium">
+                  <EyeOff className="h-2.5 w-2.5" />
+                  Скрыт в меню
+                </span>
+              )}
+            </div>
+
+            {/* Template name & description */}
+            <div className="flex items-center gap-1.5">
+              <h4 className="text-xs font-semibold text-[#111111] truncate group-hover:text-[#4a38f5] transition-colors">
+                {tpl.name}
+              </h4>
+              {isSelected && (
+                <span className="rounded-full bg-[#4a38f5] text-white px-1.5 py-0.2 text-[9px] font-bold shrink-0">
+                  Активен
+                </span>
+              )}
+            </div>
+            {tpl.description && (
+              <p className="text-[11px] text-[#666666] mt-0.5 line-clamp-1 leading-snug">
+                {tpl.description}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Card footer: Page size & Action buttons */}
+        <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-[#f0f0f0]">
+          <span className="text-[10px] font-mono text-[#888888] uppercase">
+            {tpl.pageSize || "A4"} • {tpl.orientation === "landscape" ? "Альбомная" : "Книжная"}
+          </span>
+
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Visibility toggle button */}
+            {onToggleVisibility && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleVisibility(tpl.id);
+                }}
+                className={cn(
+                  "p-1 rounded-[4px] transition-colors cursor-pointer",
+                  tpl.isHidden
+                    ? "text-[#888888] hover:text-[#4a38f5] hover:bg-[#f0f0f0]"
+                    : "text-[#4a38f5] hover:bg-[#4a38f5]/10",
+                )}
+                title={
+                  tpl.isHidden
+                    ? "Включить в меню быстрой печати"
+                    : "Скрыть из меню быстрой печати"
+                }
+              >
+                {tpl.isHidden ? (
+                  <EyeOff className="h-3.5 w-3.5 text-[#888888]" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
+
+            {/* Duplicate button */}
+            {onDuplicateTemplate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDuplicateTemplate(tpl.id);
+                }}
+                className="p-1 text-[#666666] hover:text-[#4a38f5] hover:bg-[#f0f0f0] rounded-[4px] transition-colors cursor-pointer"
+                title="Создать копию шаблона"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            {/* Set as default button */}
+            {!tpl.isDefault && onSetDefaultTemplate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSetDefaultTemplate(tpl.id);
+                }}
+                className="p-1 text-[#666666] hover:text-amber-600 hover:bg-[#f0f0f0] rounded-[4px] transition-colors cursor-pointer"
+                title="Сделать основным по умолчанию"
+              >
+                <Star className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            {/* Delete button (only custom non-default templates) */}
+            {tpl.isCustom && !tpl.isDefault && onDeleteTemplate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteTemplate(tpl.id);
+                }}
+                className="p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 rounded-[4px] transition-colors cursor-pointer"
+                title="Удалить шаблон"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const navItems: Array<{ id: InspectorTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: "templates", label: "Шаблоны", icon: FileText },
     { id: "style", label: "Стиль", icon: Type },
@@ -160,155 +404,88 @@ export function VisualPrintInspector({
       {/* Tab Content Body (Scrollable) */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* ================================================================= */}
-        {/* TAB 1: TEMPLATES & PRESETS                                        */}
+        {/* TAB 1: TEMPLATES & PRESETS (SINGLE INTERACTIVE CATALOG)           */}
         {/* ================================================================= */}
         {activeTab === "templates" && (
           <div className="space-y-4">
-            <div>
-              <h3 className="text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                Каталог шаблонов и пресетов
-              </h3>
-              <p className="text-[11px] text-[#666666]">
-                Выберите готовый заводской пресет или управляйте собственными шаблонами бланков
-              </p>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
+                  Каталог печатных бланков
+                </h3>
+                <p className="text-[11px] text-[#666666]">
+                  Кликните по бланку для выбора и мгновенного предпросмотра
+                </p>
+              </div>
+              {onCreateTemplate && (
+                <button
+                  type="button"
+                  onClick={onCreateTemplate}
+                  className="flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-[11px] font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors cursor-pointer shrink-0"
+                >
+                  <Plus className="h-3 w-3" />
+                  <span>Новый</span>
+                </button>
+              )}
             </div>
 
-            {/* Presets List */}
-            <div className="space-y-2">
-              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
-                Заводские пресеты бланков
-              </span>
+            {/* Custom Templates Section */}
+            {customTemplates.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-[#4a38f5] uppercase tracking-wider">
+                    Пользовательские шаблоны ({customTemplates.length})
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {customTemplates.map(renderTemplateCard)}
+                </div>
+              </div>
+            )}
+
+            {/* System Baseline Templates Section */}
+            <div className="space-y-2 pt-2 border-t border-[#e5e5e5]">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
+                  Системные базовые бланки ({systemTemplates.length || ALL_CLIENT_PRESETS.length})
+                </span>
+              </div>
               <div className="grid grid-cols-1 gap-2">
-                {ALL_CLIENT_PRESETS.map((preset) => {
-                  const isMatch =
-                    currentTemplate?.slug === preset.slug ||
-                    currentTemplate?.documentType === preset.documentType;
-                  return (
-                    <div
-                      key={preset.slug}
-                      className={cn(
-                        "rounded-[8px] border p-3 bg-white transition-all",
-                        isMatch
-                          ? "border-[#4a38f5] ring-1 ring-[#4a38f5]/20 shadow-xs"
-                          : "border-[#e5e5e5] hover:border-[#cccccc]",
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-2">
+                {systemTemplates.length > 0
+                  ? systemTemplates.map(renderTemplateCard)
+                  : ALL_CLIENT_PRESETS.map((preset) => {
+                      const isMatch =
+                        currentTemplate?.slug === preset.slug ||
+                        currentTemplate?.documentType === preset.documentType;
+                      return (
+                        <div
+                          key={preset.slug}
+                          onClick={() => {
+                            onChangeConfig(preset.layoutConfig);
+                          }}
+                          className={cn(
+                            "rounded-[8px] border p-3 bg-white transition-all cursor-pointer",
+                            isMatch
+                              ? "border-[#4a38f5] ring-2 ring-[#4a38f5]/20 bg-[#4a38f5]/[0.02] shadow-xs"
+                              : "border-[#e5e5e5] hover:border-[#cccccc]",
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-semibold text-[#111111]">
                               {preset.name}
                             </span>
-                            {isMatch && (
-                              <span className="rounded bg-[#4a38f5]/10 text-[#4a38f5] px-1.5 py-0.5 text-[10px] font-semibold">
-                                Активен
-                              </span>
-                            )}
+                            <span className="rounded bg-[#f0f0f0] text-[#555555] px-1.5 py-0.5 text-[10px] font-medium">
+                              Системный
+                            </span>
                           </div>
                           <p className="text-[11px] text-[#666666] mt-0.5 leading-snug">
                             {preset.description}
                           </p>
                         </div>
-                      </div>
-
-                      <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-[#f0f0f0]">
-                        <span className="text-[10px] font-mono text-[#888888] uppercase">
-                          {preset.pageSize} • {preset.orientation === "portrait" ? "Книжная" : "Альбомная"}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onChangeConfig(preset.layoutConfig);
-                          }}
-                          className="flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] font-medium text-[#666666] hover:text-[#4a38f5] hover:border-[#4a38f5] transition-colors cursor-pointer"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                          <span>Применить разметку</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
               </div>
             </div>
-
-            {/* User Custom Templates */}
-            {templatesList.length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-[#e5e5e5]">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
-                    Сохраненные шаблоны тенанта ({templatesList.length})
-                  </span>
-                  {onCreateTemplate && (
-                    <button
-                      type="button"
-                      onClick={onCreateTemplate}
-                      className="flex items-center gap-1 text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer"
-                    >
-                      <Plus className="h-3 w-3" />
-                      <span>Новый</span>
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  {templatesList.map((tpl) => {
-                    const isSelected = currentTemplate?.id === tpl.id;
-                    return (
-                      <div
-                        key={tpl.id}
-                        className={cn(
-                          "rounded-[8px] border p-2.5 bg-white transition-all",
-                          isSelected
-                            ? "border-[#4a38f5] ring-1 ring-[#4a38f5]/20 shadow-xs"
-                            : "border-[#e5e5e5] hover:border-[#cccccc]",
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => onSelectTemplate?.(tpl)}
-                            className="flex-1 text-left font-medium text-xs text-[#111111] hover:text-[#4a38f5] truncate cursor-pointer"
-                          >
-                            {tpl.name}
-                          </button>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {tpl.isDefault ? (
-                              <span className="flex items-center gap-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-semibold">
-                                <Check className="h-2.5 w-2.5" />
-                                Основной
-                              </span>
-                            ) : (
-                              onSetDefaultTemplate && (
-                                <button
-                                  type="button"
-                                  onClick={() => onSetDefaultTemplate(tpl.id)}
-                                  className="text-[10px] text-[#888888] hover:text-[#4a38f5] hover:underline cursor-pointer px-1 py-0.5"
-                                  title="Сделать основным для этого типа документов"
-                                >
-                                  Сделать осн.
-                                </button>
-                              )
-                            )}
-
-                            {!tpl.isDefault && onDeleteTemplate && (
-                              <button
-                                type="button"
-                                onClick={() => onDeleteTemplate(tpl.id)}
-                                className="p-1 text-[#888888] hover:text-rose-600 rounded transition-colors cursor-pointer"
-                                title="Удалить шаблон"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -485,20 +662,104 @@ export function VisualPrintInspector({
               </div>
 
               {config.header.showLogo && (
-                <div className="space-y-1.5 pt-2 border-t border-[#f0f0f0]">
-                  <div className="flex items-center justify-between text-xs text-[#555555]">
-                    <span>Ширина логотипа</span>
-                    <span className="font-mono text-[#111111]">{config.header.logoWidth} px</span>
-                  </div>
+                <div className="space-y-3 pt-2 border-t border-[#f0f0f0]">
+                  {/* Current Logo Preview or Upload Dropzone */}
+                  {config.header.logoUrl ? (
+                    <div className="flex items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5">
+                      <div className="flex h-14 w-28 shrink-0 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white p-1 overflow-hidden">
+                        <img
+                          src={config.header.logoUrl}
+                          alt="Логотип"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-[#111111] truncate">
+                          Логотип загружен
+                        </div>
+                        <div className="text-[10px] text-[#666666]">
+                          Отображается в шапке бланка
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isProcessingLogo}
+                            className="flex items-center gap-1 text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer"
+                          >
+                            <Camera className="h-3 w-3" />
+                            <span>Заменить</span>
+                          </button>
+                          <span className="text-[#cccccc]">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setRemoveLogoOpen(true)}
+                            className="flex items-center gap-1 text-[11px] font-medium text-rose-600 hover:underline cursor-pointer"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            <span>Удалить</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={cn(
+                        "flex flex-col items-center justify-center rounded-[8px] border border-dashed p-4 text-center cursor-pointer transition-colors",
+                        isDragOver
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5"
+                          : "border-[#d0d0d0] bg-[#fafafa] hover:border-[#4a38f5] hover:bg-white",
+                      )}
+                    >
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white border border-[#e5e5e5] text-[#4a38f5] shadow-xs mb-1.5">
+                        {isProcessingLogo ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <UploadCloud className="h-4 w-4" />
+                        )}
+                      </div>
+                      <span className="text-xs font-medium text-[#111111]">
+                        {isProcessingLogo ? "Обработка изображения..." : "Загрузить логотип"}
+                      </span>
+                      <span className="text-[10.5px] text-[#888888] mt-0.5">
+                        Перетащите файл или нажмите для выбора
+                      </span>
+                      <span className="text-[10px] text-[#aaaaaa] mt-1">
+                        PNG, JPG, WebP до 10 МБ
+                      </span>
+                    </div>
+                  )}
+
                   <input
-                    type="range"
-                    min="80"
-                    max="220"
-                    step="5"
-                    value={config.header.logoWidth}
-                    onChange={(e) => updateConfig("header", { logoWidth: Number(e.target.value) })}
-                    className="w-full accent-[#4a38f5] cursor-pointer"
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => void handleLogoFile(e.target.files?.[0])}
                   />
+
+                  {/* Logo Width Slider */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-xs text-[#555555]">
+                      <span>Ширина логотипа на листе</span>
+                      <span className="font-mono font-medium text-[#111111]">
+                        {config.header.logoWidth} px
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="80"
+                      max="260"
+                      step="5"
+                      value={config.header.logoWidth}
+                      onChange={(e) => updateConfig("header", { logoWidth: Number(e.target.value) })}
+                      className="w-full accent-[#4a38f5] cursor-pointer"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -562,7 +823,7 @@ export function VisualPrintInspector({
                       type="text"
                       value={config.header.companyName}
                       onChange={(e) => updateConfig("header", { companyName: e.target.value })}
-                      placeholder="Ремонт инструмента ИП Сагайдак А.Г."
+                      placeholder="ООО / ИП Название компании"
                       className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                     />
                   </div>
@@ -573,7 +834,7 @@ export function VisualPrintInspector({
                       type="text"
                       value={config.header.companyAddress}
                       onChange={(e) => updateConfig("header", { companyAddress: e.target.value })}
-                      placeholder="Москва, 3-й проезд Марьиной рощи 40с1"
+                      placeholder="г. Москва, ул. Примерная, д. 1"
                       className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                     />
                   </div>
@@ -585,7 +846,7 @@ export function VisualPrintInspector({
                         type="text"
                         value={config.header.companyPhone}
                         onChange={(e) => updateConfig("header", { companyPhone: e.target.value })}
-                        placeholder="+7 977 628 20 49"
+                        placeholder="+7 (999) 000-00-00"
                         className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
                       />
                     </div>
@@ -608,7 +869,7 @@ export function VisualPrintInspector({
                         type="text"
                         value={config.header.companyInn ?? ""}
                         onChange={(e) => updateConfig("header", { companyInn: e.target.value })}
-                        placeholder="771501234567"
+                        placeholder="ИНН (10 или 12 цифр)"
                         className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
                       />
                     </div>
@@ -618,7 +879,7 @@ export function VisualPrintInspector({
                         type="text"
                         value={config.header.companyOgrn ?? ""}
                         onChange={(e) => updateConfig("header", { companyOgrn: e.target.value })}
-                        placeholder="318774600123456"
+                        placeholder="ОГРН / ОГРНИП"
                         className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
                       />
                     </div>
@@ -1141,6 +1402,33 @@ export function VisualPrintInspector({
           </div>
         )}
       </div>
+
+      {/* Avatar / Logo Crop Modal (Rectangular Crop) */}
+      <AvatarCropModal
+        open={cropSource !== null}
+        image={cropSource?.image ?? null}
+        imageUrl={cropSource?.url ?? null}
+        shape="rect"
+        title="Выберите область логотипа"
+        onCancel={() => {
+          if (cropSource) releaseImage(cropSource.url);
+          setCropSource(null);
+        }}
+        onApply={handleLogoCropApply}
+        isPending={isProcessingLogo}
+      />
+
+      {/* Delete Logo Confirmation Dialog */}
+      <ConfirmDialog
+        open={removeLogoOpen}
+        title="Удалить логотип бланка?"
+        description="Логотип будет удален из заголовка печатной формы. Вы сможете загрузить новый логотип в любой момент."
+        confirmLabel="Удалить"
+        cancelLabel="Отмена"
+        variant="destructive"
+        onConfirm={handleRemoveLogo}
+        onClose={() => setRemoveLogoOpen(false)}
+      />
     </div>
   );
 }

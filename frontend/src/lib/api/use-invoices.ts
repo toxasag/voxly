@@ -9,10 +9,12 @@ import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClien
 
 export type TransactionType = "income" | "expense";
 export type InvoiceStatus = "draft" | "sent" | "paid" | "overdue" | "cancelled";
+export type AccountType = "bank" | "cash" | "acquiring" | "safe";
 
 export interface AccountDTO {
   id: string;
   name: string;
+  accountType?: AccountType;
   currency: string;
   balance: number;
   isDefault: boolean;
@@ -31,6 +33,8 @@ export interface TransactionDTO {
   dealId: string | null;
   repairOrderId: string | null;
   invoiceId: string | null;
+  counterpartyName?: string;
+  counterpartyInn?: string;
   occurredAt: string;
 }
 
@@ -105,6 +109,7 @@ export interface InvoicesListResult {
 
 export interface CreateAccountPayload {
   name: string;
+  account_type?: AccountType;
   currency?: string;
   opening_balance?: number;
   is_default?: boolean;
@@ -565,6 +570,89 @@ export function useDeleteFinanceCategory(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: ["finance", "categories"] });
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
+  });
+}
+
+export function useDeleteTransaction(): UseMutationResult<
+  { success: boolean; count: number },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean; count: number }, ApiClientError, string>({
+    mutationFn: async (id) => {
+      const res = await apiClient.delete<{ success: boolean; count: number }>(`/api/v1/finance/transactions/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteTransactions(): UseMutationResult<
+  { success: boolean; count: number },
+  ApiClientError,
+  string[]
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean; count: number }, ApiClientError, string[]>({
+    mutationFn: async (ids) => {
+      const res = await apiClient.post<{ success: boolean; count: number }>("/api/v1/finance/transactions/bulk-delete", { ids });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBulkDuplicateTransactions(): UseMutationResult<
+  { data: TransactionDTO[]; count: number },
+  ApiClientError,
+  string[]
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ data: TransactionDTO[]; count: number }, ApiClientError, string[]>({
+    mutationFn: async (ids) => {
+      const res = await apiClient.post<{ data: TransactionDTO[]; count: number }>("/api/v1/finance/transactions/bulk-duplicate", { ids });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export interface CounterpartyContact {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+}
+
+export interface CounterpartyCompany {
+  id: string;
+  name: string;
+  inn: string;
+  phone: string;
+}
+
+export interface CounterpartiesData {
+  contacts: CounterpartyContact[];
+  companies: CounterpartyCompany[];
+}
+
+export function useCounterparties(search?: string): UseQueryResult<CounterpartiesData, ApiClientError> {
+  return useQuery<CounterpartiesData, ApiClientError>({
+    queryKey: ["finance", "counterparties", search ?? ""],
+    queryFn: async () => {
+      const res = await apiClient.get<CounterpartiesData>("/api/v1/finance/counterparties", {
+        query: { search: search?.trim() || undefined },
+      });
+      return res.data;
+    },
+    staleTime: 30_000,
   });
 }
 

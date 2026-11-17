@@ -19,6 +19,7 @@ import {
   type DictionaryItemDTO,
 } from "@/lib/api/use-repairs";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 export type DictionaryCategory = "type" | "brand" | "model" | "accessory" | "malfunction";
 
@@ -102,27 +103,17 @@ export function DictionarySelectField({
     });
   }, [items]);
 
-  // Закрытие при клике снаружи
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent | TouchEvent) {
-      const target = event.target as Node;
-      const clickedInsideContainer = containerRef.current?.contains(target);
-      const clickedInsideAddPopover = addPopoverRef.current?.contains(target);
-
-      if (!clickedInsideContainer && !clickedInsideAddPopover) {
-        setIsOpen(false);
-        setIsAddOpen(false);
-        setEditingId(null);
-        setActionError(null);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("touchstart", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
-    };
-  }, []);
+  // Закрытие при клике снаружи или нажатии Escape
+  useClickOutside(
+    [containerRef, addPopoverRef],
+    () => {
+      setIsOpen(false);
+      setIsAddOpen(false);
+      setEditingId(null);
+      setActionError(null);
+    },
+    isOpen || isAddOpen
+  );
 
   // Фокус в инпут поиска при открытии дропдауна
   useEffect(() => {

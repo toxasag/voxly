@@ -385,9 +385,16 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const partnerTenantId = request.tenant_is_partner
       ? request.tenant_id
       : (request.impersonator_tenant_id || request.tenant_id);
-    const isParentPartner =
-      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
-      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
+
+    let isParentPartner = false;
+    if (partnerTenantId && tenant.id) {
+      const check = await queryOne<{ is_descendant: boolean }>(
+        `SELECT is_tenant_descendant($1, $2) AS is_descendant`,
+        [partnerTenantId, tenant.id],
+      );
+      isParentPartner = Boolean(check?.is_descendant && partnerTenantId !== tenant.id);
+    }
+
     if (!isPlatformOwner && !isParentPartner) {
       throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
     }
@@ -436,9 +443,16 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const partnerTenantId = request.tenant_is_partner
       ? request.tenant_id
       : (request.impersonator_tenant_id || request.tenant_id);
-    const isParentPartner =
-      (tenant.parent_tenant_id !== null && tenant.parent_tenant_id === partnerTenantId) ||
-      (tenant.owner_partner_id !== null && tenant.owner_partner_id === partnerTenantId);
+
+    let isParentPartner = false;
+    if (partnerTenantId && tenant.id) {
+      const check = await queryOne<{ is_descendant: boolean }>(
+        `SELECT is_tenant_descendant($1, $2) AS is_descendant`,
+        [partnerTenantId, tenant.id],
+      );
+      isParentPartner = Boolean(check?.is_descendant && partnerTenantId !== tenant.id);
+    }
+
     if (!isPlatformOwner && !isParentPartner) {
       throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
     }

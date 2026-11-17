@@ -232,15 +232,33 @@ export async function restoreAdminSessionDetailed(): Promise<RestoreSessionResul
 
   // 1. Полноценная серверная ротация с выставлением HttpOnly cookie
   try {
-    const res = await apiClient.post<{
-      access_token?: string;
-      refresh_token?: string;
-      accessToken?: string;
-      refreshToken?: string;
-    }>("/api/v1/auth/revert-impersonation", {
+    const payload = {
       admin_refresh_token: backup?.refreshToken || undefined,
       admin_access_token: backup?.accessToken || undefined,
-    });
+    };
+
+    let res: {
+      data?: {
+        access_token?: string;
+        refresh_token?: string;
+        accessToken?: string;
+        refreshToken?: string;
+      };
+    } = {};
+
+    if (backup?.isPartner) {
+      try {
+        res = await apiClient.post("/api/v1/partner/revert-tenant", payload);
+      } catch {
+        res = await apiClient.post("/api/v1/auth/revert-impersonation", payload);
+      }
+    } else {
+      try {
+        res = await apiClient.post("/api/v1/auth/revert-impersonation", payload);
+      } catch {
+        res = await apiClient.post("/api/v1/partner/revert-tenant", payload);
+      }
+    }
 
     const newAccessToken = res.data?.access_token ?? res.data?.accessToken;
     const newRefreshToken = res.data?.refresh_token ?? res.data?.refreshToken;

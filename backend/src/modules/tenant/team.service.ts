@@ -9,9 +9,7 @@ import type { Permission, Role } from "../../types/index.js";
 // ---------------------------------------------------------------------------
 // Управление сотрудниками арендатора.
 //
-// Раньше единственным способом появления строки в `users` была регистрация
-// владельца, поэтому экран «Сотрудники» показывал бы список из одного человека
-// без возможности что-либо изменить.
+// Омниканальный механизм приглашений: Email, Телефон, Telegram, WhatsApp.
 //
 // Статус сотрудника («Активен» / «Приглашён») выводится из `invited_at` и
 // `activated_at`, а не хранится отдельной колонкой: два источника истины
@@ -37,7 +35,7 @@ export type TeamMemberStatus = "active" | "invited";
 export interface TeamMemberDTO {
   id: string;
   fullName: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   role: Role;
   /** Base64 data-URI либо null; при null интерфейс показывает инициалы. */
@@ -53,6 +51,25 @@ export interface TeamMemberDTO {
   createdAt: string;
 }
 
+export interface PendingInviteDTO {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  name: string;
+  role: Role;
+  roleLabel: string;
+  token: string | null;
+  inviteUrl: string | null;
+  telegramShareUrl: string | null;
+  whatsappShareUrl: string | null;
+  status: "pending" | "accepted" | "expired" | "revoked";
+  deliveryStatus: "sent" | "failed" | "pending";
+  deliveryError: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  isExpired: boolean;
+}
+
 /** Сколько мест занято и во что обойдётся следующее. */
 export interface SeatUsageDTO {
   used: number;
@@ -66,6 +83,7 @@ export interface SeatUsageDTO {
 
 export interface TeamListDTO {
   members: TeamMemberDTO[];
+  invites: PendingInviteDTO[];
   seats: SeatUsageDTO;
   /** Роли, доступные для назначения (без `owner`). */
   assignableRoles: Role[];
@@ -76,7 +94,7 @@ export interface TeamListDTO {
 interface MemberRow {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   role: Role;
   avatar_url: string | null;
@@ -84,6 +102,10 @@ interface MemberRow {
   invited_at: Date | string | null;
   activated_at: Date | string | null;
   created_at: Date | string;
+  invite_token?: string | null;
+  invite_expires_at?: Date | string | null;
+  invite_delivery_status?: string | null;
+  invite_delivery_error?: string | null;
 }
 
 class SeatLimitError extends AppError {
@@ -100,8 +122,28 @@ function toIsoOrNull(value: Date | string | null): string | null {
   return value === null ? null : toIso(value);
 }
 
+function toDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
+}
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function buildInviteUrl(token: string): string {
+  return `${getEnv().PUBLIC_APP_URL.replace(/\/+$/, "")}/accept-invite?token=${encodeURIComponent(token)}`;
+}
+
+function buildTelegramShareUrl(link: string, name: string, companyName: string): string {
+  const text = `Здравствуйте, ${name}! Приглашаем вас присоединиться к команде «${companyName}» в GETVOXLY:\n${link}`;
+  return `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
+}
+
+function buildWhatsappShareUrl(link: string, name: string, companyName: string, phone?: string | null): string {
+  const text = `Здравствуйте, ${name}! Приглашаем вас присоединиться к команде «${companyName}» в GETVOXLY: ${link}`;
+  const cleanDigits = phone ? phone.replace(/\D/g, "") : "";
+  const phoneParam = cleanDigits ? `phone=${encodeURIComponent(cleanDigits)}&` : "";
+  return `https://api.whatsapp.com/send?${phoneParam}text=${encodeURIComponent(text)}`;
 }
 
 function toMemberDTO(row: MemberRow, ownerId: string | null, selfId: string): TeamMemberDTO {
@@ -198,8 +240,67 @@ export class TeamService {
     return row?.id ?? null;
   }
 
+  /** Список ожидающих (не принятых) приглашений арендатора. */
+  async listPendingInvites(tenantId: string): Promise<PendingInviteDTO[]> {
+    const tenant = await queryOne<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+    const companyName = tenant?.name ?? "GETVOXLY";
+
+    const rows = await query<{
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      role: Role;
+      invite_token: string | null;
+      invited_at: Date | string | null;
+      invite_expires_at: Date | string | null;
+      invite_delivery_status: string | null;
+      invite_delivery_error: string | null;
+      activated_at: Date | string | null;
+      deleted_at: Date | string | null;
+      created_at: Date | string;
+    }>(
+      `SELECT id, name, email, phone, role, invite_token, invited_at, invite_expires_at,
+              invite_delivery_status, invite_delivery_error, activated_at, deleted_at, created_at
+       FROM users
+       WHERE tenant_id = $1 AND deleted_at IS NULL AND activated_at IS NULL
+         AND (invited_at IS NOT NULL OR invite_token_hash IS NOT NULL)
+       ORDER BY invited_at DESC NULLS LAST, created_at DESC`,
+      [tenantId],
+    );
+
+    return rows.map((row) => {
+      const isExpired = row.invite_expires_at !== null && toDate(row.invite_expires_at).getTime() < Date.now();
+      const status: PendingInviteDTO["status"] =
+        row.deleted_at !== null ? "revoked" : row.activated_at !== null ? "accepted" : isExpired ? "expired" : "pending";
+      const deliveryStatus = (row.invite_delivery_status as PendingInviteDTO["deliveryStatus"]) || "pending";
+      const inviteUrl = row.invite_token ? buildInviteUrl(row.invite_token) : null;
+      const telegramShareUrl = inviteUrl ? buildTelegramShareUrl(inviteUrl, row.name, companyName) : null;
+      const whatsappShareUrl = inviteUrl ? buildWhatsappShareUrl(inviteUrl, row.name, companyName, row.phone) : null;
+
+      return {
+        id: row.id,
+        email: row.email,
+        phone: row.phone,
+        name: row.name,
+        role: row.role,
+        roleLabel: ROLE_LABELS[row.role] ?? row.role,
+        token: row.invite_token,
+        inviteUrl,
+        telegramShareUrl,
+        whatsappShareUrl,
+        status,
+        deliveryStatus,
+        deliveryError: row.invite_delivery_error,
+        createdAt: toIso(row.invited_at ?? row.created_at),
+        expiresAt: toIsoOrNull(row.invite_expires_at),
+        isExpired,
+      };
+    });
+  }
+
   async list(tenantId: string, currentUserId: string): Promise<TeamListDTO> {
-    const [rows, seats, owner] = await Promise.all([
+    const [rows, invites, seats, owner] = await Promise.all([
       query<MemberRow>(
         `SELECT id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at
          FROM users
@@ -210,12 +311,14 @@ export class TeamService {
            name ASC, created_at ASC`,
         [tenantId],
       ),
+      this.listPendingInvites(tenantId),
       this.seatUsage(tenantId),
       this.ownerId(tenantId),
     ]);
 
     return {
       members: rows.map((row) => toMemberDTO(row, owner, currentUserId)),
+      invites,
       seats,
       assignableRoles: [...ASSIGNABLE_ROLES],
       availablePermissions: [...ALL_PERMISSIONS],
@@ -223,24 +326,41 @@ export class TeamService {
   }
 
   /**
-   * Приглашает сотрудника: создаёт неактивную строку и отправляет ссылку.
+   * Приглашает сотрудника: создаёт неактивную строку, генерирует омниканальные ссылки
+   * и отправляет письмо, если указан e-mail.
    *
-   * `confirmExtraSeat` обязателен, когда включённые места исчерпаны: без явного
-   * подтверждения счёт вырос бы молча. Клиент показывает предупреждение с ценой
-   * и повторяет запрос с этим флагом — проверка на сервере, а не только в UI,
-   * потому что запрос можно отправить и минуя интерфейс.
+   * Всегда возвращает рабочую ссылку-приглашение и ссылки для Telegram / WhatsApp!
    */
   async invite(input: {
     tenantId: string;
     actorId: string;
     name: string;
-    email: string;
+    email?: string | null;
+    phone?: string | null;
     role: Role;
     confirmExtraSeat: boolean;
-  }): Promise<{ member: TeamMemberDTO; seats: SeatUsageDTO; emailSent: boolean; inviteUrl: string | null }> {
+  }): Promise<{
+    member: TeamMemberDTO;
+    invite: PendingInviteDTO;
+    seats: SeatUsageDTO;
+    emailSent: boolean;
+    inviteUrl: string;
+    telegramShareUrl: string;
+    whatsappShareUrl: string;
+  }> {
     if (!ASSIGNABLE_ROLES.includes(input.role)) {
       throw new AppError(400, "VALIDATION_ERROR", "Недопустимая роль", {
         role: ["Роль нельзя назначить приглашаемому сотруднику"],
+      });
+    }
+
+    const cleanEmail = input.email ? input.email.trim().toLowerCase() : null;
+    const rawPhone = input.phone ? input.phone.trim() : null;
+    const cleanPhone = rawPhone ? rawPhone.replace(/\D/g, "") : null;
+
+    if (!cleanEmail && (!cleanPhone || cleanPhone.length < 10)) {
+      throw new AppError(400, "VALIDATION_ERROR", "Укажите e-mail или корректный номер телефона (от 10 цифр)", {
+        email: ["Укажите e-mail или номер телефона сотрудника"],
       });
     }
 
@@ -257,19 +377,20 @@ export class TeamService {
     const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 3_600_000);
 
     const created = await transaction(async (tx) => {
-      // Повторное приглашение того же адреса обновляет существующую строку, а не
-      // создаёт вторую: частичный уникальный индекс по (tenant_id,
-      // lower(email)) иначе отклонил бы вставку ошибкой 23505.
+      // Повторное приглашение того же адреса или телефона обновляет существующую строку
       const existing = await tx.queryOne<{ id: string; activated_at: Date | string | null }>(
         `SELECT id, activated_at FROM users
-         WHERE tenant_id = $1 AND lower(email) = lower($2) AND deleted_at IS NULL
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND (
+           ($2::text IS NOT NULL AND lower(email) = lower($2)) OR
+           ($3::text IS NOT NULL AND (phone = $3 OR regexp_replace(phone, '\\D', '', 'g') = $3))
+         )
          FOR UPDATE`,
-        [input.tenantId, input.email],
+        [input.tenantId, cleanEmail, cleanPhone],
       );
 
       if (existing !== null && existing.activated_at !== null) {
-        throw new AppError(409, "USER_ALREADY_EXISTS", "Сотрудник с таким e-mail уже работает", {
-          email: ["Этот e-mail уже занят активным сотрудником"],
+        throw new AppError(409, "USER_ALREADY_EXISTS", "Сотрудник с таким контактом уже работает", {
+          email: ["Этот контакт уже занят активным сотрудником"],
         });
       }
 
@@ -278,16 +399,30 @@ export class TeamService {
       if (existing !== null) {
         return tx.queryOneOrThrow<MemberRow>(
           `UPDATE users
-           SET name = $3, role = $4, permissions = $5, invite_token_hash = $6,
-               invited_at = now(), invite_expires_at = $7, invited_by = $8, updated_at = now()
+           SET name = $3,
+               email = COALESCE($4, email),
+               phone = COALESCE($5, phone),
+               role = $6,
+               permissions = $7,
+               invite_token = $8,
+               invite_token_hash = $9,
+               invited_at = now(),
+               invite_expires_at = $10,
+               invited_by = $11,
+               invite_delivery_status = 'pending',
+               invite_delivery_error = NULL,
+               updated_at = now()
            WHERE id = $1 AND tenant_id = $2
-           RETURNING id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at`,
+           RETURNING id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at, invite_token, invite_expires_at`,
           [
             existing.id,
             input.tenantId,
             input.name,
+            cleanEmail,
+            cleanPhone,
             input.role,
             permissions,
+            token,
             hashToken(token),
             expiresAt,
             input.actorId,
@@ -297,16 +432,18 @@ export class TeamService {
 
       return tx.queryOneOrThrow<MemberRow>(
         `INSERT INTO users
-           (tenant_id, email, name, role, permissions, invite_token_hash,
-            invited_at, invite_expires_at, invited_by)
-         VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8)
-         RETURNING id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at`,
+           (tenant_id, email, phone, name, role, permissions, invite_token, invite_token_hash,
+            invited_at, invite_expires_at, invited_by, invite_delivery_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9, $10, 'pending')
+         RETURNING id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at, invite_token, invite_expires_at`,
         [
           input.tenantId,
-          input.email,
+          cleanEmail,
+          cleanPhone,
           input.name,
           input.role,
           permissions,
+          token,
           hashToken(token),
           expiresAt,
           input.actorId,
@@ -317,27 +454,75 @@ export class TeamService {
     const tenant = await queryOne<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [
       input.tenantId,
     ]);
+    const companyName = tenant?.name ?? "GETVOXLY";
 
-    const link = `${getEnv().PUBLIC_APP_URL.replace(/\/+$/, "")}/accept-invite?token=${token}`;
-    const sent = await EmailService.sendTeamInviteEmail({
-      to: created.email,
-      inviteeName: created.name,
-      companyName: tenant?.name ?? "GETVOXLY",
-      roleLabel: ROLE_LABELS[created.role],
-      link,
-      expiresInHours: INVITE_TTL_HOURS,
-    });
+    const link = buildInviteUrl(token);
+    let emailSent = false;
+    let deliveryStatus: "sent" | "failed" | "pending" = "pending";
+    let deliveryError: string | null = null;
+
+    if (created.email) {
+      try {
+        const sent = await EmailService.sendTeamInviteEmail({
+          to: created.email,
+          inviteeName: created.name,
+          companyName,
+          roleLabel: ROLE_LABELS[created.role],
+          link,
+          expiresInHours: INVITE_TTL_HOURS,
+        });
+        emailSent = sent.sent;
+        deliveryStatus = sent.sent ? "sent" : "failed";
+        deliveryError = sent.sent ? null : (sent.error ?? "Ошибка отправки SMTP");
+      } catch (err) {
+        emailSent = false;
+        deliveryStatus = "failed";
+        deliveryError = err instanceof Error ? err.message : String(err);
+      }
+
+      await query(
+        `UPDATE users
+         SET invite_delivery_status = $2, invite_delivery_error = $3
+         WHERE id = $1`,
+        [created.id, deliveryStatus, deliveryError],
+      );
+    }
+
+    const telegramShareUrl = buildTelegramShareUrl(link, created.name, companyName);
+    const whatsappShareUrl = buildWhatsappShareUrl(link, created.name, companyName, created.phone);
 
     const [seats, owner] = await Promise.all([
       this.seatUsage(input.tenantId),
       this.ownerId(input.tenantId),
     ]);
 
+    const inviteDTO: PendingInviteDTO = {
+      id: created.id,
+      email: created.email,
+      phone: created.phone,
+      name: created.name,
+      role: created.role,
+      roleLabel: ROLE_LABELS[created.role] ?? created.role,
+      token,
+      inviteUrl: link,
+      telegramShareUrl,
+      whatsappShareUrl,
+      status: "pending",
+      deliveryStatus,
+      deliveryError,
+      createdAt: toIso(created.invited_at ?? new Date()),
+      expiresAt: toIso(expiresAt),
+      isExpired: false,
+    };
+
     return {
       member: toMemberDTO(created, owner, input.actorId),
+      invite: inviteDTO,
       seats,
-      emailSent: sent.sent,
-      inviteUrl: sent.sent ? null : link,
+      emailSent,
+      inviteUrl: link,
+      telegramShareUrl,
+      whatsappShareUrl,
     };
   }
 
@@ -388,12 +573,6 @@ export class TeamService {
 
   /**
    * Мягкое удаление сотрудника и отзыв его сессий.
-   *
-   * Хард-делит невозможен: на `users(id)` ссылаются сделки, задачи, счёта и
-   * записи ремонтов без `ON DELETE`, поэтому Postgres отклонил бы удаление
-   * любого сотрудника, успевшего создать хоть одну запись. Отзыв
-   * refresh-токенов обязателен — иначе уволенный сотрудник продолжал бы
-   * работать по действующей сессии.
    */
   async remove(input: {
     tenantId: string;
@@ -412,7 +591,7 @@ export class TeamService {
     await transaction(async (tx) => {
       const removed = await tx.queryOne<{ id: string }>(
         `UPDATE users
-         SET deleted_at = now(), invite_token_hash = NULL, updated_at = now()
+         SET deleted_at = now(), invite_token = NULL, invite_token_hash = NULL, updated_at = now()
          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
          RETURNING id`,
         [input.userId, input.tenantId],
@@ -430,20 +609,46 @@ export class TeamService {
     return { seats: await this.seatUsage(input.tenantId) };
   }
 
+  /** Отзыв неподтверждённого приглашения. */
+  async revokeInvite(input: {
+    tenantId: string;
+    userId: string;
+  }): Promise<{ seats: SeatUsageDTO }> {
+    const revoked = await queryOne<{ id: string }>(
+      `UPDATE users
+       SET deleted_at = now(), invite_token = NULL, invite_token_hash = NULL, updated_at = now()
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND activated_at IS NULL
+       RETURNING id`,
+      [input.userId, input.tenantId],
+    );
+
+    if (revoked === null) throw new NotFoundError("Приглашение не найдено или уже принято");
+
+    return { seats: await this.seatUsage(input.tenantId) };
+  }
+
   /** Повторная отправка приглашения с новым токеном. */
   async resendInvite(input: {
     tenantId: string;
     userId: string;
-  }): Promise<{ emailSent: boolean; inviteUrl: string | null }> {
+  }): Promise<{
+    emailSent: boolean;
+    inviteUrl: string;
+    telegramShareUrl: string;
+    whatsappShareUrl: string;
+    deliveryStatus: "sent" | "failed" | "pending";
+    deliveryError: string | null;
+  }> {
     const token = randomBytes(32).toString("base64url");
     const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 3_600_000);
 
-    const row = await queryOne<{ email: string; name: string; role: Role }>(
+    const row = await queryOne<{ email: string | null; phone: string | null; name: string; role: Role }>(
       `UPDATE users
-       SET invite_token_hash = $3, invited_at = now(), invite_expires_at = $4, updated_at = now()
+       SET invite_token = $3, invite_token_hash = $4, invited_at = now(), invite_expires_at = $5,
+           invite_delivery_status = 'pending', invite_delivery_error = NULL, updated_at = now()
        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND activated_at IS NULL
-       RETURNING email, name, role`,
-      [input.userId, input.tenantId, hashToken(token), expiresAt],
+       RETURNING email, phone, name, role`,
+      [input.userId, input.tenantId, token, hashToken(token), expiresAt],
     );
 
     if (row === null) throw new NotFoundError("Приглашение не найдено или уже принято");
@@ -451,17 +656,50 @@ export class TeamService {
     const tenant = await queryOne<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [
       input.tenantId,
     ]);
+    const companyName = tenant?.name ?? "GETVOXLY";
 
-    const link = `${getEnv().PUBLIC_APP_URL.replace(/\/+$/, "")}/accept-invite?token=${token}`;
-    const sent = await EmailService.sendTeamInviteEmail({
-      to: row.email,
-      inviteeName: row.name,
-      companyName: tenant?.name ?? "GETVOXLY",
-      roleLabel: ROLE_LABELS[row.role],
-      link,
-      expiresInHours: INVITE_TTL_HOURS,
-    });
+    const link = buildInviteUrl(token);
+    let emailSent = false;
+    let deliveryStatus: "sent" | "failed" | "pending" = "pending";
+    let deliveryError: string | null = null;
 
-    return { emailSent: sent.sent, inviteUrl: sent.sent ? null : link };
+    if (row.email) {
+      try {
+        const sent = await EmailService.sendTeamInviteEmail({
+          to: row.email,
+          inviteeName: row.name,
+          companyName,
+          roleLabel: ROLE_LABELS[row.role],
+          link,
+          expiresInHours: INVITE_TTL_HOURS,
+        });
+        emailSent = sent.sent;
+        deliveryStatus = sent.sent ? "sent" : "failed";
+        deliveryError = sent.sent ? null : (sent.error ?? "Ошибка отправки SMTP");
+      } catch (err) {
+        emailSent = false;
+        deliveryStatus = "failed";
+        deliveryError = err instanceof Error ? err.message : String(err);
+      }
+
+      await query(
+        `UPDATE users
+         SET invite_delivery_status = $2, invite_delivery_error = $3
+         WHERE id = $1`,
+        [input.userId, deliveryStatus, deliveryError],
+      );
+    }
+
+    const telegramShareUrl = buildTelegramShareUrl(link, row.name, companyName);
+    const whatsappShareUrl = buildWhatsappShareUrl(link, row.name, companyName, row.phone);
+
+    return {
+      emailSent,
+      inviteUrl: link,
+      telegramShareUrl,
+      whatsappShareUrl,
+      deliveryStatus,
+      deliveryError,
+    };
   }
 }

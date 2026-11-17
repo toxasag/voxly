@@ -23,6 +23,7 @@ import { BatchPaymentModal } from "./BatchPaymentModal";
 import { GenerateInvoiceModal } from "./GenerateInvoiceModal";
 import { TagPill } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface FinancialSummaryProps {
   repairOrderId: string;
@@ -72,6 +73,8 @@ export const FinancialSummary = memo(function FinancialSummary({
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [activeMessengerMenuId, setActiveMessengerMenuId] = useState<string | null>(null);
+  const messengerMenuRef = useRef<HTMLDivElement>(null);
+  useClickOutside(messengerMenuRef, () => setActiveMessengerMenuId(null), activeMessengerMenuId !== null);
 
   const { data: invoices = [], isLoading: isLoadingInvoices, refetch: refetchInvoices } = useRepairInvoices(repairOrderId);
   const sendInvoice = useSendInvoice();
@@ -460,7 +463,7 @@ export const FinancialSummary = memo(function FinancialSummary({
                         </button>
 
                         {/* 3. Отправить клиенту в мессенджер */}
-                        <div className="relative">
+                        <div ref={isMessengerMenuOpen ? messengerMenuRef : undefined} className="relative">
                           <button
                             type="button"
                             onClick={() =>

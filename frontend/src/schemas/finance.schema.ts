@@ -1,5 +1,18 @@
 import { z } from "zod";
 
+export const accountTypeSchema = z.enum(["bank", "cash", "acquiring", "safe"]);
+export type AccountType = z.infer<typeof accountTypeSchema>;
+
+export const createAccountSchema = z.object({
+  name: z.string().min(1, "Название счёта обязательно").max(120),
+  account_type: accountTypeSchema.default("cash"),
+  currency: z.string().length(3).default("RUB"),
+  opening_balance: z.number().nonnegative("Начальный остаток не может быть отрицательным").default(0),
+  is_default: z.boolean().default(false),
+});
+
+export type CreateAccountPayload = z.infer<typeof createAccountSchema>;
+
 export const createTransactionSchema = z.object({
   account_id: z.string().min(1, "Account is required"),
   type: z.enum(["income", "expense"], {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -88,6 +88,18 @@ export function DrawerCreateCompany({
   const [linkedin, setLinkedin] = useState("");
   const [isFavorite, setIsFavorite] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [moreMenuOpen]);
 
   // Group collapses
   const [generalOpen, setGeneralOpen] = useState(true);

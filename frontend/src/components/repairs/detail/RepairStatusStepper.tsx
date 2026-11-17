@@ -1,10 +1,11 @@
 "use client";
 
-import { memo, useState, useRef, useEffect } from "react";
+import { memo, useState, useRef } from "react";
 import { Check, Circle, AlertTriangle, ChevronDown } from "lucide-react";
 import type { RepairStatus } from "@/lib/repairs/repairs.types";
 import { getRepairStatusLabel } from "@/lib/repairs/repairs.types";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface RepairStatusStepperProps {
   current: RepairStatus;
@@ -36,21 +37,7 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent | TouchEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setDropdownOpen(false);
-      }
-    }
-    if (dropdownOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      document.addEventListener("touchstart", handleClickOutside);
-      return () => {
-        document.removeEventListener("mousedown", handleClickOutside);
-        document.removeEventListener("touchstart", handleClickOutside);
-      };
-    }
-  }, [dropdownOpen]);
+  useClickOutside(dropdownRef, () => setDropdownOpen(false), dropdownOpen);
 
   // Индекс в первичном списке (если текущий статус там есть)
   const primaryIdx = PRIMARY_STATUSES.findIndex((s) => s.status === current);

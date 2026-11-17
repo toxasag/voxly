@@ -188,7 +188,7 @@ export class MaxBridgeService {
       payload.mimeType = input.mimeType;
     }
 
-    const res = await this.bridgeFetch<{ ok: boolean; messageId?: string; detail?: string }>(
+    const res = await this.bridgeFetch<{ ok?: boolean; messageId?: string; detail?: string; error?: string }>(
       "/messages/send",
       {
         method: "POST",
@@ -197,7 +197,8 @@ export class MaxBridgeService {
     );
 
     if (!res.ok) {
-      return { ok: false, error: res.json?.detail || "Ошибка отправки сообщения в max-bridge" };
+      const errorMsg = res.json?.error || res.json?.detail || "Ошибка отправки сообщения в max-bridge";
+      return { ok: false, error: errorMsg };
     }
 
     return { ok: true, messageId: res.json?.messageId };

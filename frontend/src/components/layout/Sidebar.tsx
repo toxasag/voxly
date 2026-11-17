@@ -22,7 +22,7 @@ import {
   Briefcase,
   type LucideIcon,
 } from "lucide-react";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/use-auth";
 import { useTenantModules } from "@/lib/api/use-tenant-modules";
@@ -115,6 +115,18 @@ export function Sidebar({
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [createTenantOpen, setCreateTenantOpen] = useState(false);
   const [switchingSlug, setSwitchingSlug] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!tenantMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setTenantMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [tenantMenuOpen]);
 
   const { data: profile } = useProfile();
   const { data: workspacesData } = useWorkspaces();

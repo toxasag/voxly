@@ -37,6 +37,7 @@ import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import geminiIntegrationRoutes from "./modules/ai/gemini-integration.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
+import workspacesRoutes from "./modules/tenant/workspaces.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import partnerRoutes from "./modules/partner/partner.routes.js";
 import { warehouseRoutes } from "./modules/warehouse/warehouse.routes.js";
@@ -401,112 +402,172 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.status(404).send({ error: "Avatar not found" });
   });
 
+  const mimeMap: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".txt": "text/plain",
+    ".zip": "application/zip",
+  };
+
+  function streamFileWithRange(
+    filePath: string,
+    stat: { size: number },
+    contentType: string,
+    disposition: string,
+    request: FastifyRequest,
+    reply: FastifyReply,
+    isPublic = false,
+  ) {
+    const cacheControl = isPublic ? "public, max-age=86400" : "private, no-store";
+    const rangeHeader = request.headers.range;
+    if (rangeHeader && stat.size > 0) {
+      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+      if (match && match[1] !== undefined) {
+        const start = parseInt(match[1], 10);
+        const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
+        if (start < stat.size && end >= start) {
+          const boundedEnd = Math.min(end, stat.size - 1);
+          const chunkSize = boundedEnd - start + 1;
+          const stream = createReadStream(filePath, { start, end: boundedEnd });
+
+          return reply
+            .status(206)
+            .type(contentType)
+            .header("Content-Range", `bytes ${start}-${boundedEnd}/${stat.size}`)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", chunkSize)
+            .header("Content-Disposition", disposition)
+            .header("Cache-Control", cacheControl)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+            .header("Cross-Origin-Resource-Policy", "cross-origin")
+            .send(stream);
+        }
+      }
+    }
+
+    return reply
+      .status(200)
+      .type(contentType)
+      .header("Accept-Ranges", "bytes")
+      .header("Content-Length", stat.size)
+      .header("Content-Disposition", disposition)
+      .header("Cache-Control", cacheControl)
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .send(createReadStream(filePath));
+  }
+
+  // CORS preflight для публичных загрузок и аватаров
+  app.options("/uploads/:filename", async (_request, reply) => {
+    return reply
+      .status(204)
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+      .header("Access-Control-Allow-Headers", "Content-Type, Authorization, Range")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .send();
+  });
+
+  // Эндпоинт отдачи загруженных файлов (/uploads/:filename).
+  // Публичные ассеты (аватары, логотипы, маркер _public_, изображения) отдаются
+  // без авторизации с открытыми CORS/CORP заголовками для виджетов на клиентских сайтах.
+  // Конфиденциальные документы (PDF, XLSX, DOCX) требуют валидный JWT и проверку арендатора.
+  app.get("/uploads/:filename", async (request, reply) => {
+    const { filename } = request.params as { filename: string };
+    const safeFilename = path.basename(filename);
+    const ext = path.extname(safeFilename).toLowerCase();
+    const contentType = mimeMap[ext] ?? "application/octet-stream";
+
+    const isPublicAsset =
+      safeFilename.includes("_avatar_") ||
+      safeFilename.includes("_logo_") ||
+      safeFilename.includes("_public_") ||
+      contentType.startsWith("image/");
+
+    let isAuthorized = isPublicAsset;
+    let hasToken = false;
+
+    if (!isAuthorized) {
+      let token: string | undefined;
+      const authHeader = request.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.slice("Bearer ".length);
+      } else if (request.headers.cookie) {
+        const cookieMatch = request.headers.cookie.match(/(?:^|;\s*)(?:getvoxly_auth_token|access_token)=([^;]+)/);
+        if (cookieMatch && cookieMatch[1]) token = decodeURIComponent(cookieMatch[1]);
+      }
+      if (!token && typeof (request.query as Record<string, unknown> | undefined)?.token === "string") {
+        token = (request.query as Record<string, string>).token;
+      }
+
+      if (token) {
+        hasToken = true;
+        try {
+          const payload = app.jwt.verify(token) as { tenant_id?: string; platform_role?: string };
+          if (payload && typeof payload.tenant_id === "string") {
+            const tenantPrefix = `${payload.tenant_id}_`;
+            const isOwner = payload.platform_role === "platform_owner";
+            if (safeFilename.startsWith(tenantPrefix) || isOwner) {
+              isAuthorized = true;
+            }
+          }
+        } catch {
+          // Невалидный токен
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      return reply.status(hasToken ? 404 : 401).send({ error: hasToken ? "File not found" : "Unauthorized" });
+    }
+
+    const filePath = path.join(process.cwd(), "uploads", safeFilename);
+
+    try {
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) {
+        return reply.status(404).send({ error: "File not found" });
+      }
+
+      const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+      const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
+      const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
+      const disposition = isInline
+        ? "inline"
+        : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
+
+      return streamFileWithRange(filePath, stat, contentType, disposition, request, reply, isPublicAsset);
+    } catch {
+      return reply.status(404).send({ error: "File not found" });
+    }
+  });
+
   // Медиа CRM доступны только авторизованному пользователю своего арендатора.
   // Имя файла содержит tenant UUID, поэтому проверяем принадлежность до открытия
   // потока; публичная кэшируемость отключена, чтобы URL не превращался в
   // бессрочную ссылку на вложение. Поддерживает HTTP Range requests (206) для перемотки аудио/видео.
   await app.register(async (mediaApp) => {
     await mediaApp.register(authenticatePlugin);
-
-    function streamFileWithRange(
-      filePath: string,
-      stat: { size: number },
-      contentType: string,
-      disposition: string,
-      request: FastifyRequest,
-      reply: FastifyReply,
-    ) {
-      const rangeHeader = request.headers.range;
-      if (rangeHeader && stat.size > 0) {
-        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
-        if (match && match[1] !== undefined) {
-          const start = parseInt(match[1], 10);
-          const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
-          if (start < stat.size && end >= start) {
-            const boundedEnd = Math.min(end, stat.size - 1);
-            const chunkSize = boundedEnd - start + 1;
-            const stream = createReadStream(filePath, { start, end: boundedEnd });
-
-            return reply
-              .status(206)
-              .type(contentType)
-              .header("Content-Range", `bytes ${start}-${boundedEnd}/${stat.size}`)
-              .header("Accept-Ranges", "bytes")
-              .header("Content-Length", chunkSize)
-              .header("Content-Disposition", disposition)
-              .header("Cache-Control", "private, no-store")
-              .header("Cross-Origin-Resource-Policy", "cross-origin")
-              .send(stream);
-          }
-        }
-      }
-
-      return reply
-        .status(200)
-        .type(contentType)
-        .header("Accept-Ranges", "bytes")
-        .header("Content-Length", stat.size)
-        .header("Content-Disposition", disposition)
-        .header("Cache-Control", "private, no-store")
-        .header("Cross-Origin-Resource-Policy", "cross-origin")
-        .send(createReadStream(filePath));
-    }
-
-    const mimeMap: Record<string, string> = {
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".png": "image/png",
-      ".webp": "image/webp",
-      ".gif": "image/gif",
-      ".svg": "image/svg+xml",
-      ".mp3": "audio/mpeg",
-      ".ogg": "audio/ogg",
-      ".opus": "audio/ogg",
-      ".m4a": "audio/mp4",
-      ".wav": "audio/wav",
-      ".mp4": "video/mp4",
-      ".mov": "video/quicktime",
-      ".webm": "video/webm",
-      ".pdf": "application/pdf",
-      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      ".doc": "application/msword",
-      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ".xls": "application/vnd.ms-excel",
-      ".txt": "text/plain",
-      ".zip": "application/zip",
-    };
-
-    mediaApp.get("/uploads/:filename", async (request, reply) => {
-      const { filename } = request.params as { filename: string };
-      const safeFilename = path.basename(filename);
-      const tenantPrefix = `${request.tenant_id}_`;
-      const isOwner = request.authUser?.platform_role === "platform_owner";
-      if (!safeFilename.startsWith(tenantPrefix) && !isOwner) {
-        return reply.status(404).send({ error: "File not found" });
-      }
-      const filePath = path.join(process.cwd(), "uploads", safeFilename);
-
-      try {
-        const stat = await fs.stat(filePath);
-        if (!stat.isFile()) {
-          return reply.status(404).send({ error: "File not found" });
-        }
-
-        const ext = path.extname(safeFilename).toLowerCase();
-        const contentType = mimeMap[ext] ?? "application/octet-stream";
-
-        const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
-        const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
-        const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
-        const disposition = isInline
-          ? "inline"
-          : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
-
-        return streamFileWithRange(filePath, stat, contentType, disposition, request, reply);
-      } catch {
-        return reply.status(404).send({ error: "File not found" });
-      }
-    });
 
     // Защищенный эндпоинт получения вложения сообщения по ID сообщения
     mediaApp.get("/api/v1/crm/messages/:id/attachment", async (request, reply) => {
@@ -665,6 +726,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminMetricsRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });
   await app.register(tenantRoutes, { prefix: "/api/v1/tenant" });
+  await app.register(workspacesRoutes, { prefix: "/api/v1/workspaces" });
+  await app.register(workspacesRoutes, { prefix: "/api/workspaces" });
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/v1/settings/notifications" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/settings/notifications" });

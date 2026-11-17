@@ -259,7 +259,18 @@ export class PartnerService {
    */
   async listChildTenants(parentTenantId: string): Promise<PartnerChildTenantDTO[]> {
     const rows = await query<TenantRow>(
-      `SELECT t.id, t.name, t.slug, t.plan, t.status, t.parent_tenant_id,
+      `WITH RECURSIVE tenant_tree AS (
+         SELECT id, 1 AS depth
+         FROM tenants
+         WHERE (parent_tenant_id = $1 OR owner_partner_id = $1)
+           AND id <> $1
+         UNION ALL
+         SELECT t.id, tt.depth + 1
+         FROM tenants t
+         JOIN tenant_tree tt ON (t.parent_tenant_id = tt.id OR t.owner_partner_id = tt.id)
+         WHERE tt.depth < 20 AND t.id <> tt.id
+       )
+       SELECT t.id, t.name, t.slug, t.plan, t.status, t.parent_tenant_id,
               t.auth_settings, t.custom_pricing, t.custom_price_rubles,
               t.created_at, t.updated_at,
               (SELECT count(*) FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL)::int AS users_count,
@@ -270,6 +281,7 @@ export class PartnerService {
               u_admin.name AS admin_name,
               u_admin.phone AS admin_phone
        FROM tenants t
+       JOIN tenant_tree tt ON t.id = tt.id
        LEFT JOIN LATERAL (
          SELECT u.id, u.email, u.name, u.phone
          FROM users u
@@ -277,7 +289,6 @@ export class PartnerService {
          ORDER BY u.created_at ASC
          LIMIT 1
        ) u_admin ON true
-       WHERE (t.parent_tenant_id = $1 OR t.owner_partner_id = $1)
        ORDER BY t.created_at DESC`,
       [parentTenantId],
     );

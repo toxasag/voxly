@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import {
   Bot,
   Check,
@@ -122,28 +123,7 @@ export function SourceMultiSelect({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Закрытие при клике снаружи и по Escape
-  useEffect(() => {
-    if (!open) return;
-
-    const handlePointerDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
+  useClickOutside(containerRef, () => setOpen(false), open);
 
   // Фокус на инпут поиска при открытии
   useEffect(() => {

@@ -67,13 +67,15 @@ export class DealMessagingService {
    */
   async getSendFromOptions(tenantId: string, dealId: string): Promise<SendFromOptionDTO[]> {
     const contactRows = await query<{
+      contact_id: string | null;
       telegram_chat_id: string | null;
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
       socials?: ContactSocialJson[];
     }>(
-      `SELECT c.telegram_chat_id::text AS telegram_chat_id,
+      `SELECT d.contact_id,
+              c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
               c.phone,
@@ -84,7 +86,9 @@ export class DealMessagingService {
       [tenantId, dealId],
     );
 
+    const hasContact = Boolean(contactRows[0]?.contact_id);
     const contact = contactRows[0] ?? {
+      contact_id: null,
       telegram_chat_id: null,
       telegram_username: null,
       whatsapp: null,
@@ -117,24 +121,26 @@ export class DealMessagingService {
       let available = false;
       let unavailableReason: string | undefined;
 
-      if (acc.channel === "telegram") {
+      if (!hasContact) {
+        unavailableReason = "К сделке не привязан контакт";
+      } else if (acc.channel === "telegram") {
         if (contact.telegram_chat_id || contact.telegram_username || contact.phone) {
           available = true;
         } else {
-          unavailableReason = "У контакта не указан Telegram или номер телефона";
+          unavailableReason = "У контакта не указан Telegram (@username) или номер телефона";
         }
       } else if (acc.channel === "whatsapp") {
         if (contact.whatsapp || contact.phone) {
           available = true;
         } else {
-          unavailableReason = "У контакта не указан телефон для WhatsApp";
+          unavailableReason = "У контакта не указан номер телефона для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
         const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
         if (contact.phone || hasMaxSocial) {
           available = true;
         } else {
-          unavailableReason = "У контакта не указан телефон для MAX";
+          unavailableReason = "У контакта не указан номер телефона для MAX";
         }
       } else {
         available = true;
@@ -254,7 +260,7 @@ export class DealMessagingService {
     if (route === null) {
       return {
         ok: false,
-        reason: "У сделки нет контакта с адресом в этом канале",
+        reason: "У сделки нет контакта или адрес в выбранном канале не указан",
       };
     }
 
@@ -594,7 +600,8 @@ export class DealMessagingService {
   async listContactMessages(tenantId: string, contactId: string): Promise<DealMessageDTO[]> {
     const rows = await query<any>(
       `SELECT m.id, m.tenant_id, m.deal_id, m.channel_account_id, m.source, m.direction, m.sender_name, m.content, m.channel,
-              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.metadata, m.created_at
+              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.metadata,
+              m.delivered_at, m.read_at, m.created_at
        FROM deal_messages m
        JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
        WHERE m.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
@@ -616,6 +623,8 @@ export class DealMessagingService {
       deliveryStatus: r.delivery_status,
       deliveryError: r.delivery_error,
       metadata: r.metadata ?? {},
+      deliveredAt: r.delivered_at ? new Date(r.delivered_at).toISOString() : null,
+      readAt: r.read_at ? new Date(r.read_at).toISOString() : null,
       createdAt: r.created_at,
     }));
   }

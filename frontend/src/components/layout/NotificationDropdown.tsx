@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import {
   Bell,
   MessageSquare,
@@ -126,15 +127,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
     [markOneRead, router],
   );
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  useClickOutside(dropdownRef, () => setOpen(false), open);
 
   return (
     <div className={cn("relative", className)} ref={dropdownRef}>
