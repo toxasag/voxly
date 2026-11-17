@@ -252,6 +252,24 @@ describe("Выбор агента", () => {
     expect(outcome.kind).toBe("agent_paused");
   });
 
+  it("в онлайн-чате на сайте отвечает клиенту, если агент активен", async () => {
+    const fx = await fixture({ mode: "suggester" });
+    const { runWithTenantContext } = await import("../db/client.js");
+    const pipeline = makePipeline(new StubChatProvider(GOOD_REPLY));
+
+    const outcome = await runWithTenantContext(fx.tenantId, () =>
+      pipeline.prepareReply({
+        tenantId: fx.tenantId,
+        channelAccountId: fx.accountId,
+        chatId: "555000",
+        text: "Сколько длится гарантия?",
+        channelType: "онлайн-чат на сайте",
+      }),
+    );
+
+    expect(outcome.kind).toBe("replied");
+  });
+
   it("не отвечает агентом чужого арендатора при совпадении аккаунта", async () => {
     const mine = await fixture({ bind: false });
     const other = await fixture();

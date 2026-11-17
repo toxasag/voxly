@@ -60,7 +60,7 @@ interface BotModalProps {
   onDelete?: (bot: AiBot) => void;
 }
 
-const MODES: BotMode[] = ["suggester", "autoreply", "disabled"];
+const MODES: BotMode[] = ["autoreply", "suggester", "disabled"];
 
 const ACCENTS: { value: CreateBotPayload["accent"]; swatch: string }[] = [
   { value: "amber", swatch: "bg-[#4a38f5]" },
@@ -74,7 +74,7 @@ const DEFAULT_VALUES: CreateBotPayload = {
   name: "Ассистент",
   description: "Консультирует клиентов по услугам, отвечает на вопросы и квалифицирует лиды",
   model: "gemini-3.5-flash",
-  mode: "suggester",
+  mode: "autoreply",
   status: "active",
   accent: "amber",
   temperature: 0.6,

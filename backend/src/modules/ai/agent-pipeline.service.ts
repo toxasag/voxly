@@ -189,9 +189,13 @@ export class AgentPipelineService {
       return { kind: "no_agent" };
     }
 
-    // Отвечает только `autoreply`. `suggester` готовит черновики оператору, и
-    // отправлять их клиенту напрямую означало бы игнорировать выбор настройки.
-    if (agent.status !== "active" || agent.mode !== "autoreply") {
+    // Отвечает `autoreply`. В онлайн-чате на сайте агент также отвечает при `suggester`
+    // (в публичном виджете на сайте операторских черновиков не существует, посетитель ждет ответа подключенного бота).
+    // Только `disabled` или `status === 'paused'` блокируют ответ на сайте.
+    const isWebchat = input.channelType === "онлайн-чат на сайте";
+    const isModeAllowed = agent.mode === "autoreply" || (isWebchat && agent.mode !== "disabled");
+
+    if (agent.status !== "active" || !isModeAllowed || agent.mode === "disabled") {
       aiTraceLogger.traceEvent("ai:prepare_reply:blocked", {
         gate: "mode_gate",
         agentId: agent.id,
