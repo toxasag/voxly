@@ -88,12 +88,14 @@ export function AvatarUpload({
 
   // Оптимистичный локальный preview
   const [optimisticPreview, setOptimisticPreview] = useState<string | null>(null);
+  const [imageLoadError, setImageLoadError] = useState(false);
 
   // Синхронизация внешнего значения
   useEffect(() => {
     if (value) {
       setOptimisticPreview(null);
     }
+    setImageLoadError(false);
   }, [value]);
 
   const displayUrl = optimisticPreview || value || "";
@@ -138,14 +140,13 @@ export function AvatarUpload({
           const formData = new FormData();
           formData.append("file", uploadFile, uploadFile.name);
 
-          const res = await apiClient.postFormData<{ url: string }>(
+          await apiClient.postFormData<{ url: string }>(
             "/api/v1/crm/upload",
             formData,
           );
 
-          if (res?.data?.url) {
-            onChange(res.data.url);
-          }
+          // data-URI уже установлен в onChange и обеспечивает мгновенный автономный рендеринг
+          setImageLoadError(false);
           toast.success("Фото успешно сохранено");
         } catch {
           // Если выгрузка на бэкенд не прошла, data-URI уже сохранен и работает автономно
@@ -248,12 +249,13 @@ export function AvatarUpload({
               isBusy && "cursor-not-allowed opacity-75",
             )}
           >
-            {displayUrl ? (
+            {displayUrl && !imageLoadError ? (
               // eslint-disable-next-line @next/next/no-img-element -- Base64 data-URI и внешние URL
               <img
                 src={displayUrl}
                 alt={name || "Аватар"}
                 className="h-full w-full object-cover"
+                onError={() => setImageLoadError(true)}
               />
             ) : name.trim() ? (
               <div className="flex h-full w-full items-center justify-center bg-[#f0f0f0] text-sm font-semibold text-[#111111]">
