@@ -2,6 +2,7 @@ import type {
   ChangeStatusPayload,
   ClientLookupDealDTO,
   ClientLookupResultDTO,
+  ClientMessengerSourceDTO,
   CreateBatchRepairPayload,
   CreateNotePayload,
   CreatePartPayload,
@@ -53,6 +54,7 @@ import {
 } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import { normalizePhoneToE164 } from "../crm/contacts/dedupe.service.js";
+import { CrmEnrichmentService } from "../crm/enrichment.service.js";
 import { ensureTenantDefaults } from "../tenant/tenant-defaults.js";
 
 const ORDER_COLUMNS = `
@@ -2095,20 +2097,40 @@ export class RepairsService {
   /**
    * Reactive lookup for customer identification during repair intake.
    * Searches contacts by phone (normalized digits match) or query (name/company).
+   * Also asynchronously researches messenger profiles (Telegram, WhatsApp, MAX)
+   * with ranking of name confidence and circuit-breaker timeout <= 2.5s.
    * If customer found, also loads their company requisites and active CRM deals.
    */
   async clientLookup(
     tenantId: string,
     params: { phone?: string; query?: string },
   ): Promise<ClientLookupResultDTO> {
-    return withTenant(tenantId, async (tx) => {
-      const rawPhone = params.phone?.trim() ?? "";
-      const rawQuery = params.query?.trim() ?? "";
+    const rawPhone = params.phone?.trim() ?? "";
+    const rawQuery = params.query?.trim() ?? "";
 
-      if (!rawPhone && !rawQuery) {
-        return { found: false, client: null, company: null, activeDeals: [] };
-      }
+    if (!rawPhone && !rawQuery) {
+      return {
+        found: false,
+        client: null,
+        company: null,
+        activeDeals: [],
+        suggestedName: null,
+        sources: [],
+        channelsChecked: [],
+        messengerLookupStatus: "idle",
+      };
+    }
 
+    const phoneDigits = rawPhone.replace(/\D/g, "");
+    const shouldResearchMessengers = phoneDigits.length >= 10 && phoneDigits.length <= 15;
+
+    // Параллельный запуск поиска по мессенджерам вне длительной блокировки DB-соединения
+    const enrichmentService = new CrmEnrichmentService();
+    const messengerPromise = shouldResearchMessengers
+      ? enrichmentService.lookupClientByPhone(tenantId, rawPhone, { timeoutMs: 2300 }).catch(() => null)
+      : Promise.resolve(null);
+
+    const dbResult = await withTenant(tenantId, async (tx) => {
       let contact: {
         id: string;
         first_name: string;
@@ -2121,7 +2143,6 @@ export class RepairsService {
       } | null = null;
 
       // 1. Try search by phone digits if phone is provided
-      const phoneDigits = rawPhone.replace(/\D/g, "");
       if (phoneDigits.length >= 6) {
         const searchSuffix = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
         contact = await tx.queryOne<{
@@ -2175,7 +2196,7 @@ export class RepairsService {
       }
 
       if (!contact) {
-        return { found: false, client: null, company: null, activeDeals: [] };
+        return { contact: null, company: null, activeDeals: [] };
       }
 
       // 3. Find company requisites if company_id is present
@@ -2209,7 +2230,6 @@ export class RepairsService {
       }
 
       // 4. Find active deals associated with this contact or company
-      // Active deals: is_won = false AND is_lost = false AND deleted_at IS NULL
       const dealRows = await tx.query<{
         id: string;
         title: string;
@@ -2269,22 +2289,58 @@ export class RepairsService {
         ownerName: d.owner_name ?? null,
       }));
 
-      return {
-        found: true,
-        client: {
-          id: contact.id,
-          firstName: contact.first_name,
-          lastName: contact.last_name ?? "",
-          middleName: contact.middle_name ?? "",
-          phone: contact.phone ?? "",
-          email: contact.email ?? null,
-          companyId: contact.company_id ?? null,
-          companyName: contact.company_name ?? null,
-        },
-        company,
-        activeDeals,
-      };
+      return { contact, company, activeDeals };
     });
+
+    const messengerRes = await messengerPromise;
+
+    let contact = dbResult.contact;
+    let company = dbResult.company;
+    let activeDeals = dbResult.activeDeals;
+
+    // Если контакт не найден по прямому запросу, но найден через глубокий поиск мессенджеров
+    if (!contact && messengerRes?.existingClient) {
+      const ec = messengerRes.existingClient;
+      contact = {
+        id: ec.id,
+        first_name: ec.firstName,
+        last_name: ec.lastName,
+        middle_name: ec.middleName,
+        phone: ec.phone,
+        email: ec.email,
+        company_id: ec.companyId,
+        company_name: ec.companyName,
+      };
+    }
+
+    const sources: ClientMessengerSourceDTO[] = messengerRes?.sources ?? [];
+    const suggestedName: string | null = messengerRes?.suggestedName ?? null;
+    const channelsChecked: string[] = messengerRes?.channelsChecked ?? (contact ? ["crm"] : []);
+    const messengerLookupStatus = shouldResearchMessengers
+      ? (sources.length > 0 ? "found" : "not_found")
+      : "idle";
+
+    return {
+      found: Boolean(contact || (messengerRes && messengerRes.found)),
+      client: contact
+        ? {
+            id: contact.id,
+            firstName: contact.first_name,
+            lastName: contact.last_name ?? "",
+            middleName: contact.middle_name ?? "",
+            phone: contact.phone ?? "",
+            email: contact.email ?? null,
+            companyId: contact.company_id ?? null,
+            companyName: contact.company_name ?? null,
+          }
+        : null,
+      company,
+      activeDeals,
+      suggestedName,
+      sources,
+      channelsChecked,
+      messengerLookupStatus,
+    };
   }
 
   /**

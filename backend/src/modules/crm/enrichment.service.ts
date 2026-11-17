@@ -47,6 +47,33 @@ export interface CrossChannelProviders {
   checkWhatsApp: (phone: string, tenantId: string) => Promise<WhatsAppProfileResolved>;
 }
 
+export interface MessengerSourceInfo {
+  channel: "telegram" | "whatsapp" | "max" | "crm";
+  name: string;
+  username?: string;
+  avatarUrl?: string;
+  phone?: string;
+  isVerified?: boolean;
+}
+
+export interface ClientPhoneLookupResult {
+  phone: string;
+  found: boolean;
+  suggestedName: string | null;
+  sources: MessengerSourceInfo[];
+  channelsChecked: string[];
+  existingClient: {
+    id: string;
+    firstName: string;
+    lastName: string | null;
+    middleName: string | null;
+    phone: string | null;
+    email: string | null;
+    companyId: string | null;
+    companyName: string | null;
+  } | null;
+}
+
 export interface EnrichContactResult {
   contactId: string;
   phone: string;
@@ -438,6 +465,251 @@ export class CrmEnrichmentService {
       ok: true,
       enrichedFields,
       channelsChecked,
+    };
+  }
+
+  /**
+   * Сквозной резолвинг клиента по номеру телефона:
+   * 1. Поиск в базе контактов CRM текущего тенанта (прошлые заявки/наряды).
+   * 2. Асинхронный опрос подключенных каналов мессенджеров (Telegram, WhatsApp, MAX) с circuit breaker таймаутом <= 2.5 сек.
+   * 3. Ранжирование достоверности и формирование агрегированного результата ФИО.
+   */
+  async lookupClientByPhone(
+    tenantId: string,
+    rawPhone: string,
+    options?: { timeoutMs?: number; skipChannels?: boolean },
+  ): Promise<ClientPhoneLookupResult> {
+    const phoneDigits = normalizePhoneDigits(rawPhone);
+    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+      return {
+        phone: rawPhone,
+        found: false,
+        suggestedName: null,
+        sources: [],
+        channelsChecked: [],
+        existingClient: null,
+      };
+    }
+
+    const searchSuffix = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+    const sources: MessengerSourceInfo[] = [];
+    const channelsChecked: string[] = [];
+
+    // 1. Поиск контакта в базе CRM текущего тенанта
+    const contactRow = await queryOne<{
+      id: string;
+      first_name: string;
+      last_name: string | null;
+      middle_name: string | null;
+      phone: string | null;
+      email: string | null;
+      company_id: string | null;
+      company_name: string | null;
+      telegram_username: string | null;
+      whatsapp: string | null;
+      socials: ContactSocialJson[] | null;
+      custom_fields: Record<string, unknown> | null;
+    }>(
+      `SELECT id, first_name, last_name, middle_name, phone, email, company_id, company_name,
+              telegram_username, whatsapp, socials, custom_fields
+       FROM contacts
+       WHERE tenant_id = $1 AND deleted_at IS NULL
+         AND (
+           regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+           OR additional_phones::text LIKE '%' || $2 || '%'
+         )
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [tenantId, searchSuffix],
+    );
+
+    let existingClient: ClientPhoneLookupResult["existingClient"] = null;
+    let crmNameValid: string | null = null;
+
+    if (contactRow) {
+      existingClient = {
+        id: contactRow.id,
+        firstName: contactRow.first_name,
+        lastName: contactRow.last_name,
+        middleName: contactRow.middle_name,
+        phone: contactRow.phone,
+        email: contactRow.email,
+        companyId: contactRow.company_id,
+        companyName: contactRow.company_name,
+      };
+
+      channelsChecked.push("crm");
+      const isPlaceholder = isPlaceholderName(contactRow.first_name, contactRow.last_name);
+      if (!isPlaceholder) {
+        crmNameValid = [contactRow.last_name, contactRow.first_name, contactRow.middle_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        if (crmNameValid) {
+          sources.push({
+            channel: "crm",
+            name: crmNameValid,
+            phone: contactRow.phone ?? `+${phoneDigits}`,
+            isVerified: true,
+          });
+        }
+      }
+
+      if (contactRow.telegram_username) {
+        sources.push({
+          channel: "telegram",
+          name: `@${contactRow.telegram_username.replace(/^@/, "")}`,
+          username: contactRow.telegram_username.replace(/^@/, ""),
+          isVerified: true,
+        });
+      }
+      if (contactRow.whatsapp) {
+        sources.push({
+          channel: "whatsapp",
+          name: contactRow.whatsapp,
+          phone: contactRow.whatsapp,
+          isVerified: true,
+        });
+      }
+      if (Array.isArray(contactRow.socials)) {
+        for (const soc of contactRow.socials) {
+          if (soc.kind === "max" && soc.value) {
+            sources.push({
+              channel: "max",
+              name: soc.value,
+              username: soc.value.startsWith("@") ? soc.value.slice(1) : undefined,
+              isVerified: true,
+            });
+          }
+        }
+      }
+    }
+
+    if (options?.skipChannels) {
+      return {
+        phone: `+${phoneDigits}`,
+        found: sources.length > 0 || existingClient !== null,
+        suggestedName: crmNameValid,
+        sources,
+        channelsChecked,
+        existingClient,
+      };
+    }
+
+    // 2. Параллельный асинхронный опрос подключенных каналов мессенджеров (с circuit breaker)
+    const timeoutMs = options?.timeoutMs ?? 2200;
+    let tgRes: TelegramProfileResolved | null = null;
+    let maxRes: MaxProfileResolved | null = null;
+    let waRes: WhatsAppProfileResolved | null = null;
+
+    try {
+      channelsChecked.push("telegram", "max", "whatsapp");
+
+      const checkTg = this.providers.checkTelegram(phoneDigits, tenantId).catch((err) => ({
+        exists: false,
+        error: String(err),
+      }));
+      const checkMax = this.providers.checkMax(phoneDigits, tenantId).catch((err) => ({
+        exists: false,
+        error: String(err),
+      }));
+      const checkWa = this.providers.checkWhatsApp(phoneDigits, tenantId).catch((err) => ({
+        exists: false,
+        error: String(err),
+      }));
+
+      const timeoutPromise = new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), timeoutMs),
+      );
+
+      const batchResult = await Promise.race([
+        Promise.allSettled([checkTg, checkMax, checkWa]),
+        timeoutPromise,
+      ]);
+
+      if (Array.isArray(batchResult)) {
+        const [tgSettled, maxSettled, waSettled] = batchResult;
+        if (tgSettled.status === "fulfilled") tgRes = tgSettled.value;
+        if (maxSettled.status === "fulfilled") maxRes = maxSettled.value;
+        if (waSettled.status === "fulfilled") waRes = waSettled.value;
+      }
+    } catch {
+      // Игнорируем сетевые сбои
+    }
+
+    // 3. Обработка профилей мессенджеров
+    let maxSuggestedName: string | null = null;
+    let tgSuggestedName: string | null = null;
+
+    if (maxRes?.exists) {
+      const rawMax = `${maxRes.firstName || ""} ${maxRes.lastName || ""}`.trim();
+      const cleaned = cleanContactDisplayName(rawMax);
+      if (cleaned && !isPlaceholderName(cleaned.firstName, cleaned.lastName)) {
+        maxSuggestedName = [cleaned.lastName, cleaned.firstName].filter(Boolean).join(" ").trim();
+      }
+      const existingMaxSource = sources.find((s) => s.channel === "max");
+      if (!existingMaxSource) {
+        sources.push({
+          channel: "max",
+          name: maxSuggestedName || (maxRes.username ? `@${maxRes.username}` : (maxRes.link || `+${phoneDigits}`)),
+          username: maxRes.username,
+          isVerified: true,
+        });
+      }
+    }
+
+    if (tgRes?.exists) {
+      const rawTg = `${tgRes.firstName || ""} ${tgRes.lastName || ""}`.trim();
+      const cleaned = cleanContactDisplayName(rawTg);
+      if (cleaned && !isPlaceholderName(cleaned.firstName, cleaned.lastName)) {
+        tgSuggestedName = [cleaned.lastName, cleaned.firstName].filter(Boolean).join(" ").trim();
+      } else if (tgRes.username) {
+        const parsedFromName = parseNameFromTelegramUsername(tgRes.username);
+        if (parsedFromName && !isPlaceholderName(parsedFromName.firstName, parsedFromName.lastName)) {
+          tgSuggestedName = [parsedFromName.lastName, parsedFromName.firstName].filter(Boolean).join(" ").trim();
+        }
+      }
+      const existingTgSource = sources.find((s) => s.channel === "telegram");
+      if (!existingTgSource) {
+        sources.push({
+          channel: "telegram",
+          name: tgSuggestedName || (tgRes.username ? `@${tgRes.username.replace(/^@/, "")}` : `Telegram ID: ${tgRes.userId}`),
+          username: tgRes.username ? tgRes.username.replace(/^@/, "") : undefined,
+          avatarUrl: tgRes.avatarUrl,
+          isVerified: true,
+        });
+      }
+    }
+
+    if (waRes?.exists) {
+      const existingWaSource = sources.find((s) => s.channel === "whatsapp");
+      if (!existingWaSource) {
+        sources.push({
+          channel: "whatsapp",
+          name: `+${phoneDigits}`,
+          phone: `+${phoneDigits}`,
+          isVerified: true,
+        });
+      }
+    }
+
+    // 4. Ранжирование достоверности имени (CRM -> MAX -> Telegram Display Name -> Telegram Username)
+    let finalSuggestedName: string | null = null;
+    if (crmNameValid) {
+      finalSuggestedName = crmNameValid;
+    } else if (maxSuggestedName) {
+      finalSuggestedName = maxSuggestedName;
+    } else if (tgSuggestedName) {
+      finalSuggestedName = tgSuggestedName;
+    }
+
+    return {
+      phone: `+${phoneDigits}`,
+      found: sources.length > 0 || existingClient !== null,
+      suggestedName: finalSuggestedName,
+      sources,
+      channelsChecked,
+      existingClient,
     };
   }
 

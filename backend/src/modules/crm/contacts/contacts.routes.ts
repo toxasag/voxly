@@ -210,6 +210,18 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
 
   const dedupeService = new ContactDedupeService();
 
+  const resolvePhoneQuerySchema = z.object({
+    phone: z.string().min(1, "phone query parameter is required"),
+  });
+
+  // GET /contacts/resolve-by-phone — сквозной резолвинг и обогащение контакта по мессенджерам
+  app.get("/resolve-by-phone", { onRequest: canRead }, async (request, reply) => {
+    const { phone } = resolvePhoneQuerySchema.parse(request.query);
+    const enrichment = new CrmEnrichmentService();
+    const result = await enrichment.lookupClientByPhone(request.tenant_id, phone);
+    return reply.send({ data: result });
+  });
+
   const duplicatesQuerySchema = z.object({
     phone: z.string().min(1, "phone query parameter is required"),
     exclude_id: z.string().uuid().optional(),
