@@ -473,10 +473,30 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
       id: "contact",
       header: "Контактное лицо",
       icon: User,
-      width: 190,
+      width: 220,
       sortValue: (deal) => deal.contactName ?? "",
       render: (deal) => {
         const isCurrentEditing = isEditing(deal.id, "contact");
+        const hasMax = Boolean(
+          deal.contactSocials?.some((s) => s.kind === "max") ||
+            deal.contactChannel === "max" ||
+            deal.sourceChannel === "max" ||
+            deal.sourceChannel === "max_bot",
+        );
+        const hasTg = Boolean(
+          deal.contactTelegramUsername ||
+            deal.contactSocials?.some((s) => s.kind === "telegram") ||
+            deal.contactChannel === "telegram" ||
+            deal.sourceChannel === "telegram" ||
+            deal.sourceChannel === "telegram_bot",
+        );
+        const hasWa = Boolean(
+          deal.contactWhatsapp ||
+            deal.contactSocials?.some((s) => s.kind === "whatsapp") ||
+            deal.contactChannel === "whatsapp" ||
+            deal.sourceChannel === "whatsapp",
+        );
+        const maxVal = deal.contactSocials?.find((s) => s.kind === "max")?.value || deal.contactPhone || "";
 
         return (
           <div className="relative flex h-full w-full items-center">
@@ -490,18 +510,50 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
               }}
             >
               {deal.contactName !== null ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f4f4f5] px-2 py-0.5 text-xs text-[#111111]">
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold",
-                      getContactAvatarColor(deal.contactName),
-                    )}
-                  >
-                    {getSingleInitial(deal.contactName)}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f4f4f5] px-2 py-0.5 text-xs text-[#111111] max-w-[140px]">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold",
+                        getContactAvatarColor(deal.contactName),
+                      )}
+                    >
+                      {getSingleInitial(deal.contactName)}
+                    </span>
+                    <span className="truncate font-medium">{deal.contactName}</span>
                   </span>
-                  <span className="max-w-[140px] truncate font-medium">{deal.contactName}</span>
-                </span>
+
+                  {/* Мессенджер MAX */}
+                  {hasMax && (
+                    <span
+                      title={maxVal ? `MAX: ${maxVal}` : "Мессенджер MAX"}
+                      className="inline-flex h-4 items-center justify-center rounded-[3px] border border-violet-200 bg-violet-50 px-1 text-[9px] font-bold text-violet-700 select-none shrink-0"
+                    >
+                      MAX
+                    </span>
+                  )}
+
+                  {/* Telegram */}
+                  {hasTg && (
+                    <span
+                      title={deal.contactTelegramUsername ? `@${deal.contactTelegramUsername}` : "Telegram"}
+                      className="inline-flex h-4 items-center justify-center rounded-[3px] border border-sky-200 bg-sky-50 px-1 text-[9px] font-bold text-sky-700 select-none shrink-0"
+                    >
+                      TG
+                    </span>
+                  )}
+
+                  {/* WhatsApp */}
+                  {hasWa && (
+                    <span
+                      title={deal.contactWhatsapp || "WhatsApp"}
+                      className="inline-flex h-4 items-center justify-center rounded-[3px] border border-emerald-200 bg-emerald-50 px-1 text-[9px] font-bold text-emerald-700 select-none shrink-0"
+                    >
+                      WA
+                    </span>
+                  )}
+                </div>
               ) : (
                 <span className="inline-flex h-4 w-5 items-center justify-center rounded-full bg-[#f4f4f5] text-xs font-medium text-[#888888]">
                   -
