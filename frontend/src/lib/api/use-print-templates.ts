@@ -139,6 +139,9 @@ export interface PrintTemplateDTO {
   bodyTemplate: string;
   layoutConfig: PrintLayoutConfig;
   isDefault: boolean;
+  isCustom: boolean;
+  parentTemplateId?: string | null;
+  isHidden: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -152,6 +155,9 @@ export interface CreatePrintTemplatePayload {
   layout_config?: PrintLayoutConfig;
   body_template?: string;
   is_default?: boolean;
+  is_custom?: boolean;
+  parent_template_id?: string | null;
+  is_hidden?: boolean;
   clone_from_id?: string;
 }
 
@@ -164,6 +170,8 @@ export interface UpdatePrintTemplatePayload {
   layout_config?: PrintLayoutConfig;
   body_template?: string;
   is_default?: boolean;
+  is_custom?: boolean;
+  is_hidden?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +244,13 @@ export type UpdatePrintTemplateSettingsPayload = Partial<{
 
 export const printTemplateKeys = {
   all: ["print-templates"] as const,
-  list: (type?: string) => [...printTemplateKeys.all, "list", type ?? "all"] as const,
+  list: (params?: { documentType?: string; visibleOnly?: boolean } | string) =>
+    [
+      ...printTemplateKeys.all,
+      "list",
+      typeof params === "string" ? params : (params?.documentType ?? "all"),
+      typeof params === "object" && params?.visibleOnly ? "visible" : "all",
+    ] as const,
   detail: (idOrSlug: string) => [...printTemplateKeys.all, "detail", idOrSlug] as const,
   settings: () => [...printTemplateKeys.all, "settings"] as const,
 };
@@ -245,12 +259,24 @@ export const printTemplateKeys = {
 // Hooks
 // ---------------------------------------------------------------------------
 
-export function usePrintTemplates(documentType?: string) {
+export function usePrintTemplates(
+  paramsOrDocType?: string | { documentType?: string; visibleOnly?: boolean },
+) {
+  const documentType =
+    typeof paramsOrDocType === "string" ? paramsOrDocType : paramsOrDocType?.documentType;
+  const visibleOnly =
+    typeof paramsOrDocType === "object" ? paramsOrDocType.visibleOnly : undefined;
+
   return useQuery({
-    queryKey: printTemplateKeys.list(documentType),
+    queryKey: printTemplateKeys.list(paramsOrDocType),
     queryFn: async () => {
-      const query = documentType ? { document_type: documentType } : undefined;
-      const res = await apiClient.get<PrintTemplateDTO[]>("/api/v1/print-templates", { query });
+      const query: Record<string, string | boolean> = {};
+      if (documentType) query.document_type = documentType;
+      if (visibleOnly !== undefined) query.visible_only = visibleOnly;
+
+      const res = await apiClient.get<PrintTemplateDTO[]>("/api/v1/print-templates", {
+        query: Object.keys(query).length > 0 ? query : undefined,
+      });
       if (Array.isArray(res.data)) {
         return res.data;
       }
@@ -302,6 +328,32 @@ export function useSetDefaultPrintTemplate() {
   return useMutation({
     mutationFn: async (id: string) => {
       const res = await apiClient.post<PrintTemplateDTO>(`/api/v1/print-templates/${id}/set-default`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: printTemplateKeys.all });
+    },
+  });
+}
+
+export function useTogglePrintTemplateVisibility() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.post<PrintTemplateDTO>(`/api/v1/print-templates/${id}/toggle-visibility`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: printTemplateKeys.all });
+    },
+  });
+}
+
+export function useDuplicatePrintTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.post<PrintTemplateDTO>(`/api/v1/print-templates/${id}/duplicate`);
       return res.data;
     },
     onSuccess: () => {

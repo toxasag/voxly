@@ -24,7 +24,12 @@ import { RecordCellShell } from "@/components/crm/shared/RecordCell";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { PrintTemplateSettingsDrawer } from "./PrintTemplateSettingsDrawer";
-import { usePrintTemplateSettings, formatTicketNumber } from "@/lib/api/use-print-templates";
+import {
+  usePrintTemplateSettings,
+  usePrintTemplates,
+  getPrintRenderUrl,
+  formatTicketNumber,
+} from "@/lib/api/use-print-templates";
 import {
   useBatchUpdateRepairStatus,
   useBatchDeleteRepairs,
@@ -166,6 +171,8 @@ function PrintDropdownMenu({
   const [coords, setCoords] = useState<{ top: number; right: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
+  const { data: visibleTemplates = [] } = usePrintTemplates({ visibleOnly: true });
+
   const toggleOpen = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isOpen) {
@@ -244,22 +251,42 @@ function PrintDropdownMenu({
             onClick={(e) => e.stopPropagation()}
             className="fixed z-[9999] w-56 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-lg animate-in fade-in zoom-in-95 duration-100"
           >
-            <button
-              type="button"
-              onClick={handleReceipt}
-              className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer text-left"
-            >
-              <FileText className="h-3.5 w-3.5 text-[#666666] shrink-0" />
-              <span>Акт приемки (Договор)</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleWorkOrder}
-              className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer text-left"
-            >
-              <CheckSquare className="h-3.5 w-3.5 text-[#666666] shrink-0" />
-              <span>Акт выполненных работ</span>
-            </button>
+            {visibleTemplates.length > 0 ? (
+              visibleTemplates.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsOpen(false);
+                    window.open(getPrintRenderUrl(t.slug || t.id, ticket.id), "_blank");
+                  }}
+                  className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer text-left"
+                >
+                  <FileText className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+                  <span className="truncate">{t.name}</span>
+                </button>
+              ))
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleReceipt}
+                  className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer text-left"
+                >
+                  <FileText className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+                  <span>Акт приемки (Договор)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWorkOrder}
+                  className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer text-left"
+                >
+                  <CheckSquare className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+                  <span>Акт выполненных работ</span>
+                </button>
+              </>
+            )}
             {onOpenSettings && (
               <>
                 <div className="my-1 border-t border-[#e5e5e5]" />

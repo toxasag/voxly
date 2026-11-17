@@ -248,6 +248,9 @@ export const createPrintTemplateSchema = z.object({
   layout_config: printLayoutConfigSchema.optional(),
   body_template: z.string().optional(),
   is_default: z.boolean().default(false),
+  is_custom: z.boolean().default(true),
+  parent_template_id: z.string().uuid().optional().nullable(),
+  is_hidden: z.boolean().default(false),
   clone_from_id: z.string().uuid().optional(),
 });
 export type CreatePrintTemplatePayload = z.infer<typeof createPrintTemplateSchema>;
@@ -261,6 +264,9 @@ export const updatePrintTemplateSchema = z.object({
   layout_config: printLayoutConfigSchema.optional(),
   body_template: z.string().optional(),
   is_default: z.boolean().optional(),
+  is_custom: z.boolean().optional(),
+  parent_template_id: z.string().uuid().optional().nullable(),
+  is_hidden: z.boolean().optional(),
 });
 export type UpdatePrintTemplatePayload = z.infer<typeof updatePrintTemplateSchema>;
 
@@ -276,6 +282,9 @@ export interface PrintTemplateRow {
   body_template: string;
   layout_config: PrintLayoutConfig | Record<string, unknown>;
   is_default: boolean;
+  is_custom?: boolean;
+  parent_template_id?: string | null;
+  is_hidden?: boolean;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -291,6 +300,9 @@ export interface PrintTemplateDTO {
   bodyTemplate: string;
   layoutConfig: PrintLayoutConfig;
   isDefault: boolean;
+  isCustom: boolean;
+  parentTemplateId?: string | null;
+  isHidden: boolean;
   createdAt: string;
   updatedAt: string;
 }
