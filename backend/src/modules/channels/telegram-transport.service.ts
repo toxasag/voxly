@@ -979,7 +979,9 @@ export class TelegramTransportService {
         });
 
         if (phoneResolve.exists && phoneResolve.userId) {
-          await sendToTarget(phoneResolve.userId);
+          const resolvedUserId = phoneResolve.userId;
+          const resolvedUsername = phoneResolve.username ?? null;
+          await sendToTarget(resolvedUserId);
 
           // Связываем найденный Telegram ID и username с контактом в БД
           void runWithPlatformScope(async () => {
@@ -990,7 +992,7 @@ export class TelegramTransportService {
                    telegram_username = COALESCE(telegram_username, $2)
                WHERE tenant_id = $3
                  AND (regexp_replace(phone, '\\D', '', 'g') = $4 OR phone = $5)`,
-              [phoneResolve.userId, phoneResolve.username ?? null, connection.tenantId, digits, phoneToResolve],
+              [resolvedUserId, resolvedUsername, connection.tenantId, digits, phoneToResolve],
             );
           }).catch(() => {});
 
