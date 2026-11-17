@@ -19,12 +19,14 @@ import {
   type PurchaseRequestDTO,
   type PurchaseRequestRow,
   type PurchaseRequestStatus,
+  type ReceiptSupplierOrderPayload,
   type SupplierOrderDTO,
   type SupplierOrderItemDTO,
   type SupplierOrderItemRow,
   type SupplierOrderRow,
   type SupplierOrderStatus,
   type UpdatePurchaseRequestPayload,
+  type UpdateSupplierOrderPayload,
   type UpdateWarehouseItemPayload,
   type UpdateWarehouseSettingsPayload,
   type WarehouseBatchDTO,
@@ -108,15 +110,30 @@ function extractRowFields(
     }
   }
 
+  let sku = (item.sku ?? "").trim();
+  let name = (item.name ?? "").trim();
+  let brand = (item.brand ?? "").trim();
+  const category = (item.category ?? "").trim();
+  const unit = (item.unit ?? "").trim() || "шт";
+
+  // Fallback if name is empty but brand or sku has text
+  if (!name && brand) {
+    name = brand;
+    brand = "";
+  } else if (!name && sku) {
+    name = sku;
+    sku = "";
+  }
+
   return {
-    sku: (item.sku ?? "").trim(),
-    name: (item.name ?? "").trim(),
-    brand: (item.brand ?? "").trim(),
-    category: (item.category ?? "").trim(),
-    unit: (item.unit ?? "").trim() || "шт",
-    costPrice: Math.max(0, parseCleanNumber(item.cost_price)),
-    retailPrice: Math.max(0, parseCleanNumber(item.retail_price)),
-    minStock: Math.max(0, parseCleanNumber(item.min_stock)),
+    sku,
+    name,
+    brand,
+    category,
+    unit,
+    costPrice: Math.max(0, Math.min(999999999.99, parseCleanNumber(item.cost_price))),
+    retailPrice: Math.max(0, Math.min(999999999.99, parseCleanNumber(item.retail_price))),
+    minStock: Math.max(0, Math.min(999999999.99, parseCleanNumber(item.min_stock))),
   };
 }
 
@@ -749,45 +766,87 @@ export class WarehouseService {
 
       const orderRow = await tx.queryOneOrThrow<SupplierOrderRow>(
         `INSERT INTO supplier_orders
-           (tenant_id, order_number, supplier_name, status, total_amount, notes, created_by)
-         VALUES ($1, $2, $3, 'pending_payment', 0, $4, $5)
+           (tenant_id, order_number, supplier_name, supplier_company_id, status, total_amount, notes, created_by)
+         VALUES ($1, $2, $3, $4, 'pending_payment', 0, $5, $6)
          RETURNING *`,
-        [tenantId, orderNumber, payload.supplier_name, payload.notes ?? "", userId],
+        [
+          tenantId,
+          orderNumber,
+          payload.supplier_name,
+          payload.supplier_company_id ?? null,
+          payload.notes ?? "",
+          userId,
+        ],
       );
 
       let totalAmount = 0;
       const createdItems: SupplierOrderItemDTO[] = [];
+      const linkedRequestIds: string[] = [];
 
-      // Вариант 1: Формирование из purchase_request_ids
-      if (payload.purchase_request_ids && payload.purchase_request_ids.length > 0) {
-        const requests = await tx.query<PurchaseRequestRow>(
-          `SELECT * FROM purchase_requests
-           WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
-          [tenantId, payload.purchase_request_ids],
-        );
+      // Подготовка позиций без дублирования
+      let itemsToProcess = payload.items;
+      if (!itemsToProcess || itemsToProcess.length === 0) {
+        if (payload.purchase_request_ids && payload.purchase_request_ids.length > 0) {
+          const requests = await tx.query<PurchaseRequestRow>(
+            `SELECT * FROM purchase_requests
+             WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+            [tenantId, payload.purchase_request_ids],
+          );
+          itemsToProcess = requests.map((req) => ({
+            purchase_request_id: req.id,
+            purchase_request_ids: [req.id],
+            item_id: req.item_id ?? undefined,
+            item_name: req.item_name,
+            sku: req.sku || "",
+            requested_quantity: Number(req.quantity),
+            extra_quantity: 0,
+            quantity: Number(req.quantity),
+            unit: req.unit || "шт",
+            price: Number(req.estimated_price || 0),
+            repair_order_id: req.repair_order_id ?? undefined,
+          }));
+        }
+      }
 
-        for (const req of requests) {
-          const qty = Number(req.quantity);
-          const price = Number(req.estimated_price || 0);
-          const itemTotal = qty * price;
+      if (itemsToProcess && itemsToProcess.length > 0) {
+        for (const it of itemsToProcess) {
+          const reqQty = Number(it.requested_quantity ?? 0);
+          const totalQty = Number(it.quantity);
+          const extraQty = Number(it.extra_quantity ?? Math.max(0, totalQty - reqQty));
+          const unitPrice = Number(it.price || 0);
+          const itemTotal = totalQty * unitPrice;
           totalAmount += itemTotal;
+
+          const reqIds: string[] = [];
+          if (it.purchase_request_ids && it.purchase_request_ids.length > 0) {
+            reqIds.push(...it.purchase_request_ids);
+          } else if (it.purchase_request_id) {
+            reqIds.push(it.purchase_request_id);
+          }
+          linkedRequestIds.push(...reqIds);
 
           const itemRow = await tx.queryOneOrThrow<SupplierOrderItemRow>(
             `INSERT INTO supplier_order_items
-               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku, quantity, unit, price, total_price)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku,
+                requested_quantity, extra_quantity, quantity, unit, price, total_price,
+                repair_order_id, purchase_request_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              RETURNING *`,
             [
               tenantId,
               orderRow.id,
-              req.id,
-              req.item_id,
-              req.item_name,
-              req.sku,
-              qty,
-              req.unit,
-              price,
+              reqIds[0] ?? it.purchase_request_id ?? null,
+              it.item_id ?? null,
+              it.item_name,
+              it.sku ?? "",
+              reqQty,
+              extraQty,
+              totalQty,
+              it.unit ?? "шт",
+              unitPrice,
               itemTotal,
+              it.repair_order_id ?? null,
+              reqIds,
             ],
           );
 
@@ -798,62 +857,29 @@ export class WarehouseService {
             itemId: itemRow.item_id,
             itemName: itemRow.item_name,
             sku: itemRow.sku,
-            quantity: Number(itemRow.quantity),
+            requestedQuantity: reqQty,
+            extraQuantity: extraQty,
+            repairOrderId: itemRow.repair_order_id ?? null,
+            purchaseRequestIds: reqIds,
+            repairOrders: it.repair_orders,
+            quantity: totalQty,
             unit: itemRow.unit,
-            price: Number(itemRow.price),
-            totalPrice: Number(itemRow.total_price),
+            price: unitPrice,
+            totalPrice: itemTotal,
             createdAt: toIso(itemRow.created_at),
           });
         }
+      }
 
-        // Обновляем статус исходных заявок на 'ordered'
+      // Обновляем статус исходных заявок на 'ordered'
+      const uniqueRequestIds = Array.from(new Set(linkedRequestIds));
+      if (uniqueRequestIds.length > 0) {
         await tx.query(
           `UPDATE purchase_requests
            SET status = 'ordered', supplier_order_id = $1, updated_at = now()
            WHERE tenant_id = $2 AND id = ANY($3::uuid[])`,
-          [orderRow.id, tenantId, payload.purchase_request_ids],
+          [orderRow.id, tenantId, uniqueRequestIds],
         );
-      }
-
-      // Вариант 2: Прямая передача позиций
-      if (payload.items && payload.items.length > 0) {
-        for (const it of payload.items) {
-          const itemTotal = it.quantity * it.price;
-          totalAmount += itemTotal;
-
-          const itemRow = await tx.queryOneOrThrow<SupplierOrderItemRow>(
-            `INSERT INTO supplier_order_items
-               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku, quantity, unit, price, total_price)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-             RETURNING *`,
-            [
-              tenantId,
-              orderRow.id,
-              it.purchase_request_id ?? null,
-              it.item_id ?? null,
-              it.item_name,
-              it.sku ?? "",
-              it.quantity,
-              it.unit ?? "шт",
-              it.price,
-              itemTotal,
-            ],
-          );
-
-          createdItems.push({
-            id: itemRow.id,
-            supplierOrderId: itemRow.supplier_order_id,
-            purchaseRequestId: itemRow.purchase_request_id,
-            itemId: itemRow.item_id,
-            itemName: itemRow.item_name,
-            sku: itemRow.sku,
-            quantity: Number(itemRow.quantity),
-            unit: itemRow.unit,
-            price: Number(itemRow.price),
-            totalPrice: Number(itemRow.total_price),
-            createdAt: toIso(itemRow.created_at),
-          });
-        }
       }
 
       // Фиксируем итоговую сумму заказа
@@ -867,6 +893,7 @@ export class WarehouseService {
         id: orderRow.id,
         orderNumber: orderRow.order_number,
         supplierName: orderRow.supplier_name,
+        supplierCompanyId: orderRow.supplier_company_id ?? null,
         status: (orderRow.status as SupplierOrderStatus) || "pending_payment",
         totalAmount,
         cashAccountId: orderRow.cash_account_id,
@@ -879,6 +906,166 @@ export class WarehouseService {
         createdAt: toIso(orderRow.created_at),
         updatedAt: toIso(orderRow.updated_at),
       };
+    });
+  }
+
+  async updateSupplierOrder(
+    tenantId: string,
+    id: string,
+    payload: UpdateSupplierOrderPayload,
+  ): Promise<SupplierOrderDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const order = await tx.queryOne<SupplierOrderRow>(
+        `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, id],
+      );
+      if (!order) {
+        throw new Error("Заказ поставщику не найден");
+      }
+      if (order.status === "received") {
+        throw new Error("Нельзя редактировать заказ, который уже оприходован на склад");
+      }
+
+      const updates: string[] = [];
+      const params: (string | number | null)[] = [tenantId, id];
+
+      if (payload.supplier_name !== undefined) {
+        params.push(payload.supplier_name);
+        updates.push(`supplier_name = $${params.length}`);
+      }
+      if (payload.supplier_company_id !== undefined) {
+        params.push(payload.supplier_company_id);
+        updates.push(`supplier_company_id = $${params.length}`);
+      }
+      if (payload.notes !== undefined) {
+        params.push(payload.notes);
+        updates.push(`notes = $${params.length}`);
+      }
+      if (payload.status !== undefined) {
+        params.push(payload.status);
+        updates.push(`status = $${params.length}`);
+      }
+
+      if (payload.items && payload.items.length > 0) {
+        await tx.query(
+          `DELETE FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
+          [tenantId, id],
+        );
+
+        let totalAmount = 0;
+        const linkedRequestIds: string[] = [];
+
+        for (const it of payload.items) {
+          const reqQty = Number(it.requested_quantity ?? 0);
+          const totalQty = Number(it.quantity);
+          const extraQty = Number(it.extra_quantity ?? Math.max(0, totalQty - reqQty));
+          const unitPrice = Number(it.price || 0);
+          const itemTotal = totalQty * unitPrice;
+          totalAmount += itemTotal;
+
+          const reqIds: string[] = [];
+          if (it.purchase_request_ids && it.purchase_request_ids.length > 0) {
+            reqIds.push(...it.purchase_request_ids);
+          } else if (it.purchase_request_id) {
+            reqIds.push(it.purchase_request_id);
+          }
+          linkedRequestIds.push(...reqIds);
+
+          await tx.query(
+            `INSERT INTO supplier_order_items
+               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku,
+                requested_quantity, extra_quantity, quantity, unit, price, total_price,
+                repair_order_id, purchase_request_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+            [
+              tenantId,
+              id,
+              reqIds[0] ?? it.purchase_request_id ?? null,
+              it.item_id ?? null,
+              it.item_name,
+              it.sku ?? "",
+              reqQty,
+              extraQty,
+              totalQty,
+              it.unit ?? "шт",
+              unitPrice,
+              itemTotal,
+              it.repair_order_id ?? null,
+              reqIds,
+            ],
+          );
+        }
+
+        const uniqueReqIds = Array.from(new Set(linkedRequestIds));
+        if (uniqueReqIds.length > 0) {
+          await tx.query(
+            `UPDATE purchase_requests
+             SET status = 'ordered', supplier_order_id = $1, updated_at = now()
+             WHERE tenant_id = $2 AND id = ANY($3::uuid[])`,
+            [id, tenantId, uniqueReqIds],
+          );
+        }
+
+        params.push(totalAmount);
+        updates.push(`total_amount = $${params.length}`);
+      }
+
+      updates.push(`updated_at = now()`);
+
+      await tx.query(
+        `UPDATE supplier_orders SET ${updates.join(", ")} WHERE tenant_id = $1 AND id = $2`,
+        params,
+      );
+
+      const refreshed = await this.getSupplierOrder(tenantId, id);
+      return refreshed!;
+    });
+  }
+
+  async deleteSupplierOrder(tenantId: string, id: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const order = await tx.queryOne<SupplierOrderRow>(
+        `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, id],
+      );
+      if (!order) {
+        throw new Error("Заказ поставщику не найден");
+      }
+      if (order.status === "received") {
+        throw new Error("Нельзя удалить заказ, который уже оприходован на склад");
+      }
+
+      // Возвращаем связанные заявки на закупку в статус 'pending'
+      await tx.query(
+        `UPDATE purchase_requests
+         SET status = 'pending', supplier_order_id = NULL, updated_at = now()
+         WHERE tenant_id = $1 AND supplier_order_id = $2`,
+        [tenantId, id],
+      );
+
+      // Если была создана кассовая проводка, удаляем её и возвращаем баланс
+      if (order.finance_transaction_id && order.cash_account_id) {
+        await tx.query(
+          `DELETE FROM transactions WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, order.finance_transaction_id],
+        );
+        await tx.query(
+          `UPDATE cash_accounts SET balance = balance + $1 WHERE tenant_id = $2 AND id = $3`,
+          [order.total_amount, tenantId, order.cash_account_id],
+        );
+      }
+
+      // Удаляем позиции и сам заказ
+      await tx.query(
+        `DELETE FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
+        [tenantId, id],
+      );
+      await tx.query(
+        `DELETE FROM supplier_orders WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id],
+      );
+
+      return true;
     });
   }
 
@@ -903,16 +1090,26 @@ export class WarehouseService {
     if (orderRows.length === 0) return [];
 
     const orderIds = orderRows.map((o) => o.id);
-    const itemRows = await query<SupplierOrderItemRow>(
-      `SELECT * FROM supplier_order_items
-       WHERE tenant_id = $1 AND supplier_order_id = ANY($2::uuid[])
-       ORDER BY created_at ASC`,
+    const itemRows = await query<
+      SupplierOrderItemRow & { repair_ticket_number?: string | null }
+    >(
+      `SELECT soi.*,
+              COALESCE(ro.ticket_number, pr_ro.ticket_number) AS repair_ticket_number
+       FROM supplier_order_items soi
+       LEFT JOIN repair_orders ro ON ro.id = soi.repair_order_id AND ro.tenant_id = soi.tenant_id
+       LEFT JOIN purchase_requests pr ON pr.id = soi.purchase_request_id AND pr.tenant_id = soi.tenant_id
+       LEFT JOIN repair_orders pr_ro ON pr_ro.id = pr.repair_order_id AND pr_ro.tenant_id = soi.tenant_id
+       WHERE soi.tenant_id = $1 AND soi.supplier_order_id = ANY($2::uuid[])
+       ORDER BY soi.created_at ASC`,
       [tenantId, orderIds],
     );
 
     const itemsByOrder = new Map<string, SupplierOrderItemDTO[]>();
     for (const item of itemRows) {
       const list = itemsByOrder.get(item.supplier_order_id) ?? [];
+      const totalQty = Number(item.quantity);
+      const reqQty = Number(item.requested_quantity || 0);
+      const extraQty = Number(item.extra_quantity || Math.max(0, totalQty - reqQty));
       list.push({
         id: item.id,
         supplierOrderId: item.supplier_order_id,
@@ -920,7 +1117,12 @@ export class WarehouseService {
         itemId: item.item_id,
         itemName: item.item_name,
         sku: item.sku,
-        quantity: Number(item.quantity),
+        requestedQuantity: reqQty,
+        extraQuantity: extraQty,
+        repairOrderId: item.repair_order_id ?? null,
+        purchaseRequestIds: item.purchase_request_ids || [],
+        repairOrders: item.repair_ticket_number ? `№${item.repair_ticket_number}` : undefined,
+        quantity: totalQty,
         unit: item.unit,
         price: Number(item.price),
         totalPrice: Number(item.total_price),
@@ -933,6 +1135,7 @@ export class WarehouseService {
       id: o.id,
       orderNumber: o.order_number,
       supplierName: o.supplier_name,
+      supplierCompanyId: o.supplier_company_id ?? null,
       status: (o.status as SupplierOrderStatus) || "pending_payment",
       totalAmount: Number(o.total_amount),
       cashAccountId: o.cash_account_id,
@@ -1030,50 +1233,17 @@ export class WarehouseService {
       );
 
       // Переводим заказ в статус 'paid'
-      const updatedOrder = await tx.queryOneOrThrow<SupplierOrderRow>(
+      await tx.query(
         `UPDATE supplier_orders
          SET status = 'paid', cash_account_id = $1, finance_transaction_id = $2, paid_at = now(), updated_at = now()
-         WHERE tenant_id = $3 AND id = $4
-         RETURNING *`,
+         WHERE tenant_id = $3 AND id = $4`,
         [cashAccountId, txRow.id, tenantId, id],
       );
 
-      const items = await tx.query<SupplierOrderItemRow>(
-        `SELECT * FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
-        [tenantId, id],
-      );
-
-      const orderDto: SupplierOrderDTO = {
-        id: updatedOrder.id,
-        orderNumber: updatedOrder.order_number,
-        supplierName: updatedOrder.supplier_name,
-        status: "paid",
-        totalAmount,
-        cashAccountId,
-        financeTransactionId: txRow.id,
-        notes: updatedOrder.notes,
-        paidAt: toIso(updatedOrder.paid_at),
-        receivedAt: toNullableIso(updatedOrder.received_at),
-        createdBy: updatedOrder.created_by,
-        items: items.map((i) => ({
-          id: i.id,
-          supplierOrderId: i.supplier_order_id,
-          purchaseRequestId: i.purchase_request_id,
-          itemId: i.item_id,
-          itemName: i.item_name,
-          sku: i.sku,
-          quantity: Number(i.quantity),
-          unit: i.unit,
-          price: Number(i.price),
-          totalPrice: Number(i.total_price),
-          createdAt: toIso(i.created_at),
-        })),
-        createdAt: toIso(updatedOrder.created_at),
-        updatedAt: toIso(updatedOrder.updated_at),
-      };
+      const refreshed = await this.getSupplierOrder(tenantId, id);
 
       return {
-        order: orderDto,
+        order: refreshed!,
         transactionId: txRow.id,
         status: "PAID",
       };
@@ -1081,18 +1251,23 @@ export class WarehouseService {
   }
 
   /**
-   * Оприходование по заказу поставщику (создание партий и журнала движений)
+   * Оприходование по заказу поставщику (создание партий, движений и резервирование под наряд)
    */
   async createReceiptFromSupplierOrder(
     tenantId: string,
     id: string,
     userId: string | null,
-  ): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number }> {
+    payload?: ReceiptSupplierOrderPayload,
+  ): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }> {
     return withTenant(tenantId, async (tx) => {
       const order = await tx.queryOneOrThrow<SupplierOrderRow>(
         `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
         [tenantId, id],
       );
+
+      if (order.status === "received") {
+        throw new Error("Заказ поставщику уже оприходован");
+      }
 
       const items = await tx.query<SupplierOrderItemRow>(
         `SELECT * FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
@@ -1131,10 +1306,11 @@ export class WarehouseService {
           }
         }
 
-        const qty = Number(it.quantity);
+        const totalQty = Number(it.quantity);
+        const reqQty = Number(it.requested_quantity || 0);
         const price = Number(it.price);
 
-        // Обновляем закупочную цену детали
+        // Обновляем себестоимость в номенклатуре
         await tx.query(
           `UPDATE warehouse_items
            SET cost_price = $1, updated_at = now()
@@ -1142,7 +1318,7 @@ export class WarehouseService {
           [price, tenantId, itemId],
         );
 
-        // Создаем партию
+        // Создаем партию на ВСЕ поступившее количество
         const batch = await tx.queryOneOrThrow<WarehouseBatchRow>(
           `INSERT INTO warehouse_batches
              (tenant_id, item_id, batch_number, supplier_name, purchase_price, initial_quantity, remaining_quantity)
@@ -1154,12 +1330,12 @@ export class WarehouseService {
             order.order_number,
             order.supplier_name,
             price,
-            qty,
-            qty,
+            totalQty,
+            totalQty,
           ],
         );
 
-        // Движение на склад
+        // Фиксируем поступление на склад (intake)
         await tx.query(
           `INSERT INTO warehouse_movements
              (tenant_id, item_id, batch_id, type, quantity, cost_price, description, created_by)
@@ -1168,7 +1344,7 @@ export class WarehouseService {
             tenantId,
             itemId,
             batch.id,
-            qty,
+            totalQty,
             price,
             `Поступление по заказу поставщику ${order.order_number} (${order.supplier_name})`,
             userId,
@@ -1177,59 +1353,148 @@ export class WarehouseService {
 
         batchesCount++;
 
-        // Если заявка была привязана, переводим ее в 'received'
-        if (it.purchase_request_id) {
+        // БИЗНЕС-ЛОГИКА РАЗДЕЛЕНИЯ:
+        // Подтягиваем связанные заявки на закупку под наряды
+        const linkedReqIds: string[] = [];
+        if (it.purchase_request_ids && it.purchase_request_ids.length > 0) {
+          linkedReqIds.push(...it.purchase_request_ids);
+        } else if (it.purchase_request_id) {
+          linkedReqIds.push(it.purchase_request_id);
+        }
+
+        let linkedRequests: PurchaseRequestRow[] = [];
+        if (linkedReqIds.length > 0) {
+          linkedRequests = await tx.query<PurchaseRequestRow>(
+            `SELECT * FROM purchase_requests WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+            [tenantId, linkedReqIds],
+          );
+        } else if (reqQty > 0) {
+          linkedRequests = await tx.query<PurchaseRequestRow>(
+            `SELECT * FROM purchase_requests
+             WHERE tenant_id = $1 AND supplier_order_id = $2
+               AND (item_id = $3 OR lower(btrim(item_name)) = lower(btrim($4)))`,
+            [tenantId, id, itemId, it.item_name],
+          );
+        }
+
+        for (const req of linkedRequests) {
+          const partQty = Number(req.quantity);
+          if (req.repair_order_id && partQty > 0) {
+            // 1. Резервируем количество под заказ-наряд
+            await tx.query(
+              `INSERT INTO warehouse_reservations
+                 (tenant_id, repair_order_id, item_id, quantity, status)
+               VALUES ($1, $2, $3, $4, 'reserved')`,
+              [tenantId, req.repair_order_id, itemId, partQty],
+            );
+
+            // 2. Движение резервирования
+            await tx.query(
+              `INSERT INTO warehouse_movements
+                 (tenant_id, item_id, batch_id, repair_order_id, type, quantity, cost_price, description, created_by)
+               VALUES ($1, $2, $3, $4, 'reserve', $5, $6, $7, $8)`,
+              [
+                tenantId,
+                itemId,
+                batch.id,
+                req.repair_order_id,
+                partQty,
+                price,
+                `Резерв под наряд по заказу ${order.order_number} (${it.item_name})`,
+                userId,
+              ],
+            );
+
+            // 3. Обновляем статус детали в наряде repair_parts
+            await tx.query(
+              `UPDATE repair_parts
+               SET warehouse_item_id = $1, cost_price = $2, status = 'reserved'
+               WHERE tenant_id = $3 AND repair_order_id = $4
+                 AND (warehouse_item_id = $1 OR lower(btrim(name)) = lower(btrim($5)))`,
+              [itemId, price, tenantId, req.repair_order_id, it.item_name],
+            );
+          }
+
+          // Переводим заявку на закупку в статус 'received'
           await tx.query(
             `UPDATE purchase_requests
              SET status = 'received', updated_at = now()
              WHERE tenant_id = $1 AND id = $2`,
-            [tenantId, it.purchase_request_id],
+            [tenantId, req.id],
+          );
+        }
+        // Излишки сверх наряда (extra_quantity) остаются на свободном остатке склада!
+      }
+
+      let paidTransactionId: string | undefined;
+
+      // Если в модалке подтвердили оплату при оприходовании:
+      if (payload?.mark_paid || payload?.cash_account_id) {
+        let cashAccountId = payload?.cash_account_id || order.cash_account_id;
+        if (!cashAccountId) {
+          const defaultCash = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM cash_accounts WHERE tenant_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+            [tenantId],
+          );
+          cashAccountId = defaultCash?.id ?? null;
+        }
+
+        if (cashAccountId) {
+          let cat = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM finance_categories
+             WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
+             LIMIT 1`,
+            [tenantId],
+          );
+          if (!cat) {
+            cat = await tx.queryOne<{ id: string }>(
+              `INSERT INTO finance_categories (tenant_id, name, type)
+               VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
+               RETURNING id`,
+              [tenantId],
+            );
+          }
+
+          const desc = payload?.comment || `Оплата при оприходовании заказа ${order.order_number} (${order.supplier_name})`;
+          const txRow = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO transactions
+               (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name)
+             VALUES ($1, $2, $3, $4, 'expense', $5, $6)
+             RETURNING id`,
+            [tenantId, cashAccountId, cat?.id ?? null, Number(order.total_amount), desc, order.supplier_name],
+          );
+
+          await tx.query(
+            `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
+            [Number(order.total_amount), tenantId, cashAccountId],
+          );
+
+          paidTransactionId = txRow.id;
+
+          await tx.query(
+            `UPDATE supplier_orders
+             SET paid_at = now(), cash_account_id = $1, finance_transaction_id = $2
+             WHERE tenant_id = $3 AND id = $4`,
+            [cashAccountId, txRow.id, tenantId, id],
           );
         }
       }
 
       // Переводим заказ в статус 'received'
-      const updatedOrder = await tx.queryOneOrThrow<SupplierOrderRow>(
+      await tx.query(
         `UPDATE supplier_orders
          SET status = 'received', received_at = now(), updated_at = now()
-         WHERE tenant_id = $1 AND id = $2
-         RETURNING *`,
+         WHERE tenant_id = $1 AND id = $2`,
         [tenantId, id],
       );
 
-      const orderDto: SupplierOrderDTO = {
-        id: updatedOrder.id,
-        orderNumber: updatedOrder.order_number,
-        supplierName: updatedOrder.supplier_name,
-        status: "received",
-        totalAmount: Number(updatedOrder.total_amount),
-        cashAccountId: updatedOrder.cash_account_id,
-        financeTransactionId: updatedOrder.finance_transaction_id,
-        notes: updatedOrder.notes,
-        paidAt: toNullableIso(updatedOrder.paid_at),
-        receivedAt: toIso(updatedOrder.received_at),
-        createdBy: updatedOrder.created_by,
-        items: items.map((i) => ({
-          id: i.id,
-          supplierOrderId: i.supplier_order_id,
-          purchaseRequestId: i.purchase_request_id,
-          itemId: i.item_id,
-          itemName: i.item_name,
-          sku: i.sku,
-          quantity: Number(i.quantity),
-          unit: i.unit,
-          price: Number(i.price),
-          totalPrice: Number(i.total_price),
-          createdAt: toIso(i.created_at),
-        })),
-        createdAt: toIso(updatedOrder.created_at),
-        updatedAt: toIso(updatedOrder.updated_at),
-      };
+      const refreshed = await this.getSupplierOrder(tenantId, id);
 
       return {
         success: true,
-        order: orderDto,
+        order: refreshed!,
         batchesCreated: batchesCount,
+        transactionId: paidTransactionId,
       };
     });
   }
@@ -1410,6 +1675,7 @@ export class WarehouseService {
       return {
         headers: [],
         sampleRows: [],
+        rows: [],
         totalRows: 0,
         detectedDelimiter,
         suggestedMapping: {},
@@ -1430,6 +1696,7 @@ export class WarehouseService {
     return {
       headers,
       sampleRows,
+      rows,
       totalRows: rows.length,
       detectedDelimiter,
       suggestedMapping,
@@ -1591,6 +1858,7 @@ export class WarehouseService {
       let updatedCount = 0;
       let skippedCount = 0;
       let errorCount = 0;
+      const errors: { rowNumber: number; reason: string }[] = [];
 
       for (let idx = 0; idx < dataRows.length; idx++) {
         const row = dataRows[idx];
@@ -1600,6 +1868,10 @@ export class WarehouseService {
 
         if (!parsed.name) {
           errorCount++;
+          errors.push({
+            rowNumber,
+            reason: "Не заполнено обязательное поле «Наименование»",
+          });
           continue;
         }
 
@@ -1627,57 +1899,88 @@ export class WarehouseService {
           }
 
           if (res === "overwrite") {
-            await tx.query(
-              `UPDATE warehouse_items
-               SET name = $1, brand = $2, category = $3, unit = $4,
-                   cost_price = $5, retail_price = $6, min_stock = $7,
-                   updated_at = now()
-               WHERE tenant_id = $8 AND id = $9`,
-              [
-                parsed.name,
-                parsed.brand,
-                parsed.category,
-                parsed.unit,
-                parsed.costPrice,
-                parsed.retailPrice,
-                parsed.minStock,
-                tenantId,
-                existingMatch.id,
-              ],
-            );
-            updatedCount++;
+            const spName = `sp_up_${idx}`;
+            await tx.query(`SAVEPOINT ${spName}`);
+            try {
+              await tx.query(
+                `UPDATE warehouse_items
+                 SET name = $1, brand = $2, category = $3, unit = $4,
+                     cost_price = $5, retail_price = $6, min_stock = $7,
+                     updated_at = now()
+                 WHERE tenant_id = $8 AND id = $9`,
+                [
+                  parsed.name,
+                  parsed.brand,
+                  parsed.category,
+                  parsed.unit,
+                  parsed.costPrice,
+                  parsed.retailPrice,
+                  parsed.minStock,
+                  tenantId,
+                  existingMatch.id,
+                ],
+              );
+              await tx.query(`RELEASE SAVEPOINT ${spName}`);
+              updatedCount++;
+            } catch (err) {
+              await tx.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+              errorCount++;
+              errors.push({
+                rowNumber,
+                reason: err instanceof Error ? err.message : "Ошибка обновления позиции",
+              });
+            }
             continue;
           }
 
           // keep_both: fall through to insert
         }
 
-        const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
-          `INSERT INTO warehouse_items
-             (tenant_id, sku, name, brand, category, unit, cost_price, retail_price, min_stock)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, sku, name, brand, category, unit, cost_price, retail_price, min_stock`,
-          [
-            tenantId,
-            parsed.sku,
-            parsed.name,
-            parsed.brand,
-            parsed.category,
-            parsed.unit,
-            parsed.costPrice,
-            parsed.retailPrice,
-            parsed.minStock,
-          ],
-        );
+        const spName = `sp_in_${idx}`;
+        await tx.query(`SAVEPOINT ${spName}`);
+        try {
+          const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
+            `INSERT INTO warehouse_items
+               (tenant_id, sku, name, brand, category, unit, cost_price, retail_price, min_stock)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING id, sku, name, brand, category, unit, cost_price, retail_price, min_stock`,
+            [
+              tenantId,
+              parsed.sku,
+              parsed.name,
+              parsed.brand,
+              parsed.category,
+              parsed.unit,
+              parsed.costPrice,
+              parsed.retailPrice,
+              parsed.minStock,
+            ],
+          );
 
-        if (parsed.sku) {
-          existingBySku.set(parsed.sku.toLowerCase(), inserted);
+          if (parsed.sku) {
+            existingBySku.set(parsed.sku.toLowerCase(), inserted);
+          }
+          existingByName.set(parsed.name.toLowerCase(), inserted);
+          await tx.query(`RELEASE SAVEPOINT ${spName}`);
+          importedCount++;
+        } catch (err) {
+          await tx.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+          errorCount++;
+          errors.push({
+            rowNumber,
+            reason: err instanceof Error ? err.message : "Ошибка создания позиции",
+          });
         }
-        existingByName.set(parsed.name.toLowerCase(), inserted);
-        importedCount++;
       }
 
-      return { importedCount, updatedCount, skippedCount, errorCount };
+      return {
+        importedCount,
+        updatedCount,
+        skippedCount,
+        errorCount,
+        total: dataRows.length,
+        errors: errors.slice(0, 100),
+      };
     });
   }
 

@@ -130,6 +130,11 @@ export interface SupplierOrderItemDTO {
   itemId: string | null;
   itemName: string;
   sku: string;
+  requestedQuantity: number;
+  extraQuantity: number;
+  repairOrderId?: string | null;
+  purchaseRequestIds?: string[];
+  repairOrders?: string;
   quantity: number;
   unit: string;
   price: number;
@@ -141,6 +146,7 @@ export interface SupplierOrderDTO {
   id: string;
   orderNumber: string;
   supplierName: string;
+  supplierCompanyId: string | null;
   status: "draft" | "pending_payment" | "paid" | "received" | "cancelled";
   totalAmount: number;
   cashAccountId: string | null;
@@ -157,17 +163,49 @@ export interface SupplierOrderDTO {
 
 export interface CreateSupplierOrderPayload {
   supplier_name: string;
+  supplier_company_id?: string | null;
   purchase_request_ids?: string[];
   items?: {
-    purchase_request_id?: string;
-    item_id?: string;
+    purchase_request_id?: string | null;
+    purchase_request_ids?: string[];
+    item_id?: string | null;
     item_name: string;
     sku?: string;
+    requested_quantity?: number;
+    extra_quantity?: number;
     quantity: number;
     unit?: string;
     price: number;
+    repair_orders?: string;
   }[];
   notes?: string;
+}
+
+export interface UpdateSupplierOrderPayload {
+  supplier_name?: string;
+  supplier_company_id?: string | null;
+  notes?: string;
+  status?: "draft" | "pending_payment" | "paid" | "received" | "cancelled";
+  items?: {
+    id?: string;
+    purchase_request_id?: string | null;
+    purchase_request_ids?: string[];
+    item_id?: string | null;
+    item_name: string;
+    sku?: string;
+    requested_quantity?: number;
+    extra_quantity?: number;
+    quantity: number;
+    unit?: string;
+    price: number;
+    repair_orders?: string;
+  }[];
+}
+
+export interface ReceiptSupplierOrderPayload {
+  cash_account_id?: string;
+  mark_paid?: boolean;
+  comment?: string;
 }
 
 export interface PaySupplierOrderPayload {
@@ -393,6 +431,45 @@ export function useCreateSupplierOrder() {
   });
 }
 
+export function useUpdateSupplierOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: UpdateSupplierOrderPayload;
+    }): Promise<SupplierOrderDTO> => {
+      const res = await apiClient.patch<SupplierOrderDTO>(
+        `/api/v1/warehouse/supplier-orders/${id}`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+    },
+  });
+}
+
+export function useDeleteSupplierOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<boolean> => {
+      await apiClient.delete(`/api/v1/warehouse/supplier-orders/${id}`);
+      return true;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+    },
+  });
+}
+
 export function usePaySupplierOrder() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -429,10 +506,16 @@ export function usePaySupplierOrder() {
 export function useCreateReceiptFromSupplierOrder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.post<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number }>(
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload?: ReceiptSupplierOrderPayload;
+    }): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }> => {
+      const res = await apiClient.post<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }>(
         `/api/v1/warehouse/supplier-orders/${id}/create-receipt`,
-        {},
+        payload ?? {},
       );
       return res.data;
     },
@@ -443,6 +526,8 @@ export function useCreateReceiptFromSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.batches() });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.movements() });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
     },
   });
 }
@@ -460,6 +545,7 @@ export interface ExportWarehouseItemsPayload {
 export interface ImportParseResultDTO {
   headers: string[];
   sampleRows: string[][];
+  rows?: string[][];
   totalRows: number;
   detectedDelimiter?: string;
   suggestedMapping: Record<string, string>;
@@ -520,11 +606,18 @@ export interface ImportCommitPayload {
   defaultResolution?: "overwrite" | "skip";
 }
 
+export interface ImportErrorDetailDTO {
+  rowNumber: number;
+  reason: string;
+}
+
 export interface ImportCommitResultDTO {
   importedCount: number;
   updatedCount: number;
   skippedCount: number;
   errorCount: number;
+  total?: number;
+  errors?: ImportErrorDetailDTO[];
 }
 
 export interface PriceAdjustmentAction {

@@ -952,6 +952,34 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
         callerUser.platform_role === "platform_owner" ||
         impersonatorUser?.platform_role === "platform_owner";
 
+      // Если активен режим имперсонации и целевым пространством является исходная организация партнера или платформы —
+      // выполняем штатный выход из имперсонации с возвратом исходных прав и токенов
+      if (
+        impersonatorUser &&
+        (targetTenant.id === impersonatorUser.tenant_id ||
+          (isPlatformOwner && (targetTenant.slug === "voxly" || targetTenant.id === impersonatorUser.tenant_id)))
+      ) {
+        const adminRefreshToken = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"] || "";
+        const adminAccessToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+        const tokens = await service.exitImpersonation(
+          {
+            adminRefreshToken,
+            adminAccessToken,
+            cookieRefreshToken: cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"],
+            impersonatorId: impersonatorUser.id,
+          },
+          {
+            userAgent: request.headers["user-agent"],
+            ip: request.ip,
+          },
+        );
+        setAuthCookies(request, reply, tokens);
+        return reply.send({
+          success: true,
+          data: tokens,
+        });
+      }
+
       const partnerTenantId = impersonatorUser ? impersonatorUser.tenant_id : callerUser.tenant_id;
       const isPartner =
         callerUser.is_partner === true ||

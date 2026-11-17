@@ -12,7 +12,7 @@ import { z } from "zod";
 // звонка. Обязательно только имя — на Person у Twenty nullable всё остальное.
 // ---------------------------------------------------------------------------
 
-export const contactChannelSchema = z.enum(["telegram", "whatsapp", "rumax", "phone", "email"]);
+export const contactChannelSchema = z.enum(["telegram", "whatsapp", "max", "rumax", "phone", "email"]);
 
 export const socialKindSchema = z.enum([
   "telegram",

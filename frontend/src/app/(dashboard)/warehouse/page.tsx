@@ -29,6 +29,8 @@ import {
   ChevronDown,
   X,
   FileSpreadsheet,
+  Eye,
+  Edit2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -45,6 +47,7 @@ import {
   useSupplierOrders,
   usePaySupplierOrder,
   useCreateReceiptFromSupplierOrder,
+  useDeleteSupplierOrder,
   useWarehouseSettings,
   useUpdateWarehouseSettings,
   useDeleteWarehouseItem,
@@ -59,6 +62,9 @@ import {
 import { CreateItemModal } from "@/components/warehouse/CreateItemModal";
 import { IntakeModal } from "@/components/warehouse/IntakeModal";
 import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierOrderModal";
+import { EditSupplierOrderModal } from "@/components/warehouse/EditSupplierOrderModal";
+import { SupplierOrderDetailModal } from "@/components/warehouse/SupplierOrderDetailModal";
+import { ReceiptSupplierOrderModal } from "@/components/warehouse/ReceiptSupplierOrderModal";
 import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
 import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
 import { cn } from "@/lib/utils";
@@ -121,6 +127,11 @@ function WarehouseContent() {
   const [createSupplierOrderModalOpen, setCreateSupplierOrderModalOpen] = useState(false);
   const [selectedAggregatedIds, setSelectedAggregatedIds] = useState<Set<string>>(new Set());
 
+  // Модальные окна заказов поставщикам
+  const [selectedOrderForEdit, setSelectedOrderForEdit] = useState<SupplierOrderDTO | null>(null);
+  const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<SupplierOrderDTO | null>(null);
+  const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<SupplierOrderDTO | null>(null);
+
   // Выбор позиций для массовых действий и модалки
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -146,6 +157,7 @@ function WarehouseContent() {
   const updatePurchaseMutation = useUpdatePurchaseRequest();
   const paySupplierOrderMutation = usePaySupplierOrder();
   const createReceiptMutation = useCreateReceiptFromSupplierOrder();
+  const deleteSupplierOrderMutation = useDeleteSupplierOrder();
   const exportMutation = useExportWarehouseItems();
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
 
@@ -306,21 +318,38 @@ function WarehouseContent() {
     }
   };
 
-  const handleCreateReceipt = async (order: SupplierOrderDTO) => {
+  const handleOpenReceiptModal = (order: SupplierOrderDTO) => {
+    setSelectedOrderForReceipt(order);
+  };
+
+  const handleOpenEditModal = (order: SupplierOrderDTO) => {
+    if (order.status === "received") {
+      toast.error("Нельзя редактировать заказ, товары по которому уже оприходованы на склад");
+      return;
+    }
+    setSelectedOrderForEdit(order);
+  };
+
+  const handleDeleteSupplierOrder = async (order: SupplierOrderDTO) => {
+    if (order.status === "received") {
+      toast.error("Нельзя удалить заказ, по которому уже оприходован товар на склад");
+      return;
+    }
     if (
       !confirm(
-        `Сформировать приходную накладную по заказу №${order.orderNumber}? Партии будут оприходованы, а остатки на складе увеличены.`,
+        `Удалить заказ поставщику №${order.orderNumber}? Все заявки на закупку вернутся в статус «В ожидании», а оплата (если была) будет отменена.`,
       )
     ) {
       return;
     }
     try {
-      const res = await createReceiptMutation.mutateAsync(order.id);
-      toast.success(
-        `Приходная накладная создана: оприходовано партий: ${res.batchesCreated}, статус заказа — Поступило`,
-      );
+      await deleteSupplierOrderMutation.mutateAsync(order.id);
+      toast.success(`Заказ №${order.orderNumber} удален, заявки возвращены в очередь`);
+      if (selectedOrderForDetail?.id === order.id) {
+        setSelectedOrderForDetail(null);
+      }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось создать приходную накладную");
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить заказ поставщику");
     }
   };
 
@@ -1101,7 +1130,7 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Оплата / Приход
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[240px]">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[260px]">
                     Действия
                   </th>
                 </tr>
@@ -1121,7 +1150,11 @@ function WarehouseContent() {
                   const isReceived = order.status === "received";
 
                   return (
-                    <tr key={order.id} className="transition-colors hover:bg-[#fafafa]">
+                    <tr
+                      key={order.id}
+                      onClick={() => setSelectedOrderForDetail(order)}
+                      className="transition-colors hover:bg-[#fafafa] cursor-pointer"
+                    >
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs font-bold text-[#111111]">
                           {order.orderNumber}
@@ -1176,14 +1209,39 @@ function WarehouseContent() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div
+                          className="flex items-center justify-end gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Кнопка Просмотр */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOrderForDetail(order)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors"
+                            title="Просмотр деталей заказа"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+
+                          {/* Кнопка Редактировать */}
+                          {!isReceived && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditModal(order)}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors"
+                              title="Редактировать заказ"
+                            >
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+
                           {/* Кнопка Оплачено */}
                           {!isPaid && order.status !== "cancelled" && (
                             <button
                               type="button"
                               onClick={() => handlePayOrder(order)}
                               disabled={paySupplierOrderMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 h-7 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors"
                               title="Оплатить заказ поставщику (создать расходный ордер в кассе)"
                             >
                               <CreditCard className="h-3 w-3" />
@@ -1191,17 +1249,17 @@ function WarehouseContent() {
                             </button>
                           )}
 
-                          {/* Кнопка Создать приходную накладную */}
+                          {/* Кнопка Оприходовать */}
                           {!isReceived && order.status !== "cancelled" && (
                             <button
                               type="button"
-                              onClick={() => handleCreateReceipt(order)}
+                              onClick={() => handleOpenReceiptModal(order)}
                               disabled={createReceiptMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
-                              title="Создать приходную накладную и пополнить остатки склада"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 h-7 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
+                              title="Оприходовать заказ на склад"
                             >
                               <ArrowDownToLine className="h-3 w-3" />
-                              Создать накладную
+                              Оприходовать
                             </button>
                           )}
 
@@ -1210,6 +1268,19 @@ function WarehouseContent() {
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               На складе
                             </span>
+                          )}
+
+                          {/* Кнопка Удалить */}
+                          {!isReceived && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSupplierOrder(order)}
+                              disabled={deleteSupplierOrderMutation.isPending}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 shadow-xs transition-colors"
+                              title="Удалить заказ поставщику"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -1354,6 +1425,40 @@ function WarehouseContent() {
         onSuccess={() => {
           setSelectedAggregatedIds(new Set());
           setActiveTab("supplier_orders");
+        }}
+      />
+
+      <SupplierOrderDetailModal
+        open={Boolean(selectedOrderForDetail)}
+        onClose={() => setSelectedOrderForDetail(null)}
+        order={selectedOrderForDetail}
+        onEdit={(o) => {
+          setSelectedOrderForDetail(null);
+          handleOpenEditModal(o);
+        }}
+        onPay={(o) => handlePayOrder(o)}
+        onReceipt={(o) => {
+          setSelectedOrderForDetail(null);
+          handleOpenReceiptModal(o);
+        }}
+        onDelete={(o) => handleDeleteSupplierOrder(o)}
+      />
+
+      <EditSupplierOrderModal
+        open={Boolean(selectedOrderForEdit)}
+        onClose={() => setSelectedOrderForEdit(null)}
+        order={selectedOrderForEdit}
+        onSuccess={() => {
+          setSelectedOrderForEdit(null);
+        }}
+      />
+
+      <ReceiptSupplierOrderModal
+        open={Boolean(selectedOrderForReceipt)}
+        onClose={() => setSelectedOrderForReceipt(null)}
+        order={selectedOrderForReceipt}
+        onSuccess={() => {
+          setSelectedOrderForReceipt(null);
         }}
       />
 

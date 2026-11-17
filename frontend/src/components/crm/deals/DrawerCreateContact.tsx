@@ -20,11 +20,13 @@ import {
   Mail,
   MapPin,
   Maximize2,
+  MessageCircle,
   MoreHorizontal,
   Pencil,
   Phone,
   Plus,
   RotateCcw,
+  Send,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -85,6 +87,9 @@ export function DrawerCreateContact({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [maxAccount, setMaxAccount] = useState("");
+  const [telegram, setTelegram] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [companyName, setCompanyName] = useState(deal?.companyName ?? "");
   const [companyId, setCompanyId] = useState(deal?.companyId ?? "");
   const [jobTitle, setJobTitle] = useState("");
@@ -133,16 +138,30 @@ export function DrawerCreateContact({
     const firstName = parts[0] || "Новый контакт";
     const lastName = parts.slice(1).join(" ") || "";
 
+    const socialsList: Array<{ kind: "max" | "telegram" | "whatsapp"; value: string }> = [];
+    const cleanMax = maxAccount.trim() || phone.trim();
+    if (cleanMax) {
+      socialsList.push({ kind: "max", value: cleanMax });
+    }
+    if (telegram.trim()) {
+      socialsList.push({ kind: "telegram", value: telegram.trim() });
+    }
+    const cleanWa = whatsapp.trim() || phone.trim();
+    if (cleanWa) {
+      socialsList.push({ kind: "whatsapp", value: cleanWa });
+    }
+
     createContact.mutate(
       {
         first_name: firstName,
         last_name: lastName,
         email: email.trim() || undefined,
         phones: phone.trim() ? [{ number: phone.trim(), calling_code: "+7", country_code: "RU" }] : undefined,
+        socials: socialsList.length > 0 ? socialsList : undefined,
         company_name: companyName.trim() || undefined,
         company_id: companyId || undefined,
         job_title: jobTitle.trim() || undefined,
-        channel: "phone",
+        channel: cleanMax ? "max" : "phone",
         linkedin_link: linkedin.trim() || undefined,
         city: city.trim() || undefined,
         address: address.trim() || undefined,
@@ -413,6 +432,33 @@ export function DrawerCreateContact({
           </button>
           {socialOpen && (
             <div className="space-y-0.5 py-0.5">
+              <FieldRow icon={MessageCircle} label="MAX">
+                <input
+                  type="text"
+                  placeholder={phone.trim() ? phone.trim() : "@username или номер"}
+                  value={maxAccount}
+                  onChange={(e) => setMaxAccount(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={Send} label="Telegram">
+                <input
+                  type="text"
+                  placeholder="@username или ID"
+                  value={telegram}
+                  onChange={(e) => setTelegram(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={Phone} label="WhatsApp">
+                <input
+                  type="text"
+                  placeholder={phone.trim() ? phone.trim() : "+7 999 123 45 67"}
+                  value={whatsapp}
+                  onChange={(e) => setWhatsapp(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
               <FieldRow icon={Linkedin} label="LinkedIn">
                 <input
                   type="text"

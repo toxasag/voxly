@@ -2,7 +2,17 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Check, Loader2, LogOut, Plug, PlusCircle, ShieldCheck } from "lucide-react";
+import {
+  Check,
+  Loader2,
+  LogOut,
+  Plug,
+  PlusCircle,
+  ShieldCheck,
+  Building2,
+  ArrowRight,
+  Handshake,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWorkspaces, switchWorkspace } from "@/lib/api/use-workspaces";
 
@@ -105,11 +115,37 @@ export default function MenuPage() {
     return [];
   }, [workspacesData, currentSlug, tenant, user]);
 
-  const handleSwitchWorkspace = async (targetSlug: string) => {
+  const parentWorkspace = useMemo(
+    () => workspaces.find((ws) => ws.is_parent) ?? null,
+    [workspaces],
+  );
+
+  const isPartner =
+    user?.role === "partner" ||
+    Boolean(user?.is_partner) ||
+    Boolean(tenant?.is_partner) ||
+    isPlatformOwner;
+
+  const isPrivilegedUser =
+    isPlatformOwner ||
+    isPartner ||
+    user?.role === "owner" ||
+    user?.role === "admin" ||
+    user?.role === "manager";
+
+  const handleSwitchWorkspace = async (targetSlug: string, isTargetParent?: boolean) => {
     if (targetSlug === currentSlug) return;
     try {
       setSwitchingSlug(targetSlug);
-      await switchWorkspace(targetSlug, currentSlug, user?.email, user?.name);
+      await switchWorkspace(
+        targetSlug,
+        currentSlug,
+        user?.email,
+        user?.name,
+        isPartner,
+        isPlatformOwner,
+        isTargetParent,
+      );
     } catch (err) {
       console.error("Не удалось переключить организацию", err);
       setSwitchingSlug(null);
@@ -133,6 +169,61 @@ export default function MenuPage() {
       <div className="flex items-center justify-between px-1 pt-1">
         <Logo size="sm" href="/dashboard" />
       </div>
+
+      {/* CRM RETURN BRIDGE: Карточка быстрого возврата в кабинет партнёра */}
+      {parentWorkspace && isPrivilegedUser && (
+        <div className="rounded-[8px] border border-[#4a38f5]/30 bg-[#4a38f5]/[0.06] p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <Building2 className="h-4 w-4 text-[#4a38f5]" />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#4a38f5]">
+                  Управляющий партнёр
+                </span>
+              </div>
+              <p className="mt-1 truncate text-[14px] font-semibold text-[#111111]">
+                {parentWorkspace.name}
+              </p>
+              <p className="truncate text-xs text-[#666666]">
+                {parentWorkspace.slug}.getvoxly.ru
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={switchingSlug !== null}
+              onClick={() => handleSwitchWorkspace(parentWorkspace.slug, true)}
+              className="flex shrink-0 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#3d2ee0] cursor-pointer"
+            >
+              {switchingSlug === parentWorkspace.slug ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ArrowRight className="h-3.5 w-3.5" />
+              )}
+              <span>В кабинет</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Быстрое переключение для партнера между кабинетом и сделками CRM */}
+      {tenant?.is_partner && !parentWorkspace && (
+        <div className="flex gap-2">
+          <Link
+            href="/partner"
+            className="flex-1 flex items-center justify-center gap-2 rounded-[8px] border border-[#4a38f5]/30 bg-[#4a38f5]/10 py-2.5 px-3 text-xs font-semibold text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/15"
+          >
+            <Building2 className="h-3.5 w-3.5" />
+            <span>Кабинет партнёра</span>
+          </Link>
+          <Link
+            href="/crm/deals"
+            className="flex-1 flex items-center justify-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white py-2.5 px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+          >
+            <Handshake className="h-3.5 w-3.5 text-[#666666]" />
+            <span>Сделки CRM</span>
+          </Link>
+        </div>
+      )}
 
       {/* Блок пользователя: на десктопе он живёт в нижней части сайдбара. */}
       <Link

@@ -68,23 +68,63 @@ export type SupplierOrderStatus = z.infer<typeof supplierOrderStatusSchema>;
 
 export const createSupplierOrderSchema = z.object({
   supplier_name: z.string().min(1, "Имя поставщика обязательно").max(200),
+  supplier_company_id: z.string().uuid().optional().nullable(),
   purchase_request_ids: z.array(z.string().uuid()).optional(),
   items: z
     .array(
       z.object({
-        purchase_request_id: z.string().uuid().optional(),
-        item_id: z.string().uuid().optional(),
+        purchase_request_id: z.string().uuid().optional().nullable(),
+        purchase_request_ids: z.array(z.string().uuid()).optional(),
+        item_id: z.string().uuid().optional().nullable(),
         item_name: z.string().min(1),
         sku: z.string().default(""),
+        requested_quantity: z.number().nonnegative().default(0),
+        extra_quantity: z.number().nonnegative().default(0),
         quantity: z.number().positive(),
         unit: z.string().default("шт"),
         price: z.number().nonnegative(),
+        repair_order_id: z.string().uuid().optional().nullable(),
+        repair_orders: z.string().optional(),
       }),
     )
     .optional(),
   notes: z.string().default(""),
 });
 export type CreateSupplierOrderPayload = z.infer<typeof createSupplierOrderSchema>;
+
+export const updateSupplierOrderSchema = z.object({
+  supplier_name: z.string().min(1).max(200).optional(),
+  supplier_company_id: z.string().uuid().optional().nullable(),
+  notes: z.string().optional(),
+  status: supplierOrderStatusSchema.optional(),
+  items: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        purchase_request_id: z.string().uuid().optional().nullable(),
+        purchase_request_ids: z.array(z.string().uuid()).optional(),
+        item_id: z.string().uuid().optional().nullable(),
+        item_name: z.string().min(1),
+        sku: z.string().default(""),
+        requested_quantity: z.number().nonnegative().default(0),
+        extra_quantity: z.number().nonnegative().default(0),
+        quantity: z.number().positive(),
+        unit: z.string().default("шт"),
+        price: z.number().nonnegative(),
+        repair_order_id: z.string().uuid().optional().nullable(),
+        repair_orders: z.string().optional(),
+      }),
+    )
+    .optional(),
+});
+export type UpdateSupplierOrderPayload = z.infer<typeof updateSupplierOrderSchema>;
+
+export const receiptSupplierOrderSchema = z.object({
+  cash_account_id: z.string().uuid().optional(),
+  mark_paid: z.boolean().default(false),
+  comment: z.string().optional(),
+});
+export type ReceiptSupplierOrderPayload = z.infer<typeof receiptSupplierOrderSchema>;
 
 export const paySupplierOrderSchema = z.object({
   cash_account_id: z.string().uuid().optional(),
@@ -247,6 +287,10 @@ export interface SupplierOrderItemRow {
   item_id: string | null;
   item_name: string;
   sku: string;
+  requested_quantity?: string | number;
+  extra_quantity?: string | number;
+  repair_order_id?: string | null;
+  purchase_request_ids?: string[] | null;
   quantity: string | number;
   unit: string;
   price: string | number;
@@ -261,6 +305,11 @@ export interface SupplierOrderItemDTO {
   itemId: string | null;
   itemName: string;
   sku: string;
+  requestedQuantity: number;
+  extraQuantity: number;
+  repairOrderId?: string | null;
+  purchaseRequestIds?: string[];
+  repairOrders?: string;
   quantity: number;
   unit: string;
   price: number;
@@ -273,6 +322,7 @@ export interface SupplierOrderRow {
   tenant_id: string;
   order_number: string;
   supplier_name: string;
+  supplier_company_id?: string | null;
   status: string;
   total_amount: string | number;
   cash_account_id: string | null;
@@ -290,6 +340,7 @@ export interface SupplierOrderDTO {
   id: string;
   orderNumber: string;
   supplierName: string;
+  supplierCompanyId: string | null;
   status: SupplierOrderStatus;
   totalAmount: number;
   cashAccountId: string | null;
@@ -318,6 +369,7 @@ export type ExportWarehouseItemsPayload = z.infer<typeof exportWarehouseItemsSch
 export interface ImportParseResultDTO {
   headers: string[];
   sampleRows: string[][];
+  rows: string[][];
   totalRows: number;
   detectedDelimiter?: string;
   suggestedMapping: Record<string, string>;
@@ -380,11 +432,18 @@ export const importCommitSchema = z.object({
 });
 export type ImportCommitPayload = z.infer<typeof importCommitSchema>;
 
+export interface ImportErrorDetailDTO {
+  rowNumber: number;
+  reason: string;
+}
+
 export interface ImportCommitResultDTO {
   importedCount: number;
   updatedCount: number;
   skippedCount: number;
   errorCount: number;
+  total?: number;
+  errors?: ImportErrorDetailDTO[];
 }
 
 export const priceAdjustmentActionSchema = z.object({
