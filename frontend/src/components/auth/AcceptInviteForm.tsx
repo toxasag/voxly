@@ -11,7 +11,8 @@ import { apiClient, ApiClientError } from "@/lib/api/apiClient";
 import { PasswordField } from "@/components/auth/PasswordField";
 
 interface InvitePreview {
-  email: string;
+  email: string | null;
+  phone?: string | null;
   fullName: string;
   companyName: string;
   roleLabel: string;
@@ -47,7 +48,12 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
           `/auth/invite?token=${encodeURIComponent(token)}`,
           { retrying: true },
         );
-        if (!cancelled) setPreview(res.data);
+        if (!cancelled) {
+          setPreview(res.data);
+          if (res.data.phone) {
+            form.setValue("phone", formatPhone(res.data.phone));
+          }
+        }
       } catch (error) {
         if (cancelled) return;
         setLoadError(
@@ -179,7 +185,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
           <div className="min-w-0">
             <p className="truncate text-[13px] font-semibold text-[#111111]">{preview.companyName}</p>
             <p className="text-xs text-[#666666]">
-              {preview.email} · {preview.roleLabel}
+              {preview.email ?? (preview.phone ? formatPhone(preview.phone) : "")} · {preview.roleLabel}
             </p>
           </div>
         </div>

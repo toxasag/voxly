@@ -14,7 +14,9 @@ import {
   MessageSquare,
   Sparkles,
   GitMerge,
+  Globe,
   Boxes,
+  PackagePlus,
   type LucideIcon,
 } from "lucide-react";
 
@@ -84,24 +86,31 @@ export const MODULE_NAV: NavItem[] = [
     permission: entry.permission,
   })),
   {
-    label: "Склад",
+    label: "Услуги/Товары",
     href: "/warehouse",
-    icon: Boxes,
+    icon: PackagePlus,
     always: false,
-    moduleSlug: "service_center",
-    permission: "service_center:read",
+    moduleSlug: "products_services",
   },
 ];
 
 /** Каналы связи — отдельный блок сайдбара, как «Управление платформой». */
-export const CHANNEL_NAV: NavItem[] = CHANNEL_ENTRIES.map((entry) => ({
-  label: entry.label,
-  href: entry.href,
-  icon: entry.icon,
-  always: false,
-  moduleSlug: entry.slug,
-  permission: entry.permission,
-}));
+export const CHANNEL_NAV: NavItem[] = [
+  {
+    label: "Сайты",
+    href: "/channels/sites",
+    icon: Globe,
+    always: true,
+  },
+  ...CHANNEL_ENTRIES.map((entry) => ({
+    label: entry.label,
+    href: entry.href,
+    icon: entry.icon,
+    always: false,
+    moduleSlug: entry.slug,
+    permission: entry.permission,
+  })),
+];
 
 /** Маркетплейс входит в базовый тариф: без него отключённый модуль не вернуть. */
 export const MARKETPLACE_NAV: NavItem = {
@@ -190,6 +199,9 @@ export function isNavItemVisible(
   }
 
   if (item.always || item.moduleSlug === undefined) return true;
+  if (item.href === "/warehouse") {
+    return installedSlugs.has("products_services") || installedSlugs.has("service_center");
+  }
   return installedSlugs.has(item.moduleSlug);
 }
 

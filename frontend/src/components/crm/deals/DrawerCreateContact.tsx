@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   Briefcase,
   Building2,
@@ -17,6 +18,7 @@ import {
   Linkedin,
   Loader2,
   Mail,
+  MapPin,
   Maximize2,
   MoreHorizontal,
   Pencil,
@@ -26,7 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useCreateContact } from "@/lib/api/use-contacts";
+import { useCreateContact, useFindDuplicateContacts, contactFullName } from "@/lib/api/use-contacts";
 import { useCompanies } from "@/lib/api/use-companies";
 import { useTenantUsers } from "@/lib/api/use-tenant-users";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
@@ -87,8 +89,22 @@ export function DrawerCreateContact({
   const [companyId, setCompanyId] = useState(deal?.companyId ?? "");
   const [jobTitle, setJobTitle] = useState("");
   const [linkedin, setLinkedin] = useState("");
+  const [city, setCity] = useState("");
+  const [address, setAddress] = useState("");
   const [isFavorite, setIsFavorite] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [moreMenuOpen]);
 
   // Group collapses
   const [generalOpen, setGeneralOpen] = useState(true);
@@ -102,6 +118,8 @@ export function DrawerCreateContact({
   const tenantUsers = useTenantUsers();
   const companies = useCompanies({ limit: 50 });
   const createContact = useCreateContact();
+  const duplicatesQuery = useFindDuplicateContacts(phone);
+  const duplicates = duplicatesQuery.data ?? [];
 
   const currentUserName = useMemo(() => {
     const list = tenantUsers.data ?? [];
@@ -126,6 +144,8 @@ export function DrawerCreateContact({
         job_title: jobTitle.trim() || undefined,
         channel: "phone",
         linkedin_link: linkedin.trim() || undefined,
+        city: city.trim() || undefined,
+        address: address.trim() || undefined,
       },
       {
         onSuccess: (created) => {
@@ -303,6 +323,30 @@ export function DrawerCreateContact({
           <span className="text-xs font-semibold text-[#111111]">Поля</span>
         </div>
 
+        {/* Предупреждение о найденном дубликате по номеру */}
+        {duplicates.length > 0 && (
+          <div className="mx-4 my-2 flex items-center justify-between rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] shadow-2xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-[#854d0e]" />
+              <span className="truncate">
+                Контакт с таким номером уже есть: <strong>{contactFullName(duplicates[0])}</strong>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const dup = duplicates[0];
+                onSuccess?.(dup.id, contactFullName(dup));
+                onCreated?.({ id: dup.id, name: contactFullName(dup) });
+                onClose();
+              }}
+              className="shrink-0 rounded-[6px] bg-[#854d0e] px-2 py-1 text-[11px] font-medium text-white hover:bg-[#713f12] transition-colors cursor-pointer ml-2"
+            >
+              Выбрать его
+            </button>
+          </div>
+        )}
+
         {/* Группа 1: Общее */}
         <div>
           <button
@@ -331,6 +375,24 @@ export function DrawerCreateContact({
                   placeholder="Телефоны"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={Building2} label="Город">
+                <input
+                  type="text"
+                  placeholder="Город"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={MapPin} label="Адрес">
+                <input
+                  type="text"
+                  placeholder="Адрес"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
                   className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
                 />
               </FieldRow>

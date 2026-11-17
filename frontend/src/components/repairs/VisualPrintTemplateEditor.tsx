@@ -27,6 +27,8 @@ import {
   useUpdatePrintTemplate,
   useSetDefaultPrintTemplate,
   useDeletePrintTemplate,
+  useTogglePrintTemplateVisibility,
+  useDuplicatePrintTemplate,
   type PrintLayoutConfig,
   type PrintSectionType,
   type PrintTemplateDTO,
@@ -52,13 +54,6 @@ export interface VisualPrintTemplateEditorProps {
   sampleData?: PreviewSampleData;
 }
 
-const DOCUMENT_TYPES = [
-  { id: "work_order", label: "Акт приема", icon: FileText, desc: "Приемка оборудования" },
-  { id: "repair_order", label: "Заказ-наряд", icon: SlidersHorizontal, desc: "Рабочий лист мастера" },
-  { id: "completion_act", label: "Акт вып. работ", icon: FileCheck2, desc: "Выдача и гарантия" },
-  { id: "receipt", label: "Товарный чек", icon: Receipt, desc: "Квитанция об оплате" },
-] as const;
-
 export function VisualPrintTemplateEditor({
   open,
   onClose,
@@ -79,17 +74,15 @@ export function VisualPrintTemplateEditor({
   const updateMutation = useUpdatePrintTemplate();
   const setDefaultMutation = useSetDefaultPrintTemplate();
   const deleteMutation = useDeletePrintTemplate();
+  const toggleVisibilityMutation = useTogglePrintTemplateVisibility();
+  const duplicateMutation = useDuplicatePrintTemplate();
 
-  // Filter templates by current document type
-  const typeTemplates = allTemplates.filter(
-    (t) => t.documentType === documentType || t.slug === documentType,
-  );
-
-  // Active template
+  // Active template: resolves by selected ID across all templates, or default for documentType
   const currentTemplate =
-    typeTemplates.find((t) => t.id === selectedTemplateId) ??
-    typeTemplates.find((t) => t.isDefault) ??
-    typeTemplates[0] ??
+    (selectedTemplateId ? allTemplates.find((t) => t.id === selectedTemplateId) : null) ??
+    allTemplates.find((t) => (t.documentType === documentType || t.slug === documentType) && t.isDefault) ??
+    allTemplates.find((t) => t.documentType === documentType || t.slug === documentType) ??
+    allTemplates[0] ??
     null;
 
   // Local editing configuration state
@@ -102,6 +95,9 @@ export function VisualPrintTemplateEditor({
     if (currentTemplate && currentTemplate.layoutConfig) {
       setConfig(currentTemplate.layoutConfig);
       setSelectedTemplateId(currentTemplate.id);
+      if (currentTemplate.documentType && currentTemplate.documentType !== documentType) {
+        setDocumentType(currentTemplate.documentType);
+      }
       setHasChanges(false);
     } else {
       const preset = getPresetByDocumentType(documentType);
@@ -145,33 +141,57 @@ export function VisualPrintTemplateEditor({
     }
   };
 
-  // Save changes
+  // Save changes (creates client version if system baseline, updates in place if custom)
   const handleSave = async () => {
     try {
       if (currentTemplate) {
-        await updateMutation.mutateAsync({
+        const updated = await updateMutation.mutateAsync({
           id: currentTemplate.id,
           payload: {
             layout_config: config,
             document_type: documentType,
           },
         });
-        toast.success("Шаблон успешно сохранен");
+        if (updated) {
+          if (!currentTemplate.isCustom && updated.isCustom) {
+            setSelectedTemplateId(updated.id);
+            setDocumentType(updated.documentType);
+            toast.success("Создана и сохранена пользовательская копия шаблона");
+          } else {
+            toast.success("Шаблон успешно сохранен");
+          }
+        }
       } else {
         const preset = getPresetByDocumentType(documentType);
-        await createMutation.mutateAsync({
-          name: `${preset.name} (Копия)`,
+        const created = await createMutation.mutateAsync({
+          name: `${preset.name} (пользовательский)`,
           document_type: documentType,
           page_size: "A4",
           orientation: "portrait",
           layout_config: config,
           is_default: true,
+          is_custom: true,
         });
+        setSelectedTemplateId(created.id);
         toast.success("Новый шаблон создан и сохранен");
       }
       setHasChanges(false);
-    } catch (err) {
+    } catch {
       toast.error("Не удалось сохранить шаблон");
+    }
+  };
+
+  // Toggle visibility in quick print menu
+  const handleToggleVisibility = async (id: string) => {
+    try {
+      const updated = await toggleVisibilityMutation.mutateAsync(id);
+      toast.success(
+        updated.isHidden
+          ? "Шаблон скрыт из меню быстрой печати"
+          : "Шаблон включен в меню быстрой печати",
+      );
+    } catch {
+      toast.error("Не удалось изменить видимость шаблона");
     }
   };
 
@@ -185,23 +205,19 @@ export function VisualPrintTemplateEditor({
     }
   };
 
-  // Create new / clone
-  const handleClone = async () => {
+  // Duplicate template
+  const handleDuplicate = async (id?: string) => {
+    const targetId = id || currentTemplate?.id;
+    if (!targetId) return;
     try {
-      const preset = getPresetByDocumentType(documentType);
-      const baseName = currentTemplate ? currentTemplate.name : preset.name;
-      const res = await createMutation.mutateAsync({
-        name: `${baseName} (Копия ${new Date().toLocaleDateString("ru-RU")})`,
-        document_type: documentType,
-        page_size: "A4",
-        orientation: "portrait",
-        layout_config: config,
-        is_default: false,
-      });
-      setSelectedTemplateId(res.id);
-      toast.success("Копия шаблона создана");
+      const duplicated = await duplicateMutation.mutateAsync(targetId);
+      setSelectedTemplateId(duplicated.id);
+      setDocumentType(duplicated.documentType);
+      setConfig(duplicated.layoutConfig);
+      setHasChanges(false);
+      toast.success(`Создана копия: ${duplicated.name}`);
     } catch {
-      toast.error("Не удалось создать копию");
+      toast.error("Не удалось создать копию шаблона");
     }
   };
 
@@ -252,8 +268,8 @@ export function VisualPrintTemplateEditor({
         {/* TOP BAR / HEADER                                                  */}
         {/* ================================================================= */}
         <div className="shrink-0 flex items-center justify-between border-b border-[#e5e5e5] bg-[#ffffff] px-4 py-2.5">
-          {/* Left: Title & Document Type Selector */}
-          <div className="flex items-center gap-4">
+          {/* Left: Title & Active Template Badge (Single source of truth) */}
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10 border border-[#4a38f5]/20 text-[#4a38f5]">
                 <Printer className="h-4 w-4" />
@@ -268,52 +284,40 @@ export function VisualPrintTemplateEditor({
               </div>
             </div>
 
-            <div className="h-5 w-px bg-[#e5e5e5] hidden md:block" />
-
-            {/* Document Types Selector */}
-            <div className="flex items-center gap-1 bg-[#f5f5f5] p-0.5 rounded-[8px] border border-[#e5e5e5]">
-              {DOCUMENT_TYPES.map((dt) => {
-                const Icon = dt.icon;
-                const isSelected = documentType === dt.id;
-                return (
-                  <button
-                    key={dt.id}
-                    type="button"
-                    onClick={() => {
-                      setDocumentType(dt.id);
-                      setSelectedTemplateId(null);
-                    }}
+            {currentTemplate && (
+              <>
+                <div className="h-5 w-px bg-[#e5e5e5] hidden sm:block" />
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-[#fafafa] border border-[#e5e5e5] text-xs">
+                  <span className="font-semibold text-[#111111] max-w-[160px] sm:max-w-[260px] truncate">
+                    {currentTemplate.name}
+                  </span>
+                  <span
                     className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-xs font-medium transition-colors cursor-pointer",
-                      isSelected
-                        ? "bg-white text-[#4a38f5] shadow-xs font-semibold"
-                        : "text-[#666666] hover:text-[#111111]",
+                      "rounded-[4px] px-1.5 py-0.2 text-[10px] font-medium",
+                      currentTemplate.isCustom
+                        ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                        : "bg-[#e5e5e5] text-[#555555]",
                     )}
                   >
-                    <Icon className="h-3 w-3" />
-                    <span>{dt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+                    {currentTemplate.isCustom ? "Пользовательский" : "Системный"}
+                  </span>
+                  {currentTemplate.isDefault && (
+                    <span className="rounded-[4px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 text-[10px] font-semibold border border-emerald-200">
+                      Основной
+                    </span>
+                  )}
+                  {currentTemplate.isHidden && (
+                    <span className="rounded-[4px] bg-amber-50 text-[#854d0e] px-1.5 py-0.2 text-[10px] font-medium border border-amber-200">
+                      Скрыт в меню
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Right: Actions, Zoom & Close */}
           <div className="flex items-center gap-2">
-            {/* Template Status Badge */}
-            {currentTemplate && (
-              <div className="hidden lg:flex items-center gap-1 px-2 py-0.5 rounded-[6px] bg-[#fafafa] border border-[#e5e5e5] text-[11px] text-[#666666]">
-                <span className="font-medium text-[#111111] truncate max-w-[150px]">
-                  {currentTemplate.name}
-                </span>
-                {currentTemplate.isDefault && (
-                  <span className="rounded bg-emerald-50 text-emerald-700 px-1 py-0.2 text-[9px] font-bold border border-emerald-200">
-                    Основной
-                  </span>
-                )}
-              </div>
-            )}
-
             {/* Zoom Controls */}
             <div className="flex items-center gap-1 border border-[#e5e5e5] rounded-[8px] bg-white p-0.5">
               <button
@@ -348,7 +352,7 @@ export function VisualPrintTemplateEditor({
             {/* Clone Button */}
             <button
               type="button"
-              onClick={handleClone}
+              onClick={() => void handleDuplicate()}
               className="hidden sm:flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#666666] hover:text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
               title="Создать копию текущего шаблона"
             >
@@ -407,14 +411,17 @@ export function VisualPrintTemplateEditor({
               config={config}
               onChangeConfig={handleConfigChange}
               currentTemplate={currentTemplate}
-              templatesList={typeTemplates}
+              templatesList={allTemplates}
               onSelectTemplate={(tpl) => {
                 setSelectedTemplateId(tpl.id);
+                setDocumentType(tpl.documentType);
                 setConfig(tpl.layoutConfig);
                 setHasChanges(false);
               }}
-              onCreateTemplate={handleClone}
-              onCloneTemplate={handleClone}
+              onCreateTemplate={() => void handleDuplicate()}
+              onCloneTemplate={() => void handleDuplicate()}
+              onDuplicateTemplate={(id) => void handleDuplicate(id)}
+              onToggleVisibility={(id) => void handleToggleVisibility(id)}
               onSetDefaultTemplate={handleSetDefault}
               onDeleteTemplate={handleDelete}
               onResetToPreset={() => {

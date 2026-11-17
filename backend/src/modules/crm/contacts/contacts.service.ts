@@ -21,6 +21,8 @@ import {
   type SqlParam,
   type TransactionClient,
 } from "../../../db/client.js";
+import { CrmEnrichmentService } from "../enrichment.service.js";
+import { ContactDedupeService } from "./dedupe.service.js";
 
 /**
  * Те же колонки с префиксом плюс счётчики связей и имя создателя.
@@ -34,7 +36,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
   c.job_title, c.company_name, c.company_id, c.channel,
-  c.linkedin_link, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
+  c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
   u.name AS created_by_name
@@ -148,6 +150,8 @@ export class ContactsService {
         `(c.first_name ILIKE ${placeholder}
           OR c.last_name ILIKE ${placeholder}
           OR c.middle_name ILIKE ${placeholder}
+          OR c.city ILIKE ${placeholder}
+          OR c.address ILIKE ${placeholder}
           OR c.phone ILIKE ${placeholder}
           OR c.email ILIKE ${placeholder}
           OR c.job_title ILIKE ${placeholder}
@@ -229,6 +233,37 @@ export class ContactsService {
     payload: CreateContactPayload,
     createdBy?: string,
   ): Promise<ContactDTO> {
+    const primaryPhone = payload.phones?.[0]?.number;
+
+    // Дедупликация при флаге merge_if_duplicate: если дубликат найден, объединяем в него
+    if (payload.merge_if_duplicate && primaryPhone) {
+      const dedupe = new ContactDedupeService();
+      const duplicates = await dedupe.findDuplicatesByPhone(tenantId, primaryPhone);
+      if (duplicates.length > 0 && duplicates[0]) {
+        const existingId = duplicates[0].id;
+        await this.update(tenantId, existingId, {
+          email: payload.email || undefined,
+          job_title: payload.job_title || undefined,
+          company_name: payload.company_name || undefined,
+          company_id: payload.company_id || undefined,
+          city: payload.city || undefined,
+          address: payload.address || undefined,
+        });
+
+        // Запуск обогащения
+        const enrichment = new CrmEnrichmentService();
+        void enrichment
+          .enrichContact(tenantId, existingId, {
+            phoneOverride: primaryPhone,
+            channels: ["telegram", "max", "whatsapp"],
+          })
+          .catch(() => {});
+
+        const updated = await this.get(tenantId, existingId);
+        if (updated) return updated;
+      }
+    }
+
     const id = await transaction((tx) => this.createInTx(tx, tenantId, payload, createdBy));
 
     // Перечитываем ради имени создателя и счётчиков: RETURNING не отдаёт
@@ -236,6 +271,18 @@ export class ContactsService {
     // как «Система».
     const contact = await this.get(tenantId, id);
     if (contact === null) throw new Error(`Contact ${id} disappeared right after insert`);
+
+    // Автоматический запуск кросс-канального обогащения при наличии телефона (Single Ingestion Pipeline)
+    const phoneToEnrich = contact.phone || primaryPhone;
+    if (phoneToEnrich && phoneToEnrich.replace(/\D/g, "").length >= 10) {
+      const enrichment = new CrmEnrichmentService();
+      void enrichment
+        .enrichContact(tenantId, id, {
+          phoneOverride: phoneToEnrich,
+          channels: ["telegram", "max", "whatsapp"],
+        })
+        .catch(() => {});
+    }
 
     return contact;
   }
@@ -269,9 +316,10 @@ export class ContactsService {
           phone, phone_country_code, phone_calling_code, additional_phones,
           email, telegram_username, telegram_chat_id, whatsapp, socials,
           job_title, company_name, company_id, channel, linkedin_link,
+          city, address,
           custom_fields, source_metadata, notes, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb,
-               $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, $22)
+               $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23, $24)
        RETURNING id`,
       [
         tenantId,
@@ -292,6 +340,8 @@ export class ContactsService {
         company.companyId,
         payload.channel ?? "phone",
         payload.linkedin_link ?? "",
+        payload.city ?? "",
+        payload.address ?? "",
         JSON.stringify(payload.custom_fields ?? {}),
         JSON.stringify(payload.source_metadata ?? {}),
         payload.notes ?? "",
@@ -379,6 +429,8 @@ export class ContactsService {
 
       if (payload.channel !== undefined) push("channel", payload.channel);
       if (payload.linkedin_link !== undefined) push("linkedin_link", payload.linkedin_link ?? "");
+      if (payload.city !== undefined) push("city", payload.city ?? "");
+      if (payload.address !== undefined) push("address", payload.address ?? "");
       if (payload.notes !== undefined) push("notes", payload.notes);
 
       // custom_fields is merged, not replaced, so a partial PATCH cannot silently
@@ -405,7 +457,19 @@ export class ContactsService {
     // Перечитываем через get(): RETURNING не умеет отдать имя создателя и число
     // сделок — они приходят JOIN-ами. Без этого inline-правка одного поля
     // возвращала бы DTO без автора, и группа «Система» на карточке очищалась бы.
-    return this.get(tenantId, updatedId);
+    const contact = await this.get(tenantId, updatedId);
+
+    if (payload.phones !== undefined && contact?.phone && contact.phone.replace(/\D/g, "").length >= 10) {
+      const enrichment = new CrmEnrichmentService();
+      void enrichment
+        .enrichContact(tenantId, updatedId, {
+          phoneOverride: contact.phone,
+          channels: ["telegram", "max", "whatsapp"],
+        })
+        .catch(() => {});
+    }
+
+    return contact;
   }
 
   /** Replaces custom_fields wholesale (PUT semantics for the JSONB bag). */

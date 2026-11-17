@@ -1300,17 +1300,23 @@ export class CrmPipelineService {
         };
       }
 
-      const pauseMins = input.pauseMinutes ?? 30;
+      const pauseMins = input.pauseMinutes ?? 60;
       const pauseRes = await tx.queryOne<{ paused_until: string }>(
         `UPDATE deals
          SET ai_paused_until = CASE
                WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '2090-01-01'::timestamptz THEN ai_paused_until
                ELSE now() + ($1 || ' minutes')::interval
              END,
+             custom_fields = jsonb_set(
+               COALESCE(custom_fields, '{}'::jsonb),
+               '{ai_paused_reason}',
+               to_jsonb($4::text),
+               true
+             ),
              updated_at = now()
          WHERE id = $2 AND tenant_id = $3
          RETURNING ai_paused_until::text AS paused_until`,
-        [pauseMins.toString(), activeDeal.id, input.tenantId],
+        [pauseMins.toString(), activeDeal.id, input.tenantId, "messenger_takeover"],
       );
 
       const msgRes = await tx.queryOne<{ id: string }>(

@@ -179,21 +179,48 @@ export class Bitrix24Service {
       external_id: string;
       status: string;
       created_at: Date | string;
+      site_name: string | null;
+      site_url: string | null;
     }>(
-      `SELECT id, label, external_id, status, created_at
-       FROM channel_accounts
-       WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL
-       ORDER BY label ASC, created_at DESC`,
+      `SELECT 
+         ca.id, 
+         ca.label, 
+         ca.external_id, 
+         ca.status, 
+         ca.created_at,
+         si.name AS site_name,
+         si.site_url AS site_url
+       FROM channel_accounts ca
+       LEFT JOIN site_integrations si ON si.tenant_id = ca.tenant_id 
+         AND (
+           ca.external_id ILIKE '%' || replace(replace(replace(si.site_url, 'https://', ''), 'http://', ''), '/', '') || '%'
+           OR si.site_url ILIKE '%' || replace(replace(replace(ca.external_id, 'https://', ''), 'http://', ''), '/', '') || '%'
+         )
+       WHERE ca.tenant_id = $1 AND ca.channel = 'webchat' AND ca.deleted_at IS NULL
+       ORDER BY ca.label ASC, ca.created_at DESC`,
       [tenantId],
     );
 
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.label || "Онлайн-чат",
-      site_domain: r.external_id || "",
-      status: r.status,
-      created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
-    }));
+    return rows.map((r) => {
+      let domain = r.external_id || "";
+      if (domain.startsWith("http://") || domain.startsWith("https://")) {
+        try {
+          const parsed = new URL(domain);
+          domain = parsed.hostname;
+        } catch {
+          domain = domain.replace(/^https?:\/\//i, "").split("/")[0] ?? "";
+        }
+      }
+      return {
+        id: r.id,
+        name: r.label || "Онлайн-чат",
+        site_domain: domain,
+        site_name: r.site_name ?? null,
+        site_url: r.site_url ?? (r.external_id.startsWith("http") ? r.external_id : `https://${r.external_id}`),
+        status: r.status,
+        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+      };
+    });
   }
 
   /**
@@ -254,7 +281,11 @@ export class Bitrix24Service {
   /**
    * Сохранение конфигурации вебхука Битрикс24.
    */
-  async saveConfig(tenantId: string, payload: UpdateBitrix24ConfigPayload): Promise<Bitrix24ConfigDTO> {
+  async saveConfig(
+    tenantId: string,
+    payload: UpdateBitrix24ConfigPayload,
+    options?: { syncNotificationChannels?: boolean; channelId?: string },
+  ): Promise<Bitrix24ConfigDTO> {
     const current = await this.getConfig(tenantId);
 
     const rawUrl = payload.webhook_url !== undefined ? payload.webhook_url.trim() : current.webhook_url;
@@ -332,6 +363,66 @@ export class Bitrix24Service {
 
     if (!row) {
       throw new AppError(500, "DB_ERROR", "Не удалось сохранить конфигурацию Битрикс24");
+    }
+
+    // Синхронизируем tenant_notification_channels только когда это явно запрошено (например, при вызове legacy API)
+    // и НИКОГДА не перезаписываем каналы вслепую, если у тенанта настроено несколько каналов Битрикс24.
+    const shouldSync = options?.syncNotificationChannels ?? true;
+    if (shouldSync && rawUrl) {
+      try {
+        const extraMeta = {
+          custom_source_id: customSourceId,
+          allowed_sources: cleanAllowedSources,
+          selected_widget_ids: cleanSelectedWidgetIds,
+          send_utm_marks: sendUtmMarks,
+          send_geo_data: sendGeoData,
+        };
+
+        if (options?.channelId) {
+          // Если передан конкретный channelId, обновляем строго его
+          await query(
+            `UPDATE tenant_notification_channels
+             SET extra_meta = tenant_notification_channels.extra_meta || $3,
+                 destination = $4,
+                 is_active = $5,
+                 updated_at = NOW()
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, options.channelId, JSON.stringify(extraMeta), rawUrl, isEnabled],
+          );
+        } else {
+          // Вызов из legacy API: проверяем существующие каналы
+          const bitrixChannels = await query<{ id: string }>(
+            `SELECT id FROM tenant_notification_channels
+             WHERE tenant_id = $1 AND channel_type = 'bitrix24'`,
+            [tenantId],
+          );
+
+          if (bitrixChannels.length === 1 && bitrixChannels[0]) {
+            // Ровно один канал — безопасно синхронизировать его
+            await query(
+              `UPDATE tenant_notification_channels
+               SET extra_meta = tenant_notification_channels.extra_meta || $3,
+                   destination = $4,
+                   is_active = $5,
+                   updated_at = NOW()
+               WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, bitrixChannels[0].id, JSON.stringify(extraMeta), rawUrl, isEnabled],
+            );
+          } else if (bitrixChannels.length === 0) {
+            // Каналов ещё нет — создаём первичный канал
+            await query(
+              `INSERT INTO tenant_notification_channels (
+                 tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+               )
+               VALUES ($1, 'bitrix24', $2, $3, $4, true)`,
+              [tenantId, rawUrl, JSON.stringify(extraMeta), isEnabled],
+            );
+          }
+          // При bitrixChannels.length > 1 НЕ перезаписываем каналы по destination!
+        }
+      } catch (syncErr) {
+        console.warn(`[Bitrix24Service] Sync to tenant_notification_channels warning:`, syncErr);
+      }
     }
 
     return {
@@ -572,19 +663,20 @@ export class Bitrix24Service {
       contactChannel?: string | null;
       customFields?: Record<string, unknown> | null;
     },
+    overrideConfig?: Partial<Bitrix24ConfigDTO>,
   ): Promise<{ success: boolean; leadId?: number | string; skipped?: boolean; error?: string; reason?: string }> {
     let targetUrl: string | null = null;
     let payload: Bitrix24LeadAddRequest | null = null;
     let resolvedSource: LeadSource | "manual" = "manual";
     let effectiveWidgetId: string | null = null;
+    let contactId: string | null = null;
 
     try {
-      const cfg = await this.getConfig(tenantId);
-      if (!cfg.is_enabled || !cfg.webhook_url) {
-        return { success: false, skipped: true, reason: "INTEGRATION_DISABLED" };
-      }
+      effectiveWidgetId = leadData.sourceWidgetId ||
+        (leadData.sourceMetadata?.widget_id as string | undefined) ||
+        (leadData.customFields?.widget_id as string | undefined) ||
+        null;
 
-      // 1. Проверка фильтрации по источникам заявки (allowed_sources)
       resolvedSource = resolveLeadSource({
         source: leadData.source,
         sourceMetadata: leadData.sourceMetadata,
@@ -593,10 +685,73 @@ export class Bitrix24Service {
         customFields: leadData.customFields,
       });
 
-      effectiveWidgetId = leadData.sourceWidgetId ||
-        (leadData.sourceMetadata?.widget_id as string | undefined) ||
-        (leadData.customFields?.widget_id as string | undefined) ||
-        null;
+      let cfg: Bitrix24ConfigDTO;
+      if (overrideConfig) {
+        const baseCfg = await this.getConfig(tenantId);
+        cfg = {
+          ...baseCfg,
+          ...overrideConfig,
+          allowed_sources: (overrideConfig.allowed_sources ?? baseCfg.allowed_sources) as LeadSource[],
+          selected_widget_ids: overrideConfig.selected_widget_ids ?? baseCfg.selected_widget_ids,
+        };
+      } else {
+        // Проверяем наличие активных каналов Битрикс24 в tenant_notification_channels
+        const channels = await query<{
+          id: string;
+          destination: string;
+          extra_meta: Record<string, unknown>;
+        }>(
+          `SELECT id, destination, extra_meta
+           FROM tenant_notification_channels
+           WHERE tenant_id = $1 AND channel_type = 'bitrix24' AND is_active = true
+           ORDER BY created_at ASC`,
+          [tenantId],
+        );
+
+        let matchedChannel = channels.find((c) => {
+          const meta = c.extra_meta || {};
+          const selWidgets = Array.isArray(meta.selected_widget_ids)
+            ? (meta.selected_widget_ids as string[])
+            : [];
+          if (effectiveWidgetId && selWidgets.length > 0) {
+            return selWidgets.includes(effectiveWidgetId);
+          }
+          return false;
+        });
+
+        if (!matchedChannel && channels.length > 0) {
+          // Если под конкретный виджет нет отдельного канала, ищем канал со всеми виджетами
+          matchedChannel = channels.find((c) => {
+            const meta = c.extra_meta || {};
+            const selWidgets = Array.isArray(meta.selected_widget_ids)
+              ? (meta.selected_widget_ids as string[])
+              : [];
+            return selWidgets.length === 0;
+          }) || channels[0];
+        }
+
+        if (matchedChannel) {
+          const meta = matchedChannel.extra_meta || {};
+          cfg = {
+            webhook_url: matchedChannel.destination,
+            is_enabled: true,
+            allowed_sources: (meta.allowed_sources as LeadSource[]) || ["site_widget"],
+            selected_widget_ids: (meta.selected_widget_ids as string[]) || [],
+            custom_source_id: (meta.custom_source_id as string) || BITRIX24_SOURCE_ID,
+            send_utm_marks: meta.send_utm_marks !== false,
+            send_geo_data: meta.send_geo_data !== false,
+            last_lead_id: (meta.last_lead_id as string) || null,
+            last_sync_at: (meta.last_sync_at as string) || null,
+            last_error: (meta.last_error as string) || null,
+          };
+        } else {
+          cfg = await this.getConfig(tenantId);
+        }
+      }
+
+      if (!cfg.is_enabled || !cfg.webhook_url) {
+        return { success: false, skipped: true, reason: "INTEGRATION_DISABLED" };
+      }
 
       if (cfg.allowed_sources && cfg.allowed_sources.length > 0) {
         if (!cfg.allowed_sources.includes(resolvedSource)) {
@@ -683,9 +838,23 @@ export class Bitrix24Service {
         }
       }
 
-      // 3. Получение названия и домена виджета из базы
+      // 3. Получение названия, домена виджета и contact_id из базы
       let widgetLabel: string | null = null;
       let widgetDomain: string | null = null;
+      contactId = null;
+
+      try {
+        const dRow = await queryOne<{ contact_id: string }>(
+          `SELECT contact_id FROM deals WHERE id = $1 AND tenant_id = $2`,
+          [leadData.leadId, tenantId],
+        );
+        if (dRow?.contact_id) {
+          contactId = dRow.contact_id;
+        }
+      } catch {
+        // non-blocking
+      }
+
       if (effectiveWidgetId) {
         try {
           const wRow = await queryOne<{ label: string; external_id: string }>(
@@ -839,19 +1008,79 @@ export class Bitrix24Service {
 
       targetUrl = normalizeBitrixWebhookUrl(cfg.webhook_url, "crm.lead.add.json");
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+      // Проверка идемпотентности: если лид уже был успешно отправлен на этот URL
+      const existingSuccess = await queryOne<{ id: string; bitrix_lead_id: string }>(
+        `SELECT id, bitrix_lead_id FROM bitrix24_sync_logs
+         WHERE tenant_id = $1 AND deal_id = $2 AND webhook_url = $3 AND status = 'success'
+         ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, leadData.leadId, targetUrl],
+      );
+      if (existingSuccess?.bitrix_lead_id) {
+        console.log(
+          `[Bitrix24] Lead ${leadData.leadId} was already exported to ${targetUrl} (Bitrix ID: ${existingSuccess.bitrix_lead_id})`,
+        );
+        return { success: true, leadId: existingSuccess.bitrix_lead_id };
+      }
 
-      const response = await fetch(targetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+      // Отказоустойчивая отправка с повторными попытками (до 3 попыток с exponential backoff)
+      const MAX_RETRIES = 3;
+      let lastError: Error | null = null;
+      let response: Response | null = null;
+      let rawText = "";
+      let data: Bitrix24LeadAddResponse | null = null;
 
-      clearTimeout(timeoutId);
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25_000);
 
-      const data = (await response.json()) as Bitrix24LeadAddResponse;
+        try {
+          response = await fetch(targetUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "User-Agent": "GetVoxly-CRM/1.0",
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+
+          clearTimeout(timeoutId);
+
+          rawText = await response.text();
+          try {
+            data = JSON.parse(rawText) as Bitrix24LeadAddResponse;
+          } catch {
+            data = null;
+          }
+
+          if (response.status < 500) {
+            lastError = null;
+            break;
+          } else {
+            lastError = new Error(`Сервер Битрикс24 вернул ошибку HTTP ${response.status}: ${rawText.slice(0, 150)}`);
+          }
+        } catch (fetchErr: unknown) {
+          clearTimeout(timeoutId);
+          lastError = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
+          console.warn(
+            `[Bitrix24] Attempt ${attempt}/${MAX_RETRIES} to send lead ${leadData.leadId} to ${targetUrl} failed: ${lastError.message}`,
+          );
+          if (attempt < MAX_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 1000 + Math.floor(Math.random() * 500)));
+          }
+        }
+      }
+
+      if (lastError || !response || !data) {
+        let errorMsg = lastError ? lastError.message : "Не удалось связаться с сервером Битрикс24";
+        if (lastError && lastError.name === "AbortError") {
+          errorMsg = "Таймаут соединения с Битрикс24 (25 с)";
+        } else if (errorMsg === "fetch failed") {
+          const cause = (lastError as { cause?: { message?: string } })?.cause?.message;
+          errorMsg = cause ? `Ошибка сетевого подключения к Битрикс24: ${cause}` : "Сбой сетевого соединения с Битрикс24";
+        }
+        throw new Error(errorMsg);
+      }
 
       if (!response.ok || data.error) {
         const errorText = data.error_description || data.error || `HTTP ${response.status}`;
@@ -869,6 +1098,31 @@ export class Bitrix24Service {
           leadSource: resolvedSource,
           widgetId: effectiveWidgetId,
         });
+
+        // Запись ошибки в timeline активности сделки
+        if (contactId) {
+          try {
+            await query(
+              `INSERT INTO contact_activities (
+                 tenant_id, contact_id, deal_id, activity_channel, activity_kind, direction, title, payload
+               )
+               VALUES ($1, $2, $3, 'bitrix24', 'crm_export', 'outbound', $4, $5)`,
+              [
+                tenantId,
+                contactId,
+                leadData.leadId,
+                "Ошибка экспорта в Битрикс24",
+                JSON.stringify({
+                  status: "error",
+                  error: errorText,
+                  webhook_url: targetUrl,
+                  widget_id: effectiveWidgetId,
+                }),
+              ],
+            );
+          } catch {}
+        }
+
         return { success: false, error: errorText };
       }
 
@@ -887,6 +1141,51 @@ export class Bitrix24Service {
           leadSource: resolvedSource,
           widgetId: effectiveWidgetId,
         });
+
+        // Запись успешной синхронизации в timeline активности сделки
+        if (contactId) {
+          try {
+            await query(
+              `INSERT INTO contact_activities (
+                 tenant_id, contact_id, deal_id, activity_channel, activity_kind, direction, title, payload
+               )
+               VALUES ($1, $2, $3, 'bitrix24', 'crm_export', 'outbound', $4, $5)`,
+              [
+                tenantId,
+                contactId,
+                leadData.leadId,
+                `Экспорт в Битрикс24 (Лид #${data.result})`,
+                JSON.stringify({
+                  status: "success",
+                  bitrix_lead_id: String(data.result),
+                  webhook_url: targetUrl,
+                  custom_source_id: effectiveSourceId,
+                  widget_id: effectiveWidgetId,
+                }),
+              ],
+            );
+          } catch {}
+        }
+
+        // Сохранение внешнего ID лида в custom_fields сделки
+        try {
+          await query(
+            `UPDATE deals
+             SET custom_fields = jsonb_set(
+               jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{bitrix24_lead_id}', $2::jsonb),
+               '{bitrix24_synced_at}', $3::jsonb
+             ),
+             updated_at = NOW()
+             WHERE tenant_id = $1 AND id = $4`,
+            [
+              tenantId,
+              JSON.stringify(String(data.result)),
+              JSON.stringify(new Date().toISOString()),
+              leadData.leadId,
+            ],
+          );
+        } catch {}
+
         return { success: true, leadId: data.result };
       }
 
@@ -907,7 +1206,7 @@ export class Bitrix24Service {
       let errorMsg: string;
       if (err instanceof Error) {
         if (err.name === "AbortError") {
-          errorMsg = "Таймаут соединения (20 с)";
+          errorMsg = "Таймаут соединения (25 с)";
         } else {
           const cause = (err as { cause?: { code?: string; message?: string } }).cause;
           const causeMsg = cause?.message || "";
@@ -935,6 +1234,31 @@ export class Bitrix24Service {
         leadSource: resolvedSource,
         widgetId: effectiveWidgetId,
       });
+
+      // Запись сбоя в timeline активности сделки
+      if (contactId) {
+        try {
+          await query(
+            `INSERT INTO contact_activities (
+               tenant_id, contact_id, deal_id, activity_channel, activity_kind, direction, title, payload
+             )
+             VALUES ($1, $2, $3, 'bitrix24', 'crm_export', 'outbound', $4, $5)`,
+            [
+              tenantId,
+              contactId,
+              leadData.leadId,
+              "Сбой отправки в Битрикс24",
+              JSON.stringify({
+                status: "error",
+                error: errorMsg,
+                webhook_url: targetUrl,
+                widget_id: effectiveWidgetId,
+              }),
+            ],
+          );
+        } catch {}
+      }
+
       return { success: false, error: errorMsg };
     }
   }
@@ -1025,12 +1349,14 @@ export class Bitrix24Service {
     logOrDealId: string,
   ): Promise<{ success: boolean; leadId?: number | string; error?: string }> {
     let targetDealId = logOrDealId;
-    const logRow = await queryOne<{ deal_id: string }>(
-      `SELECT deal_id FROM bitrix24_sync_logs WHERE id = $1 AND tenant_id = $2`,
+    let fallbackWidgetId: string | null = null;
+    const logRow = await queryOne<{ deal_id: string; widget_id: string | null }>(
+      `SELECT deal_id, widget_id FROM bitrix24_sync_logs WHERE id = $1 AND tenant_id = $2`,
       [logOrDealId, tenantId],
     );
     if (logRow?.deal_id) {
       targetDealId = logRow.deal_id;
+      fallbackWidgetId = logRow.widget_id;
     }
 
     const deal = await queryOne<{
@@ -1081,7 +1407,9 @@ export class Bitrix24Service {
       (customFields.ya_cid as string) ||
       null;
 
-    return this.sendLead(tenantId, {
+    const effectiveWidgetId = deal.source_widget_id || fallbackWidgetId;
+
+    const leadPayload = {
       leadId: deal.id,
       title: deal.title,
       contactName,
@@ -1094,10 +1422,148 @@ export class Bitrix24Service {
       utmTags: (customFields.utm_tags as Record<string, string>) || null,
       tenantIdentifier: deal.tenant_slug || deal.tenant_name || "getvoxly",
       sourceMetadata: deal.source_metadata,
-      sourceWidgetId: deal.source_widget_id,
+      sourceWidgetId: effectiveWidgetId,
       contactChannel: deal.contact_channel,
       customFields,
-    });
+    };
+
+    // Проверяем каналы Битрикс24 в tenant_notification_channels для выбора правильного вебхука и SOURCE_ID
+    const configuredChannels = await query<{
+      id: string;
+      destination: string;
+      extra_meta: Record<string, unknown>;
+    }>(
+      `SELECT id, destination, extra_meta
+       FROM tenant_notification_channels
+       WHERE tenant_id = $1 AND channel_type = 'bitrix24' AND is_active = true
+       ORDER BY created_at ASC`,
+      [tenantId],
+    );
+
+    if (configuredChannels.length > 0) {
+      let targetChannel = configuredChannels.find((c) => {
+        const meta = c.extra_meta || {};
+        const wids = Array.isArray(meta.selected_widget_ids)
+          ? (meta.selected_widget_ids as string[])
+          : [];
+        return effectiveWidgetId && wids.includes(effectiveWidgetId);
+      });
+
+      if (!targetChannel) {
+        targetChannel = configuredChannels.find((c) => {
+          const meta = c.extra_meta || {};
+          const wids = Array.isArray(meta.selected_widget_ids)
+            ? (meta.selected_widget_ids as string[])
+            : [];
+          return wids.length === 0;
+        });
+      }
+
+      if (!targetChannel) {
+        targetChannel = configuredChannels[0];
+      }
+
+      if (targetChannel) {
+        const meta = targetChannel.extra_meta || {};
+        const allowedSources = Array.isArray(meta.allowed_sources)
+          ? (meta.allowed_sources as LeadSource[])
+          : [];
+        const selectedWidgets = Array.isArray(meta.selected_widget_ids)
+          ? (meta.selected_widget_ids as string[])
+          : [];
+        const customSourceId =
+          typeof meta.custom_source_id === "string" && meta.custom_source_id.trim()
+            ? meta.custom_source_id.trim()
+            : BITRIX24_SOURCE_ID;
+
+        const res = await this.sendLead(tenantId, leadPayload, {
+          webhook_url: targetChannel.destination,
+          is_enabled: true,
+          allowed_sources: allowedSources,
+          selected_widget_ids: selectedWidgets,
+          custom_source_id: customSourceId,
+          send_utm_marks: meta.send_utm_marks !== false,
+          send_geo_data: meta.send_geo_data !== false,
+        });
+
+        if (res.success && res.leadId) {
+          try {
+            await query(
+              `UPDATE tenant_notification_channels
+               SET extra_meta = extra_meta || $3::jsonb, updated_at = NOW()
+               WHERE tenant_id = $1 AND id = $2`,
+              [
+                tenantId,
+                targetChannel.id,
+                JSON.stringify({
+                  last_lead_id: String(res.leadId),
+                  last_sync_at: new Date().toISOString(),
+                  last_error: null,
+                }),
+              ],
+            );
+          } catch {}
+        }
+        return res;
+      }
+    }
+
+    return this.sendLead(tenantId, leadPayload);
+  }
+
+  /**
+   * Повторная отправка всех неотправленных сделок в Битрикс24 (Replay Failed Syncs).
+   */
+  async replayFailedSyncs(tenantId: string): Promise<{
+    processed: number;
+    success: number;
+    failed: number;
+    results: Array<{ dealId: string; success: boolean; leadId?: string | number; error?: string }>;
+  }> {
+    const failedDeals = await query<{ deal_id: string }>(
+      `SELECT DISTINCT l.deal_id
+       FROM bitrix24_sync_logs l
+       WHERE l.tenant_id = $1
+         AND l.deal_id IS NOT NULL
+         AND l.status = 'error'
+         AND NOT EXISTS (
+           SELECT 1 FROM bitrix24_sync_logs s
+           WHERE s.tenant_id = l.tenant_id
+             AND s.deal_id = l.deal_id
+             AND s.status = 'success'
+         )
+       ORDER BY l.deal_id
+       LIMIT 50`,
+      [tenantId],
+    );
+
+    const results: Array<{ dealId: string; success: boolean; leadId?: string | number; error?: string }> = [];
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const row of failedDeals) {
+      try {
+        const res = await this.retryLeadSync(tenantId, row.deal_id);
+        if (res.success) {
+          successCount++;
+          results.push({ dealId: row.deal_id, success: true, leadId: res.leadId });
+        } else {
+          failedCount++;
+          results.push({ dealId: row.deal_id, success: false, error: res.error });
+        }
+      } catch (err: unknown) {
+        failedCount++;
+        const msg = err instanceof Error ? err.message : String(err);
+        results.push({ dealId: row.deal_id, success: false, error: msg });
+      }
+    }
+
+    return {
+      processed: failedDeals.length,
+      success: successCount,
+      failed: failedCount,
+      results,
+    };
   }
 
   private async updateSyncStatus(

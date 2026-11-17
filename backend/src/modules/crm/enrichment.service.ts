@@ -323,14 +323,52 @@ export class CrmEnrichmentService {
                  ) || ')',
                  updated_at = now()
              WHERE contact_id = $2 AND tenant_id = $3
-               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%')`,
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%' OR title ILIKE 'Заявка от Без имени%')`,
             [resolvedFullName, contactId, tenantId],
           );
         }
       });
     }
 
-    // 5. Логируем результаты верификации мессенджеров в таймлайн сделки
+    // 4.5. Сохраняем статус и результаты обогащения в custom_fields
+    const enrichmentMeta = {
+      status: "completed",
+      checked_at: new Date().toISOString(),
+      channels: {
+        telegram: {
+          exists: tgRes?.exists ?? false,
+          username: tgRes?.username ?? null,
+          userId: tgRes?.userId ?? null,
+          error: tgRes?.error ?? null,
+        },
+        max: {
+          exists: maxRes?.exists ?? false,
+          username: maxRes?.username ?? null,
+          userId: maxRes?.userId ?? null,
+          error: maxRes?.error ?? null,
+        },
+        whatsapp: {
+          exists: waRes?.exists ?? false,
+          phone: waRes?.exists ? `+${phoneDigits}` : null,
+          error: waRes?.error ?? null,
+        },
+      },
+      enriched_fields: enrichedFields,
+    };
+
+    try {
+      await query(
+        `UPDATE contacts
+         SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{enrichment}', $1::jsonb),
+             updated_at = now()
+         WHERE id = $2 AND tenant_id = $3`,
+        [JSON.stringify(enrichmentMeta), contactId, tenantId],
+      );
+    } catch {
+      // Игнорируем ошибку обновления custom_fields
+    }
+
+    // 5. Логируем результаты верификации мессенджеров в таймлайн сделки и активность контакта
     try {
       let targetDealId = options?.dealId;
       if (!targetDealId) {
@@ -354,24 +392,41 @@ export class CrmEnrichmentService {
         const dummyHeader = isDummy ? "⚠️ Внимание: номер определен как фиктивный/тестовый!\n" : "";
         const auditMessage = `${dummyHeader}Результат проверки мессенджеров для +${phoneDigits}:\n• ${tgLabel}\n• ${waLabel}\n• ${maxLabel}`;
 
-        await query(
-          `INSERT INTO deal_messages
-             (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, metadata)
-           VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral', $4::jsonb)`,
-          [
-            tenantId,
-            targetDealId,
-            auditMessage,
-            JSON.stringify({
-              event: "messenger_verification",
-              phone: `+${phoneDigits}`,
-              isFake: isDummy,
-              telegram: tgRes?.exists ?? false,
-              whatsapp: waRes?.exists ?? false,
-              max: maxRes?.exists ?? false,
-            }),
-          ],
+        const auditMeta = JSON.stringify({
+          event: "messenger_verification",
+          phone: `+${phoneDigits}`,
+          isFake: isDummy,
+          telegram: tgRes?.exists ?? false,
+          whatsapp: waRes?.exists ?? false,
+          max: maxRes?.exists ?? false,
+        });
+
+        const existingAudit = await queryOne<{ id: string }>(
+          `SELECT id FROM deal_messages
+           WHERE tenant_id = $1 AND deal_id = $2
+             AND source = 'system'
+             AND metadata->>'event' = 'messenger_verification'
+             AND metadata->>'phone' = $3
+             AND created_at >= now() - interval '24 hours'
+           LIMIT 1`,
+          [tenantId, targetDealId, `+${phoneDigits}`],
         );
+
+        if (existingAudit) {
+          await query(
+            `UPDATE deal_messages
+             SET content = $1, metadata = $2::jsonb
+             WHERE id = $3 AND tenant_id = $4`,
+            [auditMessage, auditMeta, existingAudit.id, tenantId],
+          );
+        } else {
+          await query(
+            `INSERT INTO deal_messages
+               (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status, metadata)
+             VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral', $4::jsonb)`,
+            [tenantId, targetDealId, auditMessage, auditMeta],
+          );
+        }
       }
     } catch {
       // Ошибки логирования аудита не блокируют возврат результата

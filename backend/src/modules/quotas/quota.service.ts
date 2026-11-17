@@ -1,4 +1,4 @@
-import { query, queryOne, withTenant, type TransactionClient } from "../../db/client.js";
+import { query, queryOne, withTenant, runWithTenantContext, type TransactionClient } from "../../db/client.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import {
   SYSTEM_FEATURE_QUOTAS,
@@ -108,59 +108,61 @@ export class QuotaService {
    * Проверка квоты для тенанта: разрешено ли создать ещё одну сущность.
    */
   async checkQuota(tenantId: string, featureKey: string): Promise<QuotaCheckResult> {
-    const current = await this.getCurrentUsage(tenantId, featureKey);
+    return runWithTenantContext(tenantId, async () => {
+      const current = await this.getCurrentUsage(tenantId, featureKey);
 
-    // 1. Проверяем наличие индивидуального переопределения для конкретного тенанта
-    const custom = await queryOne<CustomQuotaRow>(
-      `SELECT feature_key, is_unlimited, max_limit
-       FROM tenant_feature_quotas
-       WHERE tenant_id = $1 AND feature_key = $2`,
-      [tenantId, featureKey],
-    );
+      // 1. Проверяем наличие индивидуального переопределения для конкретного тенанта
+      const custom = await queryOne<CustomQuotaRow>(
+        `SELECT feature_key, is_unlimited, max_limit
+         FROM tenant_feature_quotas
+         WHERE tenant_id = $1 AND feature_key = $2`,
+        [tenantId, featureKey],
+      );
 
-    if (custom) {
-      if (custom.is_unlimited || custom.max_limit === -1) {
+      if (custom) {
+        if (custom.is_unlimited || custom.max_limit === -1) {
+          return {
+            allowed: true,
+            isUnlimited: true,
+            current,
+            maxLimit: null,
+          };
+        }
         return {
-          allowed: true,
-          isUnlimited: true,
+          allowed: current < custom.max_limit,
+          isUnlimited: false,
           current,
-          maxLimit: null,
+          maxLimit: custom.max_limit,
         };
       }
+
+      // 2. Если индивидуального переопределения нет — проверяем базовый лимит и installed_modules.quantity
+      let defaultLimit = await this.getDefaultLimit(featureKey);
+
+      let moduleSlug: string | null = null;
+      if (featureKey === "webchat_widgets") moduleSlug = "webchat";
+      else if (featureKey === "ai_agents") moduleSlug = "ai_bots";
+      else if (featureKey === "telegram_channels") moduleSlug = "telegram";
+      else if (featureKey === "whatsapp_channels") moduleSlug = "whatsapp";
+      else if (featureKey === "max_channels") moduleSlug = "max";
+
+      if (moduleSlug) {
+        const installed = await queryOne<{ quantity: number }>(
+          `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = $2`,
+          [tenantId, moduleSlug],
+        );
+        if (installed && Number(installed.quantity) > defaultLimit) {
+          defaultLimit = Number(installed.quantity);
+        }
+      }
+
       return {
-        allowed: current < custom.max_limit,
+        allowed: current < defaultLimit,
         isUnlimited: false,
         current,
-        maxLimit: custom.max_limit,
+        maxLimit: defaultLimit,
       };
-    }
-
-    // 2. Если индивидуального переопределения нет — проверяем базовый лимит и installed_modules.quantity
-    let defaultLimit = await this.getDefaultLimit(featureKey);
-
-    let moduleSlug: string | null = null;
-    if (featureKey === "webchat_widgets") moduleSlug = "webchat";
-    else if (featureKey === "ai_agents") moduleSlug = "ai_bots";
-    else if (featureKey === "telegram_channels") moduleSlug = "telegram";
-    else if (featureKey === "whatsapp_channels") moduleSlug = "whatsapp";
-    else if (featureKey === "max_channels") moduleSlug = "max";
-
-    if (moduleSlug) {
-      const installed = await queryOne<{ quantity: number }>(
-        `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = $2`,
-        [tenantId, moduleSlug],
-      );
-      if (installed && Number(installed.quantity) > defaultLimit) {
-        defaultLimit = Number(installed.quantity);
-      }
-    }
-
-    return {
-      allowed: current < defaultLimit,
-      isUnlimited: false,
-      current,
-      maxLimit: defaultLimit,
-    };
+    });
   }
 
   /**
@@ -186,45 +188,47 @@ export class QuotaService {
    * Получение полного списка квот с фактическим использованием для тенанта.
    */
   async getTenantQuotas(tenantId: string): Promise<TenantQuotaItemDTO[]> {
-    const customRows = await query<CustomQuotaRow>(
-      `SELECT feature_key, is_unlimited, max_limit
-       FROM tenant_feature_quotas
-       WHERE tenant_id = $1`,
-      [tenantId],
-    );
+    return runWithTenantContext(tenantId, async () => {
+      const customRows = await query<CustomQuotaRow>(
+        `SELECT feature_key, is_unlimited, max_limit
+         FROM tenant_feature_quotas
+         WHERE tenant_id = $1`,
+        [tenantId],
+      );
 
-    const customMap = new Map<string, CustomQuotaRow>();
-    for (const row of customRows) {
-      customMap.set(row.feature_key, row);
-    }
+      const customMap = new Map<string, CustomQuotaRow>();
+      for (const row of customRows) {
+        customMap.set(row.feature_key, row);
+      }
 
-    const results: TenantQuotaItemDTO[] = [];
+      const results: TenantQuotaItemDTO[] = [];
 
-    for (const def of SYSTEM_FEATURE_QUOTAS) {
-      const usage = await this.getCurrentUsage(tenantId, def.key);
-      const defaultLimit = await this.getDefaultLimit(def.key);
-      const custom = customMap.get(def.key);
+      for (const def of SYSTEM_FEATURE_QUOTAS) {
+        const usage = await this.getCurrentUsage(tenantId, def.key);
+        const defaultLimit = await this.getDefaultLimit(def.key);
+        const custom = customMap.get(def.key);
 
-      const isCustom = custom !== undefined;
-      const isUnlimited = custom ? Boolean(custom.is_unlimited || custom.max_limit === -1) : false;
-      const maxLimit = custom && !isUnlimited ? custom.max_limit : defaultLimit;
-      const allowed = isUnlimited || usage < maxLimit;
+        const isCustom = custom !== undefined;
+        const isUnlimited = custom ? Boolean(custom.is_unlimited || custom.max_limit === -1) : false;
+        const maxLimit = custom && !isUnlimited ? custom.max_limit : defaultLimit;
+        const allowed = isUnlimited || usage < maxLimit;
 
-      results.push({
-        feature_key: def.key,
-        name: def.name,
-        description: def.description,
-        category: def.category,
-        current_usage: usage,
-        is_unlimited: isUnlimited,
-        max_limit: isUnlimited ? -1 : maxLimit,
-        allowed,
-        default_limit: defaultLimit,
-        is_custom_override: isCustom,
-      });
-    }
+        results.push({
+          feature_key: def.key,
+          name: def.name,
+          description: def.description,
+          category: def.category,
+          current_usage: usage,
+          is_unlimited: isUnlimited,
+          max_limit: isUnlimited ? -1 : maxLimit,
+          allowed,
+          default_limit: defaultLimit,
+          is_custom_override: isCustom,
+        });
+      }
 
-    return results;
+      return results;
+    });
   }
 
   /**
@@ -236,8 +240,10 @@ export class QuotaService {
   ): Promise<TenantQuotaItemDTO[]> {
     await withTenant(tenantId, async (tx: TransactionClient) => {
       for (const item of quotas) {
-        const isUnlimited = item.is_unlimited === true || item.max_limit === -1;
-        const maxLimit = isUnlimited ? -1 : Math.max(1, item.max_limit ?? 1);
+        const isUnlimited = Boolean(item.is_unlimited);
+        const maxLimit = isUnlimited
+          ? -1
+          : Math.max(1, typeof item.max_limit === "number" && item.max_limit > 0 ? item.max_limit : 1);
 
         await tx.query(
           `INSERT INTO tenant_feature_quotas (tenant_id, feature_key, is_unlimited, max_limit, updated_at)

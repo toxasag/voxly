@@ -165,14 +165,31 @@ export function VisualPrintCanvas({
             <div className="flex-1 space-y-1.5">
               <div className="flex items-center gap-3">
                 {header.showLogo && (
-                  <div
-                    className="flex shrink-0 items-center justify-center rounded border border-[#e5e5e5] bg-[#fafafa] px-2 py-1 text-xs font-semibold text-[#666666]"
-                    style={{ width: `${header.logoWidth}px`, height: "46px" }}
-                  >
-                    <span className="truncate uppercase tracking-wider text-[11px] text-[#4a38f5] font-bold">
-                      {header.companyName ? header.companyName.slice(0, 15) : "VOXLY SERVICE"}
-                    </span>
-                  </div>
+                  header.logoUrl ? (
+                    <div
+                      className="flex shrink-0 items-center justify-start overflow-hidden"
+                      style={{ maxWidth: `${header.logoWidth}px` }}
+                    >
+                      <img
+                        src={header.logoUrl}
+                        alt="Логотип сервиса"
+                        style={{
+                          maxWidth: `${header.logoWidth}px`,
+                          maxHeight: "48px",
+                          objectFit: "contain",
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className="flex shrink-0 items-center justify-center rounded border border-[#e5e5e5] bg-[#fafafa] px-2 py-1 text-xs font-semibold text-[#666666]"
+                      style={{ width: `${header.logoWidth}px`, height: "46px" }}
+                    >
+                      <span className="truncate uppercase tracking-wider text-[11px] text-[#4a38f5] font-bold">
+                        {header.companyName ? header.companyName.slice(0, 15) : "VOXLY SERVICE"}
+                      </span>
+                    </div>
+                  )
                 )}
                 {header.showCompanyDetails && (
                   <div>

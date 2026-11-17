@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus, Banknote, TrendingUp, TrendingDown, DollarSign, ArrowRightLeft, Receipt, FileText, BarChart3 } from "lucide-react";
+import { Plus, Banknote, TrendingUp, TrendingDown, DollarSign, ArrowRightLeft, Receipt, FileText, BarChart3, FolderTree } from "lucide-react";
 import { BalanceCards } from "@/components/finance/BalanceCards";
 import { TransactionsTable } from "@/components/finance/TransactionsTable";
 import { CreateTransactionModal } from "@/components/finance/CreateTransactionModal";
@@ -10,6 +10,7 @@ import { TransferModal } from "@/components/finance/TransferModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { InvoiceViewModal } from "@/components/finance/InvoiceViewModal";
 import { ProfitLossView } from "@/components/finance/ProfitLossView";
+import { CategoriesSettingsModal } from "@/components/finance/CategoriesSettingsModal";
 import { Guard } from "@/components/shared/Guard";
 import type { AccountBalance, Transaction } from "@/lib/finance/finance.types";
 import type { Invoice } from "@/lib/finance/invoices.types";
@@ -51,7 +52,8 @@ function toTransaction(dto: TransactionDTO): Transaction {
     linked_entity_id: dto.dealId ?? dto.repairOrderId ?? dto.invoiceId,
     linked_entity_type: dto.dealId ? "deal" : dto.repairOrderId ? "repair" : dto.invoiceId ? "invoice" : null,
     linked_entity_label: null,
-    counterparty: "",
+    counterparty: dto.counterpartyName ?? "",
+    counterparty_inn: dto.counterpartyInn ?? "",
   };
 }
 
@@ -98,10 +100,18 @@ function FinancePageContent() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [invoiceViewTarget, setInvoiceViewTarget] = useState<Invoice | null>(null);
+  const [categoriesModalOpen, setCategoriesModalOpen] = useState(false);
   const searchParams = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("search") ?? "");
+  const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
 
   const { data: accounts = [], isLoading: accountsLoading } = useAccounts();
-  const { data: transactionsData, isLoading: txLoading, isError: txError } = useTransactions({ limit: 25, offset: 0 });
+  const { data: transactionsData, isLoading: txLoading, isError: txError } = useTransactions({
+    limit: 100,
+    offset: 0,
+    search: searchQuery || undefined,
+    type: filterType !== "all" ? filterType : undefined,
+  });
   const { data: invoicesData, isLoading: invLoading, isError: invError } = useInvoices({ limit: 25, offset: 0 });
   const { data: pnlData } = usePnl();
 
@@ -226,6 +236,7 @@ function FinancePageContent() {
         <div className="flex items-center justify-between">
           <div><h1 className="text-xl font-bold text-[#111111]">Финансы</h1><p className="mt-1 text-sm text-[#666666]">Счета, операции, выставленные счета и прибыль</p></div>
           <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setCategoriesModalOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors"><FolderTree className="h-3.5 w-3.5 text-[#666666]" />Статьи</button>
             <button type="button" onClick={() => setTransferOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700 hover:bg-sky-100 transition-colors"><ArrowRightLeft className="h-3.5 w-3.5" />Перевод</button>
             <button type="button" onClick={() => setInvoiceCreateOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors"><Receipt className="h-3.5 w-3.5" />Новый счёт</button>
             <button type="button" onClick={() => setTxModalOpen(true)}
@@ -248,7 +259,18 @@ function FinancePageContent() {
         </div>
 
         {/* Tab Content */}
-        {tab === "transactions" && <TransactionsTable transactions={transactions} searchQuery={searchParams.get("search") ?? ""} onSearchChange={() => {}} filterType={"all"} onFilterTypeChange={() => {}} isLoading={txLoading} isError={txError} error={txError ? new Error("Failed to load transactions") : null} />}
+        {tab === "transactions" && (
+          <TransactionsTable
+            transactions={transactions}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            filterType={filterType}
+            onFilterTypeChange={setFilterType}
+            isLoading={txLoading}
+            isError={txError}
+            error={txError ? new Error("Failed to load transactions") : null}
+          />
+        )}
         {tab === "invoices" && (
           <RecordTable
             rows={invoices}
@@ -267,10 +289,17 @@ function FinancePageContent() {
         {tab === "pnl" && <ProfitLossView transactions={transactions} />}
 
         {/* Modals */}
-        <CreateTransactionModal open={txModalOpen} onClose={() => setTxModalOpen(false)} onSubmit={handleCreateTransaction} accounts={accounts} />
+        <CreateTransactionModal
+          open={txModalOpen}
+          onClose={() => setTxModalOpen(false)}
+          onSubmit={handleCreateTransaction}
+          accounts={accounts}
+          onOpenCategories={() => setCategoriesModalOpen(true)}
+        />
         <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSubmit={handleTransfer} accounts={accounts} />
         <InvoiceCreateModal open={invoiceCreateOpen} onClose={() => setInvoiceCreateOpen(false)} onSubmit={handleCreateInvoice} />
         <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewTarget(null)} />
+        <CategoriesSettingsModal open={categoriesModalOpen} onClose={() => setCategoriesModalOpen(false)} />
       </div>
     </Guard>
   );

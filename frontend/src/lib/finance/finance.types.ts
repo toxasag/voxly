@@ -12,11 +12,12 @@ export type TransactionCategory =
   | "other_income"
   | "other_expense";
 
-export type AccountType = "cash" | "bank" | "acquiring";
+export type AccountType = "cash" | "bank" | "acquiring" | "safe";
 
 export interface AccountBalance {
   id: string;
   name: string;
+  account_type?: AccountType;
   currency: string;
   balance: number;
 }
@@ -25,7 +26,7 @@ export interface Transaction {
   id: string;
   date: string;
   type: TransactionType;
-  category: TransactionCategory;
+  category: string;
   amount: number;
   account_id: string;
   account_name: string;
@@ -34,6 +35,7 @@ export interface Transaction {
   linked_entity_type: string | null;
   linked_entity_label: string | null;
   counterparty: string;
+  counterparty_inn?: string;
 }
 
 const CATEGORY_LABELS: Record<TransactionCategory, string> = {
@@ -78,13 +80,14 @@ const TYPE_LABELS: Record<TransactionType, string> = {
 };
 
 const ACCOUNT_LABELS: Record<AccountType, string> = {
-  cash: "Наличные (касса)",
-  bank: "Расчётный счёт",
+  cash: "Касса (Наличные)",
+  bank: "Безналичный счет",
   acquiring: "Эквайринг",
+  safe: "Сейф",
 };
 
-export function getCategoryLabel(category: TransactionCategory): string {
-  return CATEGORY_LABELS[category];
+export function getCategoryLabel(category: string): string {
+  return CATEGORY_LABELS[category as TransactionCategory] ?? category;
 }
 
 export function getTypeColors(type: TransactionType): string {

@@ -103,7 +103,23 @@ export default async function bitrix24Routes(app: FastifyInstance): Promise<void
     const offset = query.offset ? parseInt(query.offset, 10) : (page - 1) * limit;
 
     const result = await bitrix24Service.getSyncLogs(request.tenant_id, limit, offset);
-    return reply.send({ data: result.logs, logs: result.logs, total: result.total, limit, offset });
+    return reply.send({
+      data: result.logs,
+      meta: { total: result.total, limit, offset },
+      logs: result.logs,
+      total: result.total,
+      limit,
+      offset,
+    });
+  });
+
+  /**
+   * POST /replay-failed
+   * Повторная отправка всех неотправленных (зависших/ошибочных) сделок в Битрикс24.
+   */
+  app.post("/replay-failed", { onRequest: admin }, async (request, reply) => {
+    const result = await bitrix24Service.replayFailedSyncs(request.tenant_id);
+    return reply.send({ data: result, ...result });
   });
 
   /**

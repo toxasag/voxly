@@ -9,10 +9,12 @@ import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClien
 
 export type TransactionType = "income" | "expense";
 export type InvoiceStatus = "draft" | "sent" | "paid" | "overdue" | "cancelled";
+export type AccountType = "bank" | "cash" | "acquiring" | "safe";
 
 export interface AccountDTO {
   id: string;
   name: string;
+  accountType?: AccountType;
   currency: string;
   balance: number;
   isDefault: boolean;
@@ -31,6 +33,8 @@ export interface TransactionDTO {
   dealId: string | null;
   repairOrderId: string | null;
   invoiceId: string | null;
+  counterpartyName?: string;
+  counterpartyInn?: string;
   occurredAt: string;
 }
 
@@ -105,6 +109,7 @@ export interface InvoicesListResult {
 
 export interface CreateAccountPayload {
   name: string;
+  account_type?: AccountType;
   currency?: string;
   opening_balance?: number;
   is_default?: boolean;
@@ -168,6 +173,26 @@ export interface MarkInvoicePaidPayload {
   description?: string;
 }
 
+export interface FinanceCategoryDTO {
+  id: string;
+  name: string;
+  type: "income" | "expense";
+  parentId?: string | null;
+  createdAt: string;
+}
+
+export interface CreateFinanceCategoryPayload {
+  name: string;
+  type: "income" | "expense";
+  parent_id?: string | null;
+}
+
+export interface UpdateFinanceCategoryPayload {
+  name?: string;
+  type?: "income" | "expense";
+  parent_id?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------
@@ -175,6 +200,7 @@ export interface MarkInvoicePaidPayload {
 export const financeKeys = {
   all: ["finance"] as const,
   accounts: ["finance", "accounts"] as const,
+  categories: (type?: "income" | "expense") => ["finance", "categories", type] as const,
   transactions: (params: { limit?: number; offset?: number; type?: string; search?: string }) => ["finance", "transactions", params] as const,
   invoices: (params: { limit?: number; offset?: number; status?: string; search?: string; companyId?: string }) => ["finance", "invoices", params] as const,
   invoiceDetail: (id: string) => ["finance", "invoices", id] as const,
@@ -189,6 +215,18 @@ export function useAccounts(): UseQueryResult<AccountDTO[], ApiClientError> {
   return useQuery<AccountDTO[], ApiClientError>({
     queryKey: financeKeys.accounts,
     queryFn: async () => (await apiClient.get<AccountDTO[]>("/api/v1/finance/accounts")).data,
+  });
+}
+
+export function useFinanceCategories(type?: "income" | "expense"): UseQueryResult<FinanceCategoryDTO[], ApiClientError> {
+  return useQuery<FinanceCategoryDTO[], ApiClientError>({
+    queryKey: financeKeys.categories(type),
+    queryFn: async () => {
+      const res = await apiClient.get<FinanceCategoryDTO[]>("/api/v1/finance/categories", {
+        query: { type },
+      });
+      return res.data;
+    },
   });
 }
 
@@ -375,6 +413,246 @@ export function useMarkInvoicePaid(): UseMutationResult<InvoiceDTO, ApiClientErr
       queryClient.setQueryData(financeKeys.invoiceDetail(invoice.id), invoice);
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
+  });
+}
+
+export interface CreateInvoiceFromActsPayload {
+  repair_order_ids: string[];
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  company_address?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  deal_id?: string;
+  due_date?: string;
+  vat_rate?: number;
+  currency?: string;
+  notes?: string;
+}
+
+export interface BatchPaymentPayload {
+  repair_order_ids: string[];
+  cash_account_id: string;
+  category_id?: string;
+  description?: string;
+}
+
+export interface SendInvoicePayload {
+  channel_type: "telegram" | "whatsapp" | "all";
+}
+
+export function useRepairInvoices(repairOrderId: string | null): UseQueryResult<InvoiceDTO[], ApiClientError> {
+  return useQuery<InvoiceDTO[], ApiClientError>({
+    queryKey: ["repairs", repairOrderId, "invoices"],
+    queryFn: async () => {
+      if (!repairOrderId) return [];
+      const res = await apiClient.get<InvoiceDTO[]>(`/api/v1/repairs/${repairOrderId}/invoices`);
+      return res.data;
+    },
+    enabled: Boolean(repairOrderId),
+  });
+}
+
+export function useCreateInvoiceFromActs(): UseMutationResult<
+  InvoiceDTO,
+  ApiClientError,
+  CreateInvoiceFromActsPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation<InvoiceDTO, ApiClientError, CreateInvoiceFromActsPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<InvoiceDTO>("/api/v1/invoices/from-repairs", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBatchPayment(): UseMutationResult<
+  { success: boolean; totalPaid: number; count: number },
+  ApiClientError,
+  BatchPaymentPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { success: boolean; totalPaid: number; count: number },
+    ApiClientError,
+    BatchPaymentPayload
+  >({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ success: boolean; totalPaid: number; count: number }>(
+        "/api/v1/finance/payments/batch",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useSendInvoice(): UseMutationResult<
+  { success: boolean; channels: string[]; message: string },
+  ApiClientError,
+  { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+> {
+  return useMutation<
+    { success: boolean; channels: string[]; message: string },
+    ApiClientError,
+    { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+  >({
+    mutationFn: async ({ id, channel_type }) => {
+      const res = await apiClient.post<{ success: boolean; channels: string[]; message: string }>(
+        `/api/v1/invoices/${id}/send`,
+        { channel_type },
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useCreateFinanceCategory(): UseMutationResult<
+  FinanceCategoryDTO,
+  ApiClientError,
+  CreateFinanceCategoryPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation<FinanceCategoryDTO, ApiClientError, CreateFinanceCategoryPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<FinanceCategoryDTO>("/api/v1/finance/categories", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["finance", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useUpdateFinanceCategory(): UseMutationResult<
+  FinanceCategoryDTO,
+  ApiClientError,
+  { id: string; payload: UpdateFinanceCategoryPayload }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<FinanceCategoryDTO, ApiClientError, { id: string; payload: UpdateFinanceCategoryPayload }>({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.patch<FinanceCategoryDTO>(`/api/v1/finance/categories/${id}`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["finance", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useDeleteFinanceCategory(): UseMutationResult<
+  { success: boolean },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean }, ApiClientError, string>({
+    mutationFn: async (id) => {
+      const res = await apiClient.delete<{ success: boolean }>(`/api/v1/finance/categories/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["finance", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useDeleteTransaction(): UseMutationResult<
+  { success: boolean; count: number },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean; count: number }, ApiClientError, string>({
+    mutationFn: async (id) => {
+      const res = await apiClient.delete<{ success: boolean; count: number }>(`/api/v1/finance/transactions/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteTransactions(): UseMutationResult<
+  { success: boolean; count: number },
+  ApiClientError,
+  string[]
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean; count: number }, ApiClientError, string[]>({
+    mutationFn: async (ids) => {
+      const res = await apiClient.post<{ success: boolean; count: number }>("/api/v1/finance/transactions/bulk-delete", { ids });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBulkDuplicateTransactions(): UseMutationResult<
+  { data: TransactionDTO[]; count: number },
+  ApiClientError,
+  string[]
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ data: TransactionDTO[]; count: number }, ApiClientError, string[]>({
+    mutationFn: async (ids) => {
+      const res = await apiClient.post<{ data: TransactionDTO[]; count: number }>("/api/v1/finance/transactions/bulk-duplicate", { ids });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export interface CounterpartyContact {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+}
+
+export interface CounterpartyCompany {
+  id: string;
+  name: string;
+  inn: string;
+  phone: string;
+}
+
+export interface CounterpartiesData {
+  contacts: CounterpartyContact[];
+  companies: CounterpartyCompany[];
+}
+
+export function useCounterparties(search?: string): UseQueryResult<CounterpartiesData, ApiClientError> {
+  return useQuery<CounterpartiesData, ApiClientError>({
+    queryKey: ["finance", "counterparties", search ?? ""],
+    queryFn: async () => {
+      const res = await apiClient.get<CounterpartiesData>("/api/v1/finance/counterparties", {
+        query: { search: search?.trim() || undefined },
+      });
+      return res.data;
+    },
+    staleTime: 30_000,
   });
 }
 

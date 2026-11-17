@@ -9,7 +9,15 @@ import {
 } from "@tanstack/react-query";
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 
-export type NotificationChannelType = "email" | "telegram" | "whatsapp";
+export type NotificationChannelType = "email" | "telegram" | "whatsapp" | "bitrix24";
+
+export interface EnrichedChannelWidget {
+  id: string;
+  name: string;
+  site_domain: string;
+  site_name?: string | null;
+  site_url?: string | null;
+}
 
 export interface NotificationChannelDTO {
   id: string;
@@ -22,10 +30,19 @@ export interface NotificationChannelDTO {
   is_verified: boolean;
   created_at: string;
   updated_at?: string;
+  widgets?: EnrichedChannelWidget[];
 }
 
 export interface CreateNotificationChannelPayload {
   channel_type: NotificationChannelType;
+  destination?: string;
+  target_value?: string;
+  extra_meta?: Record<string, unknown>;
+  is_active?: boolean;
+}
+
+export interface UpdateNotificationChannelPayload {
+  id: string;
   destination?: string;
   target_value?: string;
   extra_meta?: Record<string, unknown>;
@@ -84,6 +101,29 @@ export function useCreateNotificationChannel(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
+    },
+  });
+}
+
+export function useUpdateNotificationChannel(): UseMutationResult<
+  NotificationChannelDTO,
+  ApiClientError,
+  UpdateNotificationChannelPayload
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...payload }: UpdateNotificationChannelPayload): Promise<NotificationChannelDTO> => {
+      const res = await apiClient.put<NotificationChannelDTO>(
+        `/api/v1/settings/notifications/${id}`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
     },
   });
 }
@@ -104,6 +144,7 @@ export function useDeleteNotificationChannel(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
     },
   });
 }
@@ -125,6 +166,7 @@ export function useToggleNotificationChannel(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notificationChannelKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "integrations", "bitrix24"] });
     },
   });
 }

@@ -24,7 +24,7 @@ import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { RecordInvoicesTab } from "@/components/crm/shared/RecordInvoicesTab";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 import { RecordDealsSection } from "@/components/crm/shared/RecordDealsSection";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ export const CompanyCard = memo(function CompanyCard({
           label="Создана"
           value={company.createdAt}
           readOnly
-          display={<span title={fullDate(company.createdAt)}>{timeAgo(company.createdAt)}</span>}
+          display={<span title={fullDate(company.createdAt)}>{formatDateTime(company.createdAt)}</span>}
         />
         <RecordField
           icon={UserCircle2}
@@ -226,7 +226,7 @@ export const CompanyCard = memo(function CompanyCard({
           label="Изменена"
           value={company.updatedAt}
           readOnly
-          display={<span title={fullDate(company.updatedAt)}>{timeAgo(company.updatedAt)}</span>}
+          display={<span title={fullDate(company.updatedAt)}>{formatDateTime(company.updatedAt)}</span>}
         />
         <RecordField
           icon={MapPin}

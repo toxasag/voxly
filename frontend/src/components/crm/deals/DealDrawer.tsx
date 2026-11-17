@@ -78,6 +78,18 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
   const [showPersonalConfirm, setShowPersonalConfirm] = useState(false);
 
   useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [moreMenuOpen]);
+
+  useEffect(() => {
     setCardView("deal");
   }, [dealId, open]);
 
@@ -147,7 +159,7 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
   };
 
   return (
-    <Sheet open={open} onClose={onClose} resizable isMaximized={isMaximized}>
+    <Sheet open={open} onClose={onClose} side="right" resizable isMaximized={isMaximized}>
       {cardView === "create_company" && deal.data ? (
         <DrawerCreateCompany
           deal={deal.data}

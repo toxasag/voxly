@@ -3,8 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { Loader2, Trash2, X } from "lucide-react";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
-import { timeAgo } from "@/lib/utils";
-import { cn } from "@/lib/utils";
+import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { useHorizontalResize } from "@/lib/utils/use-horizontal-resize";
 import {
   MAX_SIDE_PANEL_WIDTH,
@@ -108,7 +107,9 @@ export function RecordDetailShell({
               <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
               <p className="truncate text-xs text-[#888888]">
                 {subtitle !== undefined && subtitle !== "" ? `${subtitle} · ` : ""}
-                Добавлено {timeAgo(createdAt)}
+                <span title={`Создано: ${formatDateTime(createdAt)}`}>
+                  Добавлено {formatDateTime(createdAt)}
+                </span>
               </p>
             </div>
           </div>

@@ -2,16 +2,20 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Package, Plus, Trash2, ShoppingCart, Check, AlertCircle, Loader2, Boxes } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { PartItem } from "@/lib/repairs/repairs.types";
 import {
   useWarehouseItems,
+  useWarehouseSettings,
   useCreatePurchaseRequest,
   usePurchaseRequests,
+  warehouseKeys,
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
 import { useCreatePart, useDeletePart } from "@/lib/api/use-repairs";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface PartsTableProps {
   orderId?: string;
@@ -36,27 +40,20 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
   const [selectedWarehouseItem, setSelectedWarehouseItem] = useState<WarehouseItemDTO | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [addToPurchaseRequest, setAddToPurchaseRequest] = useState(false);
 
   const comboboxRef = useRef<HTMLDivElement>(null);
 
   const { data: warehouseItems = [], isLoading: isWarehouseLoading } = useWarehouseItems();
+  const { data: warehouseSettings } = useWarehouseSettings();
+  const allowNegativeStock = warehouseSettings ? Boolean(warehouseSettings.allowNegativeStock) : true;
   const { data: purchaseRequests = [] } = usePurchaseRequests(undefined, orderId);
   const createPartMutation = useCreatePart();
   const deletePartMutation = useDeletePart();
   const createPurchaseMutation = useCreatePurchaseRequest();
 
-  // Закрытие выпадающего списка при клике снаружи
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (comboboxRef.current && !comboboxRef.current.contains(event.target as Node)) {
-        setCatalogOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
+  // Закрытие выпадающего списка при клике снаружи или Escape
+  useClickOutside(comboboxRef, () => setCatalogOpen(false), catalogOpen);
 
   // Фильтрация номенклатуры склада по введенному поиску
   const filteredWarehouseItems = warehouseItems.filter((wi) => {
@@ -65,36 +62,25 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
     return wi.name.toLowerCase().includes(q) || wi.sku.toLowerCase().includes(q);
   });
 
+  const queryClient = useQueryClient();
+
   const handleSelectWarehouseItem = (item: WarehouseItemDTO) => {
     setSelectedWarehouseItem(item);
     setNewName(item.name);
-    setNewArticle(item.sku);
-    if (item.retailPrice > 0) {
-      setNewRetail(String(item.retailPrice));
-    }
-    if (item.costPrice > 0) {
-      setNewCostPrice(String(item.costPrice));
-    }
+    setNewArticle(item.sku || "Б/А");
+    setNewRetail(String(item.retailPrice ?? 0));
+    setNewCostPrice(String(item.costPrice ?? 0));
     setCatalogOpen(false);
   };
 
   const handleAdd = useCallback(async () => {
     const name = newName.trim();
-    const article = newArticle.trim();
-    const qtyNum = parseInt(newQty, 10);
-    const retailNum = parseFloat(newRetail);
-    const costNum = parseFloat(newCostPrice);
+    const article = newArticle.trim() || "Б/А";
+    const qtyNum = parseInt(newQty, 10) || 1;
+    const retailNum = isNaN(parseFloat(newRetail)) ? 0 : Math.max(0, parseFloat(newRetail));
+    const costNum = isNaN(parseFloat(newCostPrice)) ? 0 : Math.max(0, parseFloat(newCostPrice));
 
-    if (
-      !name ||
-      !article ||
-      isNaN(qtyNum) ||
-      qtyNum < 1 ||
-      isNaN(retailNum) ||
-      retailNum < 0 ||
-      isNaN(costNum) ||
-      costNum < 0
-    ) {
+    if (!name || qtyNum < 1) {
       return;
     }
 
@@ -109,15 +95,21 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
             retail_price: retailNum,
             cost_price: costNum,
             warehouse_item_id: selectedWarehouseItem?.id,
+            add_to_purchase_request: addToPurchaseRequest,
           },
         });
-        toast.success(`Запчасть «${name}» добавлена${selectedWarehouseItem ? " (зарезервирована со склада)" : ""}`);
+        toast.success(
+          `Запчасть «${name}» добавлена${
+            selectedWarehouseItem ? " (со склада)" : ""
+          }${addToPurchaseRequest ? " + создана заявка на закупку" : ""}`,
+        );
         setNewName("");
         setNewArticle("");
         setNewQty("1");
         setNewRetail("");
         setNewCostPrice("");
         setSelectedWarehouseItem(null);
+        setAddToPurchaseRequest(false);
         setCatalogOpen(false);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось добавить запчасть");
@@ -141,6 +133,7 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
       setNewRetail("");
       setNewCostPrice("");
       setSelectedWarehouseItem(null);
+      setAddToPurchaseRequest(false);
       setCatalogOpen(false);
     }
   }, [
@@ -151,6 +144,7 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
     newCostPrice,
     orderId,
     selectedWarehouseItem,
+    addToPurchaseRequest,
     createPartMutation,
     items,
     onChange,
@@ -189,23 +183,23 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
         estimated_price: estPrice > 0 ? estPrice : undefined,
         comment: `Заявка из наряда на ремонт`,
       });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
       toast.success(`Заявка на закупку «${partName}» создана`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Ошибка при создании заявки на закупку");
     }
   };
 
+  const requestedQty = parseInt(newQty, 10) || 1;
+  const isStockDeficit = selectedWarehouseItem ? selectedWarehouseItem.availableStock < requestedQty : false;
+  const isBlockedByStock = isStockDeficit && !allowNegativeStock;
+
   const isAdding = createPartMutation.isPending;
   const canAdd =
     !isAdding &&
+    !isBlockedByStock &&
     newName.trim().length > 0 &&
-    newArticle.trim().length > 0 &&
-    newQty.trim().length > 0 &&
-    parseInt(newQty, 10) >= 1 &&
-    newRetail.trim().length > 0 &&
-    parseFloat(newRetail) >= 0 &&
-    newCostPrice.trim().length > 0 &&
-    parseFloat(newCostPrice) >= 0;
+    (parseInt(newQty, 10) || 0) >= 1;
 
   const totalRetail = items.reduce((sum, item) => sum + item.retail_price * item.quantity, 0);
   const totalCost = items.reduce((sum, item) => sum + item.cost_price * item.quantity, 0);
@@ -377,6 +371,8 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                   <div className="space-y-0.5">
                     {filteredWarehouseItems.map((wi) => {
                       const isOutOfStock = wi.availableStock <= 0;
+                      const margin = (wi.retailPrice ?? 0) - (wi.costPrice ?? 0);
+                      const marginPct = (wi.retailPrice ?? 0) > 0 ? Math.round((margin / wi.retailPrice) * 100) : 0;
                       return (
                         <button
                           key={wi.id}
@@ -399,8 +395,12 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                             >
                               Доступно: {wi.availableStock} {wi.unit}
                             </span>
-                            <div className="text-[11px] font-mono text-[#666666] mt-0.5">
-                              {formatCost(wi.retailPrice)}
+                            <div className="flex items-center justify-end gap-2 text-[11px] font-mono mt-0.5">
+                              <span className="text-[#111111] font-medium">Розница: {formatCost(wi.retailPrice)}</span>
+                              <span className="text-[#666666]">Закупка: {formatCost(wi.costPrice)}</span>
+                              {margin > 0 && (
+                                <span className="text-emerald-700 font-medium">Наценка: +{marginPct}%</span>
+                              )}
                             </div>
                           </div>
                         </button>
@@ -435,26 +435,32 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
             title="Количество"
             className="w-[60px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-2 text-[13px] text-center font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={newRetail}
-            onChange={(e) => setNewRetail(e.target.value)}
-            placeholder="Розница"
-            title="Розничная цена"
-            className="w-[95px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-2 text-[13px] text-right font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          />
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={newCostPrice}
-            onChange={(e) => setNewCostPrice(e.target.value)}
-            placeholder="Закупка"
-            title="Себестоимость"
-            className="w-[95px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-2 text-[13px] text-right font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          />
+          <div className="relative w-[110px]">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={newRetail}
+              onChange={(e) => setNewRetail(e.target.value)}
+              placeholder="0"
+              title="Розничная цена"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-2 pr-12 text-[13px] text-right font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#888888]">₽ розн.</span>
+          </div>
+          <div className="relative w-[110px]">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={newCostPrice}
+              onChange={(e) => setNewCostPrice(e.target.value)}
+              placeholder="0"
+              title="Себестоимость (закупка)"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-2 pr-11 text-[13px] text-right font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#888888]">₽ зак.</span>
+          </div>
           <button
             type="button"
             onClick={handleAdd}
@@ -465,14 +471,14 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                 ? "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]"
                 : "bg-[#f0f0f0] text-[#888888] cursor-not-allowed",
             )}
-            title="Добавить запчасть"
+            title={isBlockedByStock ? "Товар отсутствует на складе (продажа в минус отключена)" : "Добавить запчасть"}
           >
             {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           </button>
         </div>
 
-        {/* Предупреждение о нехватке на складе и быстрая закупка */}
-        {selectedWarehouseItem && (
+        {/* Предупреждение о наличии / нехватке на складе и действия */}
+        {selectedWarehouseItem ? (
           <div className="flex items-center justify-between rounded-[6px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs">
             <div className="flex items-center gap-2">
               {selectedWarehouseItem.availableStock >= (parseInt(newQty, 10) || 1) ? (
@@ -482,34 +488,76 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                     В наличии на складе: <b>{selectedWarehouseItem.availableStock}</b> {selectedWarehouseItem.unit} (будет зарезервировано)
                   </span>
                 </>
-              ) : (
+              ) : allowNegativeStock ? (
                 <>
                   <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
                   <span className="text-amber-800 font-medium">
-                    Недостаточно на складе: доступно <b>{selectedWarehouseItem.availableStock}</b> из {selectedWarehouseItem.totalStock} {selectedWarehouseItem.unit}
+                    Недостаточно на складе: доступно <b>{selectedWarehouseItem.availableStock}</b> {selectedWarehouseItem.unit}.{" "}
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-800 border border-amber-200">
+                      Продажа в минус разрешена (дефицит)
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-3.5 w-3.5 text-rose-600" />
+                  <span className="text-rose-800 font-medium">
+                    Нет в наличии на складе: доступно <b>{selectedWarehouseItem.availableStock}</b> {selectedWarehouseItem.unit}.{" "}
+                    <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-800 border border-rose-200">
+                      Продажа в минус выключена (добавление заблокировано)
+                    </span>
                   </span>
                 </>
               )}
             </div>
 
-            {selectedWarehouseItem.availableStock < (parseInt(newQty, 10) || 1) && (
-              <button
-                type="button"
-                onClick={() =>
-                  handleCreatePurchase(
-                    selectedWarehouseItem.name,
-                    selectedWarehouseItem.sku,
-                    parseInt(newQty, 10) || 1,
-                    selectedWarehouseItem.costPrice,
-                  )
-                }
-                disabled={createPurchaseMutation.isPending}
-                className="flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
-              >
-                <ShoppingCart className="h-3 w-3" />
-                В заявку на закупку
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[#111111] select-none hover:text-[#4a38f5] transition-colors">
+                <input
+                  type="checkbox"
+                  checked={addToPurchaseRequest}
+                  onChange={(e) => setAddToPurchaseRequest(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                />
+                <span className="text-xs font-medium">В заявку на закупку</span>
+              </label>
+
+              {selectedWarehouseItem.availableStock < (parseInt(newQty, 10) || 1) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleCreatePurchase(
+                      selectedWarehouseItem.name,
+                      selectedWarehouseItem.sku,
+                      parseInt(newQty, 10) || 1,
+                      selectedWarehouseItem.costPrice,
+                    )
+                  }
+                  disabled={createPurchaseMutation.isPending}
+                  className="flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                >
+                  <ShoppingCart className="h-3 w-3" />
+                  В заявку на закупку
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between pt-0.5">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-[#111111] select-none hover:text-[#4a38f5] transition-colors">
+              <input
+                type="checkbox"
+                checked={addToPurchaseRequest}
+                onChange={(e) => setAddToPurchaseRequest(e.target.checked)}
+                className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+              />
+              <span className="font-medium">В заявку на закупку</span>
+              {addToPurchaseRequest && (
+                <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700 border border-sky-200">
+                  Создаст строку в /warehouse
+                </span>
+              )}
+            </label>
           </div>
         )}
       </div>

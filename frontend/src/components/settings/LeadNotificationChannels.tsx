@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ExternalLink,
   FileText,
+  Globe,
   Layers,
   Loader2,
   Mail,
@@ -32,6 +33,7 @@ import {
   useSendTestNotification,
   useTelegramBindLink,
   useToggleNotificationChannel,
+  useUpdateNotificationChannel,
   type NotificationChannelDTO,
   type NotificationChannelType,
 } from "@/lib/api/use-notification-channels";
@@ -48,7 +50,7 @@ import { SourceMultiSelect, SOURCE_MAP } from "@/components/settings/SourceMulti
 import { WidgetMultiSelect } from "@/components/settings/WidgetMultiSelect";
 import { Bitrix24SyncLogTable } from "@/components/settings/Bitrix24SyncLogTable";
 
-type ExtendedChannelType = NotificationChannelType | "bitrix24";
+type ExtendedChannelType = NotificationChannelType;
 
 const CHANNEL_CONFIG: Record<
   NotificationChannelType,
@@ -77,6 +79,12 @@ const CHANNEL_CONFIG: Record<
     color: "emerald",
     antiBanBadge: "Транзакционный шлюз",
   },
+  bitrix24: {
+    label: "Битрикс24",
+    icon: Layers,
+    color: "sky",
+    antiBanBadge: "crm.lead.add REST API",
+  },
 };
 
 function getBitrixDomain(url: string): string {
@@ -93,6 +101,7 @@ interface AddChannelModalProps {
   tenantId?: string;
   initialType?: ExtendedChannelType;
   initialTab?: "settings" | "logs";
+  editingChannel?: NotificationChannelDTO | null;
   onSelectDeal?: (dealId: string) => void;
 }
 
@@ -102,12 +111,14 @@ function AddChannelModal({
   tenantId,
   initialType = "telegram",
   initialTab = "settings",
+  editingChannel,
   onSelectDeal,
 }: AddChannelModalProps) {
   const [channelType, setChannelType] = useState<ExtendedChannelType>(initialType);
   const [activeTab, setActiveTab] = useState<"settings" | "logs">(initialTab);
   const [destination, setDestination] = useState("");
   const createMutation = useCreateNotificationChannel();
+  const updateChannelMutation = useUpdateNotificationChannel();
   const { data: bindLinkData } = useTelegramBindLink();
 
   // Битрикс24 стейт
@@ -117,7 +128,13 @@ function AddChannelModal({
   const updateBitrixMutation = useUpdateBitrix24Config();
   const testBitrixMutation = useTestBitrix24Connection();
 
-  const logsTotalCount = logsData?.total ?? 0;
+  const logsTotalCount = typeof logsData?.total === "number"
+    ? logsData.total
+    : Array.isArray(logsData)
+      ? logsData.length
+      : Array.isArray(logsData?.logs)
+        ? logsData.logs.length
+        : 0;
 
   const [bitrixUrl, setBitrixUrl] = useState("");
   const [bitrixEnabled, setBitrixEnabled] = useState(true);
@@ -135,20 +152,46 @@ function AddChannelModal({
 
   useEffect(() => {
     if (open) {
-      setChannelType(initialType);
-      setActiveTab(initialTab);
-      if (bitrixConfig) {
-        setBitrixUrl(bitrixConfig.webhook_url || "");
-        setBitrixEnabled(bitrixConfig.webhook_url ? Boolean(bitrixConfig.is_enabled) : true);
-        setBitrixAllowedSources(bitrixConfig.allowed_sources ?? []);
-        setBitrixSelectedWidgetIds(bitrixConfig.selected_widget_ids ?? []);
-        setBitrixCustomSourceId(bitrixConfig.custom_source_id || "UC_VWN1ZK");
-        setBitrixSendUtmMarks(bitrixConfig.send_utm_marks ?? true);
-        setBitrixSendGeoData(bitrixConfig.send_geo_data ?? true);
+      if (editingChannel) {
+        setChannelType(editingChannel.channel_type);
+        setActiveTab(initialTab);
+        if (editingChannel.channel_type === "bitrix24") {
+          const meta = (editingChannel.extra_meta as Record<string, unknown>) ?? {};
+          setBitrixUrl(editingChannel.destination || "");
+          setBitrixEnabled(editingChannel.is_active);
+          setBitrixAllowedSources(Array.isArray(meta.allowed_sources) ? (meta.allowed_sources as LeadSource[]) : []);
+          setBitrixSelectedWidgetIds(Array.isArray(meta.selected_widget_ids) ? (meta.selected_widget_ids as string[]) : []);
+          setBitrixCustomSourceId(typeof meta.custom_source_id === "string" && meta.custom_source_id ? meta.custom_source_id : "UC_VWN1ZK");
+          setBitrixSendUtmMarks(meta.send_utm_marks !== false);
+          setBitrixSendGeoData(meta.send_geo_data !== false);
+        } else {
+          setDestination(editingChannel.destination || "");
+        }
+      } else {
+        setChannelType(initialType);
+        setActiveTab(initialTab);
+        setDestination("");
+        if (initialType === "bitrix24") {
+          setBitrixUrl("");
+          setBitrixEnabled(true);
+          setBitrixAllowedSources([]);
+          setBitrixSelectedWidgetIds([]);
+          setBitrixCustomSourceId("UC_VWN1ZK");
+          setBitrixSendUtmMarks(true);
+          setBitrixSendGeoData(true);
+        } else if (bitrixConfig) {
+          setBitrixUrl(bitrixConfig.webhook_url || "");
+          setBitrixEnabled(bitrixConfig.webhook_url ? Boolean(bitrixConfig.is_enabled) : true);
+          setBitrixAllowedSources(bitrixConfig.allowed_sources ?? []);
+          setBitrixSelectedWidgetIds(bitrixConfig.selected_widget_ids ?? []);
+          setBitrixCustomSourceId(bitrixConfig.custom_source_id || "UC_VWN1ZK");
+          setBitrixSendUtmMarks(bitrixConfig.send_utm_marks ?? true);
+          setBitrixSendGeoData(bitrixConfig.send_geo_data ?? true);
+        }
       }
       setBitrixTestStatus(null);
     }
-  }, [open, initialType, bitrixConfig]);
+  }, [open, initialType, initialTab, editingChannel, bitrixConfig]);
 
   useOverlay(open, { onEscape: onClose });
 
@@ -206,16 +249,31 @@ function AddChannelModal({
         return;
       }
       try {
-        await updateBitrixMutation.mutateAsync({
-          webhook_url: cleanUrl,
-          is_enabled: bitrixEnabled,
+        const extraMeta = {
           allowed_sources: bitrixAllowedSources,
           selected_widget_ids: bitrixSelectedWidgetIds,
           custom_source_id: bitrixCustomSourceId.trim() || "UC_VWN1ZK",
           send_utm_marks: bitrixSendUtmMarks,
           send_geo_data: bitrixSendGeoData,
-        });
-        toast.success("Интеграция с Битрикс24 успешно сохранена и активирована");
+        };
+
+        if (editingChannel && editingChannel.channel_type === "bitrix24") {
+          await updateChannelMutation.mutateAsync({
+            id: editingChannel.id,
+            destination: cleanUrl,
+            extra_meta: extraMeta,
+            is_active: bitrixEnabled,
+          });
+          toast.success("Канал Битрикс24 успешно обновлен");
+        } else {
+          await createMutation.mutateAsync({
+            channel_type: "bitrix24",
+            destination: cleanUrl,
+            extra_meta: extraMeta,
+            is_active: bitrixEnabled,
+          });
+          toast.success("Новый канал Битрикс24 успешно добавлен");
+        }
         onClose();
       } catch (err: unknown) {
         const anyErr = err as { data?: { message?: string; details?: string }; message?: string };
@@ -237,20 +295,28 @@ function AddChannelModal({
     }
 
     try {
-      await createMutation.mutateAsync({
-        channel_type: channelType,
-        destination: cleanDest,
-      });
-      toast.success("Канал уведомлений успешно добавлен");
+      if (editingChannel) {
+        await updateChannelMutation.mutateAsync({
+          id: editingChannel.id,
+          destination: cleanDest,
+        });
+        toast.success("Канал уведомлений успешно обновлен");
+      } else {
+        await createMutation.mutateAsync({
+          channel_type: channelType,
+          destination: cleanDest,
+        });
+        toast.success("Канал уведомлений успешно добавлен");
+      }
       setDestination("");
       onClose();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Не удалось добавить канал";
+      const msg = err instanceof Error ? err.message : "Не удалось сохранить канал";
       toast.error(msg);
     }
   };
 
-  const isSaving = createMutation.isPending || updateBitrixMutation.isPending;
+  const isSaving = createMutation.isPending || updateBitrixMutation.isPending || updateChannelMutation.isPending;
 
   return (
     <div
@@ -265,7 +331,13 @@ function AddChannelModal({
         <div className="flex items-center justify-between border-b border-[#e5e5e5] px-6 py-3.5 bg-white flex-shrink-0">
           <div>
             <h2 className="text-base font-semibold text-[#111111]">
-              {channelType === "bitrix24" ? "Интеграция с Битрикс24" : "Добавить канал передачи заявок"}
+              {editingChannel
+                ? editingChannel.channel_type === "bitrix24"
+                  ? "Настройки канала Битрикс24"
+                  : `Редактировать канал: ${CHANNEL_CONFIG[editingChannel.channel_type]?.label || editingChannel.channel_type}`
+                : channelType === "bitrix24"
+                ? "Добавить канал Битрикс24"
+                : "Добавить канал передачи заявок"}
             </h2>
             <p className="mt-0.5 text-xs text-[#666666]">
               {channelType === "bitrix24"
@@ -322,67 +394,69 @@ function AddChannelModal({
             <Bitrix24SyncLogTable onSelectDeal={onSelectDeal} />
           ) : (
             <form id="add-channel-form" onSubmit={handleSubmit} className="space-y-5">
-          {/* Выбор типа канала — 4 провайдера */}
-          <div>
-            <label className="text-xs font-semibold text-[#111111] block mb-2">Тип канала</label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <button
-                type="button"
-                onClick={() => setChannelType("telegram")}
-                className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
-                  channelType === "telegram"
-                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
-                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
-                }`}
-              >
-                <Send className="h-5 w-5" />
-                <span className="text-xs font-semibold">Telegram Bot</span>
-                <span className="text-[10px] text-emerald-700 font-medium">100% антибан</span>
-              </button>
+          {/* Выбор типа канала — 4 провайдера (скрываем при редактировании существующего канала) */}
+          {!editingChannel && (
+            <div>
+              <label className="text-xs font-semibold text-[#111111] block mb-2">Тип канала</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setChannelType("telegram")}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
+                    channelType === "telegram"
+                      ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
+                  }`}
+                >
+                  <Send className="h-5 w-5" />
+                  <span className="text-xs font-semibold">Telegram Bot</span>
+                  <span className="text-[10px] text-emerald-700 font-medium">100% антибан</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setChannelType("email")}
-                className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
-                  channelType === "email"
-                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
-                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
-                }`}
-              >
-                <Mail className="h-5 w-5" />
-                <span className="text-xs font-semibold">Email</span>
-                <span className="text-[10px] text-[#888888]">Дополнительный</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setChannelType("email")}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
+                    channelType === "email"
+                      ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
+                  }`}
+                >
+                  <Mail className="h-5 w-5" />
+                  <span className="text-xs font-semibold">Email</span>
+                  <span className="text-[10px] text-[#888888]">Дополнительный</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setChannelType("whatsapp")}
-                className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
-                  channelType === "whatsapp"
-                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
-                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
-                }`}
-              >
-                <MessageSquare className="h-5 w-5" />
-                <span className="text-xs font-semibold">WhatsApp</span>
-                <span className="text-[10px] text-emerald-700 font-medium">Шлюз Meta</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setChannelType("whatsapp")}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
+                    channelType === "whatsapp"
+                      ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
+                  }`}
+                >
+                  <MessageSquare className="h-5 w-5" />
+                  <span className="text-xs font-semibold">WhatsApp</span>
+                  <span className="text-[10px] text-emerald-700 font-medium">Шлюз Meta</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setChannelType("bitrix24")}
-                className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
-                  channelType === "bitrix24"
-                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
-                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
-                }`}
-              >
-                <Layers className="h-5 w-5 text-[#4a38f5]" />
-                <span className="text-xs font-semibold">Битрикс24</span>
-                <span className="text-[10px] text-sky-700 font-medium bg-sky-50 px-1 rounded">Вебхук CRM</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setChannelType("bitrix24")}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-[8px] border text-left transition-all ${
+                    channelType === "bitrix24"
+                      ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc]"
+                  }`}
+                >
+                  <Layers className="h-5 w-5 text-[#4a38f5]" />
+                  <span className="text-xs font-semibold">Битрикс24</span>
+                  <span className="text-[10px] text-sky-700 font-medium bg-sky-50 px-1 rounded">Вебхук CRM</span>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Специфичные поля в зависимости от типа */}
           {channelType === "telegram" && (
@@ -675,8 +749,10 @@ function AddChannelModal({
                 <span>
                   {isSaving
                     ? "Сохранение..."
+                    : editingChannel
+                    ? "Сохранить изменения"
                     : channelType === "bitrix24"
-                    ? "Сохранить и подключить"
+                    ? "Добавить канал Битрикс24"
                     : "Добавить канал"}
                 </span>
               </button>
@@ -690,14 +766,18 @@ function AddChannelModal({
 
 export function LeadNotificationChannels() {
   const { data: channels, isLoading } = useNotificationChannels();
+  const { data: tenantWidgets = [] } = useTenantWidgets();
   const { data: info } = useTenantInfo();
   const { data: bitrixConfig, isLoading: bitrixLoading } = useBitrix24Config();
   const updateBitrixMutation = useUpdateBitrix24Config();
   const testBitrixMutation = useTestBitrix24Connection();
 
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<NotificationChannelDTO | null>(null);
   const [modalInitialType, setModalInitialType] = useState<ExtendedChannelType>("telegram");
-  const [modalInitialTab, setModalInitialTab] = useState<"settings" | "logs">("settings");
+  const [modalInitialTab, setModalInitialTab] = useState<"settings" | "logs">(
+    "settings",
+  );
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [isDeletingBitrix, setIsDeletingBitrix] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -816,7 +896,9 @@ export function LeadNotificationChannels() {
     }
   };
 
+  const hasB24InChannels = Boolean(channels?.some((c) => c.channel_type === "bitrix24"));
   const hasBitrixConfigured = Boolean(bitrixConfig?.webhook_url && bitrixConfig.webhook_url.trim());
+  const showLegacyBitrix = !hasB24InChannels && hasBitrixConfigured && bitrixConfig;
   const hasAnyChannels = (channels && channels.length > 0) || hasBitrixConfigured;
 
   return (
@@ -834,6 +916,7 @@ export function LeadNotificationChannels() {
         <button
           type="button"
           onClick={() => {
+            setEditingChannel(null);
             setModalInitialType("telegram");
             setModalInitialTab("settings");
             setAddModalOpen(true);
@@ -868,8 +951,8 @@ export function LeadNotificationChannels() {
           </div>
         ) : hasAnyChannels ? (
           <div className="divide-y divide-[#f0f0f0]">
-            {/* Строка интеграции с Битрикс24, если она настроена */}
-            {hasBitrixConfigured && bitrixConfig && (
+            {/* Строка интеграции с Битрикс24, если она настроена через legacy-конфиг */}
+            {showLegacyBitrix && (
               <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 hover:bg-[#fafafa] transition-colors bg-sky-50/20">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-sky-100/70">
@@ -885,9 +968,21 @@ export function LeadNotificationChannels() {
                       <span className="text-[10px] text-sky-800 font-medium bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-[4px]">
                         SOURCE_ID: {bitrixConfig.custom_source_id || "UC_VWN1ZK"}
                       </span>
-                      {bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length > 0 ? (
-                        <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px]">
-                          Виджеты: {bitrixConfig.selected_widget_ids.length}
+                      {bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length === 1 ? (
+                        (() => {
+                          const w = tenantWidgets.find((x) => x.id === bitrixConfig.selected_widget_ids?.[0]);
+                          return (
+                            <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1">
+                              <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                              <span>{w?.name || "Виджет"}</span>
+                              {w?.site_domain && <span className="text-[#666666] font-mono">({w.site_domain})</span>}
+                            </span>
+                          );
+                        })()
+                      ) : bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length > 1 ? (
+                        <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1">
+                          <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                          <span>Виджеты: {bitrixConfig.selected_widget_ids.length}</span>
                         </span>
                       ) : (
                         <span className="text-[10px] text-[#666666] font-medium bg-[#f5f5f5] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
@@ -926,16 +1021,42 @@ export function LeadNotificationChannels() {
                         )}
                       </span>
                       <span>•</span>
-                      <span>
-                        Источники:{" "}
-                        <strong className="text-[#333333]">
-                          {bitrixConfig.allowed_sources && bitrixConfig.allowed_sources.length > 0
-                            ? bitrixConfig.allowed_sources
-                                .map((s) => SOURCE_MAP.get(s)?.shortLabel || s)
-                                .join(", ")
-                            : "Все каналы"}
-                        </strong>
-                      </span>
+                      <div className="inline-flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[#666666]">Источники:</span>
+                        {bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length > 0 ? (
+                          <div className="inline-flex items-center gap-1.5 flex-wrap">
+                            {bitrixConfig.selected_widget_ids.map((id) => {
+                              const w = tenantWidgets.find((x) => x.id === id);
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-[#111111] bg-white border border-[#e5e5e5] px-2 py-0.5 rounded-[4px] shadow-2xs"
+                                >
+                                  <Globe className="h-3 w-3 text-[#4a38f5]" />
+                                  <span>{w?.name || "Виджет"}</span>
+                                  {w?.site_domain ? (
+                                    <span className="text-[#666666] font-mono text-[10px]">
+                                      • {w.site_domain}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[#888888] font-mono text-[10px]">
+                                      • Без сайта
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <strong className="text-[#333333]">
+                            {bitrixConfig.allowed_sources && bitrixConfig.allowed_sources.length > 0
+                              ? bitrixConfig.allowed_sources
+                                  .map((s) => (s === "site_widget" ? "Виджеты на сайтах" : SOURCE_MAP.get(s)?.shortLabel || s))
+                                  .join(", ")
+                              : "Все каналы"}
+                          </strong>
+                        )}
+                      </div>
                       {bitrixConfig.last_sync_at && (
                         <>
                           <span>•</span>
@@ -1015,8 +1136,224 @@ export function LeadNotificationChannels() {
               </div>
             )}
 
-            {/* Обычные каналы (Telegram, Email, WhatsApp) */}
+            {/* Все каналы (Telegram, Email, WhatsApp, Битрикс24) */}
             {channels?.map((channel) => {
+              if (channel.channel_type === "bitrix24") {
+                const meta = (channel.extra_meta as Record<string, unknown>) ?? {};
+                const customSourceId = typeof meta.custom_source_id === "string" && meta.custom_source_id
+                  ? meta.custom_source_id
+                  : "UC_VWN1ZK";
+                const selectedWidgetIds = Array.isArray(meta.selected_widget_ids)
+                  ? (meta.selected_widget_ids as string[])
+                  : [];
+                const allowedSources = Array.isArray(meta.allowed_sources)
+                  ? (meta.allowed_sources as LeadSource[])
+                  : [];
+                const sendUtmMarks = meta.send_utm_marks !== false;
+                const sendGeoData = meta.send_geo_data !== false;
+                const lastLeadId = meta.last_lead_id ? String(meta.last_lead_id) : null;
+                const lastSyncAt = meta.last_sync_at ? String(meta.last_sync_at) : null;
+                const lastError = meta.last_error ? String(meta.last_error) : null;
+
+                const channelWidgets = (channel.widgets && channel.widgets.length > 0)
+                  ? channel.widgets
+                  : selectedWidgetIds
+                      .map((id) => tenantWidgets.find((w) => w.id === id))
+                      .filter((w): w is (typeof tenantWidgets)[number] => Boolean(w))
+                      .map((w) => ({
+                        id: w.id,
+                        name: w.name,
+                        site_domain: w.site_domain,
+                        site_name: w.site_name,
+                      }));
+
+                return (
+                  <div
+                    key={channel.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 hover:bg-[#fafafa] transition-colors bg-sky-50/20"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-sky-100/70">
+                        <Layers className="h-4 w-4 text-[#4a38f5]" />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <TagPill color="sky">Битрикс24</TagPill>
+                          <span className="font-semibold text-[13px] text-[#111111]">
+                            {getBitrixDomain(channel.destination)}
+                          </span>
+                          <span className="text-[10px] text-sky-800 font-medium bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-[4px]">
+                            SOURCE_ID: {customSourceId}
+                          </span>
+                          {channelWidgets.length === 1 ? (
+                            <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1">
+                              <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                              <span>{channelWidgets[0].name}</span>
+                              {channelWidgets[0].site_domain && (
+                                <span className="text-[#666666] font-mono">({channelWidgets[0].site_domain})</span>
+                              )}
+                            </span>
+                          ) : channelWidgets.length > 1 ? (
+                            <span
+                              className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1"
+                              title={channelWidgets.map((w) => `${w.name} (${w.site_domain})`).join(", ")}
+                            >
+                              <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                              <span>Виджеты: {channelWidgets.length}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-[#666666] font-medium bg-[#f5f5f5] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
+                              Все виджеты
+                            </span>
+                          )}
+                          {sendUtmMarks && (
+                            <span className="text-[10px] text-[#666666] font-medium bg-[#fafafa] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
+                              UTM
+                            </span>
+                          )}
+                          {sendGeoData && (
+                            <span className="text-[10px] text-[#666666] font-medium bg-[#fafafa] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
+                              Geo
+                            </span>
+                          )}
+                          {lastLeadId && (
+                            <span className="font-mono text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-[4px]">
+                              Лид #{lastLeadId}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-1 flex items-center gap-3 text-[11px] text-[#666666]">
+                          <span className="flex items-center gap-1">
+                            {channel.is_active ? (
+                              <>
+                                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                <span className="text-emerald-700 font-medium">Экспорт активен</span>
+                              </>
+                            ) : (
+                              <>
+                                <AlertCircle className="h-3 w-3 text-[#888888]" />
+                                <span className="text-[#888888]">Приостановлен</span>
+                              </>
+                            )}
+                          </span>
+                          <span>•</span>
+                          <div className="inline-flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[#666666]">Источники:</span>
+                            {channelWidgets.length > 0 ? (
+                              <div className="inline-flex items-center gap-1.5 flex-wrap">
+                                {channelWidgets.map((w) => (
+                                  <span
+                                    key={w.id}
+                                    className="inline-flex items-center gap-1 text-[11px] font-medium text-[#111111] bg-white border border-[#e5e5e5] px-2 py-0.5 rounded-[4px] shadow-2xs"
+                                  >
+                                    <Globe className="h-3 w-3 text-[#4a38f5]" />
+                                    <span>{w.name}</span>
+                                    {w.site_domain ? (
+                                      <span className="text-[#666666] font-mono text-[10px]">
+                                        • {w.site_domain}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[#888888] font-mono text-[10px]">
+                                        • Без сайта
+                                      </span>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <strong className="text-[#333333]">
+                                {allowedSources.length > 0
+                                  ? allowedSources
+                                      .map((s) => (s === "site_widget" ? "Виджеты на сайтах" : SOURCE_MAP.get(s)?.shortLabel || s))
+                                      .join(", ")
+                                  : "Все каналы"}
+                              </strong>
+                            )}
+                          </div>
+                          {lastSyncAt && (
+                            <>
+                              <span>•</span>
+                              <span>Посл. отправка: {new Date(lastSyncAt).toLocaleString("ru-RU")}</span>
+                            </>
+                          )}
+                          {lastError && (
+                            <>
+                              <span>•</span>
+                              <span className="text-rose-600 font-medium">Ошибка: {lastError}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                      <button
+                        type="button"
+                        disabled={testingId === channel.id || !channel.is_active}
+                        onClick={() => handleTest(channel)}
+                        className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] disabled:opacity-40 inline-flex items-center gap-1"
+                      >
+                        {testingId === channel.id && <Loader2 className="h-3 w-3 animate-spin text-[#4a38f5]" />}
+                        <span>Тест</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleToggle(channel)}
+                        className={`h-7 rounded-[6px] border px-2.5 text-xs font-medium transition-colors ${
+                          channel.is_active
+                            ? "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5]"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                        }`}
+                      >
+                        {channel.is_active ? "Приостановить" : "Включить"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingChannel(channel);
+                          setModalInitialType("bitrix24");
+                          setModalInitialTab("logs");
+                          setAddModalOpen(true);
+                        }}
+                        className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] inline-flex items-center gap-1"
+                        title="Открыть журнал синхронизаций с Битрикс24"
+                      >
+                        <FileText className="h-3 w-3 text-[#666666]" />
+                        <span>Журнал</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingChannel(channel);
+                          setModalInitialType("bitrix24");
+                          setModalInitialTab("settings");
+                          setAddModalOpen(true);
+                        }}
+                        className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] inline-flex items-center gap-1"
+                        title="Настроить параметры Битрикс24"
+                      >
+                        <SlidersHorizontal className="h-3 w-3 text-[#666666]" />
+                        <span>Настроить</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setDeleteId(channel.id)}
+                        className="h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 transition-colors hover:bg-rose-100 flex items-center justify-center"
+                        title="Удалить канал Битрикс24"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               const cfg = CHANNEL_CONFIG[channel.channel_type] ?? CHANNEL_CONFIG.email;
               const Icon = cfg.icon;
 
@@ -1138,6 +1475,7 @@ export function LeadNotificationChannels() {
             <button
               type="button"
               onClick={() => {
+                setEditingChannel(null);
                 setModalInitialType("telegram");
                 setModalInitialTab("settings");
                 setAddModalOpen(true);
@@ -1151,13 +1489,18 @@ export function LeadNotificationChannels() {
         )}
       </div>
 
-      {/* Модальное окно добавления канала с поддержкой Битрикс24 */}
+      {/* Модальное окно добавления/настройки канала с поддержкой Битрикс24 */}
       <AddChannelModal
+        key={editingChannel ? `edit-${editingChannel.id}` : `new-${modalInitialType}-${modalInitialTab}`}
         open={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
+        onClose={() => {
+          setAddModalOpen(false);
+          setEditingChannel(null);
+        }}
         tenantId={info?.id}
         initialType={modalInitialType}
         initialTab={modalInitialTab}
+        editingChannel={editingChannel}
       />
 
       {/* Диалог подтверждения удаления стандартного канала */}

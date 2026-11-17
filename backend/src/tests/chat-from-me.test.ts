@@ -64,6 +64,12 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
     // Проверяем вызовы (findContact, findActiveDeal, dedupCheck, updatePausedUntil, insertMessage)
     expect(mockQueryOne).toHaveBeenCalledTimes(5);
 
+    // Проверяем установку паузы с причиной ручного перехвата из мессенджера
+    const updateArgs = mockQueryOne.mock.calls[3];
+    expect(updateArgs?.[0]).toContain("ai_paused_reason");
+    const updateParams = updateArgs?.[1] as unknown[];
+    expect(updateParams[3]).toBe("messenger_takeover");
+
     // Проверяем параметры вставки сообщения
     const insertArgs = mockQueryOne.mock.calls[4];
     expect(insertArgs?.[0]).toContain("INSERT INTO deal_messages");

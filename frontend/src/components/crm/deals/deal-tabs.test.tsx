@@ -129,6 +129,27 @@ describe("dealTabContents", () => {
     expect(tabs.find((tab) => tab.id === "repairs")?.label).toBe("СЦ");
   });
 
+  it("показывает вкладку Услуги/Товары между СЦ и Таймлайн при установленном модуле products_services", () => {
+    const tabs = resolvePageLayoutTabs(
+      FALLBACK_PAGE_LAYOUT_TABS.deal,
+      dealTabContents(deal(), context()),
+      { installedModules: [{ slug: "products_services" }], hasPermission: () => true },
+    );
+
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "home",
+      "chat",
+      "products_services",
+      "timeline",
+      "analytics",
+      "source",
+      "contact-history",
+      "tasks",
+      "notes",
+    ]);
+    expect(tabs.find((tab) => tab.id === "products_services")?.label).toBe("Услуги/Товары");
+  });
+
   it("не зависит от наличия справочника этапов", () => {
     const withoutStages = Object.keys(dealTabContents(deal(), context())).sort();
     const withStages = Object.keys(

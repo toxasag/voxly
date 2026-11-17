@@ -102,9 +102,12 @@ export const createContactSchema = z.object({
    * «уберите поле», хотя он просто его не заполнил.
    */
   linkedin_link: z.string().url("Invalid URL").max(300).optional().or(z.literal("")),
+  city: z.string().max(200).optional().or(z.literal("")),
+  address: z.string().max(500).optional().or(z.literal("")),
   notes: z.string().max(4000).optional().or(z.literal("")),
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
+  merge_if_duplicate: z.boolean().optional(),
 });
 
 export const updateContactSchema = createContactSchema.partial();
@@ -148,6 +151,8 @@ export interface ContactRow {
   company_id: string | null;
   channel: ContactChannel;
   linkedin_link: string;
+  city: string;
+  address: string;
   custom_fields: Record<string, unknown>;
   source_metadata?: Record<string, unknown> | null;
   notes: string;
@@ -196,6 +201,8 @@ export interface ContactDTO {
   companyId: string | null;
   channel: ContactChannel;
   linkedinLink: string;
+  city: string;
+  address: string;
   customFields: Record<string, unknown>;
   sourceMetadata?: Record<string, unknown> | null;
   notes: string;
@@ -281,6 +288,8 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     companyId: row.company_id,
     channel: row.channel,
     linkedinLink: row.linkedin_link,
+    city: row.city ?? "",
+    address: row.address ?? "",
     customFields: row.custom_fields,
     sourceMetadata: (row.source_metadata as Record<string, unknown>) ?? null,
     notes: row.notes,

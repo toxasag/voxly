@@ -45,6 +45,7 @@ export interface ContactDTO {
   phones: ContactPhoneDTO[];
   email: string | null;
   telegramUsername: string | null;
+  telegramChatId?: number | string | null;
   whatsapp: string | null;
   socials: ContactSocialDTO[];
   jobTitle: string;
@@ -53,6 +54,8 @@ export interface ContactDTO {
   channel: ContactChannel;
   /** Twenty: person.linkedinLink, группа social на карточке. */
   linkedinLink: string;
+  city?: string;
+  address?: string;
   sourceMetadata?: Record<string, unknown> | null;
   customFields: Record<string, unknown>;
   notes: string;
@@ -339,6 +342,37 @@ export function useContactLookup(
     enabled: Boolean(phone && phone.trim().replace(/[^\d+]/g, "").length >= 4),
   });
 }
+
+export interface EnrichContactResult {
+  contactId: string;
+  phone: string;
+  ok: boolean;
+  enrichedFields: string[];
+  channelsChecked: string[];
+  error?: string;
+}
+
+export function useEnrichContact(): UseMutationResult<
+  EnrichContactResult,
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<EnrichContactResult, ApiClientError, string>({
+    mutationFn: async (contactId: string) => {
+      const res = await apiClient.post<EnrichContactResult>(
+        `${BASE_PATH}/${contactId}/enrich`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: (_, contactId) => {
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      void queryClient.invalidateQueries({ queryKey: contactKeys.detail(contactId) });
+    },
+  });
+}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -387,6 +421,8 @@ export function toContactFormValues(contact: ContactDTO): CreateContactPayload {
     company_id: contact.companyId ?? "",
     channel: contact.channel,
     linkedin_link: contact.linkedinLink,
+    city: contact.city ?? "",
+    address: contact.address ?? "",
     notes: contact.notes,
     custom_fields: customFields,
   };

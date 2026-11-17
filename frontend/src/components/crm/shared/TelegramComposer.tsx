@@ -40,6 +40,7 @@ export interface TelegramComposerProps {
   value: string;
   onChange: (val: string) => void;
   onSend: (file?: AttachedFile) => void;
+  onFocus?: () => void;
   isSending?: boolean;
   onAiDraft?: () => void;
   isAiDraftPending?: boolean;
@@ -266,6 +267,7 @@ export function TelegramComposer({
   value,
   onChange,
   onSend,
+  onFocus,
   isSending = false,
   onAiDraft,
   isAiDraftPending = false,
@@ -281,9 +283,12 @@ export function TelegramComposer({
   const lastSerializedValueRef = useRef<string>(value);
   const savedRangeRef = useRef<Range | null>(null);
 
+  const isFirstRenderRef = useRef(true);
+
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const prevIsFullscreenRef = useRef(isFullscreen);
   const [hasContent, setHasContent] = useState<boolean>(Boolean(value.trim()));
 
   // Контекстное меню
@@ -314,9 +319,12 @@ export function TelegramComposer({
     const md = htmlToMarkdown(activeEl.innerHTML);
     lastSerializedValueRef.current = md;
     setHasContent(Boolean(md.trim()));
+    if (md.trim().length > 0) {
+      onFocus?.();
+    }
     onChange(md);
     adjustHeight();
-  }, [getTargetEditor, onChange, adjustHeight]);
+  }, [getTargetEditor, onChange, adjustHeight, onFocus]);
 
   // Синхронизация внешнего значения `value` в DOM (при сбросе после отправки или вставке черновика AI)
   useEffect(() => {
@@ -335,16 +343,29 @@ export function TelegramComposer({
   }, [value, adjustHeight]);
 
   // Синхронизация содержимого при переключении Fullscreen
+  // Защита от авто-фокуса: при первичном монтировании focus() НЕ вызывается
   useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      prevIsFullscreenRef.current = isFullscreen;
+      adjustHeight();
+      return;
+    }
+
     const html = markdownToHtml(lastSerializedValueRef.current);
     if (isFullscreen && fullscreenEditorRef.current) {
       fullscreenEditorRef.current.innerHTML = html;
-      fullscreenEditorRef.current.focus();
+      if (prevIsFullscreenRef.current !== isFullscreen) {
+        fullscreenEditorRef.current.focus();
+      }
     } else if (!isFullscreen && editorRef.current) {
       editorRef.current.innerHTML = html;
-      editorRef.current.focus();
+      if (prevIsFullscreenRef.current !== isFullscreen) {
+        editorRef.current.focus();
+      }
       adjustHeight();
     }
+    prevIsFullscreenRef.current = isFullscreen;
   }, [isFullscreen, adjustHeight]);
 
   // Сохранение и восстановление выделения
@@ -1035,6 +1056,7 @@ export function TelegramComposer({
           <div
             ref={editorRef}
             contentEditable={!disabled}
+            onFocus={onFocus}
             onInput={syncFromDOM}
             onKeyDown={handleKeyDown}
             onPaste={handleNativePaste}
@@ -1443,6 +1465,7 @@ export function TelegramComposer({
             <div
               ref={fullscreenEditorRef}
               contentEditable={!disabled}
+              onFocus={onFocus}
               onInput={syncFromDOM}
               onKeyDown={handleKeyDown}
               onPaste={handleNativePaste}

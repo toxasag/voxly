@@ -342,7 +342,8 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     const { id } = idParamsSchema.parse(request.params);
     const enrichment = new CrmEnrichmentService();
     const result = await enrichment.enrichContact(request.tenant_id, id);
-    return reply.send({ data: result });
+    const contact = await service.get(request.tenant_id, id);
+    return reply.send({ data: result, contact });
   });
 
   app.post("/:id/sync-chat-history", { onRequest: canWrite }, async (request, reply) => {

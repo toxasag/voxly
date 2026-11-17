@@ -2,7 +2,7 @@
 // Типы и DTO каналов доставки уведомлений о лидах / заявках.
 // ---------------------------------------------------------------------------
 
-export type NotificationChannelType = "email" | "telegram" | "whatsapp";
+export type NotificationChannelType = "email" | "telegram" | "whatsapp" | "bitrix24";
 
 export interface NotificationChannelRow {
   id: string;
@@ -16,6 +16,14 @@ export interface NotificationChannelRow {
   updated_at: Date | string;
 }
 
+export interface EnrichedWidgetMeta {
+  id: string;
+  name: string;
+  site_domain: string;
+  site_name?: string | null;
+  site_url?: string | null;
+}
+
 export interface NotificationChannelDTO {
   id: string;
   tenant_id: string;
@@ -27,6 +35,7 @@ export interface NotificationChannelDTO {
   is_verified: boolean;
   created_at: string;
   updated_at?: string;
+  widgets?: EnrichedWidgetMeta[];
 }
 
 export interface CreateNotificationChannelPayload {

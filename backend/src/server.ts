@@ -199,9 +199,10 @@ async function main(): Promise<void> {
           mimeType,
         });
         if (res.ok) return { ok: true };
+        return { ok: false, reason: res.error || "Ошибка отправки MAX через подключенный аккаунт" };
       }
-    } catch {
-      // Fallback к Bot API
+    } catch (err) {
+      app.log.warn({ err, message }, "Exception during maxBridge sendMessage");
     }
 
     const max = new MaxService();

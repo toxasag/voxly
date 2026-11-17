@@ -28,6 +28,7 @@ import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/cha
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import { widgetsRoutes } from "./modules/channels/widgets.routes.js";
+import { siteManagementRoutes, siteWebhookRoutes } from "./modules/channels/sites/sites.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import botAliasRoutes from "./modules/ai/bot-alias.routes.js";
@@ -36,9 +37,11 @@ import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import geminiIntegrationRoutes from "./modules/ai/gemini-integration.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
+import workspacesRoutes from "./modules/tenant/workspaces.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import partnerRoutes from "./modules/partner/partner.routes.js";
 import { warehouseRoutes } from "./modules/warehouse/warehouse.routes.js";
+import { servicesRoutes } from "./modules/services/services.routes.js";
 import { printTemplatesRoutes } from "./modules/print-templates/print-templates.routes.js";
 import notificationChannelsRoutes from "./modules/notifications/notification-channels.routes.js";
 import bitrix24Routes from "./modules/integrations/bitrix24/bitrix24.routes.js";
@@ -105,6 +108,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         url.startsWith("/api/v1/public/track/") ||
         url.startsWith("/api/v1/public/chat/") ||
         url.startsWith("/api/v1/analytics/pre-chat-telemetry") ||
+        url.startsWith("/api/v1/webhooks/sites/") ||
+        url.startsWith("/api/webhooks/sites/") ||
         url.startsWith("/mascots/");
 
       if (isPublicRoute) {
@@ -149,7 +154,14 @@ export async function buildApp(): Promise<FastifyInstance> {
      * and both carry their own higher route-level limit (see auth.routes.ts), so
      * an unauthenticated caller cannot use them as an unbounded write path.
      */
-    allowList: (request) => WEBHOOK_PATHS.has((request.url ?? "").split("?")[0] ?? ""),
+    allowList: (request) => {
+      const u = (request.url ?? "").split("?")[0] ?? "";
+      return (
+        WEBHOOK_PATHS.has(u) ||
+        u.startsWith("/api/v1/webhooks/sites/") ||
+        u.startsWith("/api/webhooks/sites/")
+      );
+    },
   });
 
   // Secret comes from validated env — no inline fallback, so production can
@@ -179,6 +191,24 @@ export async function buildApp(): Promise<FastifyInstance> {
       fieldSize: 1024 * 100,
     },
   });
+
+  // Поддержка form-urlencoded для внешних вебхуков (Tilda, WordPress и др.)
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "string" },
+    (_req, body, done) => {
+      try {
+        const parsed: Record<string, string> = {};
+        const params = new URLSearchParams(body as string);
+        for (const [key, val] of params.entries()) {
+          parsed[key] = val;
+        }
+        done(null, parsed);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
 
   app.setErrorHandler(errorHandler);
 
@@ -232,13 +262,23 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dictionariesRoutes, { prefix: "/api/dictionaries" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
   await app.register(warehouseRoutes, { prefix: "/api/v1/warehouse" });
+  await app.register(servicesRoutes, { prefix: "/api/v1/services" });
+  await app.register(servicesRoutes, { prefix: "/api/services" });
   await app.register(printTemplatesRoutes, { prefix: "/api/v1/print-templates" });
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
+  await app.register(marketplaceRoutes, { prefix: "/api/marketplace" });
+  await app.register(marketplaceRoutes, { prefix: "/api" });
   await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
   await app.register(analyticsRoutes, { prefix: "/api/analytics" });
+
+  // Интеграции внешних сайтов (Tilda, WordPress, Webflow, HTML-формы)
+  await app.register(siteManagementRoutes, { prefix: "/api/v1/channels/sites" });
+  await app.register(siteManagementRoutes, { prefix: "/api/channels/sites" });
+  await app.register(siteWebhookRoutes, { prefix: "/api/v1/webhooks/sites" });
+  await app.register(siteWebhookRoutes, { prefix: "/api/webhooks/sites" });
 
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.
@@ -362,112 +402,172 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.status(404).send({ error: "Avatar not found" });
   });
 
+  const mimeMap: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".txt": "text/plain",
+    ".zip": "application/zip",
+  };
+
+  function streamFileWithRange(
+    filePath: string,
+    stat: { size: number },
+    contentType: string,
+    disposition: string,
+    request: FastifyRequest,
+    reply: FastifyReply,
+    isPublic = false,
+  ) {
+    const cacheControl = isPublic ? "public, max-age=86400" : "private, no-store";
+    const rangeHeader = request.headers.range;
+    if (rangeHeader && stat.size > 0) {
+      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+      if (match && match[1] !== undefined) {
+        const start = parseInt(match[1], 10);
+        const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
+        if (start < stat.size && end >= start) {
+          const boundedEnd = Math.min(end, stat.size - 1);
+          const chunkSize = boundedEnd - start + 1;
+          const stream = createReadStream(filePath, { start, end: boundedEnd });
+
+          return reply
+            .status(206)
+            .type(contentType)
+            .header("Content-Range", `bytes ${start}-${boundedEnd}/${stat.size}`)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", chunkSize)
+            .header("Content-Disposition", disposition)
+            .header("Cache-Control", cacheControl)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+            .header("Cross-Origin-Resource-Policy", "cross-origin")
+            .send(stream);
+        }
+      }
+    }
+
+    return reply
+      .status(200)
+      .type(contentType)
+      .header("Accept-Ranges", "bytes")
+      .header("Content-Length", stat.size)
+      .header("Content-Disposition", disposition)
+      .header("Cache-Control", cacheControl)
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .send(createReadStream(filePath));
+  }
+
+  // CORS preflight для публичных загрузок и аватаров
+  app.options("/uploads/:filename", async (_request, reply) => {
+    return reply
+      .status(204)
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+      .header("Access-Control-Allow-Headers", "Content-Type, Authorization, Range")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .send();
+  });
+
+  // Эндпоинт отдачи загруженных файлов (/uploads/:filename).
+  // Публичные ассеты (аватары, логотипы, маркер _public_, изображения) отдаются
+  // без авторизации с открытыми CORS/CORP заголовками для виджетов на клиентских сайтах.
+  // Конфиденциальные документы (PDF, XLSX, DOCX) требуют валидный JWT и проверку арендатора.
+  app.get("/uploads/:filename", async (request, reply) => {
+    const { filename } = request.params as { filename: string };
+    const safeFilename = path.basename(filename);
+    const ext = path.extname(safeFilename).toLowerCase();
+    const contentType = mimeMap[ext] ?? "application/octet-stream";
+
+    const isPublicAsset =
+      safeFilename.includes("_avatar_") ||
+      safeFilename.includes("_logo_") ||
+      safeFilename.includes("_public_") ||
+      contentType.startsWith("image/");
+
+    let isAuthorized = isPublicAsset;
+    let hasToken = false;
+
+    if (!isAuthorized) {
+      let token: string | undefined;
+      const authHeader = request.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.slice("Bearer ".length);
+      } else if (request.headers.cookie) {
+        const cookieMatch = request.headers.cookie.match(/(?:^|;\s*)(?:getvoxly_auth_token|access_token)=([^;]+)/);
+        if (cookieMatch && cookieMatch[1]) token = decodeURIComponent(cookieMatch[1]);
+      }
+      if (!token && typeof (request.query as Record<string, unknown> | undefined)?.token === "string") {
+        token = (request.query as Record<string, string>).token;
+      }
+
+      if (token) {
+        hasToken = true;
+        try {
+          const payload = app.jwt.verify(token) as { tenant_id?: string; platform_role?: string };
+          if (payload && typeof payload.tenant_id === "string") {
+            const tenantPrefix = `${payload.tenant_id}_`;
+            const isOwner = payload.platform_role === "platform_owner";
+            if (safeFilename.startsWith(tenantPrefix) || isOwner) {
+              isAuthorized = true;
+            }
+          }
+        } catch {
+          // Невалидный токен
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      return reply.status(hasToken ? 404 : 401).send({ error: hasToken ? "File not found" : "Unauthorized" });
+    }
+
+    const filePath = path.join(process.cwd(), "uploads", safeFilename);
+
+    try {
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) {
+        return reply.status(404).send({ error: "File not found" });
+      }
+
+      const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+      const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
+      const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
+      const disposition = isInline
+        ? "inline"
+        : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
+
+      return streamFileWithRange(filePath, stat, contentType, disposition, request, reply, isPublicAsset);
+    } catch {
+      return reply.status(404).send({ error: "File not found" });
+    }
+  });
+
   // Медиа CRM доступны только авторизованному пользователю своего арендатора.
   // Имя файла содержит tenant UUID, поэтому проверяем принадлежность до открытия
   // потока; публичная кэшируемость отключена, чтобы URL не превращался в
   // бессрочную ссылку на вложение. Поддерживает HTTP Range requests (206) для перемотки аудио/видео.
   await app.register(async (mediaApp) => {
     await mediaApp.register(authenticatePlugin);
-
-    function streamFileWithRange(
-      filePath: string,
-      stat: { size: number },
-      contentType: string,
-      disposition: string,
-      request: FastifyRequest,
-      reply: FastifyReply,
-    ) {
-      const rangeHeader = request.headers.range;
-      if (rangeHeader && stat.size > 0) {
-        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
-        if (match && match[1] !== undefined) {
-          const start = parseInt(match[1], 10);
-          const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
-          if (start < stat.size && end >= start) {
-            const boundedEnd = Math.min(end, stat.size - 1);
-            const chunkSize = boundedEnd - start + 1;
-            const stream = createReadStream(filePath, { start, end: boundedEnd });
-
-            return reply
-              .status(206)
-              .type(contentType)
-              .header("Content-Range", `bytes ${start}-${boundedEnd}/${stat.size}`)
-              .header("Accept-Ranges", "bytes")
-              .header("Content-Length", chunkSize)
-              .header("Content-Disposition", disposition)
-              .header("Cache-Control", "private, no-store")
-              .header("Cross-Origin-Resource-Policy", "cross-origin")
-              .send(stream);
-          }
-        }
-      }
-
-      return reply
-        .status(200)
-        .type(contentType)
-        .header("Accept-Ranges", "bytes")
-        .header("Content-Length", stat.size)
-        .header("Content-Disposition", disposition)
-        .header("Cache-Control", "private, no-store")
-        .header("Cross-Origin-Resource-Policy", "cross-origin")
-        .send(createReadStream(filePath));
-    }
-
-    const mimeMap: Record<string, string> = {
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".png": "image/png",
-      ".webp": "image/webp",
-      ".gif": "image/gif",
-      ".svg": "image/svg+xml",
-      ".mp3": "audio/mpeg",
-      ".ogg": "audio/ogg",
-      ".opus": "audio/ogg",
-      ".m4a": "audio/mp4",
-      ".wav": "audio/wav",
-      ".mp4": "video/mp4",
-      ".mov": "video/quicktime",
-      ".webm": "video/webm",
-      ".pdf": "application/pdf",
-      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      ".doc": "application/msword",
-      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ".xls": "application/vnd.ms-excel",
-      ".txt": "text/plain",
-      ".zip": "application/zip",
-    };
-
-    mediaApp.get("/uploads/:filename", async (request, reply) => {
-      const { filename } = request.params as { filename: string };
-      const safeFilename = path.basename(filename);
-      const tenantPrefix = `${request.tenant_id}_`;
-      const isOwner = request.authUser?.platform_role === "platform_owner";
-      if (!safeFilename.startsWith(tenantPrefix) && !isOwner) {
-        return reply.status(404).send({ error: "File not found" });
-      }
-      const filePath = path.join(process.cwd(), "uploads", safeFilename);
-
-      try {
-        const stat = await fs.stat(filePath);
-        if (!stat.isFile()) {
-          return reply.status(404).send({ error: "File not found" });
-        }
-
-        const ext = path.extname(safeFilename).toLowerCase();
-        const contentType = mimeMap[ext] ?? "application/octet-stream";
-
-        const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
-        const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
-        const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
-        const disposition = isInline
-          ? "inline"
-          : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
-
-        return streamFileWithRange(filePath, stat, contentType, disposition, request, reply);
-      } catch {
-        return reply.status(404).send({ error: "File not found" });
-      }
-    });
 
     // Защищенный эндпоинт получения вложения сообщения по ID сообщения
     mediaApp.get("/api/v1/crm/messages/:id/attachment", async (request, reply) => {
@@ -626,6 +726,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminMetricsRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });
   await app.register(tenantRoutes, { prefix: "/api/v1/tenant" });
+  await app.register(workspacesRoutes, { prefix: "/api/v1/workspaces" });
+  await app.register(workspacesRoutes, { prefix: "/api/workspaces" });
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/v1/settings/notifications" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/settings/notifications" });

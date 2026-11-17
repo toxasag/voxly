@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const accountIdSchema = z.string().uuid("account_id must be a UUID");
+export const accountTypeSchema = z.enum(["bank", "cash", "acquiring", "safe"]);
 export const transactionTypeSchema = z.enum(["income", "expense"]);
 export const invoiceStatusSchema = z.enum(["draft", "sent", "paid", "overdue", "cancelled"]);
 
@@ -9,6 +10,7 @@ const isoDate = z.string().datetime("Use an ISO 8601 timestamp");
 
 export const createAccountSchema = z.object({
   name: z.string().min(1).max(120),
+  account_type: accountTypeSchema.default("cash"),
   currency: z.string().length(3).default("RUB"),
   opening_balance: z.number().nonnegative().default(0),
   is_default: z.boolean().default(false),
@@ -82,25 +84,76 @@ export const markInvoicePaidSchema = z.object({
   description: z.string().max(500).optional().or(z.literal("")),
 });
 
+export const batchPaymentSchema = z.object({
+  repair_order_ids: z.array(z.string().uuid()).min(1),
+  cash_account_id: accountIdSchema,
+  category_id: optionalUuid,
+  description: z.string().max(500).optional().or(z.literal("")),
+});
+
+export const createInvoiceFromActsSchema = z.object({
+  repair_order_ids: z.array(z.string().uuid()).min(1),
+  company_id: optionalUuid,
+  company_name: z.string().max(200).optional().or(z.literal("")),
+  company_inn: z.string().max(20).optional().or(z.literal("")),
+  company_address: z.string().max(300).optional().or(z.literal("")),
+  contact_name: z.string().max(200).optional().or(z.literal("")),
+  contact_phone: z.string().max(30).optional().or(z.literal("")),
+  deal_id: optionalUuid,
+  due_date: isoDate.optional(),
+  vat_rate: z.number().min(0).max(100).default(20),
+  currency: z.string().length(3).default("RUB"),
+  notes: z.string().max(2000).optional().or(z.literal("")),
+});
+
+export const sendInvoiceSchema = z.object({
+  channel_type: z.enum(["telegram", "whatsapp", "all"]).default("all"),
+});
+
+export const bulkTransactionsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, "Select at least 1 transaction"),
+});
+
+export type AccountType = z.infer<typeof accountTypeSchema>;
+export type BulkTransactionsPayload = z.infer<typeof bulkTransactionsSchema>;
 export type CreateAccountPayload = z.infer<typeof createAccountSchema>;
 export type TransferPayload = z.infer<typeof transferSchema>;
 export type CreateTransactionPayload = z.infer<typeof createTransactionSchema>;
 export type CreateInvoicePayload = z.infer<typeof createInvoiceSchema>;
+export type CreateInvoiceFromActsPayload = z.infer<typeof createInvoiceFromActsSchema>;
 export type UpdateInvoicePayload = z.infer<typeof updateInvoiceSchema>;
 export type MarkInvoicePaidPayload = z.infer<typeof markInvoicePaidSchema>;
+export type BatchPaymentPayload = z.infer<typeof batchPaymentSchema>;
+export type SendInvoicePayload = z.infer<typeof sendInvoiceSchema>;
 export type InvoiceItemPayload = z.infer<typeof invoiceItemSchema>;
 export type InvoiceStatus = z.infer<typeof invoiceStatusSchema>;
 export type TransactionType = z.infer<typeof transactionTypeSchema>;
 
 export interface AccountDTO {
-  id: string; name: string; currency: string; balance: number; isDefault: boolean;
+  id: string;
+  name: string;
+  accountType: AccountType;
+  currency: string;
+  balance: number;
+  isDefault: boolean;
 }
 
 export interface TransactionDTO {
-  id: string; type: TransactionType; amount: number; currency: string;
-  categoryId: string | null; categoryName: string; description: string;
-  accountId: string; accountName: string; dealId: string | null;
-  repairOrderId: string | null; invoiceId: string | null; occurredAt: string;
+  id: string;
+  type: TransactionType;
+  amount: number;
+  currency: string;
+  categoryId: string | null;
+  categoryName: string;
+  description: string;
+  accountId: string;
+  accountName: string;
+  dealId: string | null;
+  repairOrderId: string | null;
+  invoiceId: string | null;
+  counterpartyName: string;
+  counterpartyInn: string;
+  occurredAt: string;
 }
 
 export interface InvoiceItemDTO {
@@ -116,6 +169,29 @@ export interface InvoiceDTO {
   vatRate: number; vatAmount: number; total: number; currency: string;
   notes: string; paidAt: string | null; paidAccountId: string | null;
   lineItems: InvoiceItemDTO[];
+}
+
+export const createCategorySchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(100),
+  type: z.enum(["income", "expense"]),
+  parent_id: z.string().uuid().optional().nullable().or(z.literal("")),
+});
+
+export const updateCategorySchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  type: z.enum(["income", "expense"]).optional(),
+  parent_id: z.string().uuid().optional().nullable().or(z.literal("")),
+});
+
+export type CreateCategoryPayload = z.infer<typeof createCategorySchema>;
+export type UpdateCategoryPayload = z.infer<typeof updateCategorySchema>;
+
+export interface FinanceCategoryDTO {
+  id: string;
+  name: string;
+  type: "income" | "expense";
+  parentId: string | null;
+  createdAt: string;
 }
 
 export interface PnlCategoryDTO { categoryName: string; amount: number; percentage: number; }

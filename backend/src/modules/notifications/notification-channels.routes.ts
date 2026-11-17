@@ -7,7 +7,7 @@ import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { NotificationChannelsService } from "./notification-channels.service.js";
 
-const channelTypeSchema = z.enum(["email", "telegram", "whatsapp"]);
+const channelTypeSchema = z.enum(["email", "telegram", "whatsapp", "bitrix24"]);
 
 const createChannelBody = z
   .object({
@@ -29,8 +29,11 @@ const createChannelBody = z
     },
   );
 
-const toggleChannelBody = z.object({
-  is_active: z.boolean(),
+const updateChannelBody = z.object({
+  destination: z.string().optional(),
+  target_value: z.string().optional(),
+  extra_meta: z.record(z.unknown()).optional(),
+  is_active: z.boolean().optional(),
 });
 
 const testChannelBody = z.object({
@@ -71,10 +74,17 @@ export default async function notificationChannelsRoutes(app: FastifyInstance): 
     return reply.send({ data: { ok: deleted }, ok: deleted });
   });
 
+  app.put("/:id", { onRequest: admin }, async (request, reply) => {
+    const { id } = channelParams.parse(request.params);
+    const body = updateChannelBody.parse(request.body);
+    const channel = await service.updateChannel(request.tenant_id, id, body);
+    return reply.send({ data: channel, channel });
+  });
+
   app.patch("/:id", { onRequest: admin }, async (request, reply) => {
     const { id } = channelParams.parse(request.params);
-    const body = toggleChannelBody.parse(request.body);
-    const channel = await service.toggleChannel(request.tenant_id, id, body.is_active);
+    const body = updateChannelBody.parse(request.body);
+    const channel = await service.updateChannel(request.tenant_id, id, body);
     return reply.send({ data: channel, channel });
   });
 

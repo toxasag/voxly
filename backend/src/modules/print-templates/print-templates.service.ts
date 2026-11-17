@@ -235,6 +235,9 @@ function toTemplateDto(row: PrintTemplateRow): PrintTemplateDTO {
     bodyTemplate: row.body_template || "",
     layoutConfig: parsedConfig,
     isDefault: Boolean(row.is_default),
+    isCustom: Boolean(row.is_custom),
+    parentTemplateId: row.parent_template_id ?? null,
+    isHidden: Boolean(row.is_hidden),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
@@ -246,18 +249,33 @@ export class PrintTemplatesService {
    */
   async ensureTemplates(tenantId: string): Promise<void> {
     await withTenant(tenantId, async (tx) => {
+      const tenantRow = await tx.queryOne<{ name: string }>(
+        `SELECT name FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      const tenantName = tenantRow?.name || "Сервисный центр";
+
       for (const preset of ALL_PRESETS) {
         const existing = await tx.query<PrintTemplateRow>(
-          `SELECT id, layout_config FROM print_templates WHERE tenant_id = $1 AND document_type = $2 LIMIT 1`,
+          `SELECT id, layout_config, is_custom FROM print_templates WHERE tenant_id = $1 AND document_type = $2 LIMIT 1`,
           [tenantId, preset.documentType],
         );
 
         const first = existing[0];
         if (!first) {
+          const cfg = {
+            ...preset.layoutConfig,
+            header: {
+              ...preset.layoutConfig.header,
+              companyName: preset.layoutConfig.header.companyName || tenantName,
+            },
+          };
+
           await tx.query(
             `INSERT INTO print_templates (
-              tenant_id, slug, name, description, document_type, page_size, orientation, body_template, layout_config, is_default
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)`,
+              tenant_id, slug, name, description, document_type, page_size, orientation,
+              body_template, layout_config, is_default, is_custom, is_hidden
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, false, false)`,
             [
               tenantId,
               preset.slug,
@@ -267,7 +285,7 @@ export class PrintTemplatesService {
               preset.pageSize,
               preset.orientation,
               "",
-              JSON.stringify(preset.layoutConfig),
+              JSON.stringify(cfg),
             ],
           );
         } else if (
@@ -285,23 +303,33 @@ export class PrintTemplatesService {
     });
   }
 
-  async list(tenantId: string, documentType?: string): Promise<PrintTemplateDTO[]> {
+  async list(
+    tenantId: string,
+    documentType?: string,
+    visibleOnly: boolean = false,
+  ): Promise<PrintTemplateDTO[]> {
     await this.ensureTemplates(tenantId);
 
     return await withTenant(tenantId, async (tx) => {
       const params: SqlParam[] = [tenantId];
       let sql = `
-        SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation, body_template, layout_config, is_default, created_at, updated_at
+        SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
+               body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+               created_at, updated_at
         FROM print_templates
         WHERE tenant_id = $1
       `;
 
       if (documentType) {
         params.push(documentType);
-        sql += ` AND document_type = $2`;
+        sql += ` AND document_type = $${params.length}`;
       }
 
-      sql += ` ORDER BY is_default DESC, name ASC`;
+      if (visibleOnly) {
+        sql += ` AND is_hidden = false`;
+      }
+
+      sql += ` ORDER BY is_default DESC, is_custom DESC, name ASC`;
 
       const rows = await tx.query<PrintTemplateRow>(sql, params);
       return rows.map(toTemplateDto);
@@ -311,7 +339,9 @@ export class PrintTemplatesService {
   async getById(tenantId: string, id: string): Promise<PrintTemplateDTO | null> {
     return await withTenant(tenantId, async (tx) => {
       const row = await tx.queryOne<PrintTemplateRow>(
-        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation, body_template, layout_config, is_default, created_at, updated_at
+        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
+                body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+                created_at, updated_at
          FROM print_templates
          WHERE tenant_id = $1 AND id = $2`,
         [tenantId, id],
@@ -331,7 +361,9 @@ export class PrintTemplatesService {
         );
       if (isUuid) {
         const byId = await tx.queryOne<PrintTemplateRow>(
-          `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation, body_template, layout_config, is_default, created_at, updated_at
+          `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
+                  body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+                  created_at, updated_at
            FROM print_templates
            WHERE tenant_id = $1 AND id = $2`,
           [tenantId, slugOrType],
@@ -341,7 +373,9 @@ export class PrintTemplatesService {
 
       // 2. Поиск по слагу
       const bySlug = await tx.queryOne<PrintTemplateRow>(
-        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation, body_template, layout_config, is_default, created_at, updated_at
+        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
+                body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+                created_at, updated_at
          FROM print_templates
          WHERE tenant_id = $1 AND slug = $2
          ORDER BY is_default DESC
@@ -352,7 +386,9 @@ export class PrintTemplatesService {
 
       // 3. Поиск по document_type (дефолтный шаблон этого типа)
       const byDocType = await tx.queryOne<PrintTemplateRow>(
-        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation, body_template, layout_config, is_default, created_at, updated_at
+        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
+                body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+                created_at, updated_at
          FROM print_templates
          WHERE tenant_id = $1 AND document_type = $2 AND is_default = true
          LIMIT 1`,
@@ -404,8 +440,12 @@ export class PrintTemplatesService {
 
       const docType = payload.document_type || "work_order";
       const slug = `${docType}_${Date.now().toString(36)}`;
+      const isDefault = Boolean(payload.is_default);
+      const isCustom = payload.is_custom !== undefined ? Boolean(payload.is_custom) : true;
+      const isHidden = Boolean(payload.is_hidden);
+      const parentId = payload.parent_template_id || payload.clone_from_id || null;
 
-      if (payload.is_default) {
+      if (isDefault) {
         await tx.query(
           `UPDATE print_templates SET is_default = false WHERE tenant_id = $1 AND document_type = $2`,
           [tenantId, docType],
@@ -414,8 +454,9 @@ export class PrintTemplatesService {
 
       const rows = await tx.query<PrintTemplateRow>(
         `INSERT INTO print_templates (
-          tenant_id, slug, name, description, document_type, page_size, orientation, body_template, layout_config, is_default
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          tenant_id, slug, name, description, document_type, page_size, orientation,
+          body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *`,
         [
           tenantId,
@@ -427,7 +468,10 @@ export class PrintTemplatesService {
           orientation,
           bodyTemplate,
           JSON.stringify(layoutConfig),
-          Boolean(payload.is_default),
+          isDefault,
+          isCustom,
+          parentId,
+          isHidden,
         ],
       );
 
@@ -453,6 +497,55 @@ export class PrintTemplatesService {
       if (!current) return null;
       const docType = payload.document_type ?? current.document_type;
 
+      // Если редактируется системный/базовый шаблон (is_custom = false),
+      // автоматически создается новая пользовательская (клиентская) версия!
+      if (!current.is_custom) {
+        const clientName =
+          payload.name && payload.name !== current.name
+            ? payload.name
+            : `${current.name} (пользовательский)`;
+        const slug = `${docType}_custom_${Date.now().toString(36)}`;
+        const pageSize = payload.page_size ?? current.page_size;
+        const orientation = payload.orientation ?? current.orientation;
+        const bodyTemplate = payload.body_template ?? current.body_template;
+        const layoutConfig = payload.layout_config ?? current.layout_config;
+        const isDefault = payload.is_default !== undefined ? payload.is_default : true;
+        const isHidden = payload.is_hidden !== undefined ? payload.is_hidden : false;
+
+        if (isDefault) {
+          await tx.query(
+            `UPDATE print_templates SET is_default = false WHERE tenant_id = $1 AND document_type = $2`,
+            [tenantId, docType],
+          );
+        }
+
+        const rows = await tx.query<PrintTemplateRow>(
+          `INSERT INTO print_templates (
+            tenant_id, slug, name, description, document_type, page_size, orientation,
+            body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, $12)
+          RETURNING *`,
+          [
+            tenantId,
+            slug,
+            clientName,
+            payload.description ?? current.description,
+            docType,
+            pageSize,
+            orientation,
+            bodyTemplate,
+            JSON.stringify(layoutConfig),
+            isDefault,
+            current.id,
+            isHidden,
+          ],
+        );
+        const createdRow = rows[0];
+        if (!createdRow) return null;
+        return toTemplateDto(createdRow);
+      }
+
+      // Обновление существующей пользовательской копии
       if (payload.is_default) {
         await tx.query(
           `UPDATE print_templates SET is_default = false WHERE tenant_id = $1 AND document_type = $2 AND id != $3`,
@@ -468,12 +561,14 @@ export class PrintTemplatesService {
       const layoutConfig = payload.layout_config ?? current.layout_config;
       const isDefault =
         payload.is_default !== undefined ? payload.is_default : current.is_default;
+      const isHidden =
+        payload.is_hidden !== undefined ? payload.is_hidden : (current.is_hidden ?? false);
 
       const rows = await tx.query<PrintTemplateRow>(
         `UPDATE print_templates
          SET name = $1, description = $2, document_type = $3, page_size = $4, orientation = $5,
-             body_template = $6, layout_config = $7, is_default = $8, updated_at = now()
-         WHERE tenant_id = $9 AND id = $10
+             body_template = $6, layout_config = $7, is_default = $8, is_hidden = $9, updated_at = now()
+         WHERE tenant_id = $10 AND id = $11
          RETURNING *`,
         [
           name,
@@ -484,6 +579,7 @@ export class PrintTemplatesService {
           bodyTemplate,
           JSON.stringify(layoutConfig),
           isDefault,
+          isHidden,
           tenantId,
           id,
         ],
@@ -492,6 +588,66 @@ export class PrintTemplatesService {
       const updatedRow = rows[0];
       if (!updatedRow) return null;
       return toTemplateDto(updatedRow);
+    });
+  }
+
+  async duplicate(tenantId: string, id: string): Promise<PrintTemplateDTO> {
+    return await withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<PrintTemplateRow>(
+        `SELECT * FROM print_templates WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id],
+      );
+      if (!existing) {
+        throw new AppError(404, "TEMPLATE_NOT_FOUND", "Шаблон не найден");
+      }
+
+      const docType = existing.document_type;
+      const slug = `${docType}_copy_${Date.now().toString(36)}`;
+      const newName = `${existing.name} (Копия)`;
+
+      const rows = await tx.query<PrintTemplateRow>(
+        `INSERT INTO print_templates (
+          tenant_id, slug, name, description, document_type, page_size, orientation,
+          body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false, true, $10, false)
+        RETURNING *`,
+        [
+          tenantId,
+          slug,
+          newName,
+          existing.description,
+          docType,
+          existing.page_size,
+          existing.orientation,
+          existing.body_template,
+          typeof existing.layout_config === "string" ? existing.layout_config : JSON.stringify(existing.layout_config),
+          existing.id,
+        ],
+      );
+
+      const created = rows[0];
+      if (!created) {
+        throw new AppError(500, "DUPLICATE_FAILED", "Не удалось создать копию шаблона");
+      }
+      return toTemplateDto(created);
+    });
+  }
+
+  async toggleVisibility(tenantId: string, id: string): Promise<PrintTemplateDTO> {
+    return await withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<PrintTemplateRow>(
+        `UPDATE print_templates
+         SET is_hidden = NOT is_hidden, updated_at = now()
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING *`,
+        [tenantId, id],
+      );
+
+      const updated = rows[0];
+      if (!updated) {
+        throw new AppError(404, "TEMPLATE_NOT_FOUND", "Шаблон не найден");
+      }
+      return toTemplateDto(updated);
     });
   }
 
@@ -538,6 +694,14 @@ export class PrintTemplatesService {
       const tpl = existingRows[0];
       if (!tpl) {
         throw new AppError(404, "TEMPLATE_NOT_FOUND", "Шаблон не найден");
+      }
+
+      if (!tpl.is_custom) {
+        throw new AppError(
+          400,
+          "CANNOT_DELETE_SYSTEM",
+          "Системный базовый шаблон нельзя удалить. Вы можете скрыть его из меню печати.",
+        );
       }
 
       const countRows = await tx.query<{ count: string }>(
