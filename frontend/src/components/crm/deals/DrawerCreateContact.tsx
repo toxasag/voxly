@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   Briefcase,
   Building2,
@@ -27,7 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useCreateContact } from "@/lib/api/use-contacts";
+import { useCreateContact, useFindDuplicateContacts, contactFullName } from "@/lib/api/use-contacts";
 import { useCompanies } from "@/lib/api/use-companies";
 import { useTenantUsers } from "@/lib/api/use-tenant-users";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
@@ -117,6 +118,8 @@ export function DrawerCreateContact({
   const tenantUsers = useTenantUsers();
   const companies = useCompanies({ limit: 50 });
   const createContact = useCreateContact();
+  const duplicatesQuery = useFindDuplicateContacts(phone);
+  const duplicates = duplicatesQuery.data ?? [];
 
   const currentUserName = useMemo(() => {
     const list = tenantUsers.data ?? [];
@@ -319,6 +322,30 @@ export function DrawerCreateContact({
         <div className="px-4 pt-3 pb-1">
           <span className="text-xs font-semibold text-[#111111]">Поля</span>
         </div>
+
+        {/* Предупреждение о найденном дубликате по номеру */}
+        {duplicates.length > 0 && (
+          <div className="mx-4 my-2 flex items-center justify-between rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] shadow-2xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-[#854d0e]" />
+              <span className="truncate">
+                Контакт с таким номером уже есть: <strong>{contactFullName(duplicates[0])}</strong>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const dup = duplicates[0];
+                onSuccess?.(dup.id, contactFullName(dup));
+                onCreated?.({ id: dup.id, name: contactFullName(dup) });
+                onClose();
+              }}
+              className="shrink-0 rounded-[6px] bg-[#854d0e] px-2 py-1 text-[11px] font-medium text-white hover:bg-[#713f12] transition-colors cursor-pointer ml-2"
+            >
+              Выбрать его
+            </button>
+          </div>
+        )}
 
         {/* Группа 1: Общее */}
         <div>

@@ -21,6 +21,8 @@ import {
   type SqlParam,
   type TransactionClient,
 } from "../../../db/client.js";
+import { CrmEnrichmentService } from "../enrichment.service.js";
+import { ContactDedupeService } from "./dedupe.service.js";
 
 /**
  * Те же колонки с префиксом плюс счётчики связей и имя создателя.
@@ -231,6 +233,37 @@ export class ContactsService {
     payload: CreateContactPayload,
     createdBy?: string,
   ): Promise<ContactDTO> {
+    const primaryPhone = payload.phones?.[0]?.number;
+
+    // Дедупликация при флаге merge_if_duplicate: если дубликат найден, объединяем в него
+    if (payload.merge_if_duplicate && primaryPhone) {
+      const dedupe = new ContactDedupeService();
+      const duplicates = await dedupe.findDuplicatesByPhone(tenantId, primaryPhone);
+      if (duplicates.length > 0 && duplicates[0]) {
+        const existingId = duplicates[0].id;
+        await this.update(tenantId, existingId, {
+          email: payload.email || undefined,
+          job_title: payload.job_title || undefined,
+          company_name: payload.company_name || undefined,
+          company_id: payload.company_id || undefined,
+          city: payload.city || undefined,
+          address: payload.address || undefined,
+        });
+
+        // Запуск обогащения
+        const enrichment = new CrmEnrichmentService();
+        void enrichment
+          .enrichContact(tenantId, existingId, {
+            phoneOverride: primaryPhone,
+            channels: ["telegram", "max", "whatsapp"],
+          })
+          .catch(() => {});
+
+        const updated = await this.get(tenantId, existingId);
+        if (updated) return updated;
+      }
+    }
+
     const id = await transaction((tx) => this.createInTx(tx, tenantId, payload, createdBy));
 
     // Перечитываем ради имени создателя и счётчиков: RETURNING не отдаёт
@@ -238,6 +271,18 @@ export class ContactsService {
     // как «Система».
     const contact = await this.get(tenantId, id);
     if (contact === null) throw new Error(`Contact ${id} disappeared right after insert`);
+
+    // Автоматический запуск кросс-канального обогащения при наличии телефона (Single Ingestion Pipeline)
+    const phoneToEnrich = contact.phone || primaryPhone;
+    if (phoneToEnrich && phoneToEnrich.replace(/\D/g, "").length >= 10) {
+      const enrichment = new CrmEnrichmentService();
+      void enrichment
+        .enrichContact(tenantId, id, {
+          phoneOverride: phoneToEnrich,
+          channels: ["telegram", "max", "whatsapp"],
+        })
+        .catch(() => {});
+    }
 
     return contact;
   }
@@ -412,7 +457,19 @@ export class ContactsService {
     // Перечитываем через get(): RETURNING не умеет отдать имя создателя и число
     // сделок — они приходят JOIN-ами. Без этого inline-правка одного поля
     // возвращала бы DTO без автора, и группа «Система» на карточке очищалась бы.
-    return this.get(tenantId, updatedId);
+    const contact = await this.get(tenantId, updatedId);
+
+    if (payload.phones !== undefined && contact?.phone && contact.phone.replace(/\D/g, "").length >= 10) {
+      const enrichment = new CrmEnrichmentService();
+      void enrichment
+        .enrichContact(tenantId, updatedId, {
+          phoneOverride: contact.phone,
+          channels: ["telegram", "max", "whatsapp"],
+        })
+        .catch(() => {});
+    }
+
+    return contact;
   }
 
   /** Replaces custom_fields wholesale (PUT semantics for the JSONB bag). */
