@@ -442,6 +442,7 @@ export const ContactCard = memo(function ContactCard({
         const hasTg = Boolean(
           contact.telegramUsername ||
             contact.telegramChatId ||
+            contact.socials.some((s) => s.kind === "telegram") ||
             enrichmentData?.channels?.telegram?.exists,
         );
         const hasWa = Boolean(

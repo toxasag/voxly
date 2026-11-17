@@ -45,6 +45,7 @@ export interface ContactDTO {
   phones: ContactPhoneDTO[];
   email: string | null;
   telegramUsername: string | null;
+  telegramChatId?: number | string | null;
   whatsapp: string | null;
   socials: ContactSocialDTO[];
   jobTitle: string;
