@@ -7,7 +7,11 @@ import { toast } from "sonner";
 import { Loader2, Plug } from "lucide-react";
 
 import { ApiClientError } from "@/lib/api/apiClient";
-import { useCreateChannelAccount } from "@/lib/api/use-channels";
+import {
+  useCreateChannelAccount,
+  useUpdateChannelAccount,
+  type ChannelAccountDTO,
+} from "@/lib/api/use-channels";
 import {
   createChannelAccountSchema,
   type CreateChannelAccountValues,
@@ -37,6 +41,7 @@ interface ConnectChannelModalProps {
   channel: ChannelSlug;
   channelName: string;
   onClose: () => void;
+  initialAccount?: ChannelAccountDTO | null;
 }
 
 export function ConnectChannelModal({
@@ -44,25 +49,43 @@ export function ConnectChannelModal({
   channel,
   channelName,
   onClose,
+  initialAccount,
 }: ConnectChannelModalProps) {
   const create = useCreateChannelAccount(channel);
+  const update = useUpdateChannelAccount(channel);
   const hint = IDENTIFIER_HINTS[channel];
 
   const form = useForm<CreateChannelAccountValues>({
     resolver: zodResolver(createChannelAccountSchema),
     mode: "onChange",
-    defaultValues: { label: "", external_id: "" },
+    defaultValues: {
+      label: initialAccount?.label ?? "",
+      external_id: initialAccount?.externalId ?? "",
+    },
   });
 
   useEffect(() => {
-    if (open) form.reset({ label: "", external_id: "" });
-  }, [open, form]);
+    if (open) {
+      form.reset({
+        label: initialAccount?.label ?? "",
+        external_id: initialAccount?.externalId ?? "",
+      });
+    }
+  }, [open, initialAccount, form]);
 
   const submit = useCallback(
     async (values: CreateChannelAccountValues) => {
       try {
-        await create.mutateAsync(values);
-        toast.success(`${channelName}: подключение «${values.label}» добавлено`);
+        if (initialAccount) {
+          await update.mutateAsync({
+            id: initialAccount.id,
+            label: values.label,
+          });
+          toast.success(`${channelName}: подключение «${values.label}» обновлено`);
+        } else {
+          await create.mutateAsync(values);
+          toast.success(`${channelName}: подключение «${values.label}» добавлено`);
+        }
         onClose();
       } catch (error) {
         if (error instanceof ApiClientError) {
@@ -101,9 +124,13 @@ export function ConnectChannelModal({
           </div>
           <div>
             <h2 id="connect-channel-title" className="text-sm font-semibold text-[#111111]">
-              Подключить {channelName}
+              {initialAccount ? `Настройки: ${initialAccount.label}` : `Подключить ${channelName}`}
             </h2>
-            <p className="text-[11px] text-[#666666]">Авторизация выполняется после создания</p>
+            <p className="text-[11px] text-[#666666]">
+              {initialAccount
+                ? "Редактирование параметров подключения"
+                : "Авторизация выполняется после создания"}
+            </p>
           </div>
         </div>
       </SheetHeader>
@@ -156,21 +183,23 @@ export function ConnectChannelModal({
             <button
               type="button"
               onClick={onClose}
-              disabled={create.isPending}
+              disabled={create.isPending || update.isPending}
               className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40"
             >
               Отмена
             </button>
             <button
               type="submit"
-              disabled={create.isPending}
-              className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={create.isPending || update.isPending}
+              className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {create.isPending ? (
+              {create.isPending || update.isPending ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Подключаем...
+                  {initialAccount ? "Сохраняем..." : "Подключаем..."}
                 </>
+              ) : initialAccount ? (
+                "Сохранить"
               ) : (
                 "Подключить"
               )}
