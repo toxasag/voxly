@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { query } from "../../db/client.js";
 import { ChannelsService } from "./channels.service.js";
 import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import {
@@ -42,6 +43,24 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
   // Порядок важен: сначала право, затем установка модуля. Иначе рядовой
   // сотрудник по URL отключённого канала узнавал бы состав модулей арендатора.
   const guards = [app.requirePermission("tenant:admin"), app.requireModuleFromParam("channel")];
+
+  // Список всех активных подключенных каналов арендатора (для CRM сделок и контактов)
+  app.get("/active", { onRequest: [app.authenticate] }, async (request, reply) => {
+    const rows = await query<{
+      id: string;
+      channel: string;
+      label: string;
+      external_id: string;
+      status: string;
+    }>(
+      `SELECT id, channel, label, external_id, status
+       FROM channel_accounts
+       WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+       ORDER BY created_at ASC`,
+      [request.tenant_id],
+    );
+    return reply.send({ data: rows });
+  });
 
   app.get("/:channel/accounts", { onRequest: guards }, async (request, reply) => {
     const { channel } = channelParams.parse(request.params);

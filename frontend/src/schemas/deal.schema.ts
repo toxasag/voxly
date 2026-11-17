@@ -19,6 +19,7 @@ export const createDealSchema = z.object({
   contact_id: optionalUuid,
   company_id: optionalUuid,
   owner_id: optionalUuid,
+  source_widget_id: optionalUuid,
   close_date: optionalDate,
 });
 

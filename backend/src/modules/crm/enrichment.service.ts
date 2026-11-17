@@ -819,6 +819,7 @@ export class CrmEnrichmentService {
         firstName: data.firstName,
         lastName: data.lastName,
         link: data.link,
+        error: (data as { error?: string }).error ?? undefined,
       };
     } catch (err) {
       return { exists: false, error: String(err) };
