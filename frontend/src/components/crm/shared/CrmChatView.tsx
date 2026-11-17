@@ -44,12 +44,14 @@ import { useContact, useSetContactPersonal } from "@/lib/api/use-contacts";
 import {
   useCrmChat,
   useUploadCrmMedia,
+  useSendPresenceHeartbeat,
   type ChatMessageDTO,
   type CrmChatEntityType,
   type SendFromOptionDTO,
   type AudioTranscriptMetadata,
   type DocumentInfoMetadata,
 } from "@/lib/api/use-crm-chat";
+import { useChatStream } from "@/lib/api/use-chat-stream";
 import { TelegramComposer, type AttachedFile } from "./TelegramComposer";
 import { DialogueFeedbackModal } from "@/components/ai-bots/DialogueFeedbackModal";
 
@@ -101,6 +103,55 @@ function formatDateHeader(iso: string): string {
     }).format(d);
   } catch {
     return "";
+  }
+}
+
+function formatLastSeen(iso: string | null | undefined, isOnline: boolean): string {
+  if (isOnline) return "В сети";
+  if (!iso) return "Не в сети";
+
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "Не в сети";
+
+    const now = new Date();
+    const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+
+    if (diffSec < 60) return "Был(а) только что";
+    if (diffSec < 3600) {
+      const mins = Math.max(1, Math.floor(diffSec / 60));
+      return `Был(а) ${mins} мин назад`;
+    }
+
+    const isToday =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+
+    const timeStr = new Intl.DateTimeFormat("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+
+    if (isToday) return `Был(а) сегодня в ${timeStr}`;
+
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday =
+      d.getDate() === yesterday.getDate() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getFullYear() === yesterday.getFullYear();
+
+    if (isYesterday) return `Был(а) вчера в ${timeStr}`;
+
+    const dateStr = new Intl.DateTimeFormat("ru-RU", {
+      day: "numeric",
+      month: "short",
+    }).format(d);
+
+    return `Был(а) ${dateStr} в ${timeStr}`;
+  } catch {
+    return "Не в сети";
   }
 }
 
@@ -798,13 +849,60 @@ export function CrmChatView({
     aiControlMutation,
     aiDraftMutation,
     syncHistoryMutation,
+    presenceQuery,
+    markReadMutation,
   } = useCrmChat({ entityType, entityId, live: true });
+
+  const presence = presenceQuery?.data;
+  const isClientOnline = Boolean(presence?.isOnline);
 
   const uploadMediaMutation = useUploadCrmMedia();
 
   const isDeal = entityType === "deal";
   const dealQuery = useDeal(isDeal && entityId ? entityId : null);
   const contactQuery = useContact(!isDeal && entityId ? entityId : null);
+
+  const heartbeatMutation = useSendPresenceHeartbeat();
+
+  // Heartbeat оператора CRM пока открыт диалог
+  useEffect(() => {
+    void heartbeatMutation.mutateAsync().catch(() => {});
+    const interval = setInterval(() => {
+      void heartbeatMutation.mutateAsync().catch(() => {});
+    }, 45_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Автоматическая отметка прочтения входящих при открытии диалога
+  useEffect(() => {
+    if (!entityId || !messagesQuery.data || messagesQuery.data.length === 0) return;
+
+    const unreadInbound = messagesQuery.data.filter(
+      (m) => (m.direction === "inbound" || m.source === "client") && m.deliveryStatus !== "read",
+    );
+
+    if (unreadInbound.length > 0) {
+      const messageIds = unreadInbound.map((m) => m.id);
+      void markReadMutation.mutateAsync({
+        dealId: isDeal ? entityId : undefined,
+        contactId: !isDeal ? entityId : undefined,
+        messageIds,
+      }).catch(() => {});
+    }
+  }, [entityId, isDeal, messagesQuery.data]);
+
+  // Realtime события через SSE
+  useChatStream({
+    dealId: isDeal ? entityId : undefined,
+    enabled: Boolean(entityId && isDeal),
+    onDeliveryUpdate: () => {
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", entityType, entityId] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+    },
+    onPresenceUpdate: () => {
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "presence", entityType, entityId] });
+    },
+  });
 
   const markDealPersonalMutation = useMarkDealPersonal();
   const unmarkDealPersonalMutation = useUnmarkDealPersonal();
@@ -1278,6 +1376,40 @@ export function CrmChatView({
               )}
             </span>
           </div>
+
+          {/* Разделитель */}
+          <div className="h-4 w-px bg-[#e5e5e5]" />
+
+          {/* Индикатор присутствия собеседника (Presence & Last Seen) */}
+          <div
+            className="flex items-center gap-1.5"
+            title={
+              isClientOnline
+                ? "Собеседник сейчас онлайн в чате или на сайте"
+                : presence?.lastSeenAt
+                  ? `Был(а) в сети: ${new Date(presence.lastSeenAt).toLocaleString("ru-RU")}`
+                  : "Собеседник не в сети"
+            }
+          >
+            <span className="relative flex h-2 w-2">
+              {isClientOnline ? (
+                <>
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" />
+                </>
+              ) : (
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#888888]" />
+              )}
+            </span>
+            <span
+              className={cn(
+                "text-xs transition-colors",
+                isClientOnline ? "font-medium text-emerald-700" : "text-[#666666]",
+              )}
+            >
+              {formatLastSeen(presence?.lastSeenAt, isClientOnline)}
+            </span>
+          </div>
         </div>
 
         {/* Кнопки переключения режима AI и пометки личного контакта */}
@@ -1717,7 +1849,23 @@ export function CrmChatView({
                               </span>
                             )}
                             {message.deliveryStatus === "sent" && (
-                              <span title="Успешно доставлено клиенту" className="flex items-center text-emerald-600">
+                              <span title="Отправлено на сервер (1 серая галочка)" className="flex items-center text-[#888888]">
+                                <Check className="h-3.5 w-3.5" />
+                              </span>
+                            )}
+                            {message.deliveryStatus === "delivered" && (
+                              <span
+                                title={`Доставлено получателю${message.deliveredAt ? ` (${formatTime(message.deliveredAt)})` : ""} (2 серые галочки)`}
+                                className="flex items-center text-[#888888]"
+                              >
+                                <CheckCheck className="h-3.5 w-3.5" />
+                              </span>
+                            )}
+                            {message.deliveryStatus === "read" && (
+                              <span
+                                title={`Прочитано получателем${message.readAt ? ` (${formatTime(message.readAt)})` : ""} (2 зеленые галочки)`}
+                                className="flex items-center text-emerald-500"
+                              >
                                 <CheckCheck className="h-3.5 w-3.5" />
                               </span>
                             )}
@@ -1734,7 +1882,12 @@ export function CrmChatView({
                         ) : (
                           <span className="inline-flex items-center">
                             {message.deliveryStatus === "received" && (
-                              <span title="Получено от клиента" className="flex items-center text-emerald-600">
+                              <span title="Получено от клиента" className="flex items-center text-[#888888]">
+                                <Check className="h-3.5 w-3.5" />
+                              </span>
+                            )}
+                            {message.deliveryStatus === "read" && (
+                              <span title="Прочитано оператором" className="flex items-center text-emerald-500">
                                 <CheckCheck className="h-3.5 w-3.5" />
                               </span>
                             )}
