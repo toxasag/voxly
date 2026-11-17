@@ -10,15 +10,22 @@ import {
 export async function printTemplatesRoutes(app: FastifyInstance) {
   await app.register(authenticatePlugin);
 
-  // Список доступных шаблонов (с фильтрацией по типу документа)
+  // Список доступных шаблонов (с фильтрацией по типу документа и видимости в меню)
   app.get("/", async (request, reply) => {
     const { tenant_id } = request;
-    const { type, document_type } = request.query as {
+    const { type, document_type, visible_only, visibleOnly } = request.query as {
       type?: string;
       document_type?: string;
+      visible_only?: string | boolean;
+      visibleOnly?: string | boolean;
     };
     const filterType = document_type || type;
-    const list = await printTemplatesService.list(tenant_id, filterType);
+    const isVisibleOnly =
+      visible_only === "true" ||
+      visible_only === true ||
+      visibleOnly === "true" ||
+      visibleOnly === true;
+    const list = await printTemplatesService.list(tenant_id, filterType, isVisibleOnly);
     return reply.send({ data: list, templates: list });
   });
 
@@ -57,6 +64,22 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const updated = await printTemplatesService.setDefault(tenant_id, id);
     return reply.send({ success: true, data: updated });
+  });
+
+  // Переключение видимости шаблона в меню быстрой печати
+  app.post("/:id/toggle-visibility", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const updated = await printTemplatesService.toggleVisibility(tenant_id, id);
+    return reply.send({ success: true, data: updated });
+  });
+
+  // Дублирование (клонирование) шаблона в пользовательскую копию
+  app.post("/:id/duplicate", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const created = await printTemplatesService.duplicate(tenant_id, id);
+    return reply.status(201).send({ success: true, data: created });
   });
 
   // Удаление кастомного шаблона

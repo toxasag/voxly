@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/use-warehouse";
 import { useCreatePart, useDeletePart } from "@/lib/api/use-repairs";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface PartsTableProps {
   orderId?: string;
@@ -51,18 +52,8 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
   const deletePartMutation = useDeletePart();
   const createPurchaseMutation = useCreatePurchaseRequest();
 
-  // Закрытие выпадающего списка при клике снаружи
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (comboboxRef.current && !comboboxRef.current.contains(event.target as Node)) {
-        setCatalogOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
+  // Закрытие выпадающего списка при клике снаружи или Escape
+  useClickOutside(comboboxRef, () => setCatalogOpen(false), catalogOpen);
 
   // Фильтрация номенклатуры склада по введенному поиску
   const filteredWarehouseItems = warehouseItems.filter((wi) => {

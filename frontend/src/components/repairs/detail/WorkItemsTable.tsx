@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/use-repairs";
 import { ServiceCatalogDialog } from "./ServiceCatalogDialog";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface WorkItemsTableProps {
   orderId?: string;
@@ -56,18 +57,8 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
     }
   }, [masters, newMaster]);
 
-  // Закрытие выпадающего списка при клике вне компонента
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (comboboxRef.current && !comboboxRef.current.contains(event.target as Node)) {
-        setCatalogOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
+  // Закрытие выпадающего списка при клике вне компонента или по Escape
+  useClickOutside(comboboxRef, () => setCatalogOpen(false), catalogOpen);
 
   const totalWork = items.reduce((sum, item) => sum + item.cost, 0);
 

@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { useForm, useWatch, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth/use-auth";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import {
   AlertTriangle,
   BookOpen,
@@ -186,6 +187,8 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
   const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
   const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
+  const presetsDropdownRef = useRef<HTMLDivElement>(null);
+  useClickOutside(presetsDropdownRef, () => setShowPresetsDropdown(false), showPresetsDropdown);
 
   const generatePromptMutation = useGeneratePrompt();
   const { data: feedbacksData } = useAgentFeedbacks(bot?.id);
@@ -994,7 +997,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                   )}
                 </button>
 
-                <div className="relative">
+                <div ref={presetsDropdownRef} className="relative">
                   <button
                     type="button"
                     onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}

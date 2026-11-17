@@ -4,7 +4,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import {
   Briefcase, Building2, CalendarClock, Check, ChevronUp, CircleSlash,
   Copy, GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
-  Phone, Plus, ShieldAlert, Star, Tag, UserCircle2, UserRound, AlertTriangle,
+  Phone, Plus, ShieldAlert, Star, Tag, UserCircle2, UserRound, AlertTriangle, MapPin,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
 import { contactFullName, useUpdateContact, useFindDuplicateContacts } from "@/lib/api/use-contacts";
@@ -496,6 +496,23 @@ export const ContactCard = memo(function ContactCard({
               </div>
             </div>
           }
+        />
+
+        <RecordField
+          icon={Building2}
+          label="Город"
+          value={contact.city ?? ""}
+          placeholder="Укажите город"
+          {...field("city")}
+          onCommit={(value) => commit({ city: value.trim() })}
+        />
+        <RecordField
+          icon={MapPin}
+          label="Адрес"
+          value={contact.address ?? ""}
+          placeholder="Улица, дом, офис"
+          {...field("address")}
+          onCommit={(value) => commit({ address: value.trim() })}
         />
       </RecordFieldGroup>
 

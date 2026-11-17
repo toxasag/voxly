@@ -45,6 +45,8 @@ interface AvatarCropModalProps {
   onCancel: () => void;
   onApply: (dataUri: string) => void | Promise<void>;
   isPending: boolean;
+  title?: string;
+  shape?: "circle" | "rect";
 }
 
 export function AvatarCropModal({
@@ -54,6 +56,8 @@ export function AvatarCropModal({
   onCancel,
   onApply,
   isPending,
+  title = "Выберите область фото",
+  shape = "circle",
 }: AvatarCropModalProps) {
   const [zoom, setZoom] = useState(MIN_ZOOM);
   // Центр рамки в координатах исходного изображения.
@@ -251,7 +255,7 @@ export function AvatarCropModal({
       <div className="w-full max-w-sm rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3">
           <h2 id="crop-title" className="text-sm font-semibold text-[#111111]">
-            Выберите область фото
+            {title}
           </h2>
           <button
             type="button"
@@ -306,10 +310,13 @@ export function AvatarCropModal({
             />
 
             {/*
-              Затемнение вне круга.
+              Затемнение вне области кадрирования.
             */}
             <div
-              className="pointer-events-none absolute inset-0 rounded-full border-2 border-[#4a38f5]"
+              className={cn(
+                "pointer-events-none absolute inset-0 border-2 border-[#4a38f5]",
+                shape === "rect" ? "rounded-[8px]" : "rounded-full",
+              )}
               style={{ boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.6)" }}
             />
           </div>

@@ -34,7 +34,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
   c.job_title, c.company_name, c.company_id, c.channel,
-  c.linkedin_link, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
+  c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
   u.name AS created_by_name
@@ -148,6 +148,8 @@ export class ContactsService {
         `(c.first_name ILIKE ${placeholder}
           OR c.last_name ILIKE ${placeholder}
           OR c.middle_name ILIKE ${placeholder}
+          OR c.city ILIKE ${placeholder}
+          OR c.address ILIKE ${placeholder}
           OR c.phone ILIKE ${placeholder}
           OR c.email ILIKE ${placeholder}
           OR c.job_title ILIKE ${placeholder}
@@ -269,9 +271,10 @@ export class ContactsService {
           phone, phone_country_code, phone_calling_code, additional_phones,
           email, telegram_username, telegram_chat_id, whatsapp, socials,
           job_title, company_name, company_id, channel, linkedin_link,
+          city, address,
           custom_fields, source_metadata, notes, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb,
-               $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, $22)
+               $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23, $24)
        RETURNING id`,
       [
         tenantId,
@@ -292,6 +295,8 @@ export class ContactsService {
         company.companyId,
         payload.channel ?? "phone",
         payload.linkedin_link ?? "",
+        payload.city ?? "",
+        payload.address ?? "",
         JSON.stringify(payload.custom_fields ?? {}),
         JSON.stringify(payload.source_metadata ?? {}),
         payload.notes ?? "",
@@ -379,6 +384,8 @@ export class ContactsService {
 
       if (payload.channel !== undefined) push("channel", payload.channel);
       if (payload.linkedin_link !== undefined) push("linkedin_link", payload.linkedin_link ?? "");
+      if (payload.city !== undefined) push("city", payload.city ?? "");
+      if (payload.address !== undefined) push("address", payload.address ?? "");
       if (payload.notes !== undefined) push("notes", payload.notes);
 
       // custom_fields is merged, not replaced, so a partial PATCH cannot silently

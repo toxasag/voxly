@@ -301,6 +301,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   channel TEXT NOT NULL DEFAULT 'phone',
   -- Twenty: person.linkedinLink, группа social на record page.
   linkedin_link TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
   custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
   notes TEXT NOT NULL DEFAULT '',
   -- Twenty: person.createdBy (ActorMetadata), группа system. NULL = система/импорт.
@@ -730,6 +732,7 @@ CREATE TABLE IF NOT EXISTS cash_accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  account_type TEXT NOT NULL DEFAULT 'cash',
   currency TEXT NOT NULL DEFAULT 'RUB',
   balance NUMERIC NOT NULL DEFAULT 0,
   is_default BOOLEAN NOT NULL DEFAULT false,
@@ -1354,6 +1357,7 @@ CREATE INDEX IF NOT EXISTS idx_contacts_telegram_chat_id ON contacts(tenant_id, 
 CREATE INDEX IF NOT EXISTS idx_contacts_additional_phones ON contacts USING gin (additional_phones jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_contacts_socials ON contacts USING gin (socials jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(tenant_id, company_id) WHERE deleted_at IS NULL AND company_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_contacts_tenant_city ON contacts(tenant_id, city) WHERE city <> '';
 CREATE INDEX IF NOT EXISTS idx_deals_owner_id ON deals(owner_id) WHERE owner_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_deals_stage_position ON deals(tenant_id, stage_id, position);
 CREATE INDEX IF NOT EXISTS idx_companies_domain_name ON companies(tenant_id, domain_name) WHERE domain_name <> '';
@@ -1760,6 +1764,9 @@ CREATE TABLE IF NOT EXISTS print_templates (
   body_template TEXT NOT NULL DEFAULT '',
   layout_config JSONB NOT NULL DEFAULT '{}'::jsonb,
   is_default BOOLEAN NOT NULL DEFAULT true,
+  is_custom BOOLEAN NOT NULL DEFAULT false,
+  parent_template_id UUID REFERENCES print_templates(id) ON DELETE SET NULL,
+  is_hidden BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1775,15 +1782,15 @@ CREATE INDEX IF NOT EXISTS idx_print_templates_tenant_doctype
 CREATE TABLE IF NOT EXISTS print_template_settings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  company_name TEXT NOT NULL DEFAULT 'Ремонт инструмента ИП Сагайдак А.Г.',
-  company_address TEXT NOT NULL DEFAULT 'Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214',
-  company_phone TEXT NOT NULL DEFAULT '+7 977 628 20 49',
+  company_name TEXT NOT NULL DEFAULT '',
+  company_address TEXT NOT NULL DEFAULT '',
+  company_phone TEXT NOT NULL DEFAULT '',
   company_email TEXT NOT NULL DEFAULT '',
-  company_website TEXT NOT NULL DEFAULT 'РЕМОНТ-ИНСТРУМЕНТ.РФ',
+  company_website TEXT NOT NULL DEFAULT '',
   company_inn TEXT NOT NULL DEFAULT '',
   company_ogrn TEXT NOT NULL DEFAULT '',
-  working_hours TEXT NOT NULL DEFAULT 'Пн-Пт 10:00-19:00',
-  logo_url TEXT NOT NULL DEFAULT '/service-logo.png',
+  working_hours TEXT NOT NULL DEFAULT '',
+  logo_url TEXT NOT NULL DEFAULT '',
   numbering_format TEXT NOT NULL DEFAULT 'compact',
   numbering_prefix TEXT NOT NULL DEFAULT '№',
   intake_terms TEXT NOT NULL DEFAULT '',

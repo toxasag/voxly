@@ -80,6 +80,8 @@ interface ContactBody {
   middleName: string;
   phone: string;
   phones: ContactPhone[];
+  city?: string;
+  address?: string;
   telegramUsername: string | null;
   whatsapp: string | null;
   socials: ContactSocial[];
@@ -140,6 +142,29 @@ describe("Контакт: обязательные поля", () => {
     });
 
     expect(res.json<{ data: ContactBody }>().data.middleName).toBe("Сергеевич");
+  });
+
+  it("сохраняет и обновляет город и адрес", async () => {
+    const session = await signedInOwner();
+
+    const created = await post(session, {
+      first_name: "Иван",
+      city: "Москва",
+      address: "Тверская, 1",
+    });
+    expect(created.statusCode).toBe(201);
+    const data = created.json<{ data: ContactBody }>().data;
+    expect(data.city).toBe("Москва");
+    expect(data.address).toBe("Тверская, 1");
+
+    const patched = await patch(session, data.id, {
+      city: "Санкт-Петербург",
+      address: "Невский пр., 10",
+    });
+    expect(patched.statusCode).toBe(200);
+    const updated = patched.json<{ data: ContactBody }>().data;
+    expect(updated.city).toBe("Санкт-Петербург");
+    expect(updated.address).toBe("Невский пр., 10");
   });
 });
 
