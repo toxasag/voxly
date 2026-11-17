@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS tenants (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT tenants_slug_format CHECK (
     slug ~ '^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$'
+  ),
+  CONSTRAINT tenants_tenant_type_check CHECK (
+    tenant_type::text = ANY (ARRAY['partner'::character varying, 'client'::character varying, 'superadmin'::character varying, 'subpartner'::character varying]::text[])
   )
 );
 
@@ -1479,6 +1482,44 @@ BEGIN
   RETURN COALESCE(current_setting('app.platform_scope', true), 'off') = 'on';
 END;
 $$ LANGUAGE plpgsql STABLE;
+
+-- Рекурсивная проверка вхождения тенанта в иерархию партнера (N уровней вложенности)
+CREATE OR REPLACE FUNCTION is_tenant_descendant(ancestor_id UUID, target_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+  found_descendant BOOLEAN := false;
+BEGIN
+  IF ancestor_id IS NULL OR target_id IS NULL THEN
+    RETURN false;
+  END IF;
+
+  IF ancestor_id = target_id THEN
+    RETURN true;
+  END IF;
+
+  WITH RECURSIVE hierarchy AS (
+    SELECT id, parent_tenant_id, owner_partner_id, 1 AS depth
+    FROM tenants
+    WHERE (parent_tenant_id = ancestor_id OR owner_partner_id = ancestor_id)
+      AND id <> ancestor_id
+
+    UNION ALL
+
+    SELECT t.id, t.parent_tenant_id, t.owner_partner_id, h.depth + 1
+    FROM tenants t
+    INNER JOIN hierarchy h ON (t.parent_tenant_id = h.id OR t.owner_partner_id = h.id)
+    WHERE h.depth < 20 AND t.id <> h.id
+  )
+  SELECT EXISTS (
+    SELECT 1 FROM hierarchy WHERE id = target_id
+  ) INTO found_descendant;
+
+  RETURN found_descendant;
+END;
+$$;
 
 DO $$
 DECLARE
