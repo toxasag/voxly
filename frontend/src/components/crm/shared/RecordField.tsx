@@ -18,6 +18,7 @@ interface RecordFieldProps {
   label: string;
   value: string;
   display?: ReactNode;
+  placeholder?: string;
   kind?: FieldEditorKind;
   options?: readonly RecordFieldSelectOption[];
   readOnly?: boolean;
@@ -34,6 +35,7 @@ export function RecordField({
   label,
   value,
   display,
+  placeholder,
   kind = "text",
   options,
   readOnly = false,
@@ -102,6 +104,7 @@ export function RecordField({
             <input
               ref={inputRef}
               value={draft}
+              placeholder={placeholder}
               type={kind === "number" ? "number" : kind === "date" ? "date" : kind === "email" ? "email" : "text"}
               onChange={(event) => { setDraft(event.target.value); setError(null); }}
               onBlur={() => commit(draft)}
@@ -138,7 +141,7 @@ export function RecordField({
             readOnly ? "cursor-default text-[#666666]" : "cursor-pointer text-[#111111] hover:bg-black/[0.04]",
           )}
         >
-          {isEmpty ? <span className="text-[#888888]">{readOnly ? "—" : label}</span> : <span className="block truncate">{display ?? value}</span>}
+          {isEmpty ? <span className="text-[#888888]">{readOnly ? "—" : (placeholder ?? label)}</span> : <span className="block truncate">{display ?? value}</span>}
         </div>
       )}
     </div>

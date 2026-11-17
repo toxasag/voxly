@@ -10,6 +10,7 @@ import {
   Handshake,
   Linkedin,
   Mail,
+  MapPin,
   Phone,
   Plus,
   RefreshCw,
@@ -445,6 +446,58 @@ function ContactsPageContent() {
           ) : null}
         </RecordCellShell>
       ),
+    },
+    {
+      id: "city",
+      header: "Город",
+      icon: Building2,
+      width: 140,
+      hideable: true,
+      defaultHidden: true,
+      sortValue: (contact) => contact.city ?? "",
+      render: (contact) =>
+        isEditing(contact.id, "city") ? (
+          <RecordCellEditor
+            value={contact.city ?? ""}
+            onCancel={() => setEditing(null)}
+            onCommit={(value) => commitContact(contact, { city: value.trim() })}
+          />
+        ) : (
+          <RecordCellShell
+            editable
+            isEmpty={!contact.city}
+            emptyLabel="город"
+            onStartEdit={() => setEditing({ rowId: contact.id, columnId: "city" })}
+          >
+            <span className="truncate text-xs text-[#111111]">{contact.city}</span>
+          </RecordCellShell>
+        ),
+    },
+    {
+      id: "address",
+      header: "Адрес",
+      icon: MapPin,
+      width: 180,
+      hideable: true,
+      defaultHidden: true,
+      sortValue: (contact) => contact.address ?? "",
+      render: (contact) =>
+        isEditing(contact.id, "address") ? (
+          <RecordCellEditor
+            value={contact.address ?? ""}
+            onCancel={() => setEditing(null)}
+            onCommit={(value) => commitContact(contact, { address: value.trim() })}
+          />
+        ) : (
+          <RecordCellShell
+            editable
+            isEmpty={!contact.address}
+            emptyLabel="адрес"
+            onStartEdit={() => setEditing({ rowId: contact.id, columnId: "address" })}
+          >
+            <span className="truncate text-xs text-[#111111]">{contact.address}</span>
+          </RecordCellShell>
+        ),
     },
     {
       id: "channel",

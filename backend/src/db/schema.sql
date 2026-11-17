@@ -301,6 +301,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   channel TEXT NOT NULL DEFAULT 'phone',
   -- Twenty: person.linkedinLink, группа social на record page.
   linkedin_link TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
   custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
   notes TEXT NOT NULL DEFAULT '',
   -- Twenty: person.createdBy (ActorMetadata), группа system. NULL = система/импорт.
@@ -1355,6 +1357,7 @@ CREATE INDEX IF NOT EXISTS idx_contacts_telegram_chat_id ON contacts(tenant_id, 
 CREATE INDEX IF NOT EXISTS idx_contacts_additional_phones ON contacts USING gin (additional_phones jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_contacts_socials ON contacts USING gin (socials jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(tenant_id, company_id) WHERE deleted_at IS NULL AND company_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_contacts_tenant_city ON contacts(tenant_id, city) WHERE city <> '';
 CREATE INDEX IF NOT EXISTS idx_deals_owner_id ON deals(owner_id) WHERE owner_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_deals_stage_position ON deals(tenant_id, stage_id, position);
 CREATE INDEX IF NOT EXISTS idx_companies_domain_name ON companies(tenant_id, domain_name) WHERE domain_name <> '';

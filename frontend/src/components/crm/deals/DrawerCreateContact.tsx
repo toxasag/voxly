@@ -17,6 +17,7 @@ import {
   Linkedin,
   Loader2,
   Mail,
+  MapPin,
   Maximize2,
   MoreHorizontal,
   Pencil,
@@ -87,6 +88,8 @@ export function DrawerCreateContact({
   const [companyId, setCompanyId] = useState(deal?.companyId ?? "");
   const [jobTitle, setJobTitle] = useState("");
   const [linkedin, setLinkedin] = useState("");
+  const [city, setCity] = useState("");
+  const [address, setAddress] = useState("");
   const [isFavorite, setIsFavorite] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
@@ -126,6 +129,8 @@ export function DrawerCreateContact({
         job_title: jobTitle.trim() || undefined,
         channel: "phone",
         linkedin_link: linkedin.trim() || undefined,
+        city: city.trim() || undefined,
+        address: address.trim() || undefined,
       },
       {
         onSuccess: (created) => {
@@ -331,6 +336,24 @@ export function DrawerCreateContact({
                   placeholder="Телефоны"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={Building2} label="Город">
+                <input
+                  type="text"
+                  placeholder="Город"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={MapPin} label="Адрес">
+                <input
+                  type="text"
+                  placeholder="Адрес"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
                   className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
                 />
               </FieldRow>
