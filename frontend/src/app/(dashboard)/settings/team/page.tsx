@@ -27,6 +27,15 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { InviteMemberModal } from "@/components/settings/InviteMemberModal";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuPortal,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
   ROLE_LABELS,
   seatsCaption,
   useChangeMemberRole,
@@ -77,91 +86,85 @@ function MemberActions({
   onRemove: () => void;
   isBusy: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-
   if (member.isOwner || member.isSelf) {
     return <span className="text-xs text-[#888888]">{member.isSelf ? "Это вы" : "Владелец"}</span>;
   }
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        disabled={isBusy}
-        aria-label={`Действия для ${member.fullName}`}
-        aria-expanded={open}
-        className="rounded-[6px] p-1.5 text-[#888888] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40 cursor-pointer"
-      >
-        {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
-      </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          disabled={isBusy}
+          aria-label={`Действия для ${member.fullName}`}
+          className="rounded-[6px] p-1.5 text-[#888888] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40 cursor-pointer"
+        >
+          {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
+        </button>
+      </DropdownMenuTrigger>
 
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+      <DropdownMenuPortal>
+        <DropdownMenuContent
+          align="end"
+          side="bottom"
+          sideOffset={4}
+          avoidCollisions={true}
+          collisionPadding={12}
+          className="w-56"
+        >
+          <DropdownMenuLabel>Изменить роль</DropdownMenuLabel>
+          {assignableRoles.map((role) => (
+            <DropdownMenuItem
+              key={role}
+              onSelect={() => {
+                if (role !== member.role) onChangeRole(role);
+              }}
+              className={cn(
+                "flex w-full items-center justify-between",
+                role === member.role ? "font-medium text-[#4a38f5]" : "text-[#111111]",
+              )}
+            >
+              <span>{ROLE_LABELS[role]}</span>
+              {role === member.role && <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />}
+            </DropdownMenuItem>
+          ))}
 
-          <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-lg">
-            <p className="border-b border-[#e5e5e5] px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#888888]">
-              Изменить роль
-            </p>
-            {assignableRoles.map((role) => (
-              <button
-                key={role}
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  if (role !== member.role) onChangeRole(role);
-                }}
-                className={cn(
-                  "flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-[#fafafa] cursor-pointer",
-                  role === member.role ? "font-medium text-[#4a38f5]" : "text-[#111111]",
-                )}
-              >
-                {ROLE_LABELS[role]}
-                {role === member.role && <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />}
-              </button>
-            ))}
-
-            {availablePermissions.length > 0 && (
-              <>
-                <p className="border-t border-[#e5e5e5] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888]">
-                  Точечные права
-                </p>
-                {availablePermissions.map((permission) => (
-                  <button
+          {availablePermissions.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Точечные права</DropdownMenuLabel>
+              {availablePermissions.map((permission) => {
+                const hasPermission = member.permissions.includes(permission);
+                return (
+                  <DropdownMenuItem
                     key={permission}
-                    type="button"
-                    onClick={() => {
-                      const next = member.permissions.includes(permission)
+                    onSelect={() => {
+                      const next = hasPermission
                         ? member.permissions.filter((item) => item !== permission)
                         : [...member.permissions, permission];
-                      setOpen(false);
                       onChangePermissions(next);
                     }}
-                    className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[11px] text-[#666666] hover:bg-[#fafafa] cursor-pointer"
+                    className="flex w-full items-center justify-between text-[11px] text-[#666666]"
                   >
                     <span>{permission}</span>
-                    {member.permissions.includes(permission) && <ShieldCheck className="h-3 w-3 text-[#4a38f5]" />}
-                  </button>
-                ))}
-              </>
-            )}
+                    {hasPermission && <ShieldCheck className="h-3 w-3 text-[#4a38f5]" />}
+                  </DropdownMenuItem>
+                );
+              })}
+            </>
+          )}
 
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onRemove();
-              }}
-              className="flex w-full items-center gap-2 border-t border-[#e5e5e5] px-3 py-2 text-left text-xs text-rose-600 transition-colors hover:bg-rose-50 cursor-pointer"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Удалить сотрудника
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            danger
+            icon={Trash2}
+            onSelect={onRemove}
+          >
+            Удалить сотрудника
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenuPortal>
+    </DropdownMenu>
   );
 }
 
