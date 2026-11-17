@@ -53,6 +53,8 @@ export interface ContactDTO {
   channel: ContactChannel;
   /** Twenty: person.linkedinLink, группа social на карточке. */
   linkedinLink: string;
+  city?: string;
+  address?: string;
   sourceMetadata?: Record<string, unknown> | null;
   customFields: Record<string, unknown>;
   notes: string;
@@ -387,6 +389,8 @@ export function toContactFormValues(contact: ContactDTO): CreateContactPayload {
     company_id: contact.companyId ?? "",
     channel: contact.channel,
     linkedin_link: contact.linkedinLink,
+    city: contact.city ?? "",
+    address: contact.address ?? "",
     notes: contact.notes,
     custom_fields: customFields,
   };

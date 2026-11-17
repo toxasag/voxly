@@ -16,6 +16,7 @@ import {
 import {
   useBitrix24Logs,
   useRetryBitrix24Sync,
+  useReplayFailedBitrixSync,
   type Bitrix24SyncLogDTO,
 } from "@/lib/api/use-bitrix24";
 import { toast } from "sonner";
@@ -30,6 +31,7 @@ export function Bitrix24SyncLogTable({ onSelectDeal }: Bitrix24SyncLogTableProps
 
   const { data, isLoading, isFetching, refetch } = useBitrix24Logs({ limit: 50 });
   const retryMutation = useRetryBitrix24Sync();
+  const replayMutation = useReplayFailedBitrixSync();
 
   const logs: Bitrix24SyncLogDTO[] = Array.isArray(data)
     ? data
@@ -38,6 +40,22 @@ export function Bitrix24SyncLogTable({ onSelectDeal }: Bitrix24SyncLogTableProps
       : Array.isArray(data?.data)
         ? data.data
         : [];
+
+  const handleReplayAll = async () => {
+    try {
+      const res = await replayMutation.mutateAsync();
+      if (res.success > 0) {
+        toast.success(`Успешно доотправлено сделок в Битрикс24: ${res.success} из ${res.processed}`);
+      } else if (res.processed === 0) {
+        toast.info("Нет сделок, требующих повторной отправки");
+      } else {
+        toast.error(`Не удалось отправить сделки (${res.failed} ошибок)`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Ошибка повторной синхронизации";
+      toast.error(msg);
+    }
+  };
 
   const handleRetry = async (log: Bitrix24SyncLogDTO) => {
     setRetryingId(log.id);
@@ -85,16 +103,33 @@ export function Bitrix24SyncLogTable({ onSelectDeal }: Bitrix24SyncLogTableProps
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] inline-flex items-center gap-1.5 disabled:opacity-50"
-          title="Обновить журнал"
-        >
-          <RefreshCw className={`h-3 w-3 text-[#666666] ${isFetching ? "animate-spin text-[#4a38f5]" : ""}`} />
-          <span>Обновить</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleReplayAll}
+            disabled={replayMutation.isPending || isFetching}
+            className="h-7 rounded-[6px] border border-amber-200 bg-amber-50 px-2.5 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 hover:border-amber-300 inline-flex items-center gap-1.5 disabled:opacity-50"
+            title="Повторить отправку всех зависших или ошибочных сделок"
+          >
+            {replayMutation.isPending ? (
+              <Loader2 className="h-3 w-3 animate-spin text-amber-700" />
+            ) : (
+              <RotateCw className="h-3 w-3 text-amber-700" />
+            )}
+            <span>Повторить ошибки</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5] hover:border-[#cccccc] inline-flex items-center gap-1.5 disabled:opacity-50"
+            title="Обновить журнал"
+          >
+            <RefreshCw className={`h-3 w-3 text-[#666666] ${isFetching ? "animate-spin text-[#4a38f5]" : ""}`} />
+            <span>Обновить</span>
+          </button>
+        </div>
       </div>
 
       {/* Таблица логов */}

@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ExternalLink,
   FileText,
+  Globe,
   Layers,
   Loader2,
   Mail,
@@ -765,6 +766,7 @@ function AddChannelModal({
 
 export function LeadNotificationChannels() {
   const { data: channels, isLoading } = useNotificationChannels();
+  const { data: tenantWidgets = [] } = useTenantWidgets();
   const { data: info } = useTenantInfo();
   const { data: bitrixConfig, isLoading: bitrixLoading } = useBitrix24Config();
   const updateBitrixMutation = useUpdateBitrix24Config();
@@ -966,9 +968,21 @@ export function LeadNotificationChannels() {
                       <span className="text-[10px] text-sky-800 font-medium bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-[4px]">
                         SOURCE_ID: {bitrixConfig.custom_source_id || "UC_VWN1ZK"}
                       </span>
-                      {bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length > 0 ? (
-                        <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px]">
-                          Виджеты: {bitrixConfig.selected_widget_ids.length}
+                      {bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length === 1 ? (
+                        (() => {
+                          const w = tenantWidgets.find((x) => x.id === bitrixConfig.selected_widget_ids?.[0]);
+                          return (
+                            <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1">
+                              <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                              <span>{w?.name || "Виджет"}</span>
+                              {w?.site_domain && <span className="text-[#666666] font-mono">({w.site_domain})</span>}
+                            </span>
+                          );
+                        })()
+                      ) : bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length > 1 ? (
+                        <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1">
+                          <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                          <span>Виджеты: {bitrixConfig.selected_widget_ids.length}</span>
                         </span>
                       ) : (
                         <span className="text-[10px] text-[#666666] font-medium bg-[#f5f5f5] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
@@ -1007,16 +1021,42 @@ export function LeadNotificationChannels() {
                         )}
                       </span>
                       <span>•</span>
-                      <span>
-                        Источники:{" "}
-                        <strong className="text-[#333333]">
-                          {bitrixConfig.allowed_sources && bitrixConfig.allowed_sources.length > 0
-                            ? bitrixConfig.allowed_sources
-                                .map((s) => SOURCE_MAP.get(s)?.shortLabel || s)
-                                .join(", ")
-                            : "Все каналы"}
-                        </strong>
-                      </span>
+                      <div className="inline-flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[#666666]">Источники:</span>
+                        {bitrixConfig.selected_widget_ids && bitrixConfig.selected_widget_ids.length > 0 ? (
+                          <div className="inline-flex items-center gap-1.5 flex-wrap">
+                            {bitrixConfig.selected_widget_ids.map((id) => {
+                              const w = tenantWidgets.find((x) => x.id === id);
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-[#111111] bg-white border border-[#e5e5e5] px-2 py-0.5 rounded-[4px] shadow-2xs"
+                                >
+                                  <Globe className="h-3 w-3 text-[#4a38f5]" />
+                                  <span>{w?.name || "Виджет"}</span>
+                                  {w?.site_domain ? (
+                                    <span className="text-[#666666] font-mono text-[10px]">
+                                      • {w.site_domain}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[#888888] font-mono text-[10px]">
+                                      • Без сайта
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <strong className="text-[#333333]">
+                            {bitrixConfig.allowed_sources && bitrixConfig.allowed_sources.length > 0
+                              ? bitrixConfig.allowed_sources
+                                  .map((s) => (s === "site_widget" ? "Виджеты на сайтах" : SOURCE_MAP.get(s)?.shortLabel || s))
+                                  .join(", ")
+                              : "Все каналы"}
+                          </strong>
+                        )}
+                      </div>
                       {bitrixConfig.last_sync_at && (
                         <>
                           <span>•</span>
@@ -1115,6 +1155,18 @@ export function LeadNotificationChannels() {
                 const lastSyncAt = meta.last_sync_at ? String(meta.last_sync_at) : null;
                 const lastError = meta.last_error ? String(meta.last_error) : null;
 
+                const channelWidgets = (channel.widgets && channel.widgets.length > 0)
+                  ? channel.widgets
+                  : selectedWidgetIds
+                      .map((id) => tenantWidgets.find((w) => w.id === id))
+                      .filter((w): w is (typeof tenantWidgets)[number] => Boolean(w))
+                      .map((w) => ({
+                        id: w.id,
+                        name: w.name,
+                        site_domain: w.site_domain,
+                        site_name: w.site_name,
+                      }));
+
                 return (
                   <div
                     key={channel.id}
@@ -1134,9 +1186,21 @@ export function LeadNotificationChannels() {
                           <span className="text-[10px] text-sky-800 font-medium bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-[4px]">
                             SOURCE_ID: {customSourceId}
                           </span>
-                          {selectedWidgetIds.length > 0 ? (
-                            <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px]">
-                              Виджеты: {selectedWidgetIds.length}
+                          {channelWidgets.length === 1 ? (
+                            <span className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1">
+                              <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                              <span>{channelWidgets[0].name}</span>
+                              {channelWidgets[0].site_domain && (
+                                <span className="text-[#666666] font-mono">({channelWidgets[0].site_domain})</span>
+                              )}
+                            </span>
+                          ) : channelWidgets.length > 1 ? (
+                            <span
+                              className="text-[10px] text-[#4a38f5] font-medium bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-1.5 py-0.5 rounded-[4px] inline-flex items-center gap-1"
+                              title={channelWidgets.map((w) => `${w.name} (${w.site_domain})`).join(", ")}
+                            >
+                              <Globe className="h-2.5 w-2.5 text-[#4a38f5]" />
+                              <span>Виджеты: {channelWidgets.length}</span>
                             </span>
                           ) : (
                             <span className="text-[10px] text-[#666666] font-medium bg-[#f5f5f5] border border-[#e5e5e5] px-1.5 py-0.5 rounded-[4px]">
@@ -1175,16 +1239,39 @@ export function LeadNotificationChannels() {
                             )}
                           </span>
                           <span>•</span>
-                          <span>
-                            Источники:{" "}
-                            <strong className="text-[#333333]">
-                              {allowedSources.length > 0
-                                ? allowedSources
-                                    .map((s) => SOURCE_MAP.get(s)?.shortLabel || s)
-                                    .join(", ")
-                                : "Все каналы"}
-                            </strong>
-                          </span>
+                          <div className="inline-flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[#666666]">Источники:</span>
+                            {channelWidgets.length > 0 ? (
+                              <div className="inline-flex items-center gap-1.5 flex-wrap">
+                                {channelWidgets.map((w) => (
+                                  <span
+                                    key={w.id}
+                                    className="inline-flex items-center gap-1 text-[11px] font-medium text-[#111111] bg-white border border-[#e5e5e5] px-2 py-0.5 rounded-[4px] shadow-2xs"
+                                  >
+                                    <Globe className="h-3 w-3 text-[#4a38f5]" />
+                                    <span>{w.name}</span>
+                                    {w.site_domain ? (
+                                      <span className="text-[#666666] font-mono text-[10px]">
+                                        • {w.site_domain}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[#888888] font-mono text-[10px]">
+                                        • Без сайта
+                                      </span>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <strong className="text-[#333333]">
+                                {allowedSources.length > 0
+                                  ? allowedSources
+                                      .map((s) => (s === "site_widget" ? "Виджеты на сайтах" : SOURCE_MAP.get(s)?.shortLabel || s))
+                                      .join(", ")
+                                  : "Все каналы"}
+                              </strong>
+                            )}
+                          </div>
                           {lastSyncAt && (
                             <>
                               <span>•</span>

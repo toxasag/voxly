@@ -215,36 +215,26 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       params.push(Math.round(body.ai_balance_rubles * 100));
       sets.push(`ai_balance_kopecks = $${params.length}`);
     }
-    if (body.tenant_type !== undefined) {
-      const isPartner = body.tenant_type === "partner";
-      params.push(body.tenant_type);
+    const hasTypeOrPartner = body.tenant_type !== undefined || body.is_partner !== undefined;
+    const isPartner =
+      body.tenant_type === "partner" ||
+      (body.tenant_type === undefined && body.is_partner === true);
+
+    if (hasTypeOrPartner) {
+      params.push(isPartner ? "partner" : "client");
       sets.push(`tenant_type = $${params.length}`);
       params.push(isPartner);
       sets.push(`is_partner = $${params.length}`);
-      if (isPartner) {
-        sets.push(`parent_tenant_id = NULL`);
-        sets.push(`owner_partner_id = NULL`);
-      }
-    } else if (body.is_partner !== undefined) {
-      params.push(body.is_partner);
-      sets.push(`is_partner = $${params.length}`);
-      params.push(body.is_partner ? "partner" : "client");
-      sets.push(`tenant_type = $${params.length}`);
-      if (body.is_partner) {
-        sets.push(`parent_tenant_id = NULL`);
-        sets.push(`owner_partner_id = NULL`);
-      }
     }
 
-    if (body.parent_tenant_id !== undefined) {
-      params.push(body.parent_tenant_id);
+    if (isPartner && hasTypeOrPartner) {
+      sets.push(`parent_tenant_id = NULL`);
+      sets.push(`owner_partner_id = NULL`);
+    } else if (body.parent_tenant_id !== undefined || body.owner_partner_id !== undefined) {
+      const parentId = body.parent_tenant_id ?? body.owner_partner_id ?? null;
+      params.push(parentId);
       sets.push(`parent_tenant_id = $${params.length}`);
-      params.push(body.parent_tenant_id);
-      sets.push(`owner_partner_id = $${params.length}`);
-    } else if (body.owner_partner_id !== undefined) {
-      params.push(body.owner_partner_id);
-      sets.push(`parent_tenant_id = $${params.length}`);
-      params.push(body.owner_partner_id);
+      params.push(parentId);
       sets.push(`owner_partner_id = $${params.length}`);
     }
 
@@ -253,15 +243,14 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       sets.push(`custom_price_rubles = $${params.length}`);
       if (body.custom_price_rubles === 0) {
         sets.push(`trial_ends_at = NULL`);
-        if (body.custom_plan_name === undefined) {
-          const isPartner = body.tenant_type === "partner" || body.is_partner === true;
-          params.push(isPartner ? "Партнёрский тариф" : "Бесплатный (Клиент)");
-          sets.push(`custom_plan_name = $${params.length}`);
-        }
       }
     }
     if (body.custom_plan_name !== undefined) {
       params.push(body.custom_plan_name);
+      sets.push(`custom_plan_name = $${params.length}`);
+    } else if (body.custom_price_rubles === 0) {
+      const partnerPlan = isPartner || body.tenant_type === "partner" || body.is_partner === true;
+      params.push(partnerPlan ? "Партнёрский тариф" : "Бесплатный (Клиент)");
       sets.push(`custom_plan_name = $${params.length}`);
     }
     if (body.business_niche !== undefined) {

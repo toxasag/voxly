@@ -684,6 +684,12 @@ export function RecordTable<T>({
                   <input
                     type="checkbox"
                     checked={allSelected}
+                    ref={(el) => {
+                      if (el) {
+                        const hasSelection = rows.some((row) => selectedIds?.has(getRowId(row)));
+                        el.indeterminate = !allSelected && hasSelection;
+                      }
+                    }}
                     onChange={toggleAll}
                     aria-label="Выбрать все"
                     className="h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111] cursor-pointer"

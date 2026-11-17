@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import {
   Search,
   Plus,
@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import { isModuleInstalled } from "@/lib/context/tenant";
 import { useAuth } from "@/lib/auth/use-auth";
 import type { ModuleSlug } from "@/types";
@@ -52,15 +53,7 @@ export function Header() {
     return isModuleInstalled(displayTenant.installedModules, action.moduleSlug);
   });
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (quickActionRef.current && !quickActionRef.current.contains(e.target as Node)) {
-        setQuickActionOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  useClickOutside(quickActionRef, () => setQuickActionOpen(false), quickActionOpen);
 
   return (
     <>

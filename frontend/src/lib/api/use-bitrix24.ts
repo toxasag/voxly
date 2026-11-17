@@ -18,6 +18,8 @@ export interface SimpleWidgetDTO {
   id: string;
   name: string;
   site_domain: string;
+  site_name?: string | null;
+  site_url?: string | null;
   status: string;
   created_at?: string;
 }
@@ -207,6 +209,28 @@ export function useRetryBitrix24Sync() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: bitrix24Keys.logs() });
       void queryClient.invalidateQueries({ queryKey: bitrix24Keys.config() });
+    },
+  });
+}
+
+export function useReplayFailedBitrixSync() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<{
+        processed: number;
+        success: number;
+        failed: number;
+        results: Array<{ dealId: string; success: boolean; leadId?: string | number; error?: string }>;
+      }>("/api/v1/settings/integrations/bitrix24/replay-failed", {});
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: bitrix24Keys.logs() });
+      void queryClient.invalidateQueries({ queryKey: bitrix24Keys.config() });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "notifications"] });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

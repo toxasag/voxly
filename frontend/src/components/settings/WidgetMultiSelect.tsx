@@ -193,15 +193,26 @@ export function WidgetMultiSelect({
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-medium text-[#111111] truncate">{widget.name}</span>
+                      {widget.site_domain ? (
+                        <span className="text-[11px] text-[#666666] font-mono flex items-center gap-1">
+                          <span>•</span>
+                          <Globe className="h-3 w-3 text-[#888888]" />
+                          <span>{widget.site_domain}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-[#888888] font-mono">
+                          • Без сайта
+                        </span>
+                      )}
                       {widget.status === "connected" && (
                         <TagPill color="emerald" className="scale-90 origin-left">
                           Активен
                         </TagPill>
                       )}
                     </div>
-                    {widget.site_domain && (
-                      <span className="text-[11px] text-[#888888] font-mono block truncate">
-                        {widget.site_domain}
+                    {widget.site_name && widget.site_name !== widget.name && (
+                      <span className="text-[10px] text-[#888888] block truncate">
+                        Сайт: {widget.site_name}
                       </span>
                     )}
                   </div>

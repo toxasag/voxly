@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import {
   Banknote,
   Bot,
@@ -150,6 +150,18 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
   const [pickerSearch, setPickerSearch] = useState("");
   const [calcMode, setCalcMode] = useState<CalcMode>("none");
   const [calcMenuOpen, setCalcMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!calcMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setCalcMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [calcMenuOpen]);
 
   const move = useMoveDealStage();
   const remove = useDeleteDeal();

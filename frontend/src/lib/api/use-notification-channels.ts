@@ -11,6 +11,14 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 
 export type NotificationChannelType = "email" | "telegram" | "whatsapp" | "bitrix24";
 
+export interface EnrichedChannelWidget {
+  id: string;
+  name: string;
+  site_domain: string;
+  site_name?: string | null;
+  site_url?: string | null;
+}
+
 export interface NotificationChannelDTO {
   id: string;
   tenant_id: string;
@@ -22,6 +30,7 @@ export interface NotificationChannelDTO {
   is_verified: boolean;
   created_at: string;
   updated_at?: string;
+  widgets?: EnrichedChannelWidget[];
 }
 
 export interface CreateNotificationChannelPayload {

@@ -298,13 +298,13 @@ export function generateInvoicePdfBuffer(
   drawLine(bX, bY + 38, bX + bW, bY + 38, 0.5, "0.3 0.3 0.3");
   drawLine(bX, bY + 56, bX + colBankW, bY + 56, 0.5, "0.3 0.3 0.3");
 
-  const bankName = settings.bank_name || "АО «ТИНЬКОФФ БАНК»";
-  const bik = settings.bik || "044525974";
-  const corrAcc = settings.corr_account || "30101810145250000974";
-  const settAcc = settings.settlement_account || "40802810800003429185";
-  const inn = settings.company_inn || "771501234567";
+  const bankName = settings.bank_name || "";
+  const bik = settings.bik || "";
+  const corrAcc = settings.corr_account || "";
+  const settAcc = settings.settlement_account || "";
+  const inn = settings.company_inn || "";
   const kpp = settings.company_kpp || "";
-  const compName = settings.company_name || "ИП Сагайдак А.Г.";
+  const compName = settings.company_name || "Организация";
 
   // Bank name
   drawText(bankName, bX + 5, bY + bankTableH - 12, 8.5, true);

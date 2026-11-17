@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const accountIdSchema = z.string().uuid("account_id must be a UUID");
+export const accountTypeSchema = z.enum(["bank", "cash", "acquiring", "safe"]);
 export const transactionTypeSchema = z.enum(["income", "expense"]);
 export const invoiceStatusSchema = z.enum(["draft", "sent", "paid", "overdue", "cancelled"]);
 
@@ -9,6 +10,7 @@ const isoDate = z.string().datetime("Use an ISO 8601 timestamp");
 
 export const createAccountSchema = z.object({
   name: z.string().min(1).max(120),
+  account_type: accountTypeSchema.default("cash"),
   currency: z.string().length(3).default("RUB"),
   opening_balance: z.number().nonnegative().default(0),
   is_default: z.boolean().default(false),
@@ -108,6 +110,12 @@ export const sendInvoiceSchema = z.object({
   channel_type: z.enum(["telegram", "whatsapp", "all"]).default("all"),
 });
 
+export const bulkTransactionsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, "Select at least 1 transaction"),
+});
+
+export type AccountType = z.infer<typeof accountTypeSchema>;
+export type BulkTransactionsPayload = z.infer<typeof bulkTransactionsSchema>;
 export type CreateAccountPayload = z.infer<typeof createAccountSchema>;
 export type TransferPayload = z.infer<typeof transferSchema>;
 export type CreateTransactionPayload = z.infer<typeof createTransactionSchema>;
@@ -122,14 +130,30 @@ export type InvoiceStatus = z.infer<typeof invoiceStatusSchema>;
 export type TransactionType = z.infer<typeof transactionTypeSchema>;
 
 export interface AccountDTO {
-  id: string; name: string; currency: string; balance: number; isDefault: boolean;
+  id: string;
+  name: string;
+  accountType: AccountType;
+  currency: string;
+  balance: number;
+  isDefault: boolean;
 }
 
 export interface TransactionDTO {
-  id: string; type: TransactionType; amount: number; currency: string;
-  categoryId: string | null; categoryName: string; description: string;
-  accountId: string; accountName: string; dealId: string | null;
-  repairOrderId: string | null; invoiceId: string | null; occurredAt: string;
+  id: string;
+  type: TransactionType;
+  amount: number;
+  currency: string;
+  categoryId: string | null;
+  categoryName: string;
+  description: string;
+  accountId: string;
+  accountName: string;
+  dealId: string | null;
+  repairOrderId: string | null;
+  invoiceId: string | null;
+  counterpartyName: string;
+  counterpartyInn: string;
+  occurredAt: string;
 }
 
 export interface InvoiceItemDTO {

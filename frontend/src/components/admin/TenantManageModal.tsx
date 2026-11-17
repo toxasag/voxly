@@ -122,7 +122,7 @@ export function TenantManageModal({
       for (const q of quotasData) {
         initial[q.feature_key] = {
           is_unlimited: q.is_unlimited,
-          max_limit: q.max_limit === -1 ? q.default_limit : q.max_limit,
+          max_limit: q.max_limit > 0 ? q.max_limit : q.default_limit,
         };
       }
       setQuotasState(initial);
@@ -251,7 +251,7 @@ export function TenantManageModal({
           quotas: Object.entries(quotasState).map(([feature_key, val]) => ({
             feature_key,
             is_unlimited: val.is_unlimited,
-            max_limit: val.max_limit,
+            max_limit: val.is_unlimited ? -1 : (val.max_limit > 0 ? val.max_limit : 1),
           })),
         });
       }
@@ -831,7 +831,7 @@ export function TenantManageModal({
               {(quotasData ?? []).map((quota) => {
                 const currentSetting = quotasState[quota.feature_key] ?? {
                   is_unlimited: quota.is_unlimited,
-                  max_limit: quota.max_limit === -1 ? quota.default_limit : quota.max_limit,
+                  max_limit: quota.max_limit > 0 ? quota.max_limit : quota.default_limit,
                 };
 
                 return (
@@ -867,13 +867,17 @@ export function TenantManageModal({
                           checked={currentSetting.is_unlimited}
                           onChange={(e) => {
                             const checked = e.target.checked;
-                            setQuotasState((prev) => ({
-                              ...prev,
-                              [quota.feature_key]: {
-                                is_unlimited: checked,
-                                max_limit: prev[quota.feature_key]?.max_limit ?? quota.default_limit,
-                              },
-                            }));
+                            setQuotasState((prev) => {
+                              const prevLimit = prev[quota.feature_key]?.max_limit;
+                              const validLimit = prevLimit && prevLimit > 0 ? prevLimit : quota.default_limit;
+                              return {
+                                ...prev,
+                                [quota.feature_key]: {
+                                  is_unlimited: checked,
+                                  max_limit: validLimit,
+                                },
+                              };
+                            });
                           }}
                           className="h-4 w-4 rounded border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5]"
                         />
@@ -886,7 +890,7 @@ export function TenantManageModal({
                             type="number"
                             min={1}
                             max={10000}
-                            value={currentSetting.max_limit}
+                            value={currentSetting.max_limit > 0 ? currentSetting.max_limit : quota.default_limit}
                             onChange={(e) => {
                               const val = Math.max(1, parseInt(e.target.value, 10) || 1);
                               setQuotasState((prev) => ({
