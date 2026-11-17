@@ -318,6 +318,7 @@ export type ExportWarehouseItemsPayload = z.infer<typeof exportWarehouseItemsSch
 export interface ImportParseResultDTO {
   headers: string[];
   sampleRows: string[][];
+  rows: string[][];
   totalRows: number;
   detectedDelimiter?: string;
   suggestedMapping: Record<string, string>;
@@ -380,11 +381,18 @@ export const importCommitSchema = z.object({
 });
 export type ImportCommitPayload = z.infer<typeof importCommitSchema>;
 
+export interface ImportErrorDetailDTO {
+  rowNumber: number;
+  reason: string;
+}
+
 export interface ImportCommitResultDTO {
   importedCount: number;
   updatedCount: number;
   skippedCount: number;
   errorCount: number;
+  total?: number;
+  errors?: ImportErrorDetailDTO[];
 }
 
 export const priceAdjustmentActionSchema = z.object({
