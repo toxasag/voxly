@@ -18,17 +18,26 @@ import { quotaService } from "../quotas/quota.service.js";
 
 const roleSchema = z.enum(["admin", "manager", "technician", "viewer"]);
 
-const inviteBody = z.object({
-  name: z.string().trim().min(2, "Укажите имя сотрудника").max(120),
-  email: z.string().trim().toLowerCase().email("Некорректный e-mail"),
-  role: roleSchema,
-  /**
-   * Согласие на платное место. Проверяется на сервере, а не только в модальном
-   * окне: запрос можно отправить и минуя интерфейс, и тогда счёт вырос бы без
-   * ведома владельца.
-   */
-  confirm_extra_seat: z.boolean().default(false),
-});
+const inviteBody = z
+  .object({
+    name: z.string().trim().min(2, "Укажите имя сотрудника").max(120),
+    email: z.string().trim().toLowerCase().email("Некорректный e-mail").optional().nullable(),
+    phone: z.string().trim().optional().nullable(),
+    role: roleSchema,
+    /**
+     * Согласие на платное место. Проверяется на сервере, а не только в модальном
+     * окне: запрос можно отправить и минуя интерфейс, и тогда счёт вырос бы без
+     * ведома владельца.
+     */
+    confirm_extra_seat: z.boolean().default(false),
+  })
+  .refine(
+    (data) => Boolean((data.email && data.email.length > 0) || (data.phone && data.phone.replace(/\D/g, "").length >= 10)),
+    {
+      message: "Укажите e-mail или номер телефона сотрудника (от 10 цифр)",
+      path: ["email"],
+    },
+  );
 
 const permissionSchema = z.enum([...ALL_PERMISSIONS] as [Permission, ...Permission[]]);
 
@@ -333,7 +342,17 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     return reply.send({ data });
   });
 
-  app.post("/team/invite", { onRequest: admin }, async (request, reply) => {
+  app.get("/team/invites", { onRequest: admin }, async (request, reply) => {
+    const data = await team.listPendingInvites(request.tenant_id);
+    return reply.send({ data });
+  });
+
+  app.get("/invites", { onRequest: admin }, async (request, reply) => {
+    const data = await team.listPendingInvites(request.tenant_id);
+    return reply.send({ data });
+  });
+
+  const handleInvite = async (request: any, reply: any) => {
     const body = inviteBody.parse(request.body);
 
     const result = await team.invite({
@@ -341,11 +360,27 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       actorId: request.authUser.id,
       name: body.name,
       email: body.email,
+      phone: body.phone,
       role: body.role,
       confirmExtraSeat: body.confirm_extra_seat,
     });
 
     return reply.status(201).send({ data: result });
+  };
+
+  app.post("/team/invite", { onRequest: admin }, handleInvite);
+  app.post("/team/invites", { onRequest: admin }, handleInvite);
+
+  app.delete("/team/invites/:id", { onRequest: admin }, async (request, reply) => {
+    const { id } = userParams.parse(request.params);
+    const result = await team.revokeInvite({ tenantId: request.tenant_id, userId: id });
+    return reply.send({ data: result });
+  });
+
+  app.post("/team/invites/:id/resend", { onRequest: admin }, async (request, reply) => {
+    const { id } = userParams.parse(request.params);
+    const result = await team.resendInvite({ tenantId: request.tenant_id, userId: id });
+    return reply.send({ data: result });
   });
 
   app.post("/team/:id/resend", { onRequest: admin }, async (request, reply) => {
