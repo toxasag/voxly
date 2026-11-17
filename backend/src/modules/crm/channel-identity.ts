@@ -73,7 +73,8 @@ export const UNKNOWN_CONTACT_NAME = "Клиент";
 const CONTACT_CHANNEL_BY_SLUG: Readonly<Record<string, ContactChannel>> = {
   telegram: "telegram",
   whatsapp: "whatsapp",
-  max: "rumax",
+  max: "max",
+  rumax: "rumax",
   webchat: "phone",
   phone: "phone",
   email: "email",

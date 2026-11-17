@@ -14,7 +14,7 @@ import { z } from "zod";
 // компании, а номер может быть скрыт настройками приватности мессенджера.
 // ---------------------------------------------------------------------------
 
-export const contactChannelSchema = z.enum(["telegram", "whatsapp", "rumax", "phone", "email"]);
+export const contactChannelSchema = z.enum(["telegram", "whatsapp", "max", "rumax", "phone", "email"]);
 
 const optionalUuid = z.string().uuid().optional().or(z.literal(""));
 
