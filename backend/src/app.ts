@@ -37,6 +37,7 @@ import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import geminiIntegrationRoutes from "./modules/ai/gemini-integration.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
+import workspacesRoutes from "./modules/tenant/workspaces.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import partnerRoutes from "./modules/partner/partner.routes.js";
 import { warehouseRoutes } from "./modules/warehouse/warehouse.routes.js";
@@ -725,6 +726,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminMetricsRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });
   await app.register(tenantRoutes, { prefix: "/api/v1/tenant" });
+  await app.register(workspacesRoutes, { prefix: "/api/v1/workspaces" });
+  await app.register(workspacesRoutes, { prefix: "/api/workspaces" });
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/v1/settings/notifications" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/settings/notifications" });
