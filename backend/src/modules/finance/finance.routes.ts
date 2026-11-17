@@ -3,6 +3,7 @@ import { z } from "zod";
 import { FinanceService } from "./finance.service.js";
 import {
   batchPaymentSchema,
+  bulkTransactionsSchema,
   createAccountSchema,
   createCategorySchema,
   createTransactionSchema,
@@ -45,12 +46,39 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
   );
   app.get("/transactions", { onRequest: read }, async (req, reply) => {
     const p = page.parse(req.query);
-    const r = await service.transactions(req.tenant_id, p.limit, p.offset);
+    const filterQuery = z.object({
+      search: z.string().optional(),
+      type: z.enum(["income", "expense"]).optional(),
+    }).parse(req.query);
+    const r = await service.transactions(req.tenant_id, p.limit, p.offset, filterQuery);
     return reply.send({ data: r.items, meta: { limit: p.limit, offset: p.offset, total: r.total } });
   });
   app.post("/transactions", { onRequest: write }, async (req, reply) =>
     reply.status(201).send({ data: await service.createTransaction(req.tenant_id, createTransactionSchema.parse(req.body)) }),
   );
+  app.post("/transactions/bulk-delete", { onRequest: write }, async (req, reply) => {
+    const { ids } = bulkTransactionsSchema.parse(req.body);
+    const result = await service.bulkDeleteTransactions(req.tenant_id, ids);
+    return reply.send({ success: true, count: result.count });
+  });
+  app.post("/transactions/bulk-duplicate", { onRequest: write }, async (req, reply) => {
+    const { ids } = bulkTransactionsSchema.parse(req.body);
+    const items = await service.bulkDuplicateTransactions(req.tenant_id, ids);
+    return reply.status(201).send({ data: items, count: items.length });
+  });
+  app.delete("/transactions/:id", { onRequest: write }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const result = await service.bulkDeleteTransactions(req.tenant_id, [id]);
+    return reply.send({ success: true, count: result.count });
+  });
+  app.get("/counterparties", { onRequest: read }, async (req, reply) => {
+    const q = z.object({
+      search: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(50).default(20),
+    }).parse(req.query);
+    const data = await service.counterparties(req.tenant_id, q.search, q.limit);
+    return reply.send({ data });
+  });
   app.post("/payments/batch", { onRequest: write }, async (req, reply) => {
     const p = batchPaymentSchema.parse(req.body);
     const r = await service.batchPayment(req.tenant_id, req.authUser.id, p);
