@@ -45,7 +45,7 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
   const guards = [app.requirePermission("tenant:admin"), app.requireModuleFromParam("channel")];
 
   // Список всех активных подключенных каналов арендатора (для CRM сделок и контактов)
-  app.get("/active", { onRequest: [app.authenticate] }, async (request, reply) => {
+  app.get("/active", { onRequest: [app.requirePermission("deals:read")] }, async (request, reply) => {
     const rows = await query<{
       id: string;
       channel: string;
