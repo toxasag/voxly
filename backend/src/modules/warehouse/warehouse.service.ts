@@ -108,15 +108,30 @@ function extractRowFields(
     }
   }
 
+  let sku = (item.sku ?? "").trim();
+  let name = (item.name ?? "").trim();
+  let brand = (item.brand ?? "").trim();
+  const category = (item.category ?? "").trim();
+  const unit = (item.unit ?? "").trim() || "шт";
+
+  // Fallback if name is empty but brand or sku has text
+  if (!name && brand) {
+    name = brand;
+    brand = "";
+  } else if (!name && sku) {
+    name = sku;
+    sku = "";
+  }
+
   return {
-    sku: (item.sku ?? "").trim(),
-    name: (item.name ?? "").trim(),
-    brand: (item.brand ?? "").trim(),
-    category: (item.category ?? "").trim(),
-    unit: (item.unit ?? "").trim() || "шт",
-    costPrice: Math.max(0, parseCleanNumber(item.cost_price)),
-    retailPrice: Math.max(0, parseCleanNumber(item.retail_price)),
-    minStock: Math.max(0, parseCleanNumber(item.min_stock)),
+    sku,
+    name,
+    brand,
+    category,
+    unit,
+    costPrice: Math.max(0, Math.min(999999999.99, parseCleanNumber(item.cost_price))),
+    retailPrice: Math.max(0, Math.min(999999999.99, parseCleanNumber(item.retail_price))),
+    minStock: Math.max(0, Math.min(999999999.99, parseCleanNumber(item.min_stock))),
   };
 }
 
@@ -1410,6 +1425,7 @@ export class WarehouseService {
       return {
         headers: [],
         sampleRows: [],
+        rows: [],
         totalRows: 0,
         detectedDelimiter,
         suggestedMapping: {},
@@ -1430,6 +1446,7 @@ export class WarehouseService {
     return {
       headers,
       sampleRows,
+      rows,
       totalRows: rows.length,
       detectedDelimiter,
       suggestedMapping,
@@ -1591,6 +1608,7 @@ export class WarehouseService {
       let updatedCount = 0;
       let skippedCount = 0;
       let errorCount = 0;
+      const errors: { rowNumber: number; reason: string }[] = [];
 
       for (let idx = 0; idx < dataRows.length; idx++) {
         const row = dataRows[idx];
@@ -1600,6 +1618,10 @@ export class WarehouseService {
 
         if (!parsed.name) {
           errorCount++;
+          errors.push({
+            rowNumber,
+            reason: "Не заполнено обязательное поле «Наименование»",
+          });
           continue;
         }
 
@@ -1627,57 +1649,88 @@ export class WarehouseService {
           }
 
           if (res === "overwrite") {
-            await tx.query(
-              `UPDATE warehouse_items
-               SET name = $1, brand = $2, category = $3, unit = $4,
-                   cost_price = $5, retail_price = $6, min_stock = $7,
-                   updated_at = now()
-               WHERE tenant_id = $8 AND id = $9`,
-              [
-                parsed.name,
-                parsed.brand,
-                parsed.category,
-                parsed.unit,
-                parsed.costPrice,
-                parsed.retailPrice,
-                parsed.minStock,
-                tenantId,
-                existingMatch.id,
-              ],
-            );
-            updatedCount++;
+            const spName = `sp_up_${idx}`;
+            await tx.query(`SAVEPOINT ${spName}`);
+            try {
+              await tx.query(
+                `UPDATE warehouse_items
+                 SET name = $1, brand = $2, category = $3, unit = $4,
+                     cost_price = $5, retail_price = $6, min_stock = $7,
+                     updated_at = now()
+                 WHERE tenant_id = $8 AND id = $9`,
+                [
+                  parsed.name,
+                  parsed.brand,
+                  parsed.category,
+                  parsed.unit,
+                  parsed.costPrice,
+                  parsed.retailPrice,
+                  parsed.minStock,
+                  tenantId,
+                  existingMatch.id,
+                ],
+              );
+              await tx.query(`RELEASE SAVEPOINT ${spName}`);
+              updatedCount++;
+            } catch (err) {
+              await tx.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+              errorCount++;
+              errors.push({
+                rowNumber,
+                reason: err instanceof Error ? err.message : "Ошибка обновления позиции",
+              });
+            }
             continue;
           }
 
           // keep_both: fall through to insert
         }
 
-        const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
-          `INSERT INTO warehouse_items
-             (tenant_id, sku, name, brand, category, unit, cost_price, retail_price, min_stock)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, sku, name, brand, category, unit, cost_price, retail_price, min_stock`,
-          [
-            tenantId,
-            parsed.sku,
-            parsed.name,
-            parsed.brand,
-            parsed.category,
-            parsed.unit,
-            parsed.costPrice,
-            parsed.retailPrice,
-            parsed.minStock,
-          ],
-        );
+        const spName = `sp_in_${idx}`;
+        await tx.query(`SAVEPOINT ${spName}`);
+        try {
+          const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
+            `INSERT INTO warehouse_items
+               (tenant_id, sku, name, brand, category, unit, cost_price, retail_price, min_stock)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING id, sku, name, brand, category, unit, cost_price, retail_price, min_stock`,
+            [
+              tenantId,
+              parsed.sku,
+              parsed.name,
+              parsed.brand,
+              parsed.category,
+              parsed.unit,
+              parsed.costPrice,
+              parsed.retailPrice,
+              parsed.minStock,
+            ],
+          );
 
-        if (parsed.sku) {
-          existingBySku.set(parsed.sku.toLowerCase(), inserted);
+          if (parsed.sku) {
+            existingBySku.set(parsed.sku.toLowerCase(), inserted);
+          }
+          existingByName.set(parsed.name.toLowerCase(), inserted);
+          await tx.query(`RELEASE SAVEPOINT ${spName}`);
+          importedCount++;
+        } catch (err) {
+          await tx.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+          errorCount++;
+          errors.push({
+            rowNumber,
+            reason: err instanceof Error ? err.message : "Ошибка создания позиции",
+          });
         }
-        existingByName.set(parsed.name.toLowerCase(), inserted);
-        importedCount++;
       }
 
-      return { importedCount, updatedCount, skippedCount, errorCount };
+      return {
+        importedCount,
+        updatedCount,
+        skippedCount,
+        errorCount,
+        total: dataRows.length,
+        errors: errors.slice(0, 100),
+      };
     });
   }
 
