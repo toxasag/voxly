@@ -12,7 +12,9 @@ import {
   importValidateSchema,
   intakeBatchSchema,
   paySupplierOrderSchema,
+  receiptSupplierOrderSchema,
   updatePurchaseRequestSchema,
+  updateSupplierOrderSchema,
   updateWarehouseItemSchema,
   updateWarehouseSettingsSchema,
 } from "./warehouse.types.js";
@@ -239,6 +241,21 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: order });
   });
 
+  app.patch("/supplier-orders/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = updateSupplierOrderSchema.parse(request.body);
+    const updated = await warehouseService.updateSupplierOrder(tenant_id, id, body);
+    return reply.send({ data: updated });
+  });
+
+  app.delete("/supplier-orders/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    await warehouseService.deleteSupplierOrder(tenant_id, id);
+    return reply.send({ success: true });
+  });
+
   app.post("/supplier-orders/:id/pay", async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
@@ -256,7 +273,8 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const userId = request.authUser?.id ?? null;
-    const res = await warehouseService.createReceiptFromSupplierOrder(tenant_id, id, userId);
+    const body = receiptSupplierOrderSchema.parse(request.body ?? {});
+    const res = await warehouseService.createReceiptFromSupplierOrder(tenant_id, id, userId, body);
     return reply.send({ data: res });
   });
 }
