@@ -233,12 +233,13 @@ export class MessageTranslationService {
 
     // Если сообщение преимущественно иностранное
     if (hasForeign && (cyrillicCount === 0 || latinCount > cyrillicCount)) {
-      setImmediate(() => {
+      // 300мс задержка гарантирует, что вызывающая БД-транзакция уже закомичена
+      setTimeout(() => {
         this.translateMessage(params.tenantId, params.messageId, "ru", false).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(`[MessageTranslationService] Background auto-translation failed for ${params.messageId}:`, msg);
         });
-      });
+      }, 300);
     }
   }
 
