@@ -59,7 +59,7 @@ export const createAgentSchema = z.object({
   name: z.string().trim().min(2, "Название минимум 2 символа").max(80),
   description: z.string().trim().max(300).optional().default(""),
   model: z.string().trim().min(1, "Укажите модель").max(100).default("gpt-4o-mini"),
-  mode: z.enum(agentModeValues).default("suggester"),
+  mode: z.enum(agentModeValues).default("autoreply"),
   status: z.enum(agentStatusValues).default("active"),
   accent: z.enum(agentAccentValues).default("sky"),
   temperature: z.number().min(0, "Минимум 0").max(1, "Максимум 1").default(0.7),

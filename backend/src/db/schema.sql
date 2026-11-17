@@ -857,7 +857,7 @@ CREATE TABLE IF NOT EXISTS ai_agents (
     CHECK (accent IN ('amber', 'sky', 'emerald', 'orange', 'rose')),
   model TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'paused' CHECK (status IN ('active', 'paused')),
-  mode TEXT NOT NULL DEFAULT 'suggester'
+  mode TEXT NOT NULL DEFAULT 'autoreply'
     CHECK (mode IN ('suggester', 'autoreply', 'disabled')),
   temperature NUMERIC(3, 2) NOT NULL DEFAULT 0.7
     CHECK (temperature >= 0 AND temperature <= 1),

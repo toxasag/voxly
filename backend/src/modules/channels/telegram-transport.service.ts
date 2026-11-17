@@ -159,8 +159,8 @@ export class TelegramTransportService {
     this.unregisterStory = registerStoryPublisher("telegram", (payload) =>
       this.sendStory(payload),
     );
-    this.unregisterPhoneResolver = registerTelegramPhoneResolver((tenantId, phoneDigits) =>
-      this.resolveUserByPhone(tenantId, phoneDigits),
+    this.unregisterPhoneResolver = registerTelegramPhoneResolver((tenantId, phoneDigits, options) =>
+      this.resolveUserByPhone(tenantId, phoneDigits, options),
     );
     this.unregisterHistorySyncer = registerTelegramHistorySyncer((params) =>
       this.syncDialogHistory(params),
@@ -966,6 +966,48 @@ export class TelegramTransportService {
       await connection.client.sendMessage(target, { message: message.text });
     };
 
+    const rawTarget = (message.recipient || "").trim();
+    const isPhoneTarget = /^\+?\d{10,15}$/.test(rawTarget);
+    const phoneToResolve = message.phone || (isPhoneTarget ? rawTarget : undefined);
+
+    // Если получатель — номер телефона, в MTProto прямая отправка невозможна:
+    // GramJS требует entity с access_hash, поэтому сначала резолвим через ImportContacts
+    if (isPhoneTarget && phoneToResolve) {
+      try {
+        const phoneResolve = await this.resolveUserByPhone(connection.tenantId, phoneToResolve, {
+          deleteContactAfter: false,
+        });
+
+        if (phoneResolve.exists && phoneResolve.userId) {
+          const resolvedUserId = phoneResolve.userId;
+          const resolvedUsername = phoneResolve.username ?? null;
+          await sendToTarget(resolvedUserId);
+
+          // Связываем найденный Telegram ID и username с контактом в БД
+          void runWithPlatformScope(async () => {
+            const digits = phoneToResolve.replace(/\D/g, "");
+            await query(
+              `UPDATE contacts
+               SET telegram_chat_id = COALESCE(telegram_chat_id, $1::bigint),
+                   telegram_username = COALESCE(telegram_username, $2)
+               WHERE tenant_id = $3
+                 AND (regexp_replace(phone, '\\D', '', 'g') = $4 OR phone = $5)`,
+              [resolvedUserId, resolvedUsername, connection.tenantId, digits, phoneToResolve],
+            );
+          }).catch(() => {});
+
+          return { ok: true };
+        } else {
+          return {
+            ok: false,
+            reason: `Пользователь с номером ${phoneToResolve} не найден в Telegram (не зарегистрирован или скрыл номер в настройках приватности).`,
+          };
+        }
+      } catch (phoneErr) {
+        this.log.error({ phoneErr, phoneToResolve }, "Failed to resolve phone before outbound send");
+      }
+    }
+
     try {
       await sendToTarget(message.recipient);
       return { ok: true };
@@ -973,9 +1015,14 @@ export class TelegramTransportService {
       const errStr = error instanceof Error ? error.message : String(error);
 
       // Если в кэше сессии GramJS нет access_hash для этого peerId (например, после рестарта бэкенда)
-      if (errStr.includes("Could not find the input entity") || errStr.includes("Cannot cast") || errStr.includes("PeerUser")) {
+      if (
+        errStr.includes("Could not find the input entity") ||
+        errStr.includes("Cannot cast") ||
+        errStr.includes("PeerUser") ||
+        errStr.includes("Cannot find any entity")
+      ) {
         this.log.info(
-          { recipient: message.recipient, username: message.username },
+          { recipient: message.recipient, username: message.username, phone: message.phone },
           "Telegram entity not found in cache, attempting resolution",
         );
 
@@ -1003,17 +1050,27 @@ export class TelegramTransportService {
         }
 
         // 3. Попытка резолва по номеру телефона, если номер известен
-        if (message.phone) {
+        if (phoneToResolve) {
           try {
-            const digits = message.phone.replace(/\D/g, "");
-            const phoneResolve = await this.resolveUserByPhone(connection.tenantId, digits);
+            const phoneResolve = await this.resolveUserByPhone(connection.tenantId, phoneToResolve, {
+              deleteContactAfter: false,
+            });
             if (phoneResolve.exists && phoneResolve.userId) {
               await sendToTarget(phoneResolve.userId);
               return { ok: true };
+            } else {
+              return {
+                ok: false,
+                reason: `Пользователь с номером ${phoneToResolve} не найден в Telegram (не зарегистрирован или скрыл номер в настройках приватности).`,
+              };
             }
           } catch (phoneErr) {
             this.log.warn({ phoneErr }, "Failed to resolve peer by phone");
           }
+        }
+
+        if (message.username) {
+          return { ok: false, reason: `Пользователь @${message.username.replace(/^@/, "")} не найден в Telegram` };
         }
       }
 
@@ -1022,10 +1079,17 @@ export class TelegramTransportService {
         "Failed to send manager reply to Telegram",
       );
 
-      // Текст ошибки Telegram попадает в таймлайн, поэтому берётся сообщение
-      // исключения, а не общая фраза: «USER_IS_BLOCKED» и «FLOOD_WAIT» требуют
-      // разных действий оператора.
-      const reason = error instanceof Error ? error.message : "Неизвестная ошибка Telegram";
+      let reason = error instanceof Error ? error.message : "Неизвестная ошибка Telegram";
+      if (errStr.includes("USER_IS_BLOCKED")) {
+        reason = "Пользователь заблокировал сообщения от вашего аккаунта";
+      } else if (errStr.includes("FLOOD_WAIT")) {
+        reason = "Telegram временно ограничил отправку сообщений (FLOOD_WAIT). Попробуйте позже.";
+      } else if (errStr.includes("PEER_FLOOD")) {
+        reason = "Telegram ограничил отправку незнакомым пользователям (PEER_FLOOD).";
+      } else if (errStr.includes("Cannot find any entity") || errStr.includes("Could not find the input entity")) {
+        reason = "Пользователь не найден в Telegram (не зарегистрирован или скрыл аккаунт в настройках приватности)";
+      }
+
       return { ok: false, reason: `Telegram отклонил отправку: ${reason}` };
     }
   }
@@ -1165,6 +1229,7 @@ export class TelegramTransportService {
   async resolveUserByPhone(
     tenantId: string,
     phoneRaw: string,
+    options?: { deleteContactAfter?: boolean; firstName?: string; lastName?: string },
   ): Promise<TelegramPhoneResolveResult> {
     const digits = phoneRaw.replace(/\D/g, "");
     if (digits.length < 10 || digits.length > 15) return { exists: false, error: "bad_phone" };
@@ -1185,8 +1250,8 @@ export class TelegramTransportService {
             new Api.InputPhoneContact({
               clientId: bigInt(Date.now()),
               phone,
-              firstName: "Lead",
-              lastName: "Contact",
+              firstName: options?.firstName || "Клиент",
+              lastName: options?.lastName || "",
             }),
           ],
         }),
@@ -1224,15 +1289,18 @@ export class TelegramTransportService {
         }
       }
 
-      try {
-        const input = await conn.client.getInputEntity(user);
-        await conn.client.invoke(new Api.contacts.DeleteContacts({ id: [input] }));
-      } catch {
-        // ignore
+      if (options?.deleteContactAfter ?? true) {
+        try {
+          const input = await conn.client.getInputEntity(user);
+          await conn.client.invoke(new Api.contacts.DeleteContacts({ id: [input] }));
+        } catch {
+          // ignore
+        }
       }
 
       const isLeadPlaceholder =
         (user.firstName === "Lead" && user.lastName === "Contact") ||
+        (user.firstName === "Клиент" && !user.lastName) ||
         (user.firstName === "Lead" && !user.lastName);
 
       return {

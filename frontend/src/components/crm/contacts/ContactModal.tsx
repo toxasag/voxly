@@ -10,6 +10,7 @@ import {
 import { createContactSchema, type CreateContactPayload } from "@/schemas/contact.schema";
 import { ApiClientError } from "@/lib/api/apiClient";
 import { useCompanies } from "@/lib/api/use-companies";
+import { useFindDuplicateContacts, contactFullName } from "@/lib/api/use-contacts";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
 import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
@@ -146,6 +147,9 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
   }, [open, form, initial]);
 
   const phones = form.watch("phones") ?? [];
+  const primaryPhone = phones[0]?.number;
+  const duplicatesQuery = useFindDuplicateContacts(primaryPhone);
+  const duplicates = duplicatesQuery.data ?? [];
   const socials = form.watch("socials") ?? [];
   const companyId = form.watch("company_id") ?? "";
   const emailVal = form.watch("email") ?? "";
@@ -237,6 +241,17 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
               onChange={(next) => form.setValue("phones", next, { shouldValidate: true, shouldDirty: true })}
               error={messageOf(errors.phones)}
             />
+
+            {duplicates.length > 0 && (
+              <div className="rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] flex items-center justify-between shadow-2xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-[#854d0e]" />
+                  <span className="truncate">
+                    Контакт с таким номером уже есть в базе: <strong>{contactFullName(duplicates[0])}</strong>
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
