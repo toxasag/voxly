@@ -45,7 +45,13 @@ export class InboxService {
          COALESCE(last_msg.created_at, d.created_at)::text AS last_message_at,
          COALESCE(last_msg.sender_name, '') AS last_sender_name,
          COALESCE(last_msg.direction, 'neutral') AS last_direction,
-         CASE WHEN last_msg.direction = 'inbound' THEN 1 ELSE 0 END AS unread_count
+         COALESCE((
+           SELECT COUNT(*)::int
+           FROM deal_messages unread_dm
+           WHERE unread_dm.deal_id = d.id AND unread_dm.tenant_id = d.tenant_id
+             AND unread_dm.direction = 'inbound'
+             AND unread_dm.delivery_status != 'read'
+         ), 0) AS unread_count
        FROM deals d
        LEFT JOIN LATERAL (
          SELECT dm.channel, dm.content, dm.created_at, dm.sender_name, dm.direction
@@ -58,7 +64,11 @@ export class InboxService {
        LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id
        WHERE d.tenant_id = $1 AND d.deleted_at IS NULL
          AND ($2::text IS NULL OR last_msg.channel = $2)
-         AND ($3::boolean IS NOT TRUE OR last_msg.direction = 'inbound')
+         AND ($3::boolean IS NOT TRUE OR EXISTS (
+           SELECT 1 FROM deal_messages udm
+           WHERE udm.deal_id = d.id AND udm.tenant_id = d.tenant_id
+             AND udm.direction = 'inbound' AND udm.delivery_status != 'read'
+         ))
          AND ($4::text IS NULL OR (
            d.title ILIKE '%' || $4 || '%' OR
            c.first_name ILIKE '%' || $4 || '%' OR

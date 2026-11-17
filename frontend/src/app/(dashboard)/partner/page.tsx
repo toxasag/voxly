@@ -63,9 +63,17 @@ export default function PartnerPage() {
         writeImpersonationBackup(backupData);
       }
 
-      const res = await apiClient.post<AuthTokensDTO>("/api/v1/auth/impersonate", {
-        slug: child.slug,
-      });
+      // Вызываем специализированный switch-tenant эндпоинт партнерского модуля с фоллбэком на impersonate
+      let res: { data: AuthTokensDTO | null } = { data: null };
+      try {
+        res = await apiClient.post<AuthTokensDTO>("/api/v1/partner/switch-tenant", {
+          target_tenant_id: child.id,
+        });
+      } catch {
+        res = await apiClient.post<AuthTokensDTO>("/api/v1/auth/impersonate", {
+          slug: child.slug,
+        });
+      }
 
       if (res.data) {
         const { access_token, refresh_token } = res.data;
@@ -324,7 +332,7 @@ export default function PartnerPage() {
                             ) : (
                               <LogIn className="h-3 w-3" />
                             )}
-                            <span>{isEntering ? "Вход..." : "Войти в портал"}</span>
+                            <span>{isEntering ? "Вход..." : "Войти в тенант"}</span>
                           </button>
                         </td>
                       </tr>
