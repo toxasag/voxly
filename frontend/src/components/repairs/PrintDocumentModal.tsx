@@ -10,7 +10,7 @@ interface PrintDocumentModalProps {
   open: boolean;
   orderId: string;
   orderNumber?: string;
-  initialSlug?: "work_order" | "completion_act" | "warranty_ticket" | "receipt";
+  initialSlug?: string;
   onClose: () => void;
 }
 
@@ -28,13 +28,36 @@ export function PrintDocumentModal({
   initialSlug = "completion_act",
   onClose,
 }: PrintDocumentModalProps) {
-  const [selectedSlug, setSelectedSlug] = useState<"work_order" | "completion_act" | "warranty_ticket" | "receipt">(initialSlug);
+  const [selectedSlug, setSelectedSlug] = useState<string>(initialSlug);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const { data: templates = [] } = usePrintTemplates();
+  // Load only templates marked as visible for quick print
+  const { data: visibleTemplates = [] } = usePrintTemplates({ visibleOnly: true });
 
-  const renderUrl = orderId ? getPrintRenderUrl(selectedSlug, orderId) : "";
+  const getDocIcon = (docType: string) => {
+    switch (docType) {
+      case "work_order":
+        return FileText;
+      case "repair_order":
+        return SlidersHorizontal;
+      case "completion_act":
+        return CheckCircle;
+      case "receipt":
+        return Receipt;
+      case "warranty_ticket":
+        return ShieldCheck;
+      default:
+        return FileText;
+    }
+  };
+
+  const activeTemplate =
+    visibleTemplates.find((t) => t.slug === selectedSlug || t.id === selectedSlug) ??
+    visibleTemplates[0];
+
+  const currentSlugOrId = activeTemplate ? (activeTemplate.slug || activeTemplate.id) : selectedSlug;
+  const renderUrl = orderId ? getPrintRenderUrl(currentSlugOrId, orderId) : "";
 
   const cleanOrderNumber = orderNumber
     ? orderNumber.startsWith("№")
@@ -114,27 +137,48 @@ export function PrintDocumentModal({
         </div>
 
         {/* Template Selector Tabs */}
-        <div className="shrink-0 flex items-center gap-1 border-b border-[#e5e5e5] bg-[#fafafa] px-5 py-2">
-          {TEMPLATE_CONFIG.map((t) => {
-            const Icon = t.icon;
-            const isSelected = selectedSlug === t.slug;
-            return (
-              <button
-                key={t.slug}
-                type="button"
-                onClick={() => setSelectedSlug(t.slug)}
-                className={cn(
-                  "flex items-center gap-2 rounded-[6px] px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
-                  isSelected
-                    ? "bg-white text-[#4a38f5] shadow-xs border border-[#e5e5e5]"
-                    : "text-[#666666] hover:text-[#111111] hover:bg-[#f0f0f0]",
-                )}
-              >
-                <Icon className={cn("h-3.5 w-3.5", isSelected ? "text-[#4a38f5]" : "text-[#888888]")} />
-                <span>{t.label}</span>
-              </button>
-            );
-          })}
+        <div className="shrink-0 flex items-center gap-1 border-b border-[#e5e5e5] bg-[#fafafa] px-5 py-2 overflow-x-auto no-scrollbar">
+          {visibleTemplates.length > 0
+            ? visibleTemplates.map((t) => {
+                const Icon = getDocIcon(t.documentType);
+                const isSelected = activeTemplate?.id === t.id || activeTemplate?.slug === t.slug;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setSelectedSlug(t.slug || t.id)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-[6px] px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer shrink-0",
+                      isSelected
+                        ? "bg-white text-[#4a38f5] shadow-xs border border-[#e5e5e5] font-semibold"
+                        : "text-[#666666] hover:text-[#111111] hover:bg-[#f0f0f0]",
+                    )}
+                  >
+                    <Icon className={cn("h-3.5 w-3.5", isSelected ? "text-[#4a38f5]" : "text-[#888888]")} />
+                    <span>{t.name}</span>
+                  </button>
+                );
+              })
+            : TEMPLATE_CONFIG.map((t) => {
+                const Icon = t.icon;
+                const isSelected = selectedSlug === t.slug;
+                return (
+                  <button
+                    key={t.slug}
+                    type="button"
+                    onClick={() => setSelectedSlug(t.slug)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-[6px] px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer shrink-0",
+                      isSelected
+                        ? "bg-white text-[#4a38f5] shadow-xs border border-[#e5e5e5]"
+                        : "text-[#666666] hover:text-[#111111] hover:bg-[#f0f0f0]",
+                    )}
+                  >
+                    <Icon className={cn("h-3.5 w-3.5", isSelected ? "text-[#4a38f5]" : "text-[#888888]")} />
+                    <span>{t.label}</span>
+                  </button>
+                );
+              })}
         </div>
 
         {/* Document Live Preview in iframe */}
