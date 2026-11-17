@@ -1,4 +1,4 @@
-import { query, queryOne } from "../../../db/client.js";
+import { withTenant } from "../../../db/client.js";
 import { getRedisClient, isRedisAvailable } from "../../../infrastructure/redis.js";
 import { chatEventBus } from "./chat-events.js";
 
@@ -34,13 +34,15 @@ export class PresenceService {
       }
     }
 
-    // Сохранение в Postgres
-    await query(
-      `UPDATE users
-       SET last_seen_at = $3, is_online = true
-       WHERE tenant_id = $1 AND id = $2`,
-      [tenantId, userId, iso],
-    ).catch(() => {});
+    // Сохранение в Postgres через withTenant (RLS-изоляция)
+    await withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `UPDATE users
+         SET last_seen_at = $2, is_online = true
+         WHERE tenant_id = $1 AND id = $3`,
+        [tenantId, iso, userId],
+      );
+    }).catch(() => {});
 
     chatEventBus.emitChatEvent({
       type: "presence_updated",
@@ -75,12 +77,14 @@ export class PresenceService {
       }
     }
 
-    await query(
-      `UPDATE contacts
-       SET last_seen_at = $3, is_online = true
-       WHERE tenant_id = $1 AND id = $2`,
-      [tenantId, contactId, iso],
-    ).catch(() => {});
+    await withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `UPDATE contacts
+         SET last_seen_at = $2, is_online = true
+         WHERE tenant_id = $1 AND id = $3`,
+        [tenantId, iso, contactId],
+      );
+    }).catch(() => {});
 
     chatEventBus.emitChatEvent({
       type: "presence_updated",
@@ -106,76 +110,77 @@ export class PresenceService {
   ): Promise<PresenceDTO> {
     const nowMs = Date.now();
 
-    if (entityType === "deal") {
-      // Для сделки определяем присутствие клиента (контакта сделки)
-      const dealRow = await queryOne<{ contact_id: string | null }>(
-        `SELECT contact_id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
-        [tenantId, entityId],
-      );
-
-      const contactId = dealRow?.contact_id;
-      if (!contactId) {
-        // Контакта нет — проверяем последнее сообщение по сделке
-        const lastMsg = await queryOne<{ created_at: Date | string }>(
-          `SELECT created_at FROM deal_messages
-           WHERE tenant_id = $1 AND deal_id = $2
-           ORDER BY created_at DESC LIMIT 1`,
+    return withTenant(tenantId, async (tx) => {
+      if (entityType === "deal") {
+        const dealRow = await tx.queryOne<{ contact_id: string | null }>(
+          `SELECT contact_id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
           [tenantId, entityId],
         );
-        const lastSeen = lastMsg?.created_at ? new Date(lastMsg.created_at).toISOString() : null;
-        return {
-          entityType: "deal",
-          entityId,
-          isOnline: false,
-          lastSeenAt: lastSeen,
-        };
+
+        const contactId = dealRow?.contact_id;
+        if (!contactId) {
+          const lastMsg = await tx.queryOne<{ created_at: Date | string }>(
+            `SELECT created_at FROM deal_messages
+             WHERE tenant_id = $1 AND deal_id = $2
+             ORDER BY created_at DESC LIMIT 1`,
+            [tenantId, entityId],
+          );
+          const lastSeen = lastMsg?.created_at ? new Date(lastMsg.created_at).toISOString() : null;
+          return {
+            entityType: "deal",
+            entityId,
+            isOnline: false,
+            lastSeenAt: lastSeen,
+          };
+        }
+
+        return this.resolveContactPresenceTx(tx, tenantId, contactId, entityId);
       }
 
-      return this.resolveContactPresence(tenantId, contactId, entityId);
-    }
+      if (entityType === "contact") {
+        return this.resolveContactPresenceTx(tx, tenantId, entityId);
+      }
 
-    if (entityType === "contact") {
-      return this.resolveContactPresence(tenantId, entityId);
-    }
+      // Для пользователя (оператора CRM)
+      let isOnline = false;
+      let lastSeenAt: string | null = null;
 
-    // Для пользователя (оператора CRM)
-    let isOnline = false;
-    let lastSeenAt: string | null = null;
-
-    if (isRedisAvailable()) {
-      const redis = getRedisClient();
-      if (redis) {
-        const val = await redis.get(`presence:user:${tenantId}:${entityId}`).catch(() => null);
-        if (val) {
-          isOnline = true;
-          lastSeenAt = val;
+      if (isRedisAvailable()) {
+        const redis = getRedisClient();
+        if (redis) {
+          const val = await redis.get(`presence:user:${tenantId}:${entityId}`).catch(() => null);
+          if (val) {
+            isOnline = true;
+            lastSeenAt = val;
+          }
         }
       }
-    }
 
-    if (!isOnline) {
-      const userRow = await queryOne<{ last_seen_at: Date | string | null }>(
-        `SELECT last_seen_at FROM users WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, entityId],
-      );
-      if (userRow?.last_seen_at) {
-        const lastDate = new Date(userRow.last_seen_at);
-        lastSeenAt = lastDate.toISOString();
-        if (nowMs - lastDate.getTime() < PresenceService.ONLINE_THRESHOLD_MS) {
-          isOnline = true;
+      if (!isOnline) {
+        const userRow = await tx.queryOne<{ last_seen_at: Date | string | null }>(
+          `SELECT last_seen_at FROM users WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, entityId],
+        );
+        if (userRow?.last_seen_at) {
+          const lastDate = new Date(userRow.last_seen_at);
+          lastSeenAt = lastDate.toISOString();
+          if (nowMs - lastDate.getTime() < PresenceService.ONLINE_THRESHOLD_MS) {
+            isOnline = true;
+          }
         }
       }
-    }
 
-    return {
-      entityType: "user",
-      entityId,
-      isOnline,
-      lastSeenAt,
-    };
+      return {
+        entityType: "user",
+        entityId,
+        isOnline,
+        lastSeenAt,
+      };
+    });
   }
 
-  private async resolveContactPresence(
+  private async resolveContactPresenceTx(
+    tx: any,
     tenantId: string,
     contactId: string,
     dealIdForContext?: string,
@@ -197,7 +202,7 @@ export class PresenceService {
     }
 
     // 2. Если в Redis нет активного ключа — проверяем DB contacts.last_seen_at
-    const contactRow = await queryOne<{ last_seen_at: Date | string | null }>(
+    const contactRow = await tx.queryOne<{ last_seen_at: Date | string | null }>(
       `SELECT last_seen_at FROM contacts WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [tenantId, contactId],
     );
@@ -214,7 +219,7 @@ export class PresenceService {
     }
 
     // 3. Дополнительная эвристика: последнее входящее сообщение от клиента по всем сделкам контакта
-    const lastInbound = await queryOne<{ created_at: Date | string }>(
+    const lastInbound = await tx.queryOne<{ created_at: Date | string }>(
       `SELECT m.created_at
        FROM deal_messages m
        JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
