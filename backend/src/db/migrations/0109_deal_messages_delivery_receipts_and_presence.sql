@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0108_deal_messages_delivery_receipts_and_presence.sql
+-- 0109_deal_messages_delivery_receipts_and_presence.sql
 --
 -- Реальные квитанции доставки сообщений (Receipts state machine) и система
 -- присутствия пользователей/контактов (Presence & Last Seen).
