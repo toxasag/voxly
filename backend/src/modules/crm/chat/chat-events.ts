@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 
 export interface ChatStreamEvent {
-  type: "message_created" | "delivery_updated" | "typing" | "ai_handoff";
+  type: "message_created" | "delivery_updated" | "typing" | "ai_handoff" | "presence_updated";
   tenantId: string;
   dealId: string;
   data: Record<string, unknown>;

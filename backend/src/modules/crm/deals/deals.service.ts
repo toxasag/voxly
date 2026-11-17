@@ -29,6 +29,7 @@ import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
+import { chatEventBus } from "../chat/chat-events.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
@@ -115,7 +116,7 @@ const DEAL_LABEL_JOINS = `
 
 const MESSAGE_COLUMNS = `
   id, tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel,
-  attachment, attachment_type, delivery_status, delivery_error, metadata, created_at
+  attachment, attachment_type, delivery_status, delivery_error, metadata, delivered_at, read_at, created_at
 `;
 
 export type DealWonHandler = (payload: { tenantId: string; dealId: string }) => void | Promise<void>;
@@ -805,15 +806,89 @@ export class DealsService {
     error: string | null = null,
   ): Promise<DealMessageDTO | null> {
     return withTenant(tenantId, async (tx) => {
+      let extraSet = "";
+      if (status === "delivered") {
+        extraSet = ", delivered_at = COALESCE(delivered_at, now())";
+      } else if (status === "read") {
+        extraSet = ", read_at = COALESCE(read_at, now()), delivered_at = COALESCE(delivered_at, now())";
+      }
+
       const row = await tx.queryOne<DealMessageRow>(
         `UPDATE deal_messages
-         SET delivery_status = $3, delivery_error = $4
+         SET delivery_status = $3, delivery_error = $4${extraSet}
          WHERE tenant_id = $1 AND id = $2
          RETURNING ${MESSAGE_COLUMNS}`,
         [tenantId, messageId, status, error],
       );
 
       return row === null ? null : toDealMessageDTO(row);
+    });
+  }
+
+  /**
+   * Отметка прочтения сообщений (Receipts state machine)
+   */
+  async markMessagesRead(
+    tenantId: string,
+    options: { dealId?: string; contactId?: string; messageIds?: string[] },
+  ): Promise<{ updatedCount: number; messageIds: string[] }> {
+    return withTenant(tenantId, async (tx) => {
+      let rows: Array<{ id: string; deal_id: string }> = [];
+
+      if (options.messageIds && options.messageIds.length > 0) {
+        rows = await tx.query<{ id: string; deal_id: string }>(
+          `UPDATE deal_messages
+           SET delivery_status = 'read',
+               read_at = COALESCE(read_at, now()),
+               delivered_at = COALESCE(delivered_at, now())
+           WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+             AND delivery_status != 'read'
+           RETURNING id, deal_id`,
+          [tenantId, options.messageIds],
+        );
+      } else if (options.dealId) {
+        rows = await tx.query<{ id: string; deal_id: string }>(
+          `UPDATE deal_messages
+           SET delivery_status = 'read',
+               read_at = COALESCE(read_at, now()),
+               delivered_at = COALESCE(delivered_at, now())
+           WHERE tenant_id = $1 AND deal_id = $2
+             AND delivery_status != 'read'
+           RETURNING id, deal_id`,
+          [tenantId, options.dealId],
+        );
+      } else if (options.contactId) {
+        rows = await tx.query<{ id: string; deal_id: string }>(
+          `UPDATE deal_messages m
+           SET delivery_status = 'read',
+               read_at = COALESCE(read_at, now()),
+               delivered_at = COALESCE(delivered_at, now())
+           FROM deals d
+           WHERE m.tenant_id = $1 AND d.id = m.deal_id AND d.contact_id = $2
+             AND m.delivery_status != 'read'
+           RETURNING m.id, m.deal_id`,
+          [tenantId, options.contactId],
+        );
+      }
+
+      const updatedIds = rows.map((r) => r.id);
+      const dealId = rows[0]?.deal_id ?? options.dealId ?? "";
+
+      if (updatedIds.length > 0) {
+        chatEventBus.emitChatEvent({
+          type: "delivery_updated",
+          tenantId,
+          dealId,
+          data: {
+            messageIds: updatedIds,
+            status: "read",
+            readAt: new Date().toISOString(),
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      return { updatedCount: updatedIds.length, messageIds: updatedIds };
     });
   }
 

@@ -23,6 +23,8 @@ import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import { ConversionDispatcherService } from "../analytics/conversion-dispatcher.service.js";
 import type { VisitorGeoData } from "../../services/geo-enrichment.service.js";
+import { presenceService } from "./chat/presence.service.js";
+import { chatEventBus } from "./chat/chat-events.js";
 
 // Профиль и проверка бота объявлены в `channel-identity.ts` вместе с раскладкой по полям,
 // но реэкспортируются здесь: транспорт получает их вместе с типом входящего
@@ -1007,6 +1009,43 @@ export class CrmPipelineService {
 
       return { contactId, dealId, isNewContact, isNewDeal };
     });
+
+    // Фиксируем активность контакта (онлайн-присутствие)
+    if (result.contactId) {
+      void presenceService.recordContactActivity(input.tenantId, result.contactId, result.dealId);
+    }
+
+    // При ответе клиента все предшествующие исходящие сообщения считаются доставленными и прочитанными
+    if (result.dealId) {
+      void (async () => {
+        try {
+          const updated = await query<{ id: string }>(
+            `UPDATE deal_messages
+             SET delivery_status = 'read',
+                 read_at = COALESCE(read_at, now()),
+                 delivered_at = COALESCE(delivered_at, now())
+             WHERE tenant_id = $1 AND deal_id = $2
+               AND direction = 'outbound'
+               AND delivery_status IN ('sent', 'delivered')
+             RETURNING id`,
+            [input.tenantId, result.dealId],
+          );
+          if (updated.length > 0) {
+            chatEventBus.emitChatEvent({
+              type: "delivery_updated",
+              tenantId: input.tenantId,
+              dealId: result.dealId,
+              data: {
+                messageIds: updated.map((m) => m.id),
+                status: "read",
+                readAt: new Date().toISOString(),
+              },
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } catch {}
+      })();
+    }
 
     // Асинхронные уведомления и выжимка только если создана или найдена сделка (не бот, не личный контакт)
     if (result.dealId) {

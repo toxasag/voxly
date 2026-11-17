@@ -19,7 +19,8 @@ export interface UseChatStreamOptions {
   apiBaseUrl?: string;
   enabled?: boolean;
   onMessage?: (message: ChatMessageEventData) => void;
-  onDeliveryUpdate?: (data: { messageId: string; status: string }) => void;
+  onDeliveryUpdate?: (data: { messageId?: string; messageIds?: string[]; status: string; readAt?: string }) => void;
+  onPresenceUpdate?: (data: { entityType: string; entityId: string; isOnline: boolean; lastSeenAt: string }) => void;
 }
 
 export function useChatStream({
@@ -28,6 +29,7 @@ export function useChatStream({
   enabled = true,
   onMessage,
   onDeliveryUpdate,
+  onPresenceUpdate,
 }: UseChatStreamOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastEventTime, setLastEventTime] = useState<string | null>(null);
@@ -101,9 +103,22 @@ export function useChatStream({
 
       es.addEventListener("delivery_updated", (event: MessageEvent) => {
         try {
-          const payload = JSON.parse(event.data) as { data: { messageId: string; status: string } };
+          const payload = JSON.parse(event.data) as {
+            data: { messageId?: string; messageIds?: string[]; status: string; readAt?: string };
+          };
           if (payload.data) {
             onDeliveryUpdate?.(payload.data);
+          }
+        } catch {}
+      });
+
+      es.addEventListener("presence_updated", (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data) as {
+            data: { entityType: string; entityId: string; isOnline: boolean; lastSeenAt: string };
+          };
+          if (payload.data) {
+            onPresenceUpdate?.(payload.data);
           }
         } catch {}
       });
