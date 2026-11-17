@@ -17,7 +17,7 @@ vi.mock("@/lib/api/use-team", () => ({
   useTeamMembers: () => ({
     data: {
       members: [
-        { id: "master-1", fullName: "Мастер Иван", role: "technician" },
+        { id: "master-1", fullName: "Мастер Иван", role: "technician", status: "active" },
       ],
     },
     isLoading: false,
@@ -99,6 +99,10 @@ vi.mock("@/lib/api/use-repairs", async (importOriginal) => {
     useSearchEquipmentBySerial: () => ({
       data: undefined,
       isFetching: false,
+    }),
+    useRepairMasters: () => ({
+      data: [{ id: "master-1", fullName: "Мастер Иван", role: "technician" }],
+      isLoading: false,
     }),
   };
 });

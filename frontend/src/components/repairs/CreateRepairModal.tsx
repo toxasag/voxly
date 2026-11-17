@@ -39,7 +39,9 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
   const teamQuery = useTeamMembers();
 
   const contacts = contactsQuery.data?.items ?? [];
-  const teamMembers = teamQuery.data?.members ?? [];
+  const teamMembers = (teamQuery.data?.members ?? []).filter(
+    (m) => m.status === "active" && m.role !== "viewer",
+  );
 
   const form = useForm<CreateRepairPayload>({
     resolver: zodResolver(createRepairSchema),

@@ -26,6 +26,7 @@ import { useTeamMembers } from "@/lib/api/use-team";
 import { useDeal } from "@/lib/api/use-deals";
 import {
   useRepairDictionaries,
+  useRepairMasters,
   useSearchEquipmentBySerial,
   type CreateBatchRepairPayload,
   type EquipmentIntakeItem,
@@ -347,8 +348,25 @@ export function RepairIntakeModal({
   const [equipmentErrors, setEquipmentErrors] = useState<Record<string, Record<string, string>>>({});
 
   const currentUser = useCurrentUser();
+  const mastersQuery = useRepairMasters();
   const teamQuery = useTeamMembers();
-  const teamMembers = teamQuery.data?.members ?? [];
+
+  // Список мастеров: только активные сотрудники компании (status === 'active')
+  const teamMembers = useMemo(() => {
+    if (mastersQuery.data && mastersQuery.data.length > 0) {
+      return mastersQuery.data;
+    }
+    const members = teamQuery.data?.members ?? [];
+    return members
+      .filter((m) => m.status === "active" && m.role !== "viewer")
+      .map((m) => ({
+        id: m.id,
+        fullName: m.fullName,
+        email: m.email,
+        phone: m.phone,
+        role: m.role,
+      }));
+  }, [mastersQuery.data, teamQuery.data]);
 
   const dictionariesQuery = useRepairDictionaries();
   const dictionaries: ServiceDictionariesDTO = dictionariesQuery.data ?? {
@@ -368,6 +386,7 @@ export function RepairIntakeModal({
       customer_phone: "",
       customer_email: "",
       additional_contacts: [],
+      is_company: false,
       company_id: "",
       company_name: "",
       company_inn: "",
@@ -411,7 +430,7 @@ export function RepairIntakeModal({
     const currentId = form.getValues("master_id");
     if (!currentId && (teamMembers.length > 0 || currentUser)) {
       const self = teamMembers.find(
-        (m) => m.isSelf || (currentUser && m.id === currentUser.id),
+        (m) => (currentUser ? m.id === currentUser.id : false),
       );
       const defaultMaster = self || teamMembers[0];
       if (defaultMaster) {
@@ -437,7 +456,7 @@ export function RepairIntakeModal({
 
       // Предвыбор мастера
       const self = teamMembers.find(
-        (m) => m.isSelf || (currentUser && m.id === currentUser.id),
+        (m) => (currentUser ? m.id === currentUser.id : false),
       );
       const defaultMaster = self || teamMembers[0];
       if (defaultMaster) {
@@ -600,7 +619,7 @@ export function RepairIntakeModal({
       let currentMasterName = form.getValues("master_name");
       if (!currentMasterId) {
         const self = teamMembers.find(
-          (m) => m.isSelf || (currentUser && m.id === currentUser.id),
+          (m) => (currentUser ? m.id === currentUser.id : false),
         );
         const defaultMaster = self || teamMembers[0];
         if (defaultMaster) {
@@ -663,9 +682,21 @@ export function RepairIntakeModal({
       setEquipmentErrors(newErrors);
 
       // 4. Валидация полей клиента и мастера через react-hook-form
-      const formValid = await form.trigger(["customer_name", "customer_phone", "customer_email", "master_id"]);
+      const fieldsToTrigger: (keyof CreateRepairPayload)[] = [
+        "customer_name",
+        "customer_phone",
+        "customer_email",
+        "master_id",
+      ];
+      if (form.getValues("is_company") || Boolean(form.getValues("company_name") || form.getValues("company_inn"))) {
+        fieldsToTrigger.push("company_name");
+      }
+      const formValid = await form.trigger(fieldsToTrigger);
       const formErrors = form.formState.errors;
 
+      if (formErrors.company_name) {
+        missingFields.push("Название компании");
+      }
       if (formErrors.customer_name) {
         missingFields.push("ФИО клиента");
       }
@@ -880,7 +911,7 @@ export function RepairIntakeModal({
                     )}
                   >
                     <option value="" disabled>
-                      {teamQuery.isLoading ? "Загрузка мастеров..." : "Выберите мастера..."}
+                      {mastersQuery.isLoading || teamQuery.isLoading ? "Загрузка мастеров..." : "Выберите мастера..."}
                     </option>
                     {teamMembers.map((m) => (
                       <option key={m.id} value={m.id}>

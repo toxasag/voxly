@@ -84,9 +84,17 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
   const [debouncedName, setDebouncedName] = useState(customerName);
 
   // Организация и реквизиты
+  const isCompanyFormVal = form.watch("is_company");
   const [isCompanyChecked, setIsCompanyChecked] = useState<boolean>(
-    Boolean(companyName || companyInn || form.watch("company_id")),
+    Boolean(isCompanyFormVal || companyName || companyInn || form.watch("company_id")),
   );
+
+  // Синхронизация состояния чекбокса с формой
+  useEffect(() => {
+    if (isCompanyFormVal !== undefined && isCompanyFormVal !== isCompanyChecked) {
+      setIsCompanyChecked(isCompanyFormVal);
+    }
+  }, [isCompanyFormVal]);
   const [isRequisitesOpen, setIsRequisitesOpen] = useState<boolean>(
     Boolean(companyInn || companyOgrn || companyBik || companyAccountNumber || companyLegalAddress),
   );
@@ -193,8 +201,9 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     // Если у клиента есть компания или реквизиты
     if (lookupData.company) {
       setIsCompanyChecked(true);
+      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
       form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
-      form.setValue("company_name", lookupData.company.name, { shouldDirty: true });
+      form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
       if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
       if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
       if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
@@ -206,8 +215,9 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
       }
     } else if (client.companyName && !companyName) {
       setIsCompanyChecked(true);
+      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
       if (client.companyId) form.setValue("company_id", client.companyId, { shouldDirty: true });
-      form.setValue("company_name", client.companyName, { shouldDirty: true });
+      form.setValue("company_name", client.companyName, { shouldValidate: true, shouldDirty: true });
     }
 
     // Если есть активные сделки и сделка в форме еще не выбрана — по умолчанию не навязываем,
@@ -230,6 +240,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     form.setValue("deal_id", "");
     form.setValue("customer_name", "");
     form.setValue("customer_email", "");
+    form.setValue("is_company", false);
     form.setValue("company_id", "");
     form.setValue("company_name", "");
     form.setValue("company_inn", "");
@@ -241,6 +252,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     setPhoneInput("");
     setIsCompanyChecked(false);
     setIsRequisitesOpen(false);
+    form.clearErrors("company_name");
   };
 
   const handleSelectDeal = (selectedId: string) => {
@@ -253,6 +265,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
   const handleToggleCompany = (checked: boolean) => {
     setIsCompanyChecked(checked);
+    form.setValue("is_company", checked, { shouldValidate: true, shouldDirty: true });
     if (!checked) {
       form.setValue("company_id", "");
       form.setValue("company_name", "");
@@ -262,6 +275,9 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
       form.setValue("company_account_number", "");
       form.setValue("company_legal_address", "");
       setIsRequisitesOpen(false);
+      form.clearErrors("company_name");
+    } else {
+      void form.trigger("company_name");
     }
   };
 
@@ -588,15 +604,27 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
               <div className="space-y-1 md:col-span-2">
                 <label className="text-[11px] font-medium text-[#666666] uppercase tracking-wider">
-                  Название компании / контрагента *
+                  Название компании / контрагента <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={companyName}
-                  onChange={(e) => form.setValue("company_name", e.target.value, { shouldDirty: true })}
+                  onChange={(e) =>
+                    form.setValue("company_name", e.target.value, { shouldValidate: true, shouldDirty: true })
+                  }
                   placeholder="ООО «Вектор», ИП Иванов"
-                  className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  className={cn(
+                    "h-8 w-full rounded-[8px] border bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:outline-none focus:ring-1 transition-colors",
+                    form.formState.errors.company_name
+                      ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-[#e5e5e5] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20",
+                  )}
                 />
+                {form.formState.errors.company_name && (
+                  <p className="text-xs text-rose-500 mt-1">
+                    {form.formState.errors.company_name.message || "Укажите название компании"}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">

@@ -127,6 +127,12 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: dictionaries });
   });
 
+  // GET /repairs/masters — retrieve active technicians and masters for the tenant
+  app.get("/masters", { onRequest: canRead }, async (request, reply) => {
+    const masters = await service.listMasters(request.tenant_id);
+    return reply.send({ data: masters });
+  });
+
   // GET /repairs/dictionaries/brands — retrieve brands list
   app.get("/dictionaries/brands", { onRequest: canRead }, async (request, reply) => {
     const brands = await service.listBrands(request.tenant_id);
