@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS users (
   invite_token_hash TEXT,
   invited_at TIMESTAMPTZ,
   invite_expires_at TIMESTAMPTZ,
+  last_seen_at TIMESTAMPTZ,
+  is_online BOOLEAN NOT NULL DEFAULT false,
   activated_at TIMESTAMPTZ,
   invited_by UUID REFERENCES users(id) ON DELETE SET NULL,
   -- Мягкое удаление: хард-делит невозможен, на users(id) ссылаются deals,
@@ -308,6 +310,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   address TEXT NOT NULL DEFAULT '',
   custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
   notes TEXT NOT NULL DEFAULT '',
+  last_seen_at TIMESTAMPTZ,
+  is_online BOOLEAN NOT NULL DEFAULT false,
   -- Twenty: person.createdBy (ActorMetadata), группа system. NULL = система/импорт.
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -432,9 +436,11 @@ CREATE TABLE IF NOT EXISTS deal_messages (
   -- `failed` — отказ, причина в `delivery_error`.
   delivery_status TEXT NOT NULL DEFAULT 'neutral',
   delivery_error TEXT,
+  delivered_at TIMESTAMPTZ,
+  read_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT deal_messages_delivery_status_valid
-    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'failed', 'received'))
+    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'delivered', 'read', 'failed', 'received'))
 );
 
 CREATE TABLE IF NOT EXISTS crm_tasks (

@@ -15,6 +15,7 @@ import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { nextTypingPauseMs } from "../ai/agent-reply.js";
 import { IncomingMessageBuffer, type BufferedIncoming } from "./incoming-buffer.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
+import { messageTranslationService } from "../crm/translation/message-translation.service.js";
 import { resolveOutboundMedia, isMeaningfulCaption } from "./media-resolver.js";
 import {
   registerOutboundSender,
@@ -1453,6 +1454,14 @@ export class TelegramTransportService {
             importedCount++;
 
             if (inserted) {
+              if (!isOutbound && contentText) {
+                messageTranslationService.autoTranslateIfForeign({
+                  tenantId: params.tenantId,
+                  messageId: inserted.id,
+                  content: contentText,
+                });
+              }
+
               chatEventBus.emitChatEvent({
                 type: "message_created",
                 tenantId: params.tenantId,

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { ChatMediaService } from "./chat/media.service.js";
 import { mediaEnrichmentService } from "./media/media-enrichment.service.js";
+import { messageTranslationService } from "./translation/message-translation.service.js";
 import { contactsRoutes } from "./contacts/contacts.routes.js";
 import { companiesRoutes } from "./companies/companies.routes.js";
 import { dealsRoutes } from "./deals/deals.routes.js";
@@ -84,5 +85,18 @@ export default async function crmRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const updated = await mediaEnrichmentService.enrichMessageMedia(request.tenant_id, id);
     return reply.send({ data: updated });
+  });
+
+  // Автоматический / ручной перевод сообщения на русский язык
+  app.post("/messages/:id/translate", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body as { targetLang?: string; force?: boolean }) || {};
+    const result = await messageTranslationService.translateMessage(
+      request.tenant_id,
+      id,
+      body.targetLang || "ru",
+      Boolean(body.force),
+    );
+    return reply.send({ data: result });
   });
 }

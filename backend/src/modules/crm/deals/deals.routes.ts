@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DealsService } from "./deals.service.js";
 import { DealMessagingService } from "./deal-messaging.service.js";
 import { mediaEnrichmentService } from "../media/media-enrichment.service.js";
+import { messageTranslationService } from "../translation/message-translation.service.js";
 import {
   createDealItemSchema,
   createDealMessageSchema,
@@ -242,6 +243,27 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const { messageId } = request.params as { messageId: string };
     const transcript = await mediaEnrichmentService.transcribeAudioMessage(request.tenant_id, messageId);
     return reply.send({ data: transcript });
+  });
+
+  // Перевод конкретного сообщения в сделке
+  app.post("/:id/messages/:messageId/translate", { onRequest: canWrite }, async (request, reply) => {
+    const { messageId } = request.params as { messageId: string };
+    const body = (request.body as { targetLang?: string; force?: boolean }) || {};
+    const result = await messageTranslationService.translateMessage(
+      request.tenant_id,
+      messageId,
+      body.targetLang || "ru",
+      Boolean(body.force),
+    );
+    return reply.send({ data: result });
+  });
+
+  // Пакетный перевод всех непереведенных сообщений в сделке
+  app.post("/:id/translate-messages", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const count = await messageTranslationService.batchTranslateDealMessages(request.tenant_id, id);
+    const messages = await service.listMessages(request.tenant_id, id);
+    return reply.send({ data: { translatedCount: count, messages } });
   });
 
   // GET /deals/:id/contact-history — сквозная история контакта и LTV для карточки сделки
