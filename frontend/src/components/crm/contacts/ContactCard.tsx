@@ -131,7 +131,7 @@ export const ContactCard = memo(function ContactCard({
   const handleEnrich = useCallback(async () => {
     try {
       const res = await enrichMutation.mutateAsync(contact.id);
-      const fields = res.data.enrichedFields;
+      const fields = res.enrichedFields;
       if (fields && fields.length > 0) {
         toast.success(`Обогащено полей: ${fields.length} (${fields.join(", ")})`);
       } else {
