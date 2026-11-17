@@ -2,13 +2,25 @@
 
 import { memo, useCallback, useState } from "react";
 import { toast } from "sonner";
-import { Link2, Loader2, Plug, RefreshCw, Settings2, Trash2 } from "lucide-react";
+import {
+  Link2,
+  Loader2,
+  Pencil,
+  Plug,
+  Power,
+  PowerOff,
+  QrCode,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 
 import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/shared/StatusBadge";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { ConfigureLinkModal } from "./ConfigureLinkModal";
+import { EditChannelAccountModal } from "./EditChannelAccountModal";
 import {
   CHANNEL_STATUS_LABELS,
   useDeleteChannelAccount,
@@ -16,6 +28,7 @@ import {
   type ChannelAccountDTO,
 } from "@/lib/api/use-channels";
 import { useTelegramCheckAccount } from "@/lib/api/use-telegram-auth";
+import { cn } from "@/lib/utils";
 import type { ChannelStatus } from "@/schemas/channel.schema";
 import type { ChannelSlug } from "@/types";
 
@@ -55,6 +68,7 @@ interface ChannelAccountsTableProps {
   error: Error | null;
   onRetry: () => void;
   onConnect: () => void;
+  onReconnect?: (account: ChannelAccountDTO) => void;
   /** Достигнут лимит тарифа — кнопка в пустом состоянии не предлагается. */
   limitReached: boolean;
 }
@@ -68,6 +82,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   error,
   onRetry,
   onConnect,
+  onReconnect,
   limitReached,
 }: ChannelAccountsTableProps) {
   const update = useUpdateChannelAccount(channel);
@@ -75,6 +90,8 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   const checkTelegram = useTelegramCheckAccount();
 
   const [removeTarget, setRemoveTarget] = useState<ChannelAccountDTO | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<ChannelAccountDTO | null>(null);
+  const [editTarget, setEditTarget] = useState<ChannelAccountDTO | null>(null);
   const [configureTarget, setConfigureTarget] = useState<ChannelAccountDTO | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -106,32 +123,33 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   );
 
   /**
-   * Переключение «Отключён ↔ Требуется авторизация».
-   *
-   * Транспорта каналов ещё нет, поэтому кнопка меняет состояние записи, а не
-   * действительно переавторизует аккаунт: подписи говорят именно то, что
-   * происходит, вместо обещания работающего соединения.
+   * Безопасное переключение состояния подключения с предварительным
+   * диалогом подтверждения.
    */
-  const handleToggleStatus = useCallback(
-    async (account: ChannelAccountDTO) => {
-      const next: ChannelStatus = account.status === "disabled" ? "pending" : "disabled";
-      setBusyId(account.id);
+  const handleConfirmToggle = useCallback(async () => {
+    if (toggleTarget === null) return;
+    const isDisabling = toggleTarget.status !== "disabled";
+    const nextStatus: ChannelStatus = isDisabling ? "disabled" : "pending";
+    setBusyId(toggleTarget.id);
 
-      try {
-        await update.mutateAsync({ id: account.id, status: next });
-        toast.success(
-          next === "disabled"
-            ? `«${account.label}» отключён`
-            : `«${account.label}» включён — требуется авторизация`,
-        );
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Не удалось изменить состояние");
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [update],
-  );
+    try {
+      await update.mutateAsync({
+        id: toggleTarget.id,
+        status: nextStatus,
+        is_enabled: !isDisabling,
+      });
+      toast.success(
+        isDisabling
+          ? `«${toggleTarget.label}» отключён`
+          : `«${toggleTarget.label}» включён`,
+      );
+      setToggleTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось изменить состояние");
+    } finally {
+      setBusyId(null);
+    }
+  }, [update, toggleTarget]);
 
   const handleRemove = useCallback(async () => {
     if (removeTarget === null) return;
@@ -237,58 +255,118 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                   {account.connectedAt !== null ? formatDate(account.connectedAt) : "—"}
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-1">
-                    {supportsSessionCheck ? (
+                  <div className="flex items-center justify-end gap-1.5">
+                    {/* Кнопка явной авторизации / переподключения, если статус pending или error */}
+                    {Boolean(onReconnect && (account.status === "pending" || account.status === "error")) && (
+                      <button
+                        type="button"
+                        onClick={() => onReconnect?.(account)}
+                        title={
+                          account.status === "pending"
+                            ? "Авторизовать аккаунт (сканировать QR / войти)"
+                            : "Повторить авторизацию аккаунта"
+                        }
+                        aria-label={
+                          account.status === "pending"
+                            ? `Авторизовать ${account.label}`
+                            : `Повторить авторизацию ${account.label}`
+                        }
+                        className="flex items-center gap-1 rounded-[6px] border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 shadow-2xs transition-colors hover:bg-amber-100 cursor-pointer"
+                      >
+                        <QrCode className="h-3.5 w-3.5 text-amber-700" />
+                        <span>Авторизовать</span>
+                      </button>
+                    )}
+
+                    {/* Проверка живости сессии (только Telegram connected) */}
+                    {supportsSessionCheck && account.status === "connected" && (
                       <button
                         type="button"
                         onClick={() => void handleCheckSession(account)}
                         disabled={busyId === account.id}
-                        title="Проверить сессию"
+                        title="Проверить сессию Telegram"
                         aria-label={`Проверить сессию ${account.label}`}
                         className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-40"
                       >
                         {busyId === account.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <RefreshCw className="h-4 w-4" />
-                        )}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleStatus(account)}
-                        disabled={busyId === account.id}
-                        title={account.status === "disabled" ? "Включить" : "Отключить"}
-                        aria-label={
-                          account.status === "disabled"
-                            ? `Включить ${account.label}`
-                            : `Отключить ${account.label}`
-                        }
-                        className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-40"
-                      >
-                        {busyId === account.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Settings2 className="h-4 w-4" />
+                          <ShieldCheck className="h-4 w-4 text-emerald-600" />
                         )}
                       </button>
                     )}
+
+                    {/* Повторная авторизация для подключённого аккаунта */}
+                    {Boolean(onReconnect && account.status === "connected") && (
+                      <button
+                        type="button"
+                        onClick={() => onReconnect?.(account)}
+                        title="Переподключить аккаунт"
+                        aria-label={`Переподключить ${account.label}`}
+                        className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </button>
+                    )}
+
+                    {/* Редактирование названия */}
+                    <button
+                      type="button"
+                      onClick={() => setEditTarget(account)}
+                      title="Редактировать название подключения"
+                      aria-label={`Редактировать название ${account.label}`}
+                      className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+
+                    {/* Ссылки для сайта и кнопок */}
                     {channel !== "webchat" && (
                       <button
                         type="button"
                         onClick={() => setConfigureTarget(account)}
-                        title="Ссылки для сайта и кнопок"
+                        title="Ссылки для сайта и кнопок (Direct & Deep Links)"
                         aria-label={`Ссылки ${account.label}`}
                         className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5]"
                       >
                         <Link2 className="h-4 w-4" />
                       </button>
                     )}
+
+                    {/* Включение / Отключение с подтверждением */}
+                    <button
+                      type="button"
+                      onClick={() => setToggleTarget(account)}
+                      disabled={busyId === account.id}
+                      title={account.status === "disabled" ? "Включить аккаунт" : "Отключить аккаунт"}
+                      aria-label={
+                        account.status === "disabled"
+                          ? `Включить ${account.label}`
+                          : `Отключить ${account.label}`
+                      }
+                      className={cn(
+                        "rounded-md p-1.5 transition-colors disabled:opacity-40",
+                        account.status === "disabled"
+                          ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                          : "text-[#666666] hover:bg-amber-50 hover:text-amber-700",
+                      )}
+                    >
+                      {busyId === account.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : account.status === "disabled" ? (
+                        <Power className="h-4 w-4" />
+                      ) : (
+                        <PowerOff className="h-4 w-4" />
+                      )}
+                    </button>
+
+                    {/* Удаление подключения */}
                     <button
                       type="button"
                       onClick={() => setRemoveTarget(account)}
+                      title="Удалить подключение"
                       aria-label={`Удалить ${account.label}`}
-                      className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-rose-600"
+                      className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-rose-50 hover:text-rose-600"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -300,6 +378,29 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
         </table>
       </div>
 
+      {/* Диалог подтверждения отключения / включения */}
+      <ConfirmDialog
+        open={toggleTarget !== null}
+        onClose={() => setToggleTarget(null)}
+        onConfirm={handleConfirmToggle}
+        title={
+          toggleTarget?.status === "disabled"
+            ? "Включить подключение?"
+            : "Отключить подключение?"
+        }
+        description={
+          toggleTarget === null
+            ? undefined
+            : toggleTarget.status === "disabled"
+              ? `Возобновить приём и отправку сообщений для «${toggleTarget.label}»?`
+              : `«${toggleTarget.label}» перестанет принимать и отправлять сообщения. Сессия останется сохранённой, вы сможете включить подключение в любой момент.`
+        }
+        confirmLabel={toggleTarget?.status === "disabled" ? "Включить" : "Отключить"}
+        variant={toggleTarget?.status === "disabled" ? "default" : "destructive"}
+        isPending={update.isPending}
+      />
+
+      {/* Диалог подтверждения удаления */}
       <ConfirmDialog
         open={removeTarget !== null}
         onClose={() => setRemoveTarget(null)}
@@ -315,6 +416,16 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
         isPending={remove.isPending}
       />
 
+      {/* Модальное окно редактирования названия */}
+      <EditChannelAccountModal
+        open={editTarget !== null}
+        channel={channel}
+        channelName={channelName}
+        account={editTarget}
+        onClose={() => setEditTarget(null)}
+      />
+
+      {/* Модальное окно конфигурации ссылок */}
       <ConfigureLinkModal
         open={configureTarget !== null}
         onClose={() => setConfigureTarget(null)}

@@ -14,7 +14,7 @@ import { ConnectTelegramModal } from "@/components/integrations/ConnectTelegramM
 import { ConnectWhatsappModal } from "@/components/integrations/ConnectWhatsappModal";
 import { ConnectMaxModal } from "@/components/integrations/ConnectMaxModal";
 import { channelEntry } from "@/lib/modules/registry";
-import { pluralAccounts, useChannelAccounts } from "@/lib/api/use-channels";
+import { pluralAccounts, useChannelAccounts, type ChannelAccountDTO } from "@/lib/api/use-channels";
 import { trialDaysLeft } from "@/lib/api/use-marketplace";
 import { WebchatManagementView } from "@/components/integrations/WebchatManagementView";
 import { isChannelSlug, type ChannelSlug } from "@/types";
@@ -31,6 +31,7 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
   const entry = channelEntry(channel);
   const { data, isLoading, isError, error, refetch } = useChannelAccounts(channel);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [reconnectAccount, setReconnectAccount] = useState<ChannelAccountDTO | null>(null);
 
   const summary = data?.summary;
   const accounts = useMemo(() => data?.items ?? [], [data]);
@@ -41,7 +42,21 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
   const limitReached = summary !== undefined && !isUnlimited && summary.total >= summary.quantity;
   const daysLeft = trialDaysLeft(summary?.trialEndsAt ?? null);
 
-  const openConnect = useCallback(() => setConnectOpen(true), []);
+  const openConnect = useCallback(() => {
+    setReconnectAccount(null);
+    setConnectOpen(true);
+  }, []);
+
+  const handleReconnect = useCallback((account: ChannelAccountDTO) => {
+    setReconnectAccount(account);
+    setConnectOpen(true);
+  }, []);
+
+  const handleCloseConnect = useCallback(() => {
+    setConnectOpen(false);
+    setReconnectAccount(null);
+  }, []);
+
   const Icon = entry.icon;
 
   if (channel === "webchat") {
@@ -135,24 +150,38 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
         error={error}
         onRetry={() => void refetch()}
         onConnect={openConnect}
+        onReconnect={handleReconnect}
         limitReached={limitReached}
       />
 
       {channel === "telegram" && (
-        <ConnectTelegramModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+        <ConnectTelegramModal
+          open={connectOpen}
+          initialAccount={reconnectAccount}
+          onClose={handleCloseConnect}
+        />
       )}
       {channel === "whatsapp" && (
-        <ConnectWhatsappModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+        <ConnectWhatsappModal
+          open={connectOpen}
+          initialAccount={reconnectAccount}
+          onClose={handleCloseConnect}
+        />
       )}
       {channel === "max" && (
-        <ConnectMaxModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+        <ConnectMaxModal
+          open={connectOpen}
+          initialAccount={reconnectAccount}
+          onClose={handleCloseConnect}
+        />
       )}
       {channel !== "telegram" && channel !== "whatsapp" && channel !== "max" && (
         <ConnectChannelModal
           open={connectOpen}
           channel={channel}
           channelName={entry.label}
-          onClose={() => setConnectOpen(false)}
+          initialAccount={reconnectAccount}
+          onClose={handleCloseConnect}
         />
       )}
     </div>
