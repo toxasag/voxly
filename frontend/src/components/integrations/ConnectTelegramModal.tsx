@@ -34,6 +34,7 @@ import {
   type TelegramSendCodeValues,
 } from "@/schemas/channel.schema";
 import { cn } from "@/lib/utils";
+import type { ChannelAccountDTO } from "@/lib/api/use-channels";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,7 @@ type PhoneStep = "phone" | "code" | "password";
 interface ConnectTelegramModalProps {
   open: boolean;
   onClose: () => void;
+  initialAccount?: ChannelAccountDTO | null;
 }
 
 /** Маска ввода: пользователь видит +7 905 534-24-03, сервер получает цифры. */
@@ -70,11 +72,11 @@ function formatPhoneInput(raw: string): string {
   return `+${digits}`;
 }
 
-export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProps) {
+export function ConnectTelegramModal({ open, onClose, initialAccount }: ConnectTelegramModalProps) {
   const [mode, setMode] = useState<AuthMode>("qr");
 
   // --- Состояние для QR-авторизации ---
-  const [qrName, setQrName] = useState("Основной");
+  const [qrName, setQrName] = useState(initialAccount?.label || "Основной");
   const [qrSessionId, setQrSessionId] = useState<string | null>(null);
   const [qrBase64, setQrBase64] = useState<string | null>(null);
   const [qr2faPassword, setQr2faPassword] = useState("");
@@ -147,8 +149,9 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
   // Сброс при открытии
   useEffect(() => {
     if (open) {
+      const initialName = initialAccount?.label || "Основной";
       setMode("qr");
-      setQrName("Основной");
+      setQrName(initialName);
       setQrSessionId(null);
       setQrBase64(null);
       setQr2faPassword("");
@@ -157,21 +160,24 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
 
       setStep("phone");
       setTempSessionId(null);
-      setPhoneLabel("");
+      setPhoneLabel(initialName);
       setPasswordHint(null);
       setCooldown(0);
       setFirstStep(null);
-      phoneForm.reset({ name: "", phone: "" });
+      phoneForm.reset({
+        name: initialName,
+        phone: initialAccount?.externalId ? formatPhoneInput(initialAccount.externalId) : "",
+      });
       codeForm.reset({ code: "" });
       passwordForm.reset({ password: "" });
 
       // Запускаем QR ровно один раз
       startedQrRef.current = true;
-      handleStartQr("Основной");
+      handleStartQr(initialName);
     } else {
       startedQrRef.current = false;
     }
-  }, [open]);
+  }, [open, initialAccount]);
 
   // Обновление QR-кода при получении из статуса и автозакрытие при успехе
   useEffect(() => {
@@ -364,7 +370,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
           </div>
           <div>
             <h2 id="connect-telegram-title" className="text-sm font-semibold text-[#111111]">
-              Подключить Telegram
+              {initialAccount ? `Авторизация: ${initialAccount.label}` : "Подключить Telegram"}
             </h2>
             <p className="text-[11px] text-[#666666]">
               {mode === "qr"

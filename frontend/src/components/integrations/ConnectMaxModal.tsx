@@ -6,16 +6,18 @@ import { toast } from "sonner";
 import { AlertCircle, CheckCircle2, Loader2, MessageSquare, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { useMaxPassword, useMaxQrStatus, useMaxStartQr } from "@/lib/api/use-max-auth";
+import type { ChannelAccountDTO } from "@/lib/api/use-channels";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 
 interface ConnectMaxModalProps {
   open: boolean;
   onClose: () => void;
+  initialAccount?: ChannelAccountDTO | null;
 }
 
-export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
+export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxModalProps) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState("Основной");
+  const [name, setName] = useState(initialAccount?.label || "Основной");
   const [password, setPassword] = useState("");
   const [qrBase64, setQrBase64] = useState<string | null>(null);
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
@@ -75,16 +77,17 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
   useEffect(() => {
     if (open && !startedRef.current) {
       startedRef.current = true;
-      setName("Основной");
+      const initialName = initialAccount?.label || "Основной";
+      setName(initialName);
       setPassword("");
       setQrBase64(null);
-      handleStart("Основной");
+      handleStart(initialName);
     } else if (!open) {
       startedRef.current = false;
       setQrBase64(null);
       setPassword("");
     }
-  }, [open]);
+  }, [open, initialAccount]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,7 +114,7 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
           </div>
           <div>
             <h2 id="connect-max-title" className="text-sm font-semibold text-[#111111]">
-              Подключить MAX
+              {initialAccount ? `Авторизация: ${initialAccount.label}` : "Подключить MAX"}
             </h2>
             <p className="text-[11px] text-[#666666]">
               Авторизация личного аккаунта MAX через QR-код
