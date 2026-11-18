@@ -25,6 +25,7 @@ const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
   company_id: z.string().uuid().optional(),
   channel: contactChannelSchema.optional(),
+  contact_type: z.enum(["customer", "vendor"]).optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
 });
@@ -56,12 +57,13 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
   const canDelete = app.requirePermission("contacts:delete");
 
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { search, company_id, channel, limit, offset } = listQuerySchema.parse(request.query);
+    const { search, company_id, channel, contact_type, limit, offset } = listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       search,
       companyId: company_id,
       channel,
+      contactType: contact_type,
       limit,
       offset,
     });

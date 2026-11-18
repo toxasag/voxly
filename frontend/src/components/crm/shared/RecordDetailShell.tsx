@@ -35,6 +35,7 @@ interface RecordDetailShellProps {
   /** Имя записи — заголовок и источник цвета аватара. */
   name: string;
   subtitle?: string;
+  badge?: ReactNode;
   imageUrl?: string;
   /** Домен для авто-фавиконки компании в духе Twenty */
   domain?: string;
@@ -52,6 +53,7 @@ interface RecordDetailShellProps {
 export function RecordDetailShell({
   name,
   subtitle,
+  badge,
   imageUrl,
   domain,
   createdAt,
@@ -104,7 +106,10 @@ export function RecordDetailShell({
           <div className="flex min-w-0 items-center gap-3">
             <EntityChip name={name} domain={domain} imageUrl={imageUrl} size="md" />
             <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
+                {badge}
+              </div>
               <p className="truncate text-xs text-[#888888]">
                 {subtitle !== undefined && subtitle !== "" ? `${subtitle} · ` : ""}
                 <span title={`Создано: ${formatDateTime(createdAt)}`}>

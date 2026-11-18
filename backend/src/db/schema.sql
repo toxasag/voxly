@@ -314,6 +314,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes TEXT NOT NULL DEFAULT '',
   last_seen_at TIMESTAMPTZ,
   is_online BOOLEAN NOT NULL DEFAULT false,
+  contact_type VARCHAR(32) NOT NULL DEFAULT 'customer',
   -- Twenty: person.createdBy (ActorMetadata), группа system. NULL = система/импорт.
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -338,7 +339,8 @@ CREATE TABLE IF NOT EXISTS contacts (
       socials,
       '$[*] ? (@.type() != "object" || !(exists(@.kind ? (@.type() == "string"))) || !(exists(@.value ? (@.type() == "string"))))'
     )
-  )
+  ),
+  CONSTRAINT contacts_contact_type_check CHECK (contact_type IN ('customer', 'vendor'))
 );
 
 CREATE TABLE IF NOT EXISTS companies (

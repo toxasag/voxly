@@ -16,6 +16,9 @@ import { z } from "zod";
 
 export const contactChannelSchema = z.enum(["telegram", "whatsapp", "max", "rumax", "phone", "email"]);
 
+export const contactTypeSchema = z.enum(["customer", "vendor"]);
+export type ContactType = z.infer<typeof contactTypeSchema>;
+
 const optionalUuid = z.string().uuid().optional().or(z.literal(""));
 
 /**
@@ -96,6 +99,7 @@ export const createContactSchema = z.object({
   company_inn: z.string().max(30).optional().nullable().or(z.literal("")),
   birth_date: z.string().optional().nullable().or(z.literal("")),
   channel: contactChannelSchema.default("phone"),
+  contact_type: contactTypeSchema.default("customer").optional(),
   /**
    * Twenty: person.linkedinLink, группа social.
    *
@@ -164,6 +168,7 @@ export interface ContactRow {
   notes: string;
   is_personal?: boolean;
   suppress_deal_creation?: boolean;
+  contact_type?: ContactType | string;
   created_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -216,6 +221,7 @@ export interface ContactDTO {
   notes: string;
   isPersonal?: boolean;
   suppressDealCreation?: boolean;
+  contactType: ContactType;
   createdBy: string | null;
   /** Отображаемое имя создателя для группы «Система» на карточке. */
   createdByName: string | null;
@@ -309,6 +315,7 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     notes: row.notes,
     isPersonal: Boolean(row.is_personal),
     suppressDealCreation: Boolean(row.suppress_deal_creation),
+    contactType: (row.contact_type as ContactType) === "vendor" ? "vendor" : "customer",
     createdBy: row.created_by,
     createdByName: row.created_by_name ?? null,
     createdAt: toIso(row.created_at),
@@ -451,6 +458,7 @@ export interface ContactDealsHistoryDTO {
 
 export interface CallerIdContactDTO {
   id: string;
+  contactType?: ContactType;
   fullName: string;
   firstName: string;
   lastName: string;

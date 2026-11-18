@@ -22,6 +22,12 @@ export class ValidationError extends AppError {
   }
 }
 
+export class UnprocessableEntityError extends AppError {
+  constructor(message: string, details?: Record<string, string[]>) {
+    super(422, "UNPROCESSABLE_ENTITY", message, details);
+  }
+}
+
 export class UnauthorizedError extends AppError {
   constructor(message = "Unauthorized") {
     super(401, "UNAUTHORIZED", message);
@@ -77,6 +83,8 @@ export function formatZodIssues(error: ZodError): Record<string, string[]> {
 interface ErrorEnvelope extends ApiError {
   status: "error";
   requestId: string;
+  statusCode?: number;
+  message?: string;
 }
 
 /** Fastify's own schema-validation failures carry a `validation` array. */
@@ -116,7 +124,9 @@ export function errorHandler(
     statusCode = error.statusCode;
     payload = {
       status: "error",
+      statusCode: error.statusCode,
       requestId,
+      message: error.message,
       error: {
         code: error.code,
         message: error.message,
