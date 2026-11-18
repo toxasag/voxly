@@ -3,6 +3,7 @@ import type {
   ClientLookupDealDTO,
   ClientLookupResultDTO,
   ClientMessengerSourceDTO,
+  ExistingContactDTO,
   CreateBatchRepairPayload,
   CreateNotePayload,
   CreatePartPayload,
@@ -2140,9 +2141,13 @@ export class RepairsService {
         company: null,
         activeDeals: [],
         suggestedName: null,
+        suggestedSource: null,
         sources: [],
         channelsChecked: [],
         messengerLookupStatus: "idle",
+        repairsCount: 0,
+        existsInCrm: false,
+        existingContact: null,
       };
     }
 
@@ -2220,13 +2225,59 @@ export class RepairsService {
         );
       }
 
-      if (!contact) {
-        return { contact: null, company: null, activeDeals: [] };
+      // 3. If not found in contacts, check previous repair_orders by phone
+      if (!contact && phoneDigits.length >= 6) {
+        const searchSuffix = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+        const ro = await tx.queryOne<{
+          customer_id: string | null;
+          customer_name: string;
+          customer_phone: string;
+        }>(
+          `SELECT customer_id, customer_name, customer_phone
+           FROM repair_orders
+           WHERE tenant_id = $1
+             AND regexp_replace(customer_phone, '[^0-9]', '', 'g') LIKE '%' || $2
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [tenantId, searchSuffix],
+        );
+        if (ro) {
+          if (ro.customer_id) {
+            contact = await tx.queryOne<{
+              id: string;
+              first_name: string;
+              last_name: string | null;
+              middle_name: string | null;
+              phone: string | null;
+              email: string | null;
+              company_id: string | null;
+              company_name: string | null;
+            }>(
+              `SELECT id, first_name, last_name, middle_name, phone, email, company_id, company_name
+               FROM contacts
+               WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+              [tenantId, ro.customer_id],
+            );
+          }
+          if (!contact && ro.customer_name) {
+            const parts = ro.customer_name.trim().split(/\s+/);
+            contact = {
+              id: ro.customer_id ?? "",
+              first_name: parts[0] || ro.customer_name,
+              last_name: parts.slice(1).join(" ") || null,
+              middle_name: null,
+              phone: ro.customer_phone,
+              email: null,
+              company_id: null,
+              company_name: null,
+            };
+          }
+        }
       }
 
-      // 3. Find company requisites if company_id is present
+      // 4. Find company requisites if company_id is present
       let company: ClientLookupResultDTO["company"] = null;
-      if (contact.company_id) {
+      if (contact && contact.company_id) {
         const compRow = await tx.queryOne<{
           id: string;
           name: string;
@@ -2254,74 +2305,104 @@ export class RepairsService {
         }
       }
 
-      // 4. Find active deals associated with this contact or company
-      const dealRows = await tx.query<{
-        id: string;
-        title: string;
-        description: string | null;
-        budget: string | number | null;
-        currency: string | null;
-        stage_id: string;
-        stage_name: string;
-        stage_color: string | null;
-        pipeline_id: string;
-        pipeline_name: string;
-        created_at: Date | string;
-        owner_name: string | null;
-      }>(
-        `SELECT
-           d.id,
-           d.title,
-           d.description,
-           d.budget,
-           d.currency,
-           d.stage_id,
-           s.name AS stage_name,
-           s.color AS stage_color,
-           d.pipeline_id,
-           p.name AS pipeline_name,
-           d.created_at,
-           u.name AS owner_name
-         FROM deals d
-         JOIN stages s ON s.id = d.stage_id
-         JOIN pipelines p ON p.id = d.pipeline_id
-         LEFT JOIN users u ON u.id = d.owner_id
-         WHERE d.tenant_id = $1
-           AND d.deleted_at IS NULL
-           AND s.is_won = false
-           AND s.is_lost = false
-           AND (
-             d.contact_id = $2
-             ${contact.company_id ? "OR d.company_id = $3" : ""}
-           )
-         ORDER BY d.created_at DESC
-         LIMIT 20`,
-        contact.company_id ? [tenantId, contact.id, contact.company_id] : [tenantId, contact.id],
-      );
+      // 5. Find active deals associated with this contact or company
+      let activeDeals: ClientLookupDealDTO[] = [];
+      if (contact && contact.id) {
+        const dealRows = await tx.query<{
+          id: string;
+          title: string;
+          description: string | null;
+          budget: string | number | null;
+          currency: string | null;
+          stage_id: string;
+          stage_name: string;
+          stage_color: string | null;
+          pipeline_id: string;
+          pipeline_name: string;
+          created_at: Date | string;
+          owner_name: string | null;
+        }>(
+          `SELECT
+             d.id,
+             d.title,
+             d.description,
+             d.budget,
+             d.currency,
+             d.stage_id,
+             s.name AS stage_name,
+             s.color AS stage_color,
+             d.pipeline_id,
+             p.name AS pipeline_name,
+             d.created_at,
+             u.name AS owner_name
+           FROM deals d
+           JOIN stages s ON s.id = d.stage_id
+           JOIN pipelines p ON p.id = d.pipeline_id
+           LEFT JOIN users u ON u.id = d.owner_id
+           WHERE d.tenant_id = $1
+             AND d.deleted_at IS NULL
+             AND s.is_won = false
+             AND s.is_lost = false
+             AND (
+               d.contact_id = $2
+               ${contact.company_id ? "OR d.company_id = $3" : ""}
+             )
+           ORDER BY d.created_at DESC
+           LIMIT 20`,
+          contact.company_id ? [tenantId, contact.id, contact.company_id] : [tenantId, contact.id],
+        );
 
-      const activeDeals: ClientLookupDealDTO[] = dealRows.map((d) => ({
-        id: d.id,
-        title: d.title,
-        description: d.description ?? "",
-        budget: typeof d.budget === "number" ? d.budget : (parseFloat(String(d.budget || 0)) || 0),
-        currency: d.currency || "RUB",
-        stageId: d.stage_id,
-        stageName: d.stage_name,
-        stageColor: d.stage_color || "#4a38f5",
-        pipelineId: d.pipeline_id,
-        pipelineName: d.pipeline_name,
-        createdAt: d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
-        ownerName: d.owner_name ?? null,
-      }));
+        activeDeals = dealRows.map((d) => ({
+          id: d.id,
+          title: d.title,
+          description: d.description ?? "",
+          budget: typeof d.budget === "number" ? d.budget : (parseFloat(String(d.budget || 0)) || 0),
+          currency: d.currency || "RUB",
+          stageId: d.stage_id,
+          stageName: d.stage_name,
+          stageColor: d.stage_color || "#4a38f5",
+          pipelineId: d.pipeline_id,
+          pipelineName: d.pipeline_name,
+          createdAt: d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
+          ownerName: d.owner_name ?? null,
+        }));
+      }
 
-      return { contact, company, activeDeals };
+      // 6. Calculate total number of repairs for this client/phone
+      let repairsCount = 0;
+      const searchSuffix = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+      if (contact || phoneDigits.length >= 6) {
+        const countRow = await tx.queryOne<{ count: string | number }>(
+          `SELECT count(*)::int AS count
+           FROM repair_orders
+           WHERE tenant_id = $1
+             AND (
+               ($2::uuid IS NOT NULL AND customer_id = $2::uuid)
+               OR (
+                 $3::text <> '' AND (
+                   regexp_replace(customer_phone, '[^0-9]', '', 'g') LIKE '%' || $3
+                   OR regexp_replace(customer_phone, '[^0-9]', '', 'g') = $4
+                 )
+               )
+             )`,
+          [tenantId, (contact && contact.id) ? contact.id : null, searchSuffix, phoneDigits],
+        );
+        repairsCount = typeof countRow?.count === "number" ? countRow.count : (parseInt(String(countRow?.count || 0), 10) || 0);
+      }
+
+      if (!contact && repairsCount === 0) {
+        return { contact: null, company: null, activeDeals: [], repairsCount: 0 };
+      }
+
+      return { contact, company, activeDeals, repairsCount };
     });
 
     const messengerRes = await messengerPromise;
 
     let contact = dbResult.contact;
-    let company = dbResult.company;
-    let activeDeals = dbResult.activeDeals;
+    const company = dbResult.company;
+    const activeDeals = dbResult.activeDeals;
+    const repairsCount = dbResult.repairsCount;
 
     // Если контакт не найден по прямому запросу, но найден через глубокий поиск мессенджеров
     if (!contact && messengerRes?.existingClient) {
@@ -2338,15 +2419,30 @@ export class RepairsService {
       };
     }
 
+    const fullName = contact
+      ? [contact.last_name, contact.first_name, contact.middle_name].filter(Boolean).join(" ").trim() || contact.first_name
+      : "";
+
+    const existingContact: ExistingContactDTO | null = (contact || repairsCount > 0)
+      ? {
+          contactId: (contact && contact.id) ? contact.id : null,
+          fullName: fullName || "Клиент",
+          phone: contact?.phone ?? (rawPhone || null),
+          repairsCount,
+          activeDealsCount: activeDeals.length,
+        }
+      : null;
+
     const sources: ClientMessengerSourceDTO[] = messengerRes?.sources ?? [];
     const suggestedName: string | null = messengerRes?.suggestedName ?? null;
+    const suggestedSource = messengerRes?.suggestedSource ?? (contact ? "crm" : null);
     const channelsChecked: string[] = messengerRes?.channelsChecked ?? (contact ? ["crm"] : []);
     const messengerLookupStatus = shouldResearchMessengers
       ? (sources.length > 0 ? "found" : "not_found")
       : "idle";
 
     return {
-      found: Boolean(contact || (messengerRes && messengerRes.found)),
+      found: Boolean(contact || (messengerRes && messengerRes.found) || repairsCount > 0),
       client: contact
         ? {
             id: contact.id,
@@ -2362,9 +2458,13 @@ export class RepairsService {
       company,
       activeDeals,
       suggestedName,
+      suggestedSource,
       sources,
       channelsChecked,
       messengerLookupStatus,
+      repairsCount,
+      existsInCrm: Boolean((contact && contact.id) || repairsCount > 0),
+      existingContact,
     };
   }
 
