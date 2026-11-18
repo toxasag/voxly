@@ -158,12 +158,12 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
       if (info.legalAddress) {
         form.setValue("company_legal_address", info.legalAddress, { shouldDirty: true });
       }
-      if (info.type === "INDIVIDUAL" && info.directorName && (!customerName || customerName.trim() === "")) {
-        form.setValue("customer_name", info.directorName, { shouldDirty: true });
-      }
+      // ВАЖНО: Разделение сущностей Контакт (физическое лицо / заявитель) и Организация (юрлицо / ИП).
+      // Автоматическое перезаписывание customer_name именем директора/ИП СТРОГО ЗАПРЕЩЕНО.
+      // По умолчанию поля не связаны. Перенос имени доступен только по явному клику пользователя в UI.
       setIsRequisitesOpen(true);
     }
-  }, [innLookupQuery.data, form, customerName]);
+  }, [innLookupQuery.data, form]);
 
   // Реактивный поиск по телефону или имени
   const lookupQuery = useRepairClientLookup({
@@ -444,6 +444,36 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
                   </span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Интерактивная подсказка имени из ЕГРИП / ЕГРЮЛ по ИНН (по умолчанию не перезаписывает) */}
+          {!lookupData?.suggestedName && innLookupQuery.data?.directorName && customerName?.trim().toLowerCase() !== innLookupQuery.data.directorName.trim().toLowerCase() && (
+            <div className="pt-1">
+              <div className="flex items-center justify-between gap-1.5 rounded-[6px] border border-indigo-100 bg-indigo-50/60 px-2.5 py-1 text-xs text-indigo-950">
+                <span className="flex items-center gap-1.5 truncate">
+                  <span className="text-xs">💡</span>
+                  <span className="truncate">
+                    {innLookupQuery.data.type === "INDIVIDUAL" ? "Владелец ИП по ИНН:" : "Руководитель по ИНН:"}{" "}
+                    <strong className="font-semibold text-[#111111]">{innLookupQuery.data.directorName}</strong>
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (innLookupQuery.data?.directorName) {
+                      form.setValue("customer_name", innLookupQuery.data.directorName, {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      });
+                    }
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-[#4a38f5] px-2 py-0.5 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+                >
+                  <Check className="h-3 w-3" />
+                  Использовать
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -772,6 +802,50 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
                 </div>
               </div>
             </div>
+
+            {/* Подсказка владельца ИП / руководителя с явным действием переноса в контакт */}
+            {innLookupQuery.data?.directorName && (
+              <div className="rounded-[6px] border border-indigo-100 bg-indigo-50/60 p-2.5 text-xs transition-colors">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm">💡</span>
+                    <div className="truncate">
+                      <span className="text-[#666666]">
+                        {innLookupQuery.data.type === "INDIVIDUAL" ? "Владелец ИП (ЕГРИП):" : "Руководитель (ЕГРЮЛ):"}{" "}
+                      </span>
+                      <strong className="font-semibold text-[#111111]">
+                        {innLookupQuery.data.directorName}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    {customerName?.trim().toLowerCase() === innLookupQuery.data.directorName.trim().toLowerCase() ? (
+                      <span className="inline-flex items-center gap-1 rounded-[4px] border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                        <Check className="h-3 w-3 text-emerald-600" />
+                        Контакт совпадает с {innLookupQuery.data.type === "INDIVIDUAL" ? "владельцем ИП" : "руководителем"}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (innLookupQuery.data?.directorName) {
+                            form.setValue("customer_name", innLookupQuery.data.directorName, {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                            });
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5] px-2.5 py-1 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+                      >
+                        <UserCheck className="h-3 w-3" />
+                        {innLookupQuery.data.type === "INDIVIDUAL" ? "Использовать имя ИП для контакта" : "Использовать для контакта"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Раскрывающийся блок реквизитов */}
             <div>
