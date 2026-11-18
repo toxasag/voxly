@@ -1251,7 +1251,7 @@ export class TelegramTransportService {
             new Api.InputPhoneContact({
               clientId: bigInt(Date.now()),
               phone,
-              firstName: options?.firstName || "Клиент",
+              firstName: options?.firstName || "",
               lastName: options?.lastName || "",
             }),
           ],
@@ -1296,6 +1296,28 @@ export class TelegramTransportService {
           await conn.client.invoke(new Api.contacts.DeleteContacts({ id: [input] }));
         } catch {
           // ignore
+        }
+      }
+
+      // После удаления временного контакта из адресной книги запрашиваем реальный публичный профиль пользователя
+      try {
+        const fresh = await conn.client.getEntity(user.id ? user.id.toString() : user);
+        if (fresh instanceof Api.User && !fresh.bot) {
+          user = fresh;
+          if (fresh.username) {
+            username = String(fresh.username).trim().replace(/^@/, "");
+          }
+        }
+      } catch {
+        if (username) {
+          try {
+            const freshByUsername = await conn.client.getEntity(username);
+            if (freshByUsername instanceof Api.User && !freshByUsername.bot) {
+              user = freshByUsername;
+            }
+          } catch {
+            // ignore
+          }
         }
       }
 

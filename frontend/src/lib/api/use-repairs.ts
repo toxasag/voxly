@@ -119,6 +119,14 @@ export interface ClientMessengerSourceDTO {
   isVerified?: boolean;
 }
 
+export interface ExistingContactDTO {
+  contactId: string | null;
+  fullName: string;
+  phone?: string | null;
+  repairsCount: number;
+  activeDealsCount: number;
+}
+
 export interface ClientLookupResultDTO {
   found: boolean;
   client: {
@@ -142,9 +150,13 @@ export interface ClientLookupResultDTO {
   } | null;
   activeDeals: ClientLookupDealDTO[];
   suggestedName?: string | null;
+  suggestedSource?: "telegram" | "whatsapp" | "max" | "crm" | null;
   sources?: ClientMessengerSourceDTO[];
   channelsChecked?: string[];
   messengerLookupStatus?: "idle" | "searching" | "found" | "not_found";
+  repairsCount?: number;
+  existsInCrm?: boolean;
+  existingContact?: ExistingContactDTO | null;
 }
 
 export interface AdditionalContact {

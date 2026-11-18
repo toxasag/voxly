@@ -29,6 +29,7 @@ import {
   type ClientLookupDealDTO,
   type ClientLookupResultDTO,
   type ClientMessengerSourceDTO,
+  type ExistingContactDTO,
 } from "@/lib/api/use-repairs";
 import { formatAsYouType, formatPhone } from "@/lib/utils/phone";
 import { cn } from "@/lib/utils";
@@ -176,52 +177,55 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
   // Автозаполнение формы при обнаружении клиента
   useEffect(() => {
-    if (!lookupData || !lookupData.found || !lookupData.client || isManuallyDetached) {
+    if (!lookupData || !lookupData.found || isManuallyDetached) {
       return;
     }
 
     const client = lookupData.client;
+    if (client) {
+      // Заполняем ID клиента в форме
+      form.setValue("customer_id", client.id, { shouldDirty: true });
 
-    // Заполняем ID клиента в форме
-    form.setValue("customer_id", client.id, { shouldDirty: true });
+      // Если ФИО еще не заполнено, подставляем из базы
+      if (!customerName || customerName.trim() === "") {
+        const fullName = [client.lastName, client.firstName, client.middleName].filter(Boolean).join(" ").trim();
+        if (fullName) {
+          form.setValue("customer_name", fullName, { shouldValidate: true, shouldDirty: true });
+        }
+      }
 
-    // Если ФИО еще не заполнено, подставляем из базы
-    if (!customerName || customerName.trim() === "") {
-      const fullName = [client.lastName, client.firstName, client.middleName].filter(Boolean).join(" ").trim();
-      if (fullName) {
-        form.setValue("customer_name", fullName, { shouldValidate: true, shouldDirty: true });
+      // Если email еще не заполнен
+      if ((!customerEmail || customerEmail.trim() === "") && client.email) {
+        form.setValue("customer_email", client.email, { shouldDirty: true });
+      }
+
+      // Если у клиента есть компания или реквизиты
+      if (lookupData.company) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
+        form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
+        if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
+        if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
+        if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
+        if (lookupData.company.accountNumber) {
+          form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
+        }
+        if (lookupData.company.legalAddress) {
+          form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
+        }
+      } else if (client.companyName && !companyName) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        if (client.companyId) form.setValue("company_id", client.companyId, { shouldDirty: true });
+        form.setValue("company_name", client.companyName, { shouldValidate: true, shouldDirty: true });
+      }
+    } else if (lookupData.existingContact?.contactId) {
+      form.setValue("customer_id", lookupData.existingContact.contactId, { shouldDirty: true });
+      if (!customerName || customerName.trim() === "") {
+        form.setValue("customer_name", lookupData.existingContact.fullName, { shouldValidate: true, shouldDirty: true });
       }
     }
-
-    // Если email еще не заполнен
-    if ((!customerEmail || customerEmail.trim() === "") && client.email) {
-      form.setValue("customer_email", client.email, { shouldDirty: true });
-    }
-
-    // Если у клиента есть компания или реквизиты
-    if (lookupData.company) {
-      setIsCompanyChecked(true);
-      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
-      form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
-      form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
-      if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
-      if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
-      if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
-      if (lookupData.company.accountNumber) {
-        form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
-      }
-      if (lookupData.company.legalAddress) {
-        form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
-      }
-    } else if (client.companyName && !companyName) {
-      setIsCompanyChecked(true);
-      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
-      if (client.companyId) form.setValue("company_id", client.companyId, { shouldDirty: true });
-      form.setValue("company_name", client.companyName, { shouldValidate: true, shouldDirty: true });
-    }
-
-    // Если есть активные сделки и сделка в форме еще не выбрана — по умолчанию не навязываем,
-    // но если сделка ровно одна, можно оставить выбор пользователю
   }, [lookupData, isManuallyDetached]);
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -409,6 +413,39 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
           {form.formState.errors.customer_name && (
             <p className="text-[11px] text-rose-600">{form.formState.errors.customer_name.message}</p>
           )}
+
+          {/* Интерактивная 1-click плашка подсказки имени */}
+          {lookupData?.suggestedName && (
+            <div className="pt-1">
+              {customerName !== lookupData.suggestedName ? (
+                <div className="flex items-center justify-between gap-1.5 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2.5 py-1 text-xs text-[#854d0e]">
+                  <span className="flex items-center gap-1.5 truncate">
+                    <span>💡</span>
+                    <span className="truncate">
+                      Имя в {lookupData.suggestedSource === "telegram" ? "Telegram" : lookupData.suggestedSource === "whatsapp" ? "WhatsApp" : lookupData.suggestedSource === "max" ? "MAX" : "мессенджере"}:
+                      {" "}
+                      <strong className="font-semibold text-[#111111]">{lookupData.suggestedName}</strong>
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleApplySuggestedName(lookupData.suggestedName!)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-[#4a38f5] px-2 py-0.5 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+                  >
+                    <Check className="h-3 w-3" />
+                    Использовать
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-0.5 text-[11px] text-emerald-700">
+                  <Check className="h-3 w-3 text-emerald-600 shrink-0" />
+                  <span>
+                    Имя из {lookupData.suggestedSource === "telegram" ? "Telegram" : lookupData.suggestedSource === "whatsapp" ? "WhatsApp" : "мессенджера"} применено ({lookupData.suggestedName})
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Email */}
@@ -438,6 +475,78 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
           )}
         </div>
       </div>
+
+      {/* Карточка дедупликации существующего клиента CRM */}
+      {lookupData?.existingContact && !isManuallyDetached && (
+        <div className="rounded-[8px] border border-amber-200 bg-amber-50/50 p-3 shadow-2xs transition-all">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-amber-100 text-amber-800">
+                <UserCheck className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[13px] font-semibold text-[#111111]">
+                    Клиент уже есть в базе CRM
+                  </span>
+                  <span className="rounded-[4px] bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 border border-emerald-200">
+                    Дедупликация активна
+                  </span>
+                </div>
+                <p className="text-xs text-[#666666] mt-0.5">
+                  По номеру <span className="font-mono tabular-nums text-[#111111] font-medium">{lookupData.existingContact.phone || phoneInput}</span> найден клиент{" "}
+                  <strong className="text-[#111111]">{lookupData.existingContact.fullName}</strong>.
+                </p>
+                <div className="flex items-center gap-3 mt-2 text-[11px] text-[#666666]">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#4a38f5]" />
+                    Заказов в сервисе: <strong className="font-mono tabular-nums text-[#111111]">{lookupData.existingContact.repairsCount}</strong>
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    Открытых сделок: <strong className="font-mono tabular-nums text-[#111111]">{lookupData.existingContact.activeDealsCount}</strong>
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-800/90 mt-1.5">
+                  Заявка будет привязана к существующему клиенту без создания дубликата.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+              {customerId === lookupData.existingContact.contactId ? (
+                <span className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 border border-emerald-200">
+                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                  Привязан к клиенту
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lookupData.existingContact?.contactId) {
+                      form.setValue("customer_id", lookupData.existingContact.contactId, { shouldDirty: true });
+                    }
+                    if (lookupData.existingContact?.fullName) {
+                      form.setValue("customer_name", lookupData.existingContact.fullName, { shouldValidate: true, shouldDirty: true });
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  Привязать
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleClearCustomer}
+                className="text-[11px] text-[#888888] hover:text-rose-600 transition-colors underline underline-offset-2"
+              >
+                Создать нового
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Авто-ресерч и подсказка обогащения данных по мессенджерам */}
       {isLookupLoading && digitsCount >= 10 && (

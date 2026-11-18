@@ -395,11 +395,37 @@ export class WhatsappEvolutionService {
     });
     if (!res.ok) return [];
     const rows = Array.isArray(res.json) ? res.json : [];
-    return rows.map((r: any) => ({
+    return rows.map((r: Record<string, unknown>) => ({
       exists: Boolean(r?.exists),
-      jid: r?.jid,
-      number: r?.number,
+      jid: typeof r?.jid === "string" ? r.jid : undefined,
+      number: typeof r?.number === "string" ? r.number : undefined,
     }));
+  }
+
+  /** Запрос публичного профиля WhatsApp (имя, pushName, verifiedName, аватар, статус) */
+  async fetchProfile(
+    instanceName: string,
+    number: string,
+  ): Promise<{ exists: boolean; name?: string; picture?: string | null; isBusiness?: boolean } | null> {
+    const cleanNumber = number.replace(/\D/g, "");
+    const res = await this.evoFetch(`/chat/fetchProfile/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({ number: cleanNumber }),
+    });
+    if (!res.ok || !res.json || typeof res.json !== "object") return null;
+    const data = res.json as Record<string, unknown>;
+    const rawName =
+      (typeof data.name === "string" && data.name.trim()) ||
+      (typeof data.pushName === "string" && data.pushName.trim()) ||
+      (typeof data.verifiedName === "string" && data.verifiedName.trim()) ||
+      (typeof data.notifyName === "string" && data.notifyName.trim()) ||
+      undefined;
+    return {
+      exists: Boolean(data.numberExists),
+      name: rawName,
+      picture: typeof data.picture === "string" ? data.picture : null,
+      isBusiness: Boolean(data.isBusiness),
+    };
   }
 
   /** Настройка webhook в Evolution API */
