@@ -45,6 +45,7 @@ export const updateDealSchema = z.object({
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
   closed_at: z.string().datetime().optional().or(z.literal("")),
+  created_at: z.string().datetime({ offset: true }).or(z.string().datetime()).optional().or(z.literal("")),
 });
 
 export const moveDealStageSchema = z.object({

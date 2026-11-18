@@ -4,6 +4,7 @@ import { DealsService } from "./deals.service.js";
 import { DealMessagingService } from "./deal-messaging.service.js";
 import { mediaEnrichmentService } from "../media/media-enrichment.service.js";
 import { messageTranslationService } from "../translation/message-translation.service.js";
+import { ContactsIOService } from "../contacts/contacts-io.service.js";
 import {
   createDealItemSchema,
   createDealMessageSchema,
@@ -102,6 +103,41 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
         dealCount: columns.reduce((sum, column) => sum + column.dealCount, 0),
       },
     });
+  });
+
+  // Экспорт сделок в CSV / XLSX
+  const exportDealsQuerySchema = z.object({
+    format: z.enum(["csv", "xlsx"]).default("csv"),
+    pipeline_id: z.string().uuid().optional(),
+    search: z.string().max(200).optional(),
+  });
+
+  app.get("/export", { onRequest: canRead }, async (request, reply) => {
+    const { format, pipeline_id, search } = exportDealsQuerySchema.parse(request.query);
+    const contactsIo = new ContactsIOService();
+    const { buffer, filename, contentType } = await contactsIo.exportDeals(request.tenant_id, {
+      format,
+      pipelineId: pipeline_id,
+      search,
+    });
+    return reply
+      .header("Content-Type", contentType)
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
+      .send(buffer);
+  });
+
+  app.post("/export", { onRequest: canRead }, async (request, reply) => {
+    const { format, pipeline_id, search } = exportDealsQuerySchema.parse(request.body ?? {});
+    const contactsIo = new ContactsIOService();
+    const { buffer, filename, contentType } = await contactsIo.exportDeals(request.tenant_id, {
+      format,
+      pipelineId: pipeline_id,
+      search,
+    });
+    return reply
+      .header("Content-Type", contentType)
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
+      .send(buffer);
   });
 
   // ---------------------------------------------------------------------------

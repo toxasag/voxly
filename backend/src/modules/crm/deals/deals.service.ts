@@ -493,6 +493,13 @@ export class DealsService {
       push("closed_at", closedAt === null ? null : new Date(closedAt).toISOString());
     }
 
+    if (payload.created_at !== undefined) {
+      const createdAt = nullIfBlank(payload.created_at);
+      if (createdAt) {
+        push("created_at", new Date(createdAt).toISOString());
+      }
+    }
+
     if (assignments.length === 0) {
       return this.get(tenantId, id);
     }
