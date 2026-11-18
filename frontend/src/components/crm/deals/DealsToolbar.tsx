@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   SlidersHorizontal,
+  Upload,
   X,
 } from "lucide-react";
 import type { PipelineDTO } from "@/lib/api/use-deals";
@@ -73,6 +74,8 @@ interface Props {
   onConfigureToggle: () => void;
 
   onExport: () => void;
+  onExportXlsx?: () => void;
+  onImport?: () => void;
   duplicates: DuplicateGroup[];
   onCreateDeal: () => void;
 }
@@ -229,7 +232,11 @@ export function DealsToolbar(props: Props) {
             <MenuSeparator />
           </div>
 
-          <MenuItem icon={Download} label="Экспорт" hint="CSV" onSelect={props.onExport} />
+          <MenuItem icon={Download} label="Экспорт в Excel" hint="XLSX" onSelect={() => props.onExportXlsx ? props.onExportXlsx() : props.onExport()} />
+          <MenuItem icon={Download} label="Экспорт в CSV" hint="CSV" onSelect={props.onExport} />
+          {props.onImport && (
+            <MenuItem icon={Upload} label="Импорт базы и сделок" hint="XLSX/CSV" onSelect={props.onImport} />
+          )}
 
           {/* Подблок внешнего вида раскрывается внутри меню и не закрывает его */}
           <div>
@@ -474,6 +481,45 @@ export function DealsToolbar(props: Props) {
           {props.configureMode && <Check className="h-3.5 w-3.5" />}
           {props.configureMode ? "ГОТОВО" : "НАСТРОИТЬ"}
         </button>
+
+        {/* Экспорт */}
+        <DropdownMenu
+          trigger={
+            <button
+              type="button"
+              title="Экспорт сделок"
+              className="hidden h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-none transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] md:flex cursor-pointer"
+            >
+              <Download className="h-3.5 w-3.5 text-[#666666]" />
+              <span>Экспорт</span>
+              <ChevronDown className="h-3 w-3 text-[#888888]" />
+            </button>
+          }
+        >
+          <MenuItem
+            label="Экспорт в Excel (.xlsx)"
+            hint="XLSX"
+            onSelect={() => (props.onExportXlsx ? props.onExportXlsx() : props.onExport())}
+          />
+          <MenuItem
+            label="Экспорт в CSV (.csv)"
+            hint="CSV"
+            onSelect={props.onExport}
+          />
+        </DropdownMenu>
+
+        {/* Импорт */}
+        {props.onImport && (
+          <button
+            type="button"
+            title="Импорт базы с генерацией сделок"
+            onClick={props.onImport}
+            className="hidden h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-none transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] md:flex cursor-pointer"
+          >
+            <Upload className="h-3.5 w-3.5 text-[#666666]" />
+            <span>Импорт</span>
+          </button>
+        )}
 
         <button
           type="button"

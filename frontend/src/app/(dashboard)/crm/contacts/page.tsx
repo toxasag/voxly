@@ -7,6 +7,8 @@ import {
   Building2,
   Calendar,
   Clock,
+  ChevronDown,
+  Download,
   Handshake,
   Linkedin,
   Mail,
@@ -17,15 +19,18 @@ import {
   Search,
   Tag,
   Trash2,
+  Upload,
   User,
   UserCheck,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
+import { ContactImportDialog } from "@/components/crm/contacts/ContactImportDialog";
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { Sheet } from "@/components/ui/sheet";
 import { ContactCard } from "@/components/crm/contacts/ContactCard";
+import { DropdownMenu, MenuItem } from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
@@ -54,6 +59,7 @@ import {
   useCreateContact,
   useDeleteContact,
   useUpdateContact,
+  useExportContacts,
   type ContactDTO,
 } from "@/lib/api/use-contacts";
 import type { ContactChannel, CreateContactPayload } from "@/schemas/contact.schema";
@@ -99,7 +105,27 @@ function ContactsPageContent() {
   const [channelFilter, setChannelFilter] = useState<ContactChannel | "all">("all");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ContactDTO | null>(null);
+
+  const exportMutation = useExportContacts();
+
+  const handleExport = useCallback(
+    async (format: "csv" | "xlsx") => {
+      try {
+        toast.info(`Экспорт контактов в ${format.toUpperCase()} запущен...`);
+        await exportMutation.mutateAsync({
+          format,
+          search: search || undefined,
+          channel: channelFilter !== "all" ? channelFilter : undefined,
+        });
+        toast.success(`Файл контактов (${format.toUpperCase()}) успешно скачан`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось экспортировать контакты");
+      }
+    },
+    [exportMutation, search, channelFilter],
+  );
   /**
    * Открытая карточка хранится идентификатором, а не объектом.
    *
@@ -546,6 +572,47 @@ function ContactsPageContent() {
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />Обновляем
             </span>
           )}
+
+          {/* Экспорт контактов */}
+          <DropdownMenu
+            trigger={
+              <button
+                type="button"
+                disabled={exportMutation.isPending}
+                className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] disabled:opacity-50 cursor-pointer"
+                title="Экспорт контактов в Excel или CSV"
+              >
+                <Download className="h-3.5 w-3.5 text-[#666666]" />
+                <span className="hidden sm:inline">Экспорт</span>
+                <ChevronDown className="h-3 w-3 text-[#888888]" />
+              </button>
+            }
+          >
+            <MenuItem
+              label="Экспорт в Excel (.xlsx)"
+              hint="XLSX"
+              onSelect={() => handleExport("xlsx")}
+            />
+            <MenuItem
+              label="Экспорт в CSV (.csv)"
+              hint="CSV (UTF-8)"
+              onSelect={() => handleExport("csv")}
+            />
+          </DropdownMenu>
+
+          {/* Импорт контактов */}
+          <Guard requiredPermission="contacts:write">
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] cursor-pointer"
+              title="Импорт контактов из Excel или CSV"
+            >
+              <Upload className="h-3.5 w-3.5 text-[#666666]" />
+              <span className="hidden sm:inline">Импорт</span>
+            </button>
+          </Guard>
+
           <Guard requiredPermission="contacts:write">
             <button type="button" onClick={() => setCreateOpen(true)}
               className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0]">
@@ -691,6 +758,12 @@ function ContactsPageContent() {
       {editTarget !== null && (
         <ContactModal open onClose={() => setEditTarget(null)} onSubmit={handleUpdate} initial={editInitialValues} />
       )}
+
+      <ContactImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onSuccess={() => void query.refetch()}
+      />
 
       {detailTarget !== null && (
         <ContactCard contact={detailTarget}

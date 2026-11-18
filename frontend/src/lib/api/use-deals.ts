@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
-import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import { apiClient, API_BASE_URL, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import { readAccessToken } from "@/lib/auth/session";
 
 export type DealMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot" | "system";
 export type DealMessageDirection = "inbound" | "outbound" | "neutral";
@@ -65,7 +66,7 @@ export interface DealsParams { pipelineId?: string; stageId?: string; status?: "
 export interface DealsResult { items: DealDTO[]; total: number; limit: number; offset: number; }
 export interface SendDealMessagePayload { content: string; channel: string; source?: DealMessageSource; direction?: DealMessageDirection; attachment?: string; attachment_type?: string; }
 export interface CreateDealPayload { title: string; description?: string; budget: number; currency?: string; pipeline_id: string; stage_id: string; contact_id?: string; company_id?: string; owner_id?: string; source_widget_id?: string; close_date?: string; custom_fields?: Record<string, unknown>; }
-export interface UpdateDealPayload { title?: string; description?: string; budget?: number; currency?: string; stage_id?: string; contact_id?: string; company_id?: string; owner_id?: string; close_date?: string; position?: number; custom_fields?: Record<string, unknown>; }
+export interface UpdateDealPayload { title?: string; description?: string; budget?: number; currency?: string; stage_id?: string; contact_id?: string; company_id?: string; owner_id?: string; source_widget_id?: string; close_date?: string; position?: number; custom_fields?: Record<string, unknown>; created_at?: string; }
 
 const BASE = "/api/v1/crm/deals";
 export const dealKeys = { all: ["deals"] as const, list: (p: DealsParams) => ["deals", "list", p] as const, detail: (id: string) => ["deals", "detail", id] as const, pipelines: ["deals", "pipelines"] as const, kanban: (id: string) => ["deals", "kanban", id] as const, timeline: (id: string) => ["deals", "timeline", id] as const };
@@ -401,5 +402,63 @@ export function useDeleteDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Экспорт сделок (CSV / XLSX)
+// ---------------------------------------------------------------------------
+
+export interface ExportDealsPayload {
+  format?: "csv" | "xlsx";
+  pipelineId?: string;
+  search?: string;
+}
+
+export async function downloadDealsExport(payload: ExportDealsPayload = {}): Promise<void> {
+  const token = readAccessToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE_URL}/api/v1/deals/export`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      format: payload.format || "csv",
+      pipeline_id: payload.pipelineId,
+      search: payload.search,
+    }),
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    throw new Error("Не удалось экспортировать сделки");
+  }
+
+  const blob = await res.blob();
+  const contentDisp = res.headers.get("content-disposition");
+  let filename = payload.format === "xlsx" ? "deals.xlsx" : "deals.csv";
+  if (contentDisp) {
+    const match = contentDisp.match(/filename="?([^";]+)"?/);
+    if (match && match[1]) {
+      filename = decodeURIComponent(match[1]);
+    }
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
+export function useExportDeals() {
+  return useMutation({
+    mutationFn: (payload: ExportDealsPayload = {}) => downloadDealsExport(payload),
   });
 }

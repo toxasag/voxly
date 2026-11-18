@@ -7,7 +7,8 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import { apiClient, API_BASE_URL, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import { readAccessToken } from "@/lib/auth/session";
 import type {
   ContactChannel,
   CreateContactPayload,
@@ -426,4 +427,170 @@ export function toContactFormValues(contact: ContactDTO): CreateContactPayload {
     notes: contact.notes,
     custom_fields: customFields,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Импорт и экспорт контактов (ETL)
+// ---------------------------------------------------------------------------
+
+export interface ContactImportParseResultDTO {
+  headers: string[];
+  sampleRows: string[][];
+  totalRows: number;
+  detectedDelimiter?: string;
+  suggestedMapping: Record<string, string>;
+}
+
+export interface ContactImportValidatePayload {
+  rows: string[][];
+  mapping: Record<string, string>;
+  skipFirstRow?: boolean;
+}
+
+export interface ContactImportDuplicateDTO {
+  rowIndex: number;
+  existingContactId: string;
+  existingName: string;
+  field: "phone" | "email";
+  value: string;
+}
+
+export interface ContactImportValidateResultDTO {
+  totalRows: number;
+  validRows: number;
+  duplicatesCount: number;
+  duplicates: ContactImportDuplicateDTO[];
+  errorsCount: number;
+  errors: { rowIndex: number; error: string }[];
+  sampleParsed: {
+    rowIndex: number;
+    fullName: string;
+    phone: string;
+    email?: string;
+    companyName?: string;
+  }[];
+}
+
+export interface ContactImportCommitPayload {
+  rows: string[][];
+  mapping: Record<string, string>;
+  skipFirstRow?: boolean;
+  duplicateStrategy: "skip" | "update" | "create_anyway";
+  createDeal?: boolean;
+  dealOptions?: {
+    titleMode: "field" | "random" | "template";
+    titleField?: string;
+    titleTemplate?: string;
+    pipelineId?: string;
+    stageId?: string;
+  };
+  triggerResearch?: boolean;
+}
+
+export interface ContactImportCommitResultDTO {
+  total: number;
+  imported: number;
+  updated: number;
+  skipped: number;
+  dealsCreated: number;
+  researchTriggered: number;
+}
+
+export function useParseContactImport() {
+  return useMutation<
+    ContactImportParseResultDTO,
+    ApiClientError,
+    FormData | { fileBase64?: string; csvText?: string; filename?: string; delimiter?: string }
+  >({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<ContactImportParseResultDTO>(
+        "/api/v1/crm/contacts/import/parse",
+        payload,
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useValidateContactImport() {
+  return useMutation<ContactImportValidateResultDTO, ApiClientError, ContactImportValidatePayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<ContactImportValidateResultDTO>(
+        "/api/v1/crm/contacts/import/validate",
+        payload,
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useCommitContactImport() {
+  const queryClient = useQueryClient();
+  return useMutation<ContactImportCommitResultDTO, ApiClientError, ContactImportCommitPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<ContactImportCommitResultDTO>(
+        "/api/v1/crm/contacts/import/commit",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+    },
+  });
+}
+
+export interface ExportContactsPayload {
+  format?: "csv" | "xlsx";
+  search?: string;
+  channel?: ContactChannel;
+}
+
+export async function downloadContactsExport(payload: ExportContactsPayload = {}): Promise<void> {
+  const token = readAccessToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE_URL}/api/v1/crm/contacts/export`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      format: payload.format || "csv",
+      search: payload.search,
+      channel: payload.channel,
+    }),
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    throw new Error("Не удалось экспортировать контакты");
+  }
+
+  const blob = await res.blob();
+  const contentDisp = res.headers.get("content-disposition");
+  let filename = payload.format === "xlsx" ? "contacts.xlsx" : "contacts.csv";
+  if (contentDisp) {
+    const match = contentDisp.match(/filename="?([^";]+)"?/);
+    if (match && match[1]) {
+      filename = decodeURIComponent(match[1]);
+    }
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
+export function useExportContacts() {
+  return useMutation({
+    mutationFn: (payload: ExportContactsPayload = {}) => downloadContactsExport(payload),
+  });
 }

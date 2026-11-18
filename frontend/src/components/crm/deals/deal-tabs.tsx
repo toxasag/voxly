@@ -208,6 +208,7 @@ function HomeTab({
 
   // Редактирование даты закрытия
   const [isEditingCloseDate, setIsEditingCloseDate] = useState(false);
+  const [isEditingCreatedAt, setIsEditingCreatedAt] = useState(false);
 
   // Поповеры выбора: "stage" | "company" | "contact" | "owner"
   const [activePicker, setActivePicker] = useState<"stage" | "company" | "contact" | "owner" | null>(null);
@@ -1361,9 +1362,51 @@ function HomeTab({
         {systemOpen && (
           <div className="space-y-0.5 py-0.5">
             <FieldRow icon={Calendar} label="Дата создания">
-              <span title={fullDate(deal.createdAt)} className="text-[#111111]">
-                {formatDateTime(deal.createdAt)}
-              </span>
+              {isEditingCreatedAt ? (
+                <div className="inline-flex items-center gap-2">
+                  <input
+                    type="datetime-local"
+                    defaultValue={
+                      deal.createdAt
+                        ? new Date(new Date(deal.createdAt).getTime() - new Date().getTimezoneOffset() * 60000)
+                            .toISOString()
+                            .slice(0, 16)
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val) return;
+                      const dateIso = new Date(val).toISOString();
+                      updateDeal.mutate(
+                        { id: deal.id, pipelineId: deal.pipelineId, payload: { created_at: dateIso } },
+                        {
+                          onSuccess: () => toast.success("Дата создания обновлена"),
+                          onError: (err) => toast.error(err.message || "Ошибка"),
+                        },
+                      );
+                      setIsEditingCreatedAt(false);
+                    }}
+                    onBlur={() => setIsEditingCreatedAt(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setIsEditingCreatedAt(false);
+                    }}
+                    className="rounded-[6px] border border-[#3b82f6] px-2 py-0.5 text-xs text-[#111111] outline-none"
+                    autoFocus
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  title="Нажмите для редактирования даты создания"
+                  onClick={() => setIsEditingCreatedAt(true)}
+                  className="group/btn inline-flex items-center gap-1.5 rounded-[4px] px-1 py-0.5 -mx-1 text-left hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                >
+                  <span title={fullDate(deal.createdAt)} className="text-[#111111]">
+                    {formatDateTime(deal.createdAt)}
+                  </span>
+                  <Pencil className="h-3 w-3 text-[#999999] opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+                </button>
+              )}
             </FieldRow>
             <FieldRow icon={Bot} label="Кем создано">
               <span title={`Создано: ${creator !== undefined ? creator.fullName : "System"}`} className="inline-flex items-center gap-1.5 text-[#111111]">

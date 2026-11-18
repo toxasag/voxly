@@ -807,9 +807,18 @@ export const ContactCard = memo(function ContactCard({
         <RecordField
           icon={CalendarClock}
           label="Создан"
-          value={contact.createdAt}
-          readOnly
-          display={<span title={fullDate(contact.createdAt)}>{formatDateTime(contact.createdAt)}</span>}
+          value={contact.createdAt ? contact.createdAt.slice(0, 10) : ""}
+          kind="date"
+          display={<span className="hover:underline cursor-pointer" title={fullDate(contact.createdAt)}>{formatDateTime(contact.createdAt)}</span>}
+          {...field("createdAt")}
+          onCommit={(value) => {
+            if (value) {
+              const d = new Date(value);
+              if (!Number.isNaN(d.getTime())) {
+                commit({ created_at: d.toISOString() });
+              }
+            }
+          }}
         />
         <RecordField
           icon={UserCircle2}

@@ -110,7 +110,9 @@ export const createContactSchema = z.object({
   merge_if_duplicate: z.boolean().optional(),
 });
 
-export const updateContactSchema = createContactSchema.partial();
+export const updateContactSchema = createContactSchema.partial().extend({
+  created_at: z.string().datetime({ offset: true }).or(z.string().datetime()).optional().or(z.literal("")),
+});
 
 export type CreateContactPayload = z.infer<typeof createContactSchema>;
 export type UpdateContactPayload = z.infer<typeof updateContactSchema>;
