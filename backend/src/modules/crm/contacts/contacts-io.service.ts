@@ -8,6 +8,8 @@ import {
 import { ContactsService } from "./contacts.service.js";
 import { DealsService } from "../deals/deals.service.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";
+import { innLookupService, type InnLookupService } from "../../integrations/inn-lookup.service.js";
+import { parseDateField } from "../../../lib/date.utils.js";
 import { query, type SqlParam } from "../../../db/client.js";
 import { z } from "zod";
 import type { CreateContactPayload, ContactPhonePayload, ContactSocialPayload } from "./contacts.types.js";
@@ -73,6 +75,8 @@ export interface ContactImportValidateResultDTO {
     phone?: string;
     email?: string;
     company_name?: string;
+    company_inn?: string;
+    birth_date?: string;
   }>;
   errors: Array<{ rowIndex: number; error: string }>;
 }
@@ -103,6 +107,8 @@ export function suggestContactFieldMapping(header: string): string | null {
   if (/^(должность|позиция|position|jobtitle|job_title|профессия|статус)$/.test(h)) return "job_title";
   if (/^(телеграм|telegram|tg|username|тг|телеграмник)$/.test(h)) return "telegram_username";
   if (/^(ватсап|whatsapp|wa|вацап)$/.test(h)) return "whatsapp";
+  if (/^(инн|inn|taxid|vat|номерналогоплательщика)$/.test(h)) return "inn";
+  if (/^(датарождения|рождение|birthdate|birth_date|birthday|д_р|др|dateofbirth|dob)$/.test(h)) return "birth_date";
   if (/^(город|city|населенныйпункт)$/.test(h)) return "city";
   if (/^(адрес|address|улица|адресдоставки|юрадрес)$/.test(h)) return "address";
   if (/^(заметки|комментарий|notes|comment|описание|примечание)$/.test(h)) return "notes";
@@ -146,6 +152,7 @@ export class ContactsIOService {
   private readonly contactsService = new ContactsService();
   private readonly dealsService = new DealsService();
   private readonly enrichmentService = new CrmEnrichmentService();
+  private readonly innLookupService: InnLookupService = innLookupService;
 
   /**
    * Парсинг файла (CSV или XLSX) в 2D-массив строк с автоподбором колонок.
@@ -254,13 +261,7 @@ export class ContactsIOService {
 
     const duplicates: ContactImportDuplicateDTO[] = [];
     const errors: Array<{ rowIndex: number; error: string }> = [];
-    const sampleValid: Array<{
-      first_name: string;
-      last_name?: string;
-      phone?: string;
-      email?: string;
-      company_name?: string;
-    }> = [];
+    const sampleValid: ContactImportValidateResultDTO["sampleValid"] = [];
 
     let validCount = 0;
 
@@ -319,12 +320,16 @@ export class ContactsIOService {
       validCount++;
 
       if (sampleValid.length < 5) {
+        const rawBirth = mapped.birth_date || mapped.birthDate;
+        const rawInn = mapped.inn || mapped.company_inn;
         sampleValid.push({
           first_name: mapped.first_name || mapped.full_name || "Контакт",
           last_name: mapped.last_name,
           phone: mapped.phone,
           email: mapped.email,
           company_name: mapped.company_name,
+          company_inn: rawInn ? cleanDigits(rawInn) : undefined,
+          birth_date: rawBirth ? parseDateField(rawBirth) ?? undefined : undefined,
         });
       }
     });
@@ -449,16 +454,42 @@ export class ContactsIOService {
           socials.push({ kind: "whatsapp", value: mapped.whatsapp });
         }
 
+        // Парсинг даты рождения (BUG-1: поддержка Excel serial dates и обычных дат)
+        const rawBirthDate = mapped.birth_date || mapped.birthDate;
+        const birthDate = parseDateField(rawBirthDate);
+
+        // ИНН и обогащение реквизитов организации (BUG-2)
+        const rawInn = mapped.inn || mapped.company_inn;
+        const cleanInn = rawInn ? cleanDigits(rawInn) : "";
+
+        let companyName = mapped.company_name || "";
+        let companyInn: string | null = cleanInn || null;
+        let companyLegalAddress: string | null = null;
+
+        if (cleanInn && (cleanInn.length === 10 || cleanInn.length === 12)) {
+          try {
+            const companyInfo = await this.innLookupService.lookup(cleanInn);
+            if (companyInfo) {
+              companyName = companyName || companyInfo.name;
+              companyLegalAddress = companyInfo.legalAddress ?? null;
+            }
+          } catch {
+            // Ошибка lookup не должна блокировать создание контакта
+          }
+        }
+
         const contactPayload: CreateContactPayload = {
           first_name: firstName,
           last_name: lastName || undefined,
           middle_name: middleName || undefined,
           phones: phones.length > 0 ? phones : undefined,
           email: mapped.email || undefined,
-          company_name: mapped.company_name || undefined,
+          company_name: companyName || undefined,
+          company_inn: companyInn || undefined,
+          birth_date: birthDate || undefined,
           job_title: mapped.job_title || undefined,
           city: mapped.city || undefined,
-          address: mapped.address || undefined,
+          address: mapped.address || companyLegalAddress || undefined,
           notes: mapped.notes || undefined,
           socials: socials.length > 0 ? socials : undefined,
           channel: mapped.telegram_username ? "telegram" : mapped.whatsapp ? "whatsapp" : "phone",
@@ -621,6 +652,8 @@ export class ContactsIOService {
       phone: string;
       email: string | null;
       company_name: string;
+      company_inn: string | null;
+      birth_date: string | null;
       job_title: string;
       channel: string;
       telegram_username: string | null;
@@ -631,7 +664,7 @@ export class ContactsIOService {
       created_at: string;
     }>(
       `SELECT id, first_name, last_name, middle_name, phone, email,
-              company_name, job_title, channel, telegram_username, whatsapp,
+              company_name, company_inn, birth_date::text AS birth_date, job_title, channel, telegram_username, whatsapp,
               city, address, notes, created_at
        FROM contacts
        WHERE ${where.join(" AND ")}
@@ -645,7 +678,9 @@ export class ContactsIOService {
       { header: "Отчество", key: "middle_name", width: 18 },
       { header: "Телефон", key: "phone", width: 16 },
       { header: "Email", key: (item) => item.email ?? "", width: 22 },
+      { header: "Дата рождения", key: (item) => item.birth_date ?? "", width: 14 },
       { header: "Компания", key: "company_name", width: 22 },
+      { header: "ИНН", key: (item) => item.company_inn ?? "", width: 14 },
       { header: "Должность", key: "job_title", width: 18 },
       { header: "Канал", key: "channel", width: 12 },
       { header: "Telegram", key: (item) => item.telegram_username ? `@${item.telegram_username}` : "", width: 16 },

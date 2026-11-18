@@ -303,6 +303,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   job_title TEXT NOT NULL DEFAULT '',
   company_name TEXT NOT NULL DEFAULT '',
   company_id UUID,
+  company_inn TEXT,
+  birth_date DATE,
   channel TEXT NOT NULL DEFAULT 'phone',
   -- Twenty: person.linkedinLink, группа social на record page.
   linkedin_link TEXT NOT NULL DEFAULT '',
@@ -347,6 +349,7 @@ CREATE TABLE IF NOT EXISTS companies (
   phone TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   inn TEXT NOT NULL DEFAULT '',
+  kpp TEXT NOT NULL DEFAULT '',
   ogrn TEXT NOT NULL DEFAULT '',
   bik TEXT NOT NULL DEFAULT '',
   account_number TEXT NOT NULL DEFAULT '',

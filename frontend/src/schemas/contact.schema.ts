@@ -74,6 +74,8 @@ export const createContactSchema = z.object({
   job_title: z.string().max(150).optional().or(z.literal("")),
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_id: optionalUuid,
+  company_inn: z.string().max(30).optional().nullable().or(z.literal("")),
+  birth_date: z.string().optional().nullable().or(z.literal("")),
   channel: contactChannelSchema.default("phone").optional(),
   /** Twenty: person.linkedinLink. Пустая строка разрешена — поле необязательное. */
   linkedin_link: z.string().url("Некорректная ссылка").max(300).optional().or(z.literal("")),
