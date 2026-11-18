@@ -456,6 +456,13 @@ export class ContactsService {
       if (payload.address !== undefined) push("address", payload.address ?? "");
       if (payload.notes !== undefined) push("notes", payload.notes);
 
+      if (payload.created_at !== undefined) {
+        const createdAt = nullIfBlank(payload.created_at);
+        if (createdAt) {
+          push("created_at", new Date(createdAt).toISOString());
+        }
+      }
+
       // custom_fields is merged, not replaced, so a partial PATCH cannot silently
       // drop keys the client did not send.
       if (payload.custom_fields !== undefined) {
