@@ -39,6 +39,13 @@ export interface DealDTO {
   contactEmail?: string | null;
   contactJobTitle?: string | null;
   contactIsPersonal?: boolean;
+  contactSocials?: Array<{ kind: string; value: string }>;
+  contactChannel?: string | null;
+  contactTelegramUsername?: string | null;
+  contactWhatsapp?: string | null;
+  sourceWidgetId?: string | null;
+  sourceChannel?: string | null;
+  sourceChannelLabel?: string | null;
   ownerName: string | null;
   latestNote?: string | null;
   tasksCount?: number;
@@ -58,8 +65,13 @@ export interface DealMessageDTO { id: string; dealId: string; channelAccountId: 
 export interface DealsParams { pipelineId?: string; stageId?: string; status?: "active" | "won" | "lost" | "all"; search?: string; contactId?: string; companyId?: string; limit?: number; offset?: number; }
 export interface DealsResult { items: DealDTO[]; total: number; limit: number; offset: number; }
 export interface SendDealMessagePayload { content: string; channel: string; source?: DealMessageSource; direction?: DealMessageDirection; attachment?: string; attachment_type?: string; }
+<<<<<<< HEAD
 export interface CreateDealPayload { title: string; description?: string; budget: number; currency?: string; pipeline_id: string; stage_id: string; contact_id?: string; company_id?: string; owner_id?: string; close_date?: string; custom_fields?: Record<string, unknown>; }
 export interface UpdateDealPayload { title?: string; description?: string; budget?: number; currency?: string; stage_id?: string; contact_id?: string; company_id?: string; owner_id?: string; close_date?: string; position?: number; custom_fields?: Record<string, unknown>; created_at?: string; }
+=======
+export interface CreateDealPayload { title: string; description?: string; budget: number; currency?: string; pipeline_id: string; stage_id: string; contact_id?: string; company_id?: string; owner_id?: string; source_widget_id?: string; close_date?: string; custom_fields?: Record<string, unknown>; }
+export interface UpdateDealPayload { title?: string; description?: string; budget?: number; currency?: string; stage_id?: string; contact_id?: string; company_id?: string; owner_id?: string; close_date?: string; position?: number; custom_fields?: Record<string, unknown>; }
+>>>>>>> master
 
 const BASE = "/api/v1/crm/deals";
 export const dealKeys = { all: ["deals"] as const, list: (p: DealsParams) => ["deals", "list", p] as const, detail: (id: string) => ["deals", "detail", id] as const, pipelines: ["deals", "pipelines"] as const, kanban: (id: string) => ["deals", "kanban", id] as const, timeline: (id: string) => ["deals", "timeline", id] as const };

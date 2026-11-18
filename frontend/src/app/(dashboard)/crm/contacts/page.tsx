@@ -66,11 +66,12 @@ import type { ContactChannel, CreateContactPayload } from "@/schemas/contact.sch
 import { cn } from "@/lib/utils";
 
 const CHANNEL_TAG_COLORS: Record<ContactChannel, "sky" | "emerald" | "violet" | "amber" | "cyan"> = {
-  telegram: "sky", whatsapp: "emerald", rumax: "violet", phone: "amber", email: "cyan",
+  telegram: "sky", whatsapp: "emerald", max: "violet", rumax: "violet", phone: "amber", email: "cyan",
 };
 
 const CHANNEL_FILTERS = [
   { value: "all", label: "Все" },
+  { value: "max", label: "MAX" },
   { value: "telegram", label: "Telegram" },
   { value: "whatsapp", label: "WhatsApp" },
   { value: "rumax", label: "RuMAX" },

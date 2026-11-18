@@ -16,11 +16,14 @@ import {
   Home,
   Loader2,
   Mail,
+  MessageCircle,
   Monitor,
   Paperclip,
   Pencil,
+  Phone,
   Plus,
   RotateCcw,
+  Send,
   User,
   UserCircle2,
 } from "lucide-react";
@@ -35,6 +38,7 @@ import { stageTagColor } from "@/components/crm/deals/stage-colors";
 import { usePipelines, useKanban } from "@/lib/api/use-deals";
 import { useCompanies } from "@/lib/api/use-companies";
 import { useContacts, contactFullName } from "@/lib/api/use-contacts";
+import { useActiveChannels } from "@/lib/api/use-channels";
 import { useTenantUsers } from "@/lib/api/use-tenant-users";
 import { useAuth } from "@/lib/auth/use-auth";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
@@ -102,6 +106,7 @@ export function DrawerCreateDeal({
   const [contactName, setContactName] = useState<string | null>(null);
 
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [sourceWidgetId, setSourceWidgetId] = useState<string | null>(null);
 
   const [dealOpen, setDealOpen] = useState(true);
   const [relationsOpen, setRelationsOpen] = useState(false);
@@ -126,6 +131,7 @@ export function DrawerCreateDeal({
   const kanban = useKanban(effectivePipelineId);
   const companiesQuery = useCompanies({ limit: 100 });
   const contactsQuery = useContacts({ limit: 100 });
+  const activeChannelsQuery = useActiveChannels();
 
   // Current user resolution
   const currentUser = useMemo(() => {
@@ -149,6 +155,7 @@ export function DrawerCreateDeal({
       setCompanyName(null);
       setContactId(null);
       setContactName(null);
+      setSourceWidgetId(null);
       setCardView("deal");
       setActiveTab("home");
       setActivePicker(null);
@@ -265,6 +272,7 @@ export function DrawerCreateDeal({
       company_id: companyId ?? undefined,
       contact_id: contactId ?? undefined,
       owner_id: ownerId ?? undefined,
+      source_widget_id: sourceWidgetId ?? undefined,
       close_date: closeDate || undefined,
     };
 
@@ -294,6 +302,7 @@ export function DrawerCreateDeal({
     companyId,
     contactId,
     ownerId,
+    sourceWidgetId,
     closeDate,
     onSubmit,
     onClose,
@@ -840,6 +849,33 @@ export function DrawerCreateDeal({
                             <Pencil className="h-3 w-3 text-[#999999] opacity-0 group-hover:opacity-100 transition-opacity" />
                           </button>
                         )}
+                      </FieldRow>
+
+                      {/* Канал связи / Мессенджер */}
+                      <FieldRow icon={MessageCircle} label="Канал связи">
+                        <select
+                          value={sourceWidgetId ?? ""}
+                          onChange={(e) => setSourceWidgetId(e.target.value || null)}
+                          title="Канал связи сделки (MAX, Telegram, WhatsApp)"
+                          className="h-7 w-full max-w-[200px] rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] outline-none focus:border-[#4a38f5] transition-colors cursor-pointer"
+                        >
+                          <option value="">Авто (активный канал)</option>
+                          {(activeChannelsQuery.data ?? []).map((ch) => {
+                            const label =
+                              ch.channel === "max" || ch.channel === "max_bot"
+                                ? `MAX (${ch.label})`
+                                : ch.channel === "telegram"
+                                  ? `Telegram (${ch.label})`
+                                  : ch.channel === "whatsapp"
+                                    ? `WhatsApp (${ch.label})`
+                                    : `${ch.channel} (${ch.label})`;
+                            return (
+                              <option key={ch.id} value={ch.id}>
+                                {label}
+                              </option>
+                            );
+                          })}
+                        </select>
                       </FieldRow>
                     </div>
                   )}

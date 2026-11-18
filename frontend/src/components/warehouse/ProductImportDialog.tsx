@@ -124,6 +124,10 @@ export function ProductImportDialog({ open, onClose, onSuccess }: ProductImportD
         const key = String(idx);
         initialMap[key] = data.suggestedMapping[key] || "skip";
       });
+      // If name was not auto-suggested, default column 0 to name
+      if (!Object.values(initialMap).includes("name") && data.headers.length > 0) {
+        initialMap["0"] = "name";
+      }
       setColumnMapping(initialMap);
 
       setStep(2);
@@ -144,62 +148,25 @@ export function ProductImportDialog({ open, onClose, onSuccess }: ProductImportD
     }
 
     try {
-      // Re-read file rows for full validation or send sample + rows
-      // Since parsedData in backend returned sampleRows and headers,
-      // let's parse all rows using FileReader or form post
-      const reader = new FileReader();
-      const isCsv = selectedFile?.name.toLowerCase().endsWith(".csv");
+      const rowsToValidate =
+        parsedData.rows && parsedData.rows.length > 0
+          ? parsedData.rows
+          : [parsedData.headers, ...parsedData.sampleRows];
 
-      if (isCsv) {
-        reader.onload = async (e) => {
-          const text = e.target?.result as string;
-          const cleanText = text.replace(/^\uFEFF/, "");
-          const delim =
-            delimiter !== "auto"
-              ? delimiter
-              : parsedData.detectedDelimiter || ";";
+      const validRes = await validateMutation.mutateAsync({
+        rows: rowsToValidate,
+        mapping: columnMapping,
+        skipFirstRow,
+      });
 
-          // Simple CSV splitter
-          const lines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0);
-          const rows = lines.map((line) => line.split(delim).map((c) => c.replace(/^"|"$/g, "").trim()));
-
-          const validRes = await validateMutation.mutateAsync({
-            rows,
-            mapping: columnMapping,
-            skipFirstRow,
-          });
-
-          setValidationResult(validRes);
-          // Default resolutions
-          const initialRes: Record<string, "overwrite" | "skip" | "keep_both"> = {};
-          validRes.duplicates.forEach((dup) => {
-            initialRes[dup.matchKey] = "skip";
-          });
-          setResolutions(initialRes);
-          setStep(3);
-        };
-        reader.readAsText(selectedFile!);
-      } else {
-        // XLSX: Read base64 and parse via server validate endpoint
-        reader.onload = async (e) => {
-          const base64 = (e.target?.result as string).split(",")[1];
-          // We can call /import/parse with base64 to get all rows or validate directly
-          // Let's pass the parsed rows from parse endpoint or full file
-          const validRes = await validateMutation.mutateAsync({
-            rows: [parsedData.headers, ...parsedData.sampleRows],
-            mapping: columnMapping,
-            skipFirstRow,
-          });
-          setValidationResult(validRes);
-          const initialRes: Record<string, "overwrite" | "skip" | "keep_both"> = {};
-          validRes.duplicates.forEach((dup) => {
-            initialRes[dup.matchKey] = "skip";
-          });
-          setResolutions(initialRes);
-          setStep(3);
-        };
-        reader.readAsDataURL(selectedFile!);
-      }
+      setValidationResult(validRes);
+      // Default resolutions
+      const initialRes: Record<string, "overwrite" | "skip" | "keep_both"> = {};
+      validRes.duplicates.forEach((dup) => {
+        initialRes[dup.matchKey] = "skip";
+      });
+      setResolutions(initialRes);
+      setStep(3);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Ошибка валидации колонок");
     }
@@ -217,46 +184,26 @@ export function ProductImportDialog({ open, onClose, onSuccess }: ProductImportD
 
   // Step 3 -> Step 4: Commit Import
   const handleCommitImport = async () => {
-    if (!parsedData || !selectedFile) return;
+    if (!parsedData) return;
 
     try {
-      const isCsv = selectedFile.name.toLowerCase().endsWith(".csv");
-      const reader = new FileReader();
+      const rowsToCommit =
+        parsedData.rows && parsedData.rows.length > 0
+          ? parsedData.rows
+          : [parsedData.headers, ...parsedData.sampleRows];
 
-      reader.onload = async (e) => {
-        let rows: string[][] = [];
-        if (isCsv) {
-          const text = e.target?.result as string;
-          const cleanText = text.replace(/^\uFEFF/, "");
-          const delim =
-            delimiter !== "auto"
-              ? delimiter
-              : parsedData.detectedDelimiter || ";";
-          const lines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0);
-          rows = lines.map((line) => line.split(delim).map((c) => c.replace(/^"|"$/g, "").trim()));
-        } else {
-          rows = [parsedData.headers, ...parsedData.sampleRows];
-        }
+      const res = await commitMutation.mutateAsync({
+        rows: rowsToCommit,
+        mapping: columnMapping,
+        skipFirstRow,
+        resolutions,
+        defaultResolution: bulkResolution === "keep_both" ? "skip" : bulkResolution,
+      });
 
-        const res = await commitMutation.mutateAsync({
-          rows,
-          mapping: columnMapping,
-          skipFirstRow,
-          resolutions,
-          defaultResolution: bulkResolution === "keep_both" ? "skip" : bulkResolution,
-        });
-
-        setCommitResult(res);
-        setStep(4);
-        toast.success(`Импорт завершен: добавлено ${res.importedCount}, обновлено ${res.updatedCount}`);
-        onSuccess?.();
-      };
-
-      if (isCsv) {
-        reader.readAsText(selectedFile);
-      } else {
-        reader.readAsDataURL(selectedFile);
-      }
+      setCommitResult(res);
+      setStep(4);
+      toast.success(`Импорт завершен: добавлено ${res.importedCount}, обновлено ${res.updatedCount}`);
+      onSuccess?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось выполнить импорт");
     }
@@ -426,12 +373,20 @@ export function ProductImportDialog({ open, onClose, onSuccess }: ProductImportD
           {/* STEP 2: Column Mapping */}
           {step === 2 && parsedData && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between bg-amber-50/60 border border-amber-200/80 rounded-[8px] px-3.5 py-2 text-xs text-amber-900">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-amber-50/60 border border-amber-200/80 rounded-[8px] px-3.5 py-2.5 text-xs text-amber-900">
                 <span>
                   В файле обнаружено колонок: <strong>{parsedData.headers.length}</strong>, строк данных:{" "}
                   <strong>{parsedData.totalRows - (skipFirstRow ? 1 : 0)}</strong>
                 </span>
-                <span className="text-amber-800/80">Поле «Наименование» обязательно для создания</span>
+                <label className="flex items-center gap-2 cursor-pointer select-none font-medium text-[#111111]">
+                  <input
+                    type="checkbox"
+                    checked={skipFirstRow}
+                    onChange={(e) => setSkipFirstRow(e.target.checked)}
+                    className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                  />
+                  <span>Первая строка содержит заголовки (не импортировать)</span>
+                </label>
               </div>
 
               <div className="rounded-[8px] border border-[#e5e5e5] overflow-hidden">
@@ -447,7 +402,8 @@ export function ProductImportDialog({ open, onClose, onSuccess }: ProductImportD
                     {parsedData.headers.map((hdr, idx) => {
                       const colKey = String(idx);
                       const currentField = columnMapping[colKey] || "skip";
-                      const sampleVals = parsedData.sampleRows
+                      const sampleVals = (parsedData.rows || parsedData.sampleRows)
+                        .slice(skipFirstRow ? 1 : 0, (skipFirstRow ? 1 : 0) + 3)
                         .map((r) => r[idx])
                         .filter((v): v is string => Boolean(v && v.trim()))
                         .slice(0, 2);
@@ -700,6 +656,22 @@ export function ProductImportDialog({ open, onClose, onSuccess }: ProductImportD
                   <div className="text-[11px] text-rose-800 font-medium">Ошибок</div>
                 </div>
               </div>
+
+              {commitResult.errors && commitResult.errors.length > 0 && (
+                <div className="w-full max-w-lg rounded-[8px] border border-rose-200 bg-rose-50/50 p-3 text-left space-y-1.5">
+                  <div className="text-xs font-semibold text-rose-800">
+                    Отклонено строк ({commitResult.errors.length}):
+                  </div>
+                  <div className="max-h-36 overflow-y-auto space-y-1 pr-1 text-[11px] text-rose-700">
+                    {commitResult.errors.map((err, i) => (
+                      <div key={i} className="flex items-center justify-between border-b border-rose-100 pb-0.5">
+                        <span className="font-mono">Строка {err.rowNumber}</span>
+                        <span className="truncate max-w-xs">{err.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

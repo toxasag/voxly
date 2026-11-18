@@ -110,6 +110,15 @@ export interface ClientLookupDealDTO {
   ownerName: string | null;
 }
 
+export interface ClientMessengerSourceDTO {
+  channel: "telegram" | "whatsapp" | "max" | "crm";
+  name: string;
+  username?: string;
+  avatarUrl?: string;
+  phone?: string;
+  isVerified?: boolean;
+}
+
 export interface ClientLookupResultDTO {
   found: boolean;
   client: {
@@ -132,6 +141,10 @@ export interface ClientLookupResultDTO {
     legalAddress: string;
   } | null;
   activeDeals: ClientLookupDealDTO[];
+  suggestedName?: string | null;
+  sources?: ClientMessengerSourceDTO[];
+  channelsChecked?: string[];
+  messengerLookupStatus?: "idle" | "searching" | "found" | "not_found";
 }
 
 export interface AdditionalContact {
@@ -588,6 +601,25 @@ export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, 
       return res.data;
     },
     staleTime: 60_000,
+  });
+}
+
+export interface RepairMasterDTO {
+  id: string;
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+}
+
+export function useRepairMasters(): UseQueryResult<RepairMasterDTO[], ApiClientError> {
+  return useQuery<RepairMasterDTO[], ApiClientError>({
+    queryKey: [...repairKeys.all, "masters"],
+    queryFn: async () => {
+      const res = await apiClient.get<RepairMasterDTO[]>(`${BASE_PATH}/masters`);
+      return res.data;
+    },
+    staleTime: 30_000,
   });
 }
 

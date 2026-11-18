@@ -60,6 +60,12 @@ const DEAL_COLUMNS_WITH_LABELS = `
   ct.email AS contact_email,
   ct.job_title AS contact_job_title,
   ct.is_personal AS contact_is_personal,
+  ct.socials AS contact_socials,
+  ct.channel AS contact_channel,
+  ct.telegram_username AS contact_telegram_username,
+  ct.whatsapp AS contact_whatsapp,
+  ca.channel AS source_channel,
+  ca.label AS source_channel_label,
   ow.name AS owner_name,
   ln.body AS latest_note_body,
   COALESCE(tk.total_tasks_count, 0) AS tasks_count,
@@ -83,6 +89,8 @@ const DEAL_LABEL_JOINS = `
     ON co.id = d.company_id AND co.tenant_id = d.tenant_id AND co.deleted_at IS NULL
   LEFT JOIN contacts ct
     ON ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
+  LEFT JOIN channel_accounts ca
+    ON ca.id = d.source_widget_id AND ca.tenant_id = d.tenant_id AND ca.deleted_at IS NULL
   LEFT JOIN users ow
     ON ow.id = d.owner_id AND ow.tenant_id = d.tenant_id AND ow.deleted_at IS NULL
   LEFT JOIN LATERAL (
@@ -411,6 +419,36 @@ export class DealsService {
         [tenantId, payload.stage_id],
       );
 
+      // Разрешение источника/канала коммуникации (source_widget_id)
+      let resolvedSourceWidgetId = nullIfBlank(payload.source_widget_id);
+      if (!resolvedSourceWidgetId && payload.contact_id) {
+        const ctInfo = await tx.queryOne<{ channel: string; socials: Array<{ kind: string }> }>(
+          `SELECT channel, socials FROM contacts WHERE id = $1 AND tenant_id = $2`,
+          [payload.contact_id, tenantId],
+        );
+        if (ctInfo) {
+          const preferredChannel = ctInfo.socials?.find((s) => s.kind === "max")
+            ? "max"
+            : ctInfo.channel !== "phone"
+              ? ctInfo.channel
+              : null;
+          if (preferredChannel) {
+            const acc = await tx.queryOne<{ id: string }>(
+              `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL LIMIT 1`,
+              [tenantId, preferredChannel],
+            );
+            if (acc) resolvedSourceWidgetId = acc.id;
+          }
+        }
+      }
+      if (!resolvedSourceWidgetId) {
+        const defAcc = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel IN ('max', 'telegram', 'whatsapp') AND status = 'connected' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        if (defAcc) resolvedSourceWidgetId = defAcc.id;
+      }
+
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
@@ -435,7 +473,7 @@ export class DealsService {
           nullIfBlank(payload.owner_id) ?? createdBy,
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
-          nullIfBlank(payload.source_widget_id),
+          resolvedSourceWidgetId,
         ],
       );
 

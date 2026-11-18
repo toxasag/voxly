@@ -98,7 +98,7 @@ export interface Tenant {
 // CRM Domain Types
 // ---------------------------------------------------------------------------
 
-export type ContactChannel = "telegram" | "whatsapp" | "rumax" | "phone" | "email";
+export type ContactChannel = "telegram" | "whatsapp" | "max" | "rumax" | "phone" | "email";
 
 export interface ContactCustomFields {
   [key: string]: string | number;

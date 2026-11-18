@@ -310,6 +310,29 @@ export class ContactsService {
     const phones = splitPhones(payload.phones ?? []);
     const socials = normalizeSocials(payload.socials ?? []);
 
+    if (phones.phone) {
+      const activeChannels = await tx.query<{ channel: string }>(
+        `SELECT channel FROM channel_accounts WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL`,
+        [tenantId],
+      );
+      const hasMaxAcc = activeChannels.some((c) => c.channel === "max" || c.channel === "max_bot");
+      const hasWaAcc = activeChannels.some((c) => c.channel === "whatsapp");
+
+      if (hasMaxAcc && !socials.some((s) => s.kind === "max")) {
+        socials.push({ kind: "max", value: phones.phone });
+      }
+      if (hasWaAcc && !socials.some((s) => s.kind === "whatsapp")) {
+        socials.push({ kind: "whatsapp", value: phones.phone });
+      }
+    }
+
+    const effectiveChannel =
+      payload.channel && payload.channel !== "phone"
+        ? payload.channel
+        : socials.some((s) => s.kind === "max")
+          ? "max"
+          : payload.channel ?? "phone";
+
     const row = await tx.queryOneOrThrow<{ id: string }>(
       `INSERT INTO contacts
          (tenant_id, first_name, last_name, middle_name,
@@ -338,7 +361,7 @@ export class ContactsService {
         payload.job_title ?? "",
         company.companyName,
         company.companyId,
-        payload.channel ?? "phone",
+        effectiveChannel,
         payload.linkedin_link ?? "",
         payload.city ?? "",
         payload.address ?? "",

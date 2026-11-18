@@ -144,6 +144,12 @@ export interface DealRow {
   contact_email?: string | null;
   contact_job_title?: string | null;
   contact_is_personal?: boolean | null;
+  contact_socials?: Array<{ kind: string; value: string }> | null;
+  contact_channel?: string | null;
+  contact_telegram_username?: string | null;
+  contact_whatsapp?: string | null;
+  source_channel?: string | null;
+  source_channel_label?: string | null;
   owner_name?: string | null;
   latest_note_body?: string | null;
   tasks_count?: string | number | null;
@@ -184,6 +190,12 @@ export interface DealDTO {
   contactEmail?: string | null;
   contactJobTitle?: string | null;
   contactIsPersonal?: boolean;
+  contactSocials?: Array<{ kind: string; value: string }>;
+  contactChannel?: string | null;
+  contactTelegramUsername?: string | null;
+  contactWhatsapp?: string | null;
+  sourceChannel?: string | null;
+  sourceChannelLabel?: string | null;
   ownerName: string | null;
   latestNote: string | null;
   tasksCount?: number;
@@ -244,6 +256,12 @@ export function toDealDTO(row: DealRow): DealDTO {
     contactEmail: row.contact_email || null,
     contactJobTitle: row.contact_job_title || null,
     contactIsPersonal: Boolean(row.contact_is_personal),
+    contactSocials: Array.isArray(row.contact_socials) ? row.contact_socials : [],
+    contactChannel: row.contact_channel || null,
+    contactTelegramUsername: row.contact_telegram_username || null,
+    contactWhatsapp: row.contact_whatsapp || null,
+    sourceChannel: row.source_channel || null,
+    sourceChannelLabel: row.source_channel_label || null,
     ownerName: row.owner_name ?? null,
     latestNote: row.latest_note_body ?? null,
     tasksCount: Number(row.tasks_count ?? 0),
