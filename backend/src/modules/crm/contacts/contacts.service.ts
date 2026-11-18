@@ -36,7 +36,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.id, c.tenant_id, c.first_name, c.last_name, c.middle_name, c.phone,
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
-  c.job_title, c.company_name, c.company_id, c.channel,
+  c.job_title, c.company_name, c.company_id, c.company_inn, c.birth_date, c.channel,
   c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.contact_type, c.created_by, c.created_at, c.updated_at,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
@@ -64,8 +64,8 @@ const CONTACT_COUNT_JOIN = `
   LEFT JOIN users u ON u.id = c.created_by AND u.tenant_id = c.tenant_id
 `;
 
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
+function nullIfBlank(value: string | null | undefined): string | null {
+  if (value === undefined || value === null || value === "") return null;
   return value;
 }
 
@@ -94,6 +94,10 @@ async function resolveCompany(
   tenantId: string,
   companyId: string | null,
   companyName: string,
+  companyInn?: string | null,
+  legalAddress?: string | null,
+  ogrn?: string | null,
+  kpp?: string | null,
 ): Promise<{ companyId: string | null; companyName: string }> {
   if (companyId !== null) {
     // Название берётся из самой компании: источник правды один, иначе строка у
@@ -113,24 +117,60 @@ async function resolveCompany(
     // появится своя компания с тем же именем.
   }
 
+  const cleanInn = companyInn ? companyInn.replace(/\D/g, "").trim() : "";
+  if (cleanInn) {
+    const byInn = await tx.queryOne<{ id: string; name: string }>(
+      `SELECT id, name FROM companies
+       WHERE tenant_id = $1 AND inn = $2 AND deleted_at IS NULL
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [tenantId, cleanInn],
+    );
+    if (byInn !== null) {
+      return { companyId: byInn.id, companyName: byInn.name };
+    }
+  }
+
   const name = companyName.trim();
-  if (name === "") return { companyId: null, companyName: "" };
+  if (name === "" && !cleanInn) return { companyId: null, companyName: "" };
+  const effectiveName = name || (cleanInn ? `Компания ИНН ${cleanInn}` : "");
 
   const existing = await tx.queryOne<{ id: string; name: string }>(
     `SELECT id, name FROM companies
      WHERE tenant_id = $1 AND lower(btrim(name)) = lower($2) AND deleted_at IS NULL
      ORDER BY created_at ASC
      LIMIT 1`,
-    [tenantId, name],
+    [tenantId, effectiveName],
   );
 
-  if (existing !== null) return { companyId: existing.id, companyName: existing.name };
+  if (existing !== null) {
+    if (cleanInn || legalAddress || ogrn || kpp) {
+      await tx.query(
+        `UPDATE companies SET
+           inn = CASE WHEN inn = '' THEN COALESCE($3, '') ELSE inn END,
+           legal_address = CASE WHEN legal_address = '' THEN COALESCE($4, '') ELSE legal_address END,
+           ogrn = CASE WHEN ogrn = '' THEN COALESCE($5, '') ELSE ogrn END,
+           kpp = CASE WHEN kpp = '' THEN COALESCE($6, '') ELSE kpp END
+         WHERE id = $1 AND tenant_id = $2`,
+        [existing.id, tenantId, cleanInn || null, legalAddress ?? null, ogrn ?? null, kpp ?? null],
+      );
+    }
+    return { companyId: existing.id, companyName: existing.name };
+  }
 
   const created = await tx.queryOneOrThrow<{ id: string; name: string }>(
-    `INSERT INTO companies (tenant_id, name, notes)
-     VALUES ($1, $2, $3)
+    `INSERT INTO companies (tenant_id, name, inn, legal_address, ogrn, kpp, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id, name`,
-    [tenantId, name, "Создана автоматически при указании компании у контакта"],
+    [
+      tenantId,
+      effectiveName,
+      cleanInn,
+      legalAddress ?? "",
+      ogrn ?? "",
+      kpp ?? "",
+      "Создана автоматически при указании компании у контакта",
+    ],
   );
 
   return { companyId: created.id, companyName: created.name };
@@ -312,6 +352,7 @@ export class ContactsService {
       tenantId,
       nullIfBlank(payload.company_id),
       payload.company_name ?? "",
+      payload.company_inn,
     );
 
     const phones = splitPhones(payload.phones ?? []);
@@ -345,11 +386,11 @@ export class ContactsService {
          (tenant_id, first_name, last_name, middle_name,
           phone, phone_country_code, phone_calling_code, additional_phones,
           email, telegram_username, telegram_chat_id, whatsapp, socials,
-          job_title, company_name, company_id, channel, linkedin_link,
+          job_title, company_name, company_id, company_inn, birth_date, channel, linkedin_link,
           city, address,
           custom_fields, source_metadata, notes, contact_type, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb,
-               $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23, $24, $25)
+               $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25, $26, $27)
        RETURNING id`,
       [
         tenantId,
@@ -368,6 +409,8 @@ export class ContactsService {
         payload.job_title ?? "",
         company.companyName,
         company.companyId,
+        nullIfBlank(payload.company_inn),
+        nullIfBlank(payload.birth_date ?? undefined),
         effectiveChannel,
         payload.linkedin_link ?? "",
         payload.city ?? "",
@@ -453,9 +496,22 @@ export class ContactsService {
 
         const nextName = payload.company_name ?? current.company_name;
 
-        const company = await resolveCompany(tx, tenantId, nextId, nextName);
+        const company = await resolveCompany(
+          tx,
+          tenantId,
+          nextId,
+          nextName,
+          payload.company_inn,
+        );
         push("company_name", company.companyName);
         push("company_id", company.companyId);
+      }
+
+      if (payload.company_inn !== undefined) {
+        push("company_inn", nullIfBlank(payload.company_inn));
+      }
+      if (payload.birth_date !== undefined) {
+        push("birth_date", nullIfBlank(payload.birth_date ?? undefined));
       }
 
       if (payload.channel !== undefined) push("channel", payload.channel);

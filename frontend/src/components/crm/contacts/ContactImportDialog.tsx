@@ -44,6 +44,8 @@ const CONTACT_SYSTEM_FIELDS = [
   { key: "first_name", label: "Имя (first_name)" },
   { key: "last_name", label: "Фамилия (last_name)" },
   { key: "middle_name", label: "Отчество (middle_name)" },
+  { key: "birth_date", label: "Дата рождения (birth_date)" },
+  { key: "inn", label: "ИНН (inn)" },
   { key: "email", label: "E-mail (email)" },
   { key: "company_name", label: "Компания (company_name)" },
   { key: "job_title", label: "Должность (job_title)" },
@@ -541,6 +543,18 @@ export function ContactImportDialog({
                                   </option>
                                 ))}
                               </select>
+                              {currentMapped === "inn" && (
+                                <div className="mt-1 flex items-center gap-1 text-[11px] font-medium text-[#4a38f5]">
+                                  <Building2 className="h-3 w-3" />
+                                  <span>Автозаполнение компании по ИНН</span>
+                                </div>
+                              )}
+                              {currentMapped === "birth_date" && (
+                                <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600">
+                                  <Check className="h-3 w-3" />
+                                  <span>Конвертация в ISO (YYYY-MM-DD)</span>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );

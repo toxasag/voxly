@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { excelSerialToISO } from "../../lib/date.utils.js";
 
 /**
  * Escapes special XML characters.
@@ -335,6 +336,44 @@ export async function parseXlsxBuffer(buffer: Buffer): Promise<string[][]> {
     }
   }
 
+  // 1b. Styles Table for Date format detection
+  const dateStyleIndices = new Set<number>();
+  const stylesFile = zip.file("xl/styles.xml");
+  if (stylesFile) {
+    const stylesXml = await stylesFile.async("text");
+    const customDateFmtIds = new Set<number>();
+    const numFmtMatches = stylesXml.match(/<numFmt\s+[^>]*\/>/g) || [];
+    for (const numFmt of numFmtMatches) {
+      const idMatch = numFmt.match(/numFmtId="(\d+)"/);
+      const codeMatch = numFmt.match(/formatCode="([^"]*)"/);
+      if (idMatch?.[1] && codeMatch?.[1]) {
+        const fmtId = parseInt(idMatch[1], 10);
+        const code = codeMatch[1].toLowerCase();
+        if (/[ymdгд]/.test(code)) {
+          customDateFmtIds.add(fmtId);
+        }
+      }
+    }
+    const cellXfsMatch = stylesXml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/);
+    if (cellXfsMatch?.[1]) {
+      const xfMatches = cellXfsMatch[1].match(/<xf\s+[^>]*\/?>/g) || [];
+      xfMatches.forEach((xf, idx) => {
+        const fmtMatch = xf.match(/numFmtId="(\d+)"/);
+        if (fmtMatch?.[1]) {
+          const fmtId = parseInt(fmtMatch[1], 10);
+          if (
+            (fmtId >= 14 && fmtId <= 22) ||
+            (fmtId >= 27 && fmtId <= 36) ||
+            (fmtId >= 45 && fmtId <= 47) ||
+            customDateFmtIds.has(fmtId)
+          ) {
+            dateStyleIndices.add(idx);
+          }
+        }
+      });
+    }
+  }
+
   // 2. Locate sheet1.xml (or first worksheet)
   let sheetFile = zip.file("xl/worksheets/sheet1.xml");
   if (!sheetFile) {
@@ -368,6 +407,10 @@ export async function parseXlsxBuffer(buffer: Buffer): Promise<string[][]> {
       if (colIdx < 0) continue;
       maxColIdx = Math.max(maxColIdx, colIdx);
 
+      const sAttr = (cTag.match(/\bs="(\d+)"/) || [])[1];
+      const styleIdx = sAttr ? parseInt(sAttr, 10) : -1;
+      const isDateStyle = styleIdx >= 0 && dateStyleIndices.has(styleIdx);
+
       const typeMatch = cTag.match(/\bt="([a-z]+)"/);
       const cellType = typeMatch ? typeMatch[1] : "";
 
@@ -386,6 +429,12 @@ export async function parseXlsxBuffer(buffer: Buffer): Promise<string[][]> {
       } else {
         const vMatch = (cTag.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
         val = vMatch ?? "";
+        if (isDateStyle && val.trim() !== "") {
+          const num = Number(val.trim());
+          if (!Number.isNaN(num) && num > 0) {
+            val = excelSerialToISO(num);
+          }
+        }
       }
 
       val = val

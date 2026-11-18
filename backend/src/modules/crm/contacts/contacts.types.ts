@@ -96,6 +96,8 @@ export const createContactSchema = z.object({
   /** Компания необязательна: у физлица её нет. */
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_id: optionalUuid,
+  company_inn: z.string().max(30).optional().nullable().or(z.literal("")),
+  birth_date: z.string().optional().nullable().or(z.literal("")),
   channel: contactChannelSchema.default("phone"),
   contact_type: contactTypeSchema.default("customer").optional(),
   /**
@@ -155,6 +157,8 @@ export interface ContactRow {
   job_title: string;
   company_name: string;
   company_id: string | null;
+  company_inn?: string | null;
+  birth_date?: Date | string | null;
   channel: ContactChannel;
   linkedin_link: string;
   city: string;
@@ -206,6 +210,8 @@ export interface ContactDTO {
   jobTitle: string;
   companyName: string;
   companyId: string | null;
+  companyInn?: string | null;
+  birthDate?: string | null;
   channel: ContactChannel;
   linkedinLink: string;
   city: string;
@@ -294,6 +300,12 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     jobTitle: row.job_title,
     companyName: row.company_name,
     companyId: row.company_id,
+    companyInn: row.company_inn ?? null,
+    birthDate: row.birth_date
+      ? row.birth_date instanceof Date
+        ? row.birth_date.toISOString().slice(0, 10)
+        : String(row.birth_date).slice(0, 10)
+      : null,
     channel: row.channel,
     linkedinLink: row.linkedin_link,
     city: row.city ?? "",
