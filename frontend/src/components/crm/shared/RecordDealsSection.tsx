@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Handshake, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, Handshake, Loader2, Plus } from "lucide-react";
 import { RecordRelationSection } from "@/components/crm/shared/RecordField";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -30,6 +30,7 @@ interface RecordDealsSectionProps {
   /** Подставляется в название новой сделки: «Сделка — {название}». */
   targetLabel: string;
   canWrite?: boolean;
+  disabledHint?: string;
   onOpenDeal?: (dealId: string) => void;
 }
 
@@ -44,6 +45,7 @@ export function RecordDealsSection({
   companyId,
   targetLabel,
   canWrite = true,
+  disabledHint,
   onOpenDeal,
 }: RecordDealsSectionProps) {
   const deals = useDeals({ contactId, companyId, limit: 20 });
@@ -107,6 +109,12 @@ export function RecordDealsSection({
       }
     >
       <div className="space-y-2">
+        {disabledHint && (
+          <div className="rounded-[6px] border border-amber-200 bg-amber-50/60 px-2 py-1.5 text-[11px] text-[#854d0e] flex items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <span>{disabledHint}</span>
+          </div>
+        )}
         {composing && (
           <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-2">
             <input

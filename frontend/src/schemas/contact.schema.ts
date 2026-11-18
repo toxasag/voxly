@@ -14,6 +14,9 @@ import { z } from "zod";
 
 export const contactChannelSchema = z.enum(["telegram", "whatsapp", "max", "rumax", "phone", "email"]);
 
+export const contactTypeSchema = z.enum(["customer", "vendor"]);
+export type ContactType = z.infer<typeof contactTypeSchema>;
+
 export const socialKindSchema = z.enum([
   "telegram",
   "whatsapp",
@@ -74,6 +77,7 @@ export const createContactSchema = z.object({
   job_title: z.string().max(150).optional().or(z.literal("")),
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_id: optionalUuid,
+  contact_type: contactTypeSchema.default("customer").optional(),
   channel: contactChannelSchema.default("phone").optional(),
   /** Twenty: person.linkedinLink. Пустая строка разрешена — поле необязательное. */
   linkedin_link: z.string().url("Некорректная ссылка").max(300).optional().or(z.literal("")),

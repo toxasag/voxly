@@ -27,6 +27,8 @@ import {
   Plus,
   RotateCcw,
   Send,
+  Truck,
+  UserCheck,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -84,6 +86,7 @@ export function DrawerCreateContact({
   const effectiveDealTitle = rawDealTitle ?? deal?.title ?? "";
   const [tab, setTab] = useState("home");
   const [name, setName] = useState("");
+  const [contactType, setContactType] = useState<"customer" | "vendor">("customer");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -155,6 +158,7 @@ export function DrawerCreateContact({
       {
         first_name: firstName,
         last_name: lastName,
+        contact_type: contactType,
         email: email.trim() || undefined,
         phones: phone.trim() ? [{ number: phone.trim(), calling_code: "+7", country_code: "RU" }] : undefined,
         socials: socialsList.length > 0 ? socialsList : undefined,
@@ -379,6 +383,36 @@ export function DrawerCreateContact({
           </button>
           {generalOpen && (
             <div className="space-y-0.5 py-0.5">
+              <FieldRow icon={contactType === "vendor" ? Truck : UserCheck} label="Тип контакта">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setContactType("customer")}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-[4px] px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer",
+                      contactType === "customer"
+                        ? "bg-[#dcfce7] text-[#15803d]"
+                        : "bg-[#f5f5f5] text-[#666666] hover:bg-[#ebebeb]",
+                    )}
+                  >
+                    <UserCheck className="h-3 w-3" />
+                    <span>Клиент</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setContactType("vendor")}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-[4px] px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer",
+                      contactType === "vendor"
+                        ? "bg-[#fef9c3] text-[#a16207]"
+                        : "bg-[#f5f5f5] text-[#666666] hover:bg-[#ebebeb]",
+                    )}
+                  >
+                    <Truck className="h-3 w-3" />
+                    <span>Поставщик</span>
+                  </button>
+                </div>
+              </FieldRow>
               <FieldRow icon={Mail} label="Электронные...">
                 <input
                   type="email"

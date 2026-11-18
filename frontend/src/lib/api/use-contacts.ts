@@ -11,10 +11,13 @@ import { apiClient, API_BASE_URL, type ApiClientError, type ApiMeta } from "@/li
 import { readAccessToken } from "@/lib/auth/session";
 import type {
   ContactChannel,
+  ContactType,
   CreateContactPayload,
   SocialKind,
   UpdateContactPayload,
 } from "@/schemas/contact.schema";
+
+export type { ContactType } from "@/schemas/contact.schema";
 
 // ---------------------------------------------------------------------------
 // DTOs — mirror backend/src/modules/crm/contacts/contacts.types.ts.
@@ -53,6 +56,7 @@ export interface ContactDTO {
   companyName: string;
   companyId: string | null;
   channel: ContactChannel;
+  contactType: ContactType;
   /** Twenty: person.linkedinLink, группа social на карточке. */
   linkedinLink: string;
   city?: string;
@@ -84,6 +88,8 @@ export interface ContactsQueryParams {
   search?: string;
   companyId?: string;
   channel?: ContactChannel;
+  contactType?: ContactType;
+  contact_type?: ContactType;
   limit?: number;
   offset?: number;
 }
@@ -147,6 +153,7 @@ export function useContacts(
           search: params.search,
           company_id: params.companyId,
           channel: params.channel,
+          contact_type: params.contactType ?? params.contact_type,
           limit,
           offset,
         },
@@ -545,6 +552,8 @@ export interface ExportContactsPayload {
   format?: "csv" | "xlsx";
   search?: string;
   channel?: ContactChannel;
+  contact_type?: ContactType;
+  contactType?: ContactType;
 }
 
 export async function downloadContactsExport(payload: ExportContactsPayload = {}): Promise<void> {
@@ -561,6 +570,7 @@ export async function downloadContactsExport(payload: ExportContactsPayload = {}
       format: payload.format || "csv",
       search: payload.search,
       channel: payload.channel,
+      contact_type: payload.contactType ?? payload.contact_type,
     }),
     credentials: "include",
   });

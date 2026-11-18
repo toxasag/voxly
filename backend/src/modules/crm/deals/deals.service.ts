@@ -24,7 +24,7 @@ import type {
 } from "./deals.types.js";
 import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
-import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
+import { NotFoundError, ValidationError, UnprocessableEntityError } from "../../../plugins/errorHandler.js";
 import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
@@ -419,26 +419,42 @@ export class DealsService {
         [tenantId, payload.stage_id],
       );
 
+      // Валидация контакта: проверка принадлежности и запрет создания сделок с поставщиками
+      const contactId = nullIfBlank(payload.contact_id);
+      let contactInfo: { channel: string; socials: Array<{ kind: string }> } | null = null;
+      if (contactId) {
+        const contact = await tx.queryOne<{ id: string; contact_type: string; channel: string; socials: Array<{ kind: string }> }>(
+          `SELECT id, contact_type, channel, socials FROM contacts
+           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+          [contactId, tenantId],
+        );
+        if (contact === null) {
+          throw new ValidationError("contact_id does not belong to this tenant", {
+            contact_id: ["Unknown contact"],
+          });
+        }
+        if (contact.contact_type === "vendor") {
+          throw new UnprocessableEntityError("Нельзя создать сделку с поставщиком", {
+            contact_id: ["Сделка не может быть создана с контактом в статусе 'Поставщик'"],
+          });
+        }
+        contactInfo = contact;
+      }
+
       // Разрешение источника/канала коммуникации (source_widget_id)
       let resolvedSourceWidgetId = nullIfBlank(payload.source_widget_id);
-      if (!resolvedSourceWidgetId && payload.contact_id) {
-        const ctInfo = await tx.queryOne<{ channel: string; socials: Array<{ kind: string }> }>(
-          `SELECT channel, socials FROM contacts WHERE id = $1 AND tenant_id = $2`,
-          [payload.contact_id, tenantId],
-        );
-        if (ctInfo) {
-          const preferredChannel = ctInfo.socials?.find((s) => s.kind === "max")
-            ? "max"
-            : ctInfo.channel !== "phone"
-              ? ctInfo.channel
-              : null;
-          if (preferredChannel) {
-            const acc = await tx.queryOne<{ id: string }>(
-              `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL LIMIT 1`,
-              [tenantId, preferredChannel],
-            );
-            if (acc) resolvedSourceWidgetId = acc.id;
-          }
+      if (!resolvedSourceWidgetId && contactInfo) {
+        const preferredChannel = contactInfo.socials?.find((s) => s.kind === "max")
+          ? "max"
+          : contactInfo.channel !== "phone"
+            ? contactInfo.channel
+            : null;
+        if (preferredChannel) {
+          const acc = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL LIMIT 1`,
+            [tenantId, preferredChannel],
+          );
+          if (acc) resolvedSourceWidgetId = acc.id;
         }
       }
       if (!resolvedSourceWidgetId) {
@@ -574,8 +590,8 @@ export class DealsService {
   ): Promise<void> {
     const contactId = nullIfBlank(payload.contact_id);
     if (contactId !== null) {
-      const contact = await queryOne<{ id: string }>(
-        `SELECT id FROM contacts
+      const contact = await queryOne<{ id: string; contact_type: string }>(
+        `SELECT id, contact_type FROM contacts
          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [contactId, tenantId],
       );
@@ -583,6 +599,12 @@ export class DealsService {
       if (contact === null) {
         throw new ValidationError("contact_id does not belong to this tenant", {
           contact_id: ["Unknown contact"],
+        });
+      }
+
+      if (contact.contact_type === "vendor") {
+        throw new UnprocessableEntityError("Нельзя связать сделку с поставщиком", {
+          contact_id: ["Сделка не может быть создана или связана с контактом в статусе 'Поставщик'"],
         });
       }
     }

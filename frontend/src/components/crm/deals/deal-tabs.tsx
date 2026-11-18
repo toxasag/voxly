@@ -317,6 +317,7 @@ function HomeTab({
     companyName: deal.companyName ?? "",
     companyId: deal.companyId ?? null,
     channel: "phone" as ContactChannel,
+    contactType: "customer",
     linkedinLink: "",
     customFields: {},
     notes: "",
@@ -692,12 +693,19 @@ function HomeTab({
           </button>
           {filteredContacts.map((contact) => {
             const isSelected = contact.id === deal.contactId;
+            const isVendor = contact.contactType === "vendor";
             const name = contactFullName(contact);
             return (
               <button
                 key={contact.id}
                 type="button"
+                disabled={isVendor}
+                title={isVendor ? "Поставщик: создание и привязка сделок недоступны" : undefined}
                 onClick={() => {
+                  if (isVendor) {
+                    toast.error("Нельзя привязать сделку к поставщику");
+                    return;
+                  }
                   if (contact.id !== deal.contactId) {
                     updateDeal.mutate(
                       { id: deal.id, pipelineId: deal.pipelineId, payload: { contact_id: contact.id } },
@@ -710,7 +718,10 @@ function HomeTab({
                   setActivePicker(null);
                 }}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] transition-colors",
+                  isVendor
+                    ? "cursor-not-allowed opacity-60 bg-amber-50/40 text-[#888888]"
+                    : "hover:bg-[#f5f5f5] cursor-pointer",
                   isSelected && "bg-[#f5f5f5] font-medium",
                 )}
               >
@@ -725,7 +736,14 @@ function HomeTab({
                   </span>
                   <span className="truncate">{name}</span>
                 </div>
-                {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isVendor && (
+                    <span className="rounded-[4px] bg-[#fef9c3] px-1.5 py-0.5 text-[10px] font-medium text-[#a16207]">
+                      Поставщик
+                    </span>
+                  )}
+                  {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+                </div>
               </button>
             );
           })}

@@ -5,6 +5,7 @@ import type {
   ContactDealsHistoryDTO,
   ContactRow,
   ContactSocialJson,
+  ContactType,
   CreateContactPayload,
   UpdateContactPayload,
 } from "./contacts.types.js";
@@ -36,7 +37,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
   c.job_title, c.company_name, c.company_id, c.channel,
-  c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
+  c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.contact_type, c.created_by, c.created_at, c.updated_at,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
   u.name AS created_by_name
@@ -72,6 +73,7 @@ export interface ListContactsOptions {
   search?: string;
   companyId?: string;
   channel?: string;
+  contactType?: string;
   limit: number;
   offset: number;
 }
@@ -175,6 +177,11 @@ export class ContactsService {
     if (options.channel !== undefined) {
       params.push(options.channel);
       conditions.push(`c.channel = $${params.length}`);
+    }
+
+    if (options.contactType !== undefined) {
+      params.push(options.contactType);
+      conditions.push(`c.contact_type = $${params.length}`);
     }
 
     const where = conditions.join(" AND ");
@@ -340,9 +347,9 @@ export class ContactsService {
           email, telegram_username, telegram_chat_id, whatsapp, socials,
           job_title, company_name, company_id, channel, linkedin_link,
           city, address,
-          custom_fields, source_metadata, notes, created_by)
+          custom_fields, source_metadata, notes, contact_type, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb,
-               $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23, $24)
+               $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23, $24, $25)
        RETURNING id`,
       [
         tenantId,
@@ -368,6 +375,7 @@ export class ContactsService {
         JSON.stringify(payload.custom_fields ?? {}),
         JSON.stringify(payload.source_metadata ?? {}),
         payload.notes ?? "",
+        payload.contact_type ?? "customer",
         createdBy ?? null,
       ],
     );
@@ -451,6 +459,7 @@ export class ContactsService {
       }
 
       if (payload.channel !== undefined) push("channel", payload.channel);
+      if (payload.contact_type !== undefined) push("contact_type", payload.contact_type);
       if (payload.linkedin_link !== undefined) push("linkedin_link", payload.linkedin_link ?? "");
       if (payload.city !== undefined) push("city", payload.city ?? "");
       if (payload.address !== undefined) push("address", payload.address ?? "");
@@ -714,6 +723,7 @@ export class ContactsService {
       company_name: string;
       company_id: string | null;
       company_title: string | null;
+      contact_type: string | null;
       active_deal_id: string | null;
       active_deal_title: string | null;
       active_deal_budget: string | number | null;
@@ -721,7 +731,7 @@ export class ContactsService {
       active_deal_stage_name: string | null;
     }>(
       `SELECT
-         c.id, c.first_name, c.last_name, c.middle_name, c.phone,
+         c.id, c.first_name, c.last_name, c.middle_name, c.phone, c.contact_type,
          c.job_title, c.company_name, c.company_id,
          comp.name AS company_title,
          d.id AS active_deal_id,
@@ -776,6 +786,7 @@ export class ContactsService {
       normalizedPhone: normalizedE164,
       contact: {
         id: row.id,
+        contactType: (row.contact_type as ContactType) === "vendor" ? "vendor" : "customer",
         fullName,
         firstName: row.first_name,
         lastName: row.last_name,

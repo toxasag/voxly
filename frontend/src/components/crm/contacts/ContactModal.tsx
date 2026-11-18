@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   User, Phone, Mail, MessageCircle, Hash, Building2, Loader2, FileText, Tag, AlertCircle,
-  Linkedin, Briefcase, MapPin,
+  Linkedin, Briefcase, MapPin, Truck, UserCheck,
 } from "lucide-react";
 import { createContactSchema, type CreateContactPayload } from "@/schemas/contact.schema";
 import { ApiClientError } from "@/lib/api/apiClient";
@@ -45,6 +45,7 @@ const EMPTY_VALUES: CreateContactPayload = {
   first_name: "",
   last_name: "",
   middle_name: "",
+  contact_type: "customer",
   phones: [],
   email: "",
   socials: [],
@@ -64,6 +65,7 @@ const FORM_FIELDS = new Set<keyof CreateContactPayload>([
   "first_name",
   "last_name",
   "middle_name",
+  "contact_type",
   "phones",
   "email",
   "socials",
@@ -195,6 +197,46 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
                 <p className="text-xs text-rose-700">{rootError}</p>
               </div>
             )}
+
+            {/* Тип контакта: Клиент / Поставщик */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-[#666666]">
+                Тип контакта
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => form.setValue("contact_type", "customer", { shouldDirty: true, shouldValidate: true })}
+                  className={cn(
+                    "flex items-center justify-center gap-2 rounded-[8px] border px-3 py-2 text-xs font-medium transition-colors cursor-pointer",
+                    form.watch("contact_type") === "customer"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800 shadow-2xs font-semibold"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+                  )}
+                >
+                  <UserCheck className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>Клиент</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => form.setValue("contact_type", "vendor", { shouldDirty: true, shouldValidate: true })}
+                  className={cn(
+                    "flex items-center justify-center gap-2 rounded-[8px] border px-3 py-2 text-xs font-medium transition-colors cursor-pointer",
+                    form.watch("contact_type") === "vendor"
+                      ? "border-amber-300 bg-amber-50 text-amber-800 shadow-2xs font-semibold"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+                  )}
+                >
+                  <Truck className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>Поставщик</span>
+                </button>
+              </div>
+              {form.watch("contact_type") === "vendor" && (
+                <p className="text-[11px] text-[#854d0e]">
+                  Для контактов в статусе «Поставщик» создание сделок недоступно.
+                </p>
+              )}
+            </div>
 
             {/* ФИО: обязательна только «Имя» */}
             <div className="space-y-3">
