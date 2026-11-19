@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Briefcase,
@@ -109,6 +110,30 @@ function contactsPlural(count: number): string {
 }
 
 function ContactsPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const sortParam = searchParams.get("sort");
+  const orderParam = searchParams.get("order");
+  const sortColumn = sortParam || null;
+  const sortAsc = orderParam === "asc";
+
+  const handleSortChange = useCallback(
+    (columnId: string | null, asc: boolean) => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (columnId) {
+        next.set("sort", columnId);
+        next.set("order", asc ? "asc" : "desc");
+      } else {
+        next.delete("sort");
+        next.delete("order");
+      }
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<ContactChannel | "all">("all");
@@ -191,6 +216,8 @@ function ContactsPageContent() {
     contactType: contactTypeFilter === "all" ? undefined : contactTypeFilter,
     limit: PAGE_SIZE,
     offset: (page - 1) * PAGE_SIZE,
+    sort: sortColumn ?? undefined,
+    order: sortColumn ? (sortAsc ? "asc" : "desc") : undefined,
   });
 
   const createContact = useCreateContact();
@@ -775,6 +802,9 @@ function ContactsPageContent() {
             tableId="contacts"
             selectable={true}
             selectedIds={selected}
+            sortColumn={sortColumn}
+            sortAsc={sortAsc}
+            onSortChange={handleSortChange}
             onSelectionChange={(next) => {
               setSelected(next);
               if (next.size === 0) setIsAllSelected(false);
@@ -902,7 +932,9 @@ export default function ContactsPage() {
           description="У вашей роли нет права contacts:read. Запросите доступ у администратора рабочего пространства." />
       }
     >
-      <ContactsPageContent />
+      <Suspense fallback={<SkeletonTable rows={10} />}>
+        <ContactsPageContent />
+      </Suspense>
     </Guard>
   );
 }

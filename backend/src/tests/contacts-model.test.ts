@@ -475,3 +475,86 @@ describe("Контакт: тип контакта (клиент / поставщ
     expect(validDealRes.statusCode).toBe(201);
   });
 });
+
+describe("Контакт: актуальное имя компании и сортировка", () => {
+  it("подтягивает свежее название компании после переименования или обогащения", async () => {
+    const session = await signedInOwner();
+    const created = await post(session, {
+      first_name: "Кирилл",
+      company_name: "Компания ИНН 9702013705",
+    });
+    expect(created.statusCode).toBe(201);
+    const contact = created.json<{ data: ContactBody }>().data;
+    expect(contact.companyName).toBe("Компания ИНН 9702013705");
+
+    // Обновляем компанию в модуле companies
+    const companyId = contact.companyId;
+    expect(companyId).toBeDefined();
+    const patchCompany = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/crm/companies/${companyId}`,
+      headers: { authorization: `Bearer ${session.token}` },
+      payload: { name: 'ООО "ЦЕНТРИНЖИНИРИНГ"' },
+    });
+    expect(patchCompany.statusCode).toBe(200);
+
+    // Проверяем, что контакт отдает обновленное название компании и в деталях, и в списке
+    const getContact = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts/${contact.id}`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(getContact.statusCode).toBe(200);
+    expect(getContact.json<{ data: ContactBody }>().data.companyName).toBe('ООО "ЦЕНТРИНЖИНИРИНГ"');
+
+    const listContacts = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts?search=Кирилл`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(listContacts.statusCode).toBe(200);
+    const items = listContacts.json<{ data: ContactBody[] }>().data;
+    expect(items[0]?.companyName).toBe('ООО "ЦЕНТРИНЖИНИРИНГ"');
+  });
+
+  it("поддерживает серверную сортировку по компании через sort и order", async () => {
+    const session = await signedInOwner();
+    await post(session, { first_name: "Алексей", company_name: "Бетта" });
+    await post(session, { first_name: "Борис", company_name: "Альфа" });
+
+    const ascRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts?sort=company&order=asc`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(ascRes.statusCode).toBe(200);
+    const ascItems = ascRes.json<{ data: ContactBody[] }>().data;
+    expect(ascItems[0]?.companyName).toBe("Альфа");
+    expect(ascItems[1]?.companyName).toBe("Бетта");
+
+    const descRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts?sort=company&order=desc`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(descRes.statusCode).toBe(200);
+    const descItems = descRes.json<{ data: ContactBody[] }>().data;
+    expect(descItems[0]?.companyName).toBe("Бетта");
+    expect(descItems[1]?.companyName).toBe("Альфа");
+  });
+
+  it("отклоняет невалидный email (HTTP 400)", async () => {
+    const session = await signedInOwner();
+    const badRes = await post(session, {
+      first_name: "Иван",
+      email: 'ООО "ЦентрИнжиниринг"',
+    });
+    expect(badRes.statusCode).toBe(400);
+
+    const goodRes = await post(session, {
+      first_name: "Иван",
+      email: "ivan@example.com",
+    });
+    expect(goodRes.statusCode).toBe(201);
+  });
+});

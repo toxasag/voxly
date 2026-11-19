@@ -224,6 +224,13 @@ export class CompaniesService {
 
     if (updated === null) return null;
 
+    if (payload.name !== undefined) {
+      await query(
+        `UPDATE contacts SET company_name = $1 WHERE company_id = $2 AND tenant_id = $3`,
+        [payload.name, id, tenantId],
+      );
+    }
+
     // Перечитываем: RETURNING не отдаёт агрегаты и имя создателя — они приходят
     // JOIN-ами, и без этого inline-правка обнуляла бы счётчики на карточке.
     return this.get(tenantId, id);

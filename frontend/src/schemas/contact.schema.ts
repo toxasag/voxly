@@ -72,7 +72,7 @@ export const createContactSchema = z.object({
   last_name: z.string().max(100).optional().or(z.literal("")),
   middle_name: z.string().max(100).optional().or(z.literal("")),
   phones: z.array(contactPhoneSchema).max(10, "Слишком много номеров").optional(),
-  email: z.string().email("Некорректный e-mail").optional().or(z.literal("")),
+  email: z.string().trim().email("Некорректный e-mail").or(z.literal("")).nullable().optional(),
   socials: z.array(contactSocialSchema).max(20, "Слишком много профилей").optional(),
   job_title: z.string().max(150).optional().or(z.literal("")),
   company_name: z.string().max(200).optional().or(z.literal("")),

@@ -88,7 +88,7 @@ export const createContactSchema = z.object({
    * остальные уходят в additional_phones. Пустой список допустим.
    */
   phones: z.array(contactPhoneSchema).max(10, "Too many phone numbers").optional(),
-  email: z.string().email("Invalid email").optional().or(z.literal("")),
+  email: z.string().trim().email("Invalid email").or(z.literal("")).nullable().optional(),
   /** Мессенджеры и соцсети списком. */
   socials: z.array(contactSocialSchema).max(20, "Too many social profiles").optional(),
   telegram_chat_id: z.string().max(30).optional().or(z.literal("")),

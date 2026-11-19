@@ -37,7 +37,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.id, c.tenant_id, c.first_name, c.last_name, c.middle_name, c.phone,
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
-  c.job_title, c.company_name, c.company_id, c.company_inn, c.birth_date, c.channel,
+  c.job_title, COALESCE(comp.name, c.company_name) AS company_name, c.company_id, c.company_inn, c.birth_date, c.channel,
   c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.contact_type, c.created_by, c.created_at, c.updated_at,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
@@ -59,6 +59,7 @@ const CONTACT_COUNT_JOIN = `
       AND crm_tasks.tenant_id = c.tenant_id
       AND crm_tasks.deleted_at IS NULL
   ) t ON true
+  LEFT JOIN companies comp ON comp.id = c.company_id AND comp.tenant_id = c.tenant_id AND comp.deleted_at IS NULL
   -- Автор ограничен арендатором записи: таблица users не входит в список под RLS,
   -- поэтому JOIN только по id подставил бы имя пользователя чужого арендатора,
   -- окажись его идентификатор в created_by.
@@ -70,6 +71,13 @@ function nullIfBlank(value: string | null | undefined): string | null {
   return value;
 }
 
+function cleanEmail(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = value.trim();
+  if (trimmed === "" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
 export interface ListContactsOptions {
   search?: string;
   companyId?: string;
@@ -77,6 +85,8 @@ export interface ListContactsOptions {
   contactType?: string;
   limit: number;
   offset: number;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }
 
 /**
@@ -199,6 +209,7 @@ export class ContactsService {
           OR c.email ILIKE ${placeholder}
           OR c.job_title ILIKE ${placeholder}
           OR c.company_name ILIKE ${placeholder}
+          OR comp.name ILIKE ${placeholder}
           OR EXISTS (
             SELECT 1 FROM jsonb_array_elements(c.additional_phones) AS extra
             WHERE extra ->> 'number' ILIKE ${placeholder}
@@ -228,18 +239,55 @@ export class ContactsService {
     const where = conditions.join(" AND ");
 
     const countRow = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM contacts c WHERE ${where}`,
+      `SELECT COUNT(*)::text AS total
+       FROM contacts c
+       LEFT JOIN companies comp ON comp.id = c.company_id AND comp.tenant_id = c.tenant_id AND comp.deleted_at IS NULL
+       WHERE ${where}`,
       params,
     );
 
     params.push(options.limit, options.offset);
+
+    let orderBy = "c.created_at DESC";
+    if (options.sortBy) {
+      const direction = options.sortOrder === "asc" ? "ASC" : "DESC";
+      switch (options.sortBy) {
+        case "name":
+          orderBy = `c.first_name ${direction}, c.last_name ${direction}`;
+          break;
+        case "company":
+        case "company_name":
+          orderBy = `COALESCE(comp.name, c.company_name) ${direction}`;
+          break;
+        case "email":
+          orderBy = `c.email ${direction} NULLS LAST`;
+          break;
+        case "phone":
+          orderBy = `c.phone ${direction} NULLS LAST`;
+          break;
+        case "jobTitle":
+        case "job_title":
+          orderBy = `c.job_title ${direction} NULLS LAST`;
+          break;
+        case "contact_type":
+          orderBy = `c.contact_type ${direction}`;
+          break;
+        case "created":
+        case "created_at":
+          orderBy = `c.created_at ${direction}`;
+          break;
+        default:
+          orderBy = "c.created_at DESC";
+          break;
+      }
+    }
 
     const rows = await query<ContactRow>(
       `SELECT ${CONTACT_COLUMNS_WITH_COUNTS}
        FROM contacts c
        ${CONTACT_COUNT_JOIN}
        WHERE ${where}
-       ORDER BY c.created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -402,7 +450,7 @@ export class ContactsService {
         phones.countryCode,
         phones.callingCode,
         JSON.stringify(phones.additional),
-        nullIfBlank(payload.email),
+        cleanEmail(payload.email),
         socialValue(socials, "telegram"),
         nullIfBlank(payload.telegram_chat_id),
         socialValue(socials, "whatsapp"),
@@ -461,7 +509,7 @@ export class ContactsService {
         pushJson("additional_phones", phones.additional);
       }
 
-      if (payload.email !== undefined) push("email", nullIfBlank(payload.email));
+      if (payload.email !== undefined) push("email", cleanEmail(payload.email));
 
       // Соцсети тоже приходят списком, и вместе с ними синхронизируются колонки
       // telegram_username / whatsapp: по ним ищет транспорт каналов.

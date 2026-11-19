@@ -94,6 +94,10 @@ export interface ContactsQueryParams {
   contact_type?: ContactType;
   limit?: number;
   offset?: number;
+  sort?: string;
+  order?: "asc" | "desc";
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }
 
 /** Metadata returned by DELETE when the contact still had linked deals. */
@@ -158,6 +162,8 @@ export function useContacts(
           contact_type: params.contactType ?? params.contact_type,
           limit,
           offset,
+          sort: params.sort ?? params.sortBy,
+          order: params.order ?? params.sortOrder,
         },
       });
 
