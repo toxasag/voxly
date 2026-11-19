@@ -63,6 +63,7 @@ export interface BufferedIncoming {
   /** Сколько сообщений вошло в пачку: попадает в лог, помогает объяснить расход. */
   messageCount: number;
   firstMessageAt: Date;
+  sourceMetadata?: Record<string, unknown>;
 }
 
 interface BufferEntry {
@@ -77,6 +78,7 @@ interface BufferEntry {
   timer: NodeJS.Timeout;
   /** Абсолютный дедлайн от первого сообщения: продление не должно его обходить. */
   hardDeadlineAt: number;
+  sourceMetadata?: Record<string, unknown>;
 }
 
 interface Logger {
@@ -119,6 +121,7 @@ export class IncomingMessageBuffer {
     chatId: string;
     peerId: string;
     text: string;
+    sourceMetadata?: Record<string, unknown>;
   }): void {
     const key = bufferKey(input);
     const now = Date.now();
@@ -136,10 +139,18 @@ export class IncomingMessageBuffer {
         firstMessageAt: new Date(now),
         hardDeadlineAt: now + DEBOUNCE_MAX_TOTAL_MS,
         timer: this.arm(key, nextDelayMs()),
+        sourceMetadata: input.sourceMetadata,
       };
 
       this.entries.set(key, entry);
       return;
+    }
+
+    if (input.sourceMetadata && Object.keys(input.sourceMetadata).length > 0) {
+      existing.sourceMetadata = {
+        ...existing.sourceMetadata,
+        ...input.sourceMetadata,
+      };
     }
 
     // Переполнение: сообщение считается, но в промпт не идёт. Отбрасывать молча
@@ -211,6 +222,7 @@ export class IncomingMessageBuffer {
         text: entry.parts.join("\n"),
         messageCount: entry.parts.length,
         firstMessageAt: entry.firstMessageAt,
+        sourceMetadata: entry.sourceMetadata,
       });
     } catch (error) {
       // Ошибка ответа не должна ронять слушателя: следующее сообщение клиента

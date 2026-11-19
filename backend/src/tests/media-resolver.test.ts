@@ -86,4 +86,26 @@ describe("media-resolver", () => {
       await fs.unlink(testPath).catch(() => {});
     }
   });
+
+  it("resolveOutboundMedia разрешает файл с URL-encoded кириллицей", async () => {
+    const uploadsDir = path.resolve(process.cwd(), "uploads");
+    await fs.mkdir(uploadsDir, { recursive: true });
+
+    const literalName = "c0000000-0000-0000-0000-000000000001_839bfe27-dd8c-48ed-a7c4-ba7f1853a4bd_Скриншот экрана.jpg";
+    const testPath = path.join(uploadsDir, literalName);
+    const testBuffer = Buffer.from("fake-jpeg-binary-data");
+    await fs.writeFile(testPath, testBuffer);
+
+    try {
+      const encodedUrl = `/uploads/${encodeURIComponent(literalName)}`;
+      const resolved = await resolveOutboundMedia(encodedUrl);
+      expect(resolved).not.toBeNull();
+      expect(resolved?.filename).toBe("Скриншот экрана.jpg");
+      expect(resolved?.mimeType).toBe("image/jpeg");
+      expect(resolved?.category).toBe("image");
+      expect(resolved?.buffer.toString()).toBe(testBuffer.toString());
+    } finally {
+      await fs.unlink(testPath).catch(() => {});
+    }
+  });
 });
