@@ -303,6 +303,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   job_title TEXT NOT NULL DEFAULT '',
   company_name TEXT NOT NULL DEFAULT '',
   company_id UUID,
+  company_inn TEXT,
+  birth_date DATE,
   channel TEXT NOT NULL DEFAULT 'phone',
   -- Twenty: person.linkedinLink, группа social на record page.
   linkedin_link TEXT NOT NULL DEFAULT '',
@@ -312,6 +314,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes TEXT NOT NULL DEFAULT '',
   last_seen_at TIMESTAMPTZ,
   is_online BOOLEAN NOT NULL DEFAULT false,
+  contact_type VARCHAR(32) NOT NULL DEFAULT 'customer',
   -- Twenty: person.createdBy (ActorMetadata), группа system. NULL = система/импорт.
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -336,7 +339,8 @@ CREATE TABLE IF NOT EXISTS contacts (
       socials,
       '$[*] ? (@.type() != "object" || !(exists(@.kind ? (@.type() == "string"))) || !(exists(@.value ? (@.type() == "string"))))'
     )
-  )
+  ),
+  CONSTRAINT contacts_contact_type_check CHECK (contact_type IN ('customer', 'vendor'))
 );
 
 CREATE TABLE IF NOT EXISTS companies (
@@ -347,6 +351,7 @@ CREATE TABLE IF NOT EXISTS companies (
   phone TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   inn TEXT NOT NULL DEFAULT '',
+  kpp TEXT NOT NULL DEFAULT '',
   ogrn TEXT NOT NULL DEFAULT '',
   bik TEXT NOT NULL DEFAULT '',
   account_number TEXT NOT NULL DEFAULT '',

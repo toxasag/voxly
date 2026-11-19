@@ -42,6 +42,15 @@ export class MediaEnrichmentService {
       if (existsSync(fullPath)) {
         return fullPath;
       }
+      try {
+        const decoded = decodeURIComponent(filename);
+        if (decoded !== filename) {
+          const decodedPath = path.join(dir, decoded);
+          if (existsSync(decodedPath)) {
+            return decodedPath;
+          }
+        }
+      } catch {}
     }
 
     return null;

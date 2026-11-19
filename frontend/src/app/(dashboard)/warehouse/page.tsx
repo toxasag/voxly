@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
@@ -31,6 +31,7 @@ import {
   FileSpreadsheet,
   Eye,
   Edit2,
+  SquarePen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -67,6 +68,7 @@ import { SupplierOrderDetailModal } from "@/components/warehouse/SupplierOrderDe
 import { ReceiptSupplierOrderModal } from "@/components/warehouse/ReceiptSupplierOrderModal";
 import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
 import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
+import { EditItemModal } from "@/components/warehouse/EditItemModal";
 import { cn } from "@/lib/utils";
 
 type WarehouseTab = "items" | "batches" | "purchases" | "supplier_orders" | "movements";
@@ -136,6 +138,8 @@ function WarehouseContent() {
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
+  const [editItemModalOpen, setEditItemModalOpen] = useState(false);
+  const [selectedItemForEdit, setSelectedItemForEdit] = useState<WarehouseItemDTO | null>(null);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   useClickOutside(exportDropdownRef, () => setExportDropdownOpen(false), exportDropdownOpen);
@@ -367,6 +371,46 @@ function WarehouseContent() {
       toast.error(err instanceof Error ? err.message : "Ошибка при удалении товара");
     }
   };
+
+  const handleOpenEditItemModal = (item: WarehouseItemDTO) => {
+    setSelectedItemForEdit(item);
+    setEditItemModalOpen(true);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("edit", item.id);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleCloseEditItemModal = () => {
+    setEditItemModalOpen(false);
+    setSelectedItemForEdit(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("edit");
+    params.delete("record");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleBulkEditClick = () => {
+    if (selectedItemIds.size === 1) {
+      const selectedId = Array.from(selectedItemIds)[0];
+      const item = items.find((i) => i.id === selectedId);
+      if (item) {
+        handleOpenEditItemModal(item);
+        return;
+      }
+    }
+    setBulkEditModalOpen(true);
+  };
+
+  const editParam = searchParams.get("edit") || searchParams.get("record");
+  useEffect(() => {
+    if (editParam && items.length > 0 && !editItemModalOpen) {
+      const found = items.find((i) => i.id === editParam);
+      if (found) {
+        setSelectedItemForEdit(found);
+        setEditItemModalOpen(true);
+      }
+    }
+  }, [editParam, items, editItemModalOpen]);
 
   const handleOpenIntakeForItem = (item: WarehouseItemDTO) => {
     setIntakeInitialItem(item);
@@ -726,6 +770,9 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Наименование
                   </th>
+                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
+                    Категория
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
                     Бренд
                   </th>
@@ -774,9 +821,9 @@ function WarehouseContent() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-[13px] text-[#111111]">{item.name}</div>
-                        {item.category && (
-                          <span className="text-[11px] text-[#888888]">{item.category}</span>
-                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-[#666666]">{item.category || "—"}</span>
                       </td>
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#111111] font-medium">{item.brand || "—"}</span>
@@ -823,11 +870,11 @@ function WarehouseContent() {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             type="button"
-                            onClick={() => handleOpenIntakeForItem(item)}
-                            className="rounded p-1 text-[#888888] hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
-                            title="Оприходовать партию этого товара"
+                            onClick={() => handleOpenEditItemModal(item)}
+                            className="rounded p-1 text-[#888888] hover:text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors"
+                            title="Редактировать товар"
                           >
-                            <ArrowDownToLine className="h-3.5 w-3.5" />
+                            <SquarePen className="h-3.5 w-3.5" />
                           </button>
                           <button
                             type="button"
@@ -844,7 +891,7 @@ function WarehouseContent() {
                 })}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={11} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isItemsLoading ? "Загрузка каталога склада..." : "Товаров не найдено."}
                     </td>
                   </tr>
@@ -1476,6 +1523,16 @@ function WarehouseContent() {
         }}
       />
 
+      <EditItemModal
+        open={editItemModalOpen}
+        itemId={selectedItemForEdit?.id ?? null}
+        initialItem={selectedItemForEdit}
+        onClose={handleCloseEditItemModal}
+        onSuccess={() => {
+          setSelectedItemIds(new Set());
+        }}
+      />
+
       {/* Floating Action Bar при выборе позиций */}
       {selectedItemIds.size > 0 && activeTab === "items" && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-2xl border border-[#e5e5e5] bg-white px-5 py-3 shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
@@ -1489,7 +1546,7 @@ function WarehouseContent() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setBulkEditModalOpen(true)}
+              onClick={handleBulkEditClick}
               className="flex h-7 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />

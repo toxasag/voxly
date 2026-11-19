@@ -16,6 +16,9 @@ import { z } from "zod";
 
 export const contactChannelSchema = z.enum(["telegram", "whatsapp", "max", "rumax", "phone", "email"]);
 
+export const contactTypeSchema = z.enum(["customer", "vendor"]);
+export type ContactType = z.infer<typeof contactTypeSchema>;
+
 const optionalUuid = z.string().uuid().optional().or(z.literal(""));
 
 /**
@@ -93,7 +96,10 @@ export const createContactSchema = z.object({
   /** Компания необязательна: у физлица её нет. */
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_id: optionalUuid,
+  company_inn: z.string().max(30).optional().nullable().or(z.literal("")),
+  birth_date: z.string().optional().nullable().or(z.literal("")),
   channel: contactChannelSchema.default("phone"),
+  contact_type: contactTypeSchema.default("customer").optional(),
   /**
    * Twenty: person.linkedinLink, группа social.
    *
@@ -110,7 +116,9 @@ export const createContactSchema = z.object({
   merge_if_duplicate: z.boolean().optional(),
 });
 
-export const updateContactSchema = createContactSchema.partial();
+export const updateContactSchema = createContactSchema.partial().extend({
+  created_at: z.string().datetime({ offset: true }).or(z.string().datetime()).optional().or(z.literal("")),
+});
 
 export type CreateContactPayload = z.infer<typeof createContactSchema>;
 export type UpdateContactPayload = z.infer<typeof updateContactSchema>;
@@ -149,6 +157,8 @@ export interface ContactRow {
   job_title: string;
   company_name: string;
   company_id: string | null;
+  company_inn?: string | null;
+  birth_date?: Date | string | null;
   channel: ContactChannel;
   linkedin_link: string;
   city: string;
@@ -158,6 +168,7 @@ export interface ContactRow {
   notes: string;
   is_personal?: boolean;
   suppress_deal_creation?: boolean;
+  contact_type?: ContactType | string;
   created_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -199,6 +210,8 @@ export interface ContactDTO {
   jobTitle: string;
   companyName: string;
   companyId: string | null;
+  companyInn?: string | null;
+  birthDate?: string | null;
   channel: ContactChannel;
   linkedinLink: string;
   city: string;
@@ -208,6 +221,7 @@ export interface ContactDTO {
   notes: string;
   isPersonal?: boolean;
   suppressDealCreation?: boolean;
+  contactType: ContactType;
   createdBy: string | null;
   /** Отображаемое имя создателя для группы «Система» на карточке. */
   createdByName: string | null;
@@ -286,6 +300,12 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     jobTitle: row.job_title,
     companyName: row.company_name,
     companyId: row.company_id,
+    companyInn: row.company_inn ?? null,
+    birthDate: row.birth_date
+      ? row.birth_date instanceof Date
+        ? row.birth_date.toISOString().slice(0, 10)
+        : String(row.birth_date).slice(0, 10)
+      : null,
     channel: row.channel,
     linkedinLink: row.linkedin_link,
     city: row.city ?? "",
@@ -295,6 +315,7 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     notes: row.notes,
     isPersonal: Boolean(row.is_personal),
     suppressDealCreation: Boolean(row.suppress_deal_creation),
+    contactType: (row.contact_type as ContactType) === "vendor" ? "vendor" : "customer",
     createdBy: row.created_by,
     createdByName: row.created_by_name ?? null,
     createdAt: toIso(row.created_at),
@@ -437,6 +458,7 @@ export interface ContactDealsHistoryDTO {
 
 export interface CallerIdContactDTO {
   id: string;
+  contactType?: ContactType;
   fullName: string;
   firstName: string;
   lastName: string;

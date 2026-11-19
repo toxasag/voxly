@@ -8,6 +8,11 @@ import {
   toContactDTO,
   updateContactSchema,
 } from "./contacts.types.js";
+import {
+  ContactsIOService,
+  contactImportValidateSchema,
+  contactImportCommitSchema,
+} from "./contacts-io.service.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { DealMessagingService } from "../deals/deal-messaging.service.js";
 import { createDealMessageSchema } from "../deals/deals.types.js";
@@ -20,6 +25,7 @@ const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
   company_id: z.string().uuid().optional(),
   channel: contactChannelSchema.optional(),
+  contact_type: z.enum(["customer", "vendor"]).optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
 });
@@ -51,12 +57,13 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
   const canDelete = app.requirePermission("contacts:delete");
 
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { search, company_id, channel, limit, offset } = listQuerySchema.parse(request.query);
+    const { search, company_id, channel, contact_type, limit, offset } = listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       search,
       companyId: company_id,
       channel,
+      contactType: contact_type,
       limit,
       offset,
     });
@@ -142,6 +149,90 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
         deal_id: targetDealId ?? null,
       },
     });
+  });
+
+  const contactsIo = new ContactsIOService();
+
+  // Экспорт контактов в CSV / XLSX
+  const exportContactsQuerySchema = z.object({
+    format: z.enum(["csv", "xlsx"]).default("csv"),
+    search: z.string().max(200).optional(),
+    channel: contactChannelSchema.optional(),
+  });
+
+  app.get("/export", { onRequest: canRead }, async (request, reply) => {
+    const { format, search, channel } = exportContactsQuerySchema.parse(request.query);
+    const { buffer, filename, contentType } = await contactsIo.exportContacts(request.tenant_id, {
+      format,
+      search,
+      channel,
+    });
+    return reply
+      .header("Content-Type", contentType)
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
+      .send(buffer);
+  });
+
+  app.post("/export", { onRequest: canRead }, async (request, reply) => {
+    const { format, search, channel } = exportContactsQuerySchema.parse(request.body ?? {});
+    const { buffer, filename, contentType } = await contactsIo.exportContacts(request.tenant_id, {
+      format,
+      search,
+      channel,
+    });
+    return reply
+      .header("Content-Type", contentType)
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
+      .send(buffer);
+  });
+
+  // Парсинг загруженного файла импорта (XLSX / CSV)
+  app.post("/import/parse", { onRequest: canWrite, bodyLimit: 50 * 1024 * 1024 }, async (request, reply) => {
+    if (request.isMultipart()) {
+      const file = await request.file({ limits: { fileSize: 50 * 1024 * 1024 } });
+      if (!file) {
+        return reply.status(400).send({ error: "Файл не передан" });
+      }
+      const buffer = await file.toBuffer();
+      const delimiter =
+        typeof file.fields?.delimiter === "object" && file.fields.delimiter && "value" in file.fields.delimiter
+          ? String(file.fields.delimiter.value)
+          : undefined;
+      const parsed = await contactsIo.parseImportFile(buffer, file.filename, delimiter);
+      return reply.send({ data: parsed });
+    }
+
+    const body = request.body as
+      | { fileBase64?: string; csvText?: string; filename?: string; delimiter?: string }
+      | undefined;
+    if (body?.fileBase64) {
+      const buffer = Buffer.from(body.fileBase64, "base64");
+      const filename = body.filename || "contacts.xlsx";
+      const parsed = await contactsIo.parseImportFile(buffer, filename, body.delimiter);
+      return reply.send({ data: parsed });
+    }
+
+    if (body?.csvText) {
+      const buffer = Buffer.from(body.csvText, "utf8");
+      const parsed = await contactsIo.parseImportFile(buffer, "contacts.csv", body.delimiter);
+      return reply.send({ data: parsed });
+    }
+
+    return reply.status(400).send({ error: "Не передан файл для парсинга" });
+  });
+
+  // Валидация колонок и превью дубликатов
+  app.post("/import/validate", { onRequest: canWrite, bodyLimit: 50 * 1024 * 1024 }, async (request, reply) => {
+    const body = contactImportValidateSchema.parse(request.body);
+    const result = await contactsIo.validateImport(request.tenant_id, body);
+    return reply.send({ data: result });
+  });
+
+  // Фиксация импорта контактов (со сделками, дедупликацией и ресёрчем)
+  app.post("/import/commit", { onRequest: canWrite, bodyLimit: 50 * 1024 * 1024 }, async (request, reply) => {
+    const body = contactImportCommitSchema.parse(request.body);
+    const result = await contactsIo.commitImport(request.tenant_id, request.authUser.id, body);
+    return reply.send({ data: result });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {

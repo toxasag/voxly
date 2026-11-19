@@ -73,13 +73,15 @@ export class DealMessagingService {
       whatsapp: string | null;
       phone: string;
       socials?: ContactSocialJson[];
+      custom_fields?: Record<string, unknown> | null;
     }>(
       `SELECT d.contact_id,
               c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
               c.phone,
-              c.socials
+              c.socials,
+              c.custom_fields
        FROM deals d
        LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id AND c.deleted_at IS NULL
        WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
@@ -94,6 +96,7 @@ export class DealMessagingService {
       whatsapp: null,
       phone: "",
       socials: [],
+      custom_fields: null,
     };
 
     const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
@@ -107,6 +110,7 @@ export class DealMessagingService {
     const lastMsgAccountRow = await query<{ channel_account_id: string | null; channel: string }>(
       `SELECT channel_account_id, channel FROM deal_messages
        WHERE tenant_id = $1 AND deal_id = $2
+         AND channel != 'system'
        ORDER BY created_at DESC LIMIT 1`,
       [tenantId, dealId],
     );
@@ -124,7 +128,9 @@ export class DealMessagingService {
       if (!hasContact) {
         unavailableReason = "К сделке не привязан контакт";
       } else if (acc.channel === "telegram") {
-        if (contact.telegram_chat_id || contact.telegram_username || contact.phone) {
+        const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+        const hasValidTgChatId = contact.telegram_chat_id && contact.telegram_chat_id !== systemBotId;
+        if (hasValidTgChatId || contact.telegram_username || contact.phone) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан Telegram (@username) или номер телефона";
@@ -136,8 +142,12 @@ export class DealMessagingService {
           unavailableReason = "У контакта не указан номер телефона для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
+        const hasMaxChatId = Boolean(
+          typeof contact.custom_fields?.max_chat_id === "string" &&
+          contact.custom_fields.max_chat_id.trim().length > 0
+        );
         const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
-        if (contact.phone || hasMaxSocial) {
+        if (contact.phone || hasMaxSocial || hasMaxChatId) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан номер телефона для MAX";
@@ -322,7 +332,8 @@ export class DealMessagingService {
          c.telegram_username,
          c.whatsapp,
          c.phone,
-         c.socials
+         c.socials,
+         c.custom_fields
        FROM deals d
        LEFT JOIN contacts c
          ON c.id = d.contact_id
@@ -373,12 +384,16 @@ export class DealMessagingService {
       whatsapp: string | null;
       phone: string;
       socials?: ContactSocialJson[];
+      custom_fields?: Record<string, unknown> | null;
     },
   ): string | null {
     if (channel === "telegram") {
-      // Числовой id, а не username: транспорт обращается к peer по нему, и
-      // username мог измениться после первого сообщения.
-      return contact.telegram_chat_id ?? contact.telegram_username ?? (contact.phone && contact.phone.length > 0 ? contact.phone : null);
+      const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+      const validChatId =
+        contact.telegram_chat_id && contact.telegram_chat_id !== systemBotId
+          ? contact.telegram_chat_id
+          : null;
+      return validChatId ?? contact.telegram_username ?? (contact.phone && contact.phone.length > 0 ? contact.phone : null);
     }
 
     if (channel === "whatsapp") {
@@ -387,6 +402,8 @@ export class DealMessagingService {
     }
 
     if (channel === "max" || channel === "rumax") {
+      const maxChatId = typeof contact.custom_fields?.max_chat_id === "string" ? contact.custom_fields.max_chat_id.trim() : undefined;
+      if (maxChatId && maxChatId.length > 0) return maxChatId;
       const maxSocial = contact.socials?.find((s) => s.kind === "max")?.value;
       if (maxSocial && maxSocial.length > 0) return maxSocial;
       return contact.phone && contact.phone.length > 0 ? contact.phone : null;

@@ -17,6 +17,8 @@ export interface WarehouseItemDTO {
   totalStock: number;
   reservedStock: number;
   availableStock: number;
+  price?: number;
+  quantity?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -244,6 +246,19 @@ export function useWarehouseItems(search?: string) {
       const res = await apiClient.get<WarehouseItemDTO[]>(`/api/v1/warehouse/items${params}`);
       return res.data;
     },
+    staleTime: 30_000,
+  });
+}
+
+export function useWarehouseItem(id?: string | null) {
+  return useQuery({
+    queryKey: ["warehouse", "items", id],
+    queryFn: async () => {
+      if (!id) throw new Error("Item ID is required");
+      const res = await apiClient.get<WarehouseItemDTO>(`/api/v1/warehouse/items/${id}`);
+      return res.data;
+    },
+    enabled: Boolean(id),
     staleTime: 30_000,
   });
 }

@@ -148,8 +148,8 @@ export async function resolveOutboundMedia(
 
     // 1. Попытка чтения с локального диска (папка uploads)
     const uploadsDir = path.resolve(process.cwd(), "uploads");
-    const safeBase = path.basename(attachment.split("?")[0] || "");
-    const localCandidate = path.join(uploadsDir, safeBase);
+    let safeBase = path.basename(attachment.split("?")[0] || "");
+    let localCandidate = path.join(uploadsDir, safeBase);
 
     try {
       const stat = await fs.stat(localCandidate);
@@ -157,7 +157,17 @@ export async function resolveOutboundMedia(
         buffer = await fs.readFile(localCandidate);
       }
     } catch {
-      // Файл не найден по прямому пути в uploads, проверяем дальше
+      try {
+        const decoded = decodeURIComponent(safeBase);
+        if (decoded !== safeBase) {
+          const decodedCandidate = path.join(uploadsDir, decoded);
+          const stat = await fs.stat(decodedCandidate);
+          if (stat.isFile()) {
+            buffer = await fs.readFile(decodedCandidate);
+            safeBase = decoded;
+          }
+        }
+      } catch {}
     }
 
     // 2. Если файл не найден локально, но передан URL (http/https)

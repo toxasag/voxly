@@ -7,6 +7,8 @@ import {
   Building2,
   Calendar,
   Clock,
+  ChevronDown,
+  Download,
   Handshake,
   Linkedin,
   Mail,
@@ -17,15 +19,19 @@ import {
   Search,
   Tag,
   Trash2,
+  Truck,
+  Upload,
   User,
   UserCheck,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
+import { ContactImportDialog } from "@/components/crm/contacts/ContactImportDialog";
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { Sheet } from "@/components/ui/sheet";
 import { ContactCard } from "@/components/crm/contacts/ContactCard";
+import { DropdownMenu, MenuItem } from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
@@ -54,6 +60,7 @@ import {
   useCreateContact,
   useDeleteContact,
   useUpdateContact,
+  useExportContacts,
   type ContactDTO,
 } from "@/lib/api/use-contacts";
 import type { ContactChannel, CreateContactPayload } from "@/schemas/contact.schema";
@@ -71,6 +78,12 @@ const CHANNEL_FILTERS = [
   { value: "rumax", label: "RuMAX" },
   { value: "phone", label: "Телефон" },
   { value: "email", label: "E-mail" },
+] as const;
+
+const CONTACT_TYPE_FILTERS = [
+  { value: "all", label: "Все" },
+  { value: "customer", label: "Клиенты" },
+  { value: "vendor", label: "Поставщики" },
 ] as const;
 
 const PAGE_SIZE = DEFAULT_PAGE_SIZE;
@@ -97,9 +110,31 @@ function ContactsPageContent() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<ContactChannel | "all">("all");
+  const [contactTypeFilter, setContactTypeFilter] = useState<"all" | "customer" | "vendor">("all");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ContactDTO | null>(null);
+
+  const exportMutation = useExportContacts();
+
+  const handleExport = useCallback(
+    async (format: "csv" | "xlsx") => {
+      try {
+        toast.info(`Экспорт контактов в ${format.toUpperCase()} запущен...`);
+        await exportMutation.mutateAsync({
+          format,
+          search: search || undefined,
+          channel: channelFilter !== "all" ? channelFilter : undefined,
+          contact_type: contactTypeFilter !== "all" ? contactTypeFilter : undefined,
+        });
+        toast.success(`Файл контактов (${format.toUpperCase()}) успешно скачан`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось экспортировать контакты");
+      }
+    },
+    [exportMutation, search, channelFilter, contactTypeFilter],
+  );
   /**
    * Открытая карточка хранится идентификатором, а не объектом.
    *
@@ -149,6 +184,7 @@ function ContactsPageContent() {
   const query = useContacts({
     search: search.length > 0 ? search : undefined,
     channel: channelFilter === "all" ? undefined : channelFilter,
+    contactType: contactTypeFilter === "all" ? undefined : contactTypeFilter,
     limit: PAGE_SIZE,
     offset: (page - 1) * PAGE_SIZE,
   });
@@ -166,7 +202,7 @@ function ContactsPageContent() {
     : contacts.find((contact) => contact.id === detailId) ?? null;
   const total = query.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = search.length > 0 || channelFilter !== "all";
+  const hasFilters = search.length > 0 || channelFilter !== "all" || contactTypeFilter !== "all";
 
   // Deleting the last row of the last page would otherwise leave the user on an
   // empty page with no way back.
@@ -309,6 +345,28 @@ function ContactsPageContent() {
             <ContactAvatarCell name={contactFullName(contact)} />
           </RecordCellShell>
         ),
+    },
+    {
+      id: "contact_type",
+      header: "Тип",
+      icon: Users,
+      width: 120,
+      sortValue: (contact) => (contact.contactType === "vendor" ? "Поставщик" : "Клиент"),
+      render: (contact) => (
+        <RecordCellShell align="left">
+          {contact.contactType === "vendor" ? (
+            <TagPill color="amber" className="gap-1">
+              <Truck className="h-3 w-3" />
+              Поставщик
+            </TagPill>
+          ) : (
+            <TagPill color="emerald" className="gap-1">
+              <UserCheck className="h-3 w-3" />
+              Клиент
+            </TagPill>
+          )}
+        </RecordCellShell>
+      ),
     },
     {
       id: "email",
@@ -546,6 +604,47 @@ function ContactsPageContent() {
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />Обновляем
             </span>
           )}
+
+          {/* Экспорт контактов */}
+          <DropdownMenu
+            trigger={
+              <button
+                type="button"
+                disabled={exportMutation.isPending}
+                className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] disabled:opacity-50 cursor-pointer"
+                title="Экспорт контактов в Excel или CSV"
+              >
+                <Download className="h-3.5 w-3.5 text-[#666666]" />
+                <span className="hidden sm:inline">Экспорт</span>
+                <ChevronDown className="h-3 w-3 text-[#888888]" />
+              </button>
+            }
+          >
+            <MenuItem
+              label="Экспорт в Excel (.xlsx)"
+              hint="XLSX"
+              onSelect={() => handleExport("xlsx")}
+            />
+            <MenuItem
+              label="Экспорт в CSV (.csv)"
+              hint="CSV (UTF-8)"
+              onSelect={() => handleExport("csv")}
+            />
+          </DropdownMenu>
+
+          {/* Импорт контактов */}
+          <Guard requiredPermission="contacts:write">
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] cursor-pointer"
+              title="Импорт контактов из Excel или CSV"
+            >
+              <Upload className="h-3.5 w-3.5 text-[#666666]" />
+              <span className="hidden sm:inline">Импорт</span>
+            </button>
+          </Guard>
+
           <Guard requiredPermission="contacts:write">
             <button type="button" onClick={() => setCreateOpen(true)}
               className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0]">
@@ -562,6 +661,31 @@ function ContactsPageContent() {
             placeholder="Поиск по имени, телефону, e-mail, компании..." aria-label="Поиск контактов"
             className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20" />
         </div>
+
+        {/* Фильтры типа: Все / Клиенты / Поставщики */}
+        <div className="flex items-center gap-1 border-r border-[#e5e5e5] pr-2">
+          {CONTACT_TYPE_FILTERS.map((filter) => (
+            <button
+              key={filter.value}
+              type="button"
+              onClick={() => {
+                setContactTypeFilter(filter.value);
+                setPage(1);
+                setSelected(new Set());
+              }}
+              aria-pressed={contactTypeFilter === filter.value}
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                contactTypeFilter === filter.value
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-semibold"
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+              )}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+
         {/*
           Фильтры каналов на 360px не помещались в ряд и выносили страницу за
           край. Как на задачах: горизонтальная прокрутка до `md:`, с `md:` —
@@ -691,6 +815,12 @@ function ContactsPageContent() {
       {editTarget !== null && (
         <ContactModal open onClose={() => setEditTarget(null)} onSubmit={handleUpdate} initial={editInitialValues} />
       )}
+
+      <ContactImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onSuccess={() => void query.refetch()}
+      />
 
       {detailTarget !== null && (
         <ContactCard contact={detailTarget}

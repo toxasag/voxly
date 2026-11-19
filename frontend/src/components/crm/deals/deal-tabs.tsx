@@ -208,6 +208,7 @@ function HomeTab({
 
   // Редактирование даты закрытия
   const [isEditingCloseDate, setIsEditingCloseDate] = useState(false);
+  const [isEditingCreatedAt, setIsEditingCreatedAt] = useState(false);
 
   // Поповеры выбора: "stage" | "company" | "contact" | "owner"
   const [activePicker, setActivePicker] = useState<"stage" | "company" | "contact" | "owner" | null>(null);
@@ -316,6 +317,7 @@ function HomeTab({
     companyName: deal.companyName ?? "",
     companyId: deal.companyId ?? null,
     channel: "phone" as ContactChannel,
+    contactType: "customer",
     linkedinLink: "",
     customFields: {},
     notes: "",
@@ -691,12 +693,19 @@ function HomeTab({
           </button>
           {filteredContacts.map((contact) => {
             const isSelected = contact.id === deal.contactId;
+            const isVendor = contact.contactType === "vendor";
             const name = contactFullName(contact);
             return (
               <button
                 key={contact.id}
                 type="button"
+                disabled={isVendor}
+                title={isVendor ? "Поставщик: создание и привязка сделок недоступны" : undefined}
                 onClick={() => {
+                  if (isVendor) {
+                    toast.error("Нельзя привязать сделку к поставщику");
+                    return;
+                  }
                   if (contact.id !== deal.contactId) {
                     updateDeal.mutate(
                       { id: deal.id, pipelineId: deal.pipelineId, payload: { contact_id: contact.id } },
@@ -709,7 +718,10 @@ function HomeTab({
                   setActivePicker(null);
                 }}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] transition-colors",
+                  isVendor
+                    ? "cursor-not-allowed opacity-60 bg-amber-50/40 text-[#888888]"
+                    : "hover:bg-[#f5f5f5] cursor-pointer",
                   isSelected && "bg-[#f5f5f5] font-medium",
                 )}
               >
@@ -724,7 +736,14 @@ function HomeTab({
                   </span>
                   <span className="truncate">{name}</span>
                 </div>
-                {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isVendor && (
+                    <span className="rounded-[4px] bg-[#fef9c3] px-1.5 py-0.5 text-[10px] font-medium text-[#a16207]">
+                      Поставщик
+                    </span>
+                  )}
+                  {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+                </div>
               </button>
             );
           })}
@@ -1361,9 +1380,51 @@ function HomeTab({
         {systemOpen && (
           <div className="space-y-0.5 py-0.5">
             <FieldRow icon={Calendar} label="Дата создания">
-              <span title={fullDate(deal.createdAt)} className="text-[#111111]">
-                {formatDateTime(deal.createdAt)}
-              </span>
+              {isEditingCreatedAt ? (
+                <div className="inline-flex items-center gap-2">
+                  <input
+                    type="datetime-local"
+                    defaultValue={
+                      deal.createdAt
+                        ? new Date(new Date(deal.createdAt).getTime() - new Date().getTimezoneOffset() * 60000)
+                            .toISOString()
+                            .slice(0, 16)
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val) return;
+                      const dateIso = new Date(val).toISOString();
+                      updateDeal.mutate(
+                        { id: deal.id, pipelineId: deal.pipelineId, payload: { created_at: dateIso } },
+                        {
+                          onSuccess: () => toast.success("Дата создания обновлена"),
+                          onError: (err) => toast.error(err.message || "Ошибка"),
+                        },
+                      );
+                      setIsEditingCreatedAt(false);
+                    }}
+                    onBlur={() => setIsEditingCreatedAt(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setIsEditingCreatedAt(false);
+                    }}
+                    className="rounded-[6px] border border-[#3b82f6] px-2 py-0.5 text-xs text-[#111111] outline-none"
+                    autoFocus
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  title="Нажмите для редактирования даты создания"
+                  onClick={() => setIsEditingCreatedAt(true)}
+                  className="group/btn inline-flex items-center gap-1.5 rounded-[4px] px-1 py-0.5 -mx-1 text-left hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                >
+                  <span title={fullDate(deal.createdAt)} className="text-[#111111]">
+                    {formatDateTime(deal.createdAt)}
+                  </span>
+                  <Pencil className="h-3 w-3 text-[#999999] opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+                </button>
+              )}
             </FieldRow>
             <FieldRow icon={Bot} label="Кем создано">
               <span title={`Создано: ${creator !== undefined ? creator.fullName : "System"}`} className="inline-flex items-center gap-1.5 text-[#111111]">
