@@ -178,6 +178,35 @@ export interface WarehouseItemDTO {
   updatedAt: string;
 }
 
+export const WAREHOUSE_LIMITS = [25, 50, 75, 100, 150, 200, 250] as const;
+export type WarehouseLimit = (typeof WAREHOUSE_LIMITS)[number];
+
+export const warehousePaginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce
+    .number()
+    .int()
+    .refine((val) => WAREHOUSE_LIMITS.includes(val as WarehouseLimit), {
+      message: `Limit must be one of: ${WAREHOUSE_LIMITS.join(", ")}`,
+    })
+    .default(25),
+  search: z.string().optional(),
+  all: z.preprocess((v) => v === "true" || v === true, z.boolean().optional()),
+});
+export type WarehousePaginationQuery = z.infer<typeof warehousePaginationQuerySchema>;
+
+export interface WarehousePaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+export interface PaginatedWarehouseItemsDTO {
+  data: WarehouseItemDTO[];
+  meta: WarehousePaginationMeta;
+}
+
 export interface WarehouseBatchRow {
   id: string;
   tenant_id: string;

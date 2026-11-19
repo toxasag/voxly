@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { apiClient, API_BASE_URL } from "./apiClient";
 import { readAccessToken } from "@/lib/auth/session";
 
@@ -240,11 +240,76 @@ export const warehouseKeys = {
   },
 };
 
+export interface WarehousePaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+export interface PaginatedWarehouseResponse {
+  items: WarehouseItemDTO[];
+  meta: WarehousePaginationMeta;
+}
+
+export interface WarehousePaginationParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  all?: boolean;
+}
+
+export function useWarehouse(params?: WarehousePaginationParams) {
+  const page = params?.page ?? 1;
+  const limit = params?.limit ?? 25;
+  const search = params?.search;
+  const all = params?.all;
+
+  return useQuery({
+    queryKey: ["warehouse", "items", page, limit, search ?? "", Boolean(all)],
+    queryFn: async (): Promise<PaginatedWarehouseResponse> => {
+      const q = new URLSearchParams();
+      if (!all) {
+        q.set("page", String(page));
+        q.set("limit", String(limit));
+      } else {
+        q.set("all", "true");
+      }
+      if (search && search.trim()) {
+        q.set("search", search.trim());
+      }
+
+      const qs = q.toString();
+      const res = await apiClient.get<WarehouseItemDTO[]>(
+        `/api/v1/warehouse/items${qs ? `?${qs}` : ""}`,
+      );
+
+      const rawMeta = res.meta || {};
+      const total = Number(rawMeta.total ?? res.data.length);
+      const curPage = Number(rawMeta.page ?? page);
+      const curLimit = Number(rawMeta.limit ?? limit);
+      const pages = Number(rawMeta.pages ?? (total === 0 ? 0 : Math.ceil(total / curLimit)));
+
+      return {
+        items: res.data ?? [],
+        meta: {
+          total,
+          page: curPage,
+          limit: curLimit,
+          pages,
+        },
+      };
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+}
+
 export function useWarehouseItems(search?: string) {
   return useQuery({
     queryKey: warehouseKeys.items(search),
     queryFn: async () => {
-      const params = search ? `?search=${encodeURIComponent(search)}` : "";
+      const params = search ? `?search=${encodeURIComponent(search)}&all=true` : "?all=true";
       const res = await apiClient.get<WarehouseItemDTO[]>(`/api/v1/warehouse/items${params}`);
       return res.data;
     },

@@ -15,6 +15,7 @@ import {
   type ImportValidatePayload,
   type ImportValidateResultDTO,
   type IntakeBatchPayload,
+  type PaginatedWarehouseItemsDTO,
   type PaySupplierOrderPayload,
   type PurchaseRequestDTO,
   type PurchaseRequestRow,
@@ -183,7 +184,15 @@ export class WarehouseService {
   // Warehouse Items & Batches
   // ---------------------------------------------------------------------------
 
-  async listItems(tenantId: string, search?: string): Promise<WarehouseItemDTO[]> {
+  async listItems(
+    tenantId: string,
+    search?: string,
+    options?: { page?: number; limit?: number; all?: boolean },
+  ): Promise<PaginatedWarehouseItemsDTO> {
+    const page = Math.max(1, options?.page ?? 1);
+    const limit = options?.limit ?? 25;
+    const all = Boolean(options?.all);
+
     const params: (string | number)[] = [tenantId];
     let searchFilter = "";
 
@@ -195,6 +204,39 @@ export class WarehouseService {
     const settings = await this.getSettings(tenantId);
 
     return withTenant(tenantId, async (tx) => {
+      // 1. Подсчет общего количества позиций для текущего тенанта с учетом поиска
+      const countRow = await tx.queryOne<{ count: string | number }>(
+        `SELECT count(*)::int AS count
+         FROM warehouse_items i
+         WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+         ${searchFilter}`,
+        params,
+      );
+      const total = typeof countRow?.count === "number" ? countRow.count : parseInt(String(countRow?.count || 0), 10);
+      const pages = total === 0 ? 0 : Math.ceil(total / limit);
+
+      const offset = (page - 1) * limit;
+
+      // Если в выборке 0 позиций или запрошенная страница превышает общее число
+      if (total === 0 || (!all && offset >= total)) {
+        return {
+          data: [],
+          meta: {
+            total,
+            page,
+            limit: all ? total : limit,
+            pages: all ? (total > 0 ? 1 : 0) : pages,
+          },
+        };
+      }
+
+      const itemParams = [...params];
+      let limitClause = "";
+      if (!all) {
+        itemParams.push(limit, offset);
+        limitClause = `LIMIT $${itemParams.length - 1} OFFSET $${itemParams.length}`;
+      }
+
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
                 i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
@@ -209,16 +251,17 @@ export class WarehouseService {
          WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
          ${searchFilter}
          GROUP BY i.id
-         ORDER BY i.name ASC`,
-        params,
+         ORDER BY i.name ASC
+         ${limitClause}`,
+        itemParams,
       );
 
-      return rows.map((r) => {
-        const total = Number(r.total_stock ?? 0);
+      const data = rows.map((r) => {
+        const totalStock = Number(r.total_stock ?? 0);
         const reserved = Number(r.reserved_stock ?? 0);
         const available = settings.allowNegativeStock
-          ? total - reserved
-          : Math.max(total - reserved, 0);
+          ? totalStock - reserved
+          : Math.max(totalStock - reserved, 0);
 
         const retailPrice = Number(r.retail_price ?? 0);
         return {
@@ -232,14 +275,24 @@ export class WarehouseService {
           retailPrice,
           price: retailPrice,
           costPrice: Number(r.cost_price ?? 0),
-          totalStock: total,
-          quantity: total,
+          totalStock: totalStock,
+          quantity: totalStock,
           reservedStock: reserved,
           availableStock: available,
           createdAt: toIso(r.created_at),
           updatedAt: toIso(r.updated_at),
         };
       });
+
+      return {
+        data,
+        meta: {
+          total,
+          page,
+          limit: all ? total : limit,
+          pages: all ? (total > 0 ? 1 : 0) : pages,
+        },
+      };
     });
   }
 
@@ -1668,7 +1721,8 @@ export class WarehouseService {
     tenantId: string,
     payload: ExportWarehouseItemsPayload,
   ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
-    let items = await this.listItems(tenantId, payload.search);
+    const result = await this.listItems(tenantId, payload.search, { all: true });
+    let items = result.data;
     if (payload.ids && payload.ids.length > 0) {
       const idSet = new Set(payload.ids);
       items = items.filter((i) => idSet.has(i.id));

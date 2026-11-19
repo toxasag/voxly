@@ -18,6 +18,7 @@ import {
   updateSupplierOrderSchema,
   updateWarehouseItemSchema,
   updateWarehouseSettingsSchema,
+  warehousePaginationQuerySchema,
 } from "./warehouse.types.js";
 
 export async function warehouseRoutes(app: FastifyInstance) {
@@ -118,17 +119,25 @@ export async function warehouseRoutes(app: FastifyInstance) {
   // Список деталей с остатками (корень)
   app.get("/", async (request, reply) => {
     const { tenant_id } = request;
-    const { search } = request.query as { search?: string };
-    const items = await warehouseService.listItems(tenant_id, search);
-    return reply.send({ data: items });
+    const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const result = await warehouseService.listItems(tenant_id, query.search, {
+      page: query.page,
+      limit: query.limit,
+      all: query.all,
+    });
+    return reply.send(result);
   });
 
   // Список деталей с остатками
   app.get("/items", async (request, reply) => {
     const { tenant_id } = request;
-    const { search } = request.query as { search?: string };
-    const items = await warehouseService.listItems(tenant_id, search);
-    return reply.send({ data: items });
+    const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const result = await warehouseService.listItems(tenant_id, query.search, {
+      page: query.page,
+      limit: query.limit,
+      all: query.all,
+    });
+    return reply.send(result);
   });
 
   // Получение одной позиции

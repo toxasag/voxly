@@ -40,6 +40,7 @@ import { useAuth } from "@/lib/auth/use-auth";
 import { useServices } from "@/lib/api/use-services";
 import { ServicesCatalogTab } from "@/components/warehouse/ServicesCatalogTab";
 import {
+  useWarehouse,
   useWarehouseItems,
   useWarehouseBatches,
   useWarehouseMovements,
@@ -60,6 +61,11 @@ import {
   type AggregatedPurchaseRequestDTO,
   type SupplierOrderDTO,
 } from "@/lib/api/use-warehouse";
+import {
+  WarehousePagination,
+  WAREHOUSE_LIMITS,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
 import { CreateItemModal } from "@/components/warehouse/CreateItemModal";
 import { IntakeModal } from "@/components/warehouse/IntakeModal";
 import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierOrderModal";
@@ -119,6 +125,34 @@ function WarehouseContent() {
 
   const [activeTab, setActiveTab] = useState<WarehouseTab>("items");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Параметры серверной пагинации номенклатуры склада
+  const rawPage = parseInt(searchParams.get("page") ?? "1", 10);
+  const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
+
+  const rawLimit = parseInt(searchParams.get("limit") ?? "25", 10);
+  const limit: WarehouseLimit = WAREHOUSE_LIMITS.includes(rawLimit as WarehouseLimit)
+    ? (rawLimit as WarehouseLimit)
+    : 25;
+
+  const updateUrl = (updates: { page?: number; limit?: number }) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (updates.page !== undefined) {
+      params.set("page", String(updates.page));
+    }
+    if (updates.limit !== undefined) {
+      params.set("limit", String(updates.limit));
+    }
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleSearchChange = (newVal: string) => {
+    setSearchQuery(newVal);
+    if (page !== 1) {
+      updateUrl({ page: 1 });
+    }
+  };
+
   const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<string>("all");
   const [supplierOrderStatusFilter, setSupplierOrderStatusFilter] = useState<string>("all");
 
@@ -149,8 +183,21 @@ function WarehouseContent() {
   const updateSettingsMutation = useUpdateWarehouseSettings();
   const allowNegativeStock = Boolean(warehouseSettings?.allowNegativeStock);
 
-  // Данные
-  const { data: items = [], isLoading: isItemsLoading } = useWarehouseItems();
+  // Данные номенклатуры с серверной пагинацией
+  const {
+    data: warehouseData,
+    isLoading: isItemsLoading,
+    isPlaceholderData,
+  } = useWarehouse({
+    page,
+    limit,
+    search: searchQuery,
+  });
+
+  const items = warehouseData?.items ?? [];
+  const meta = warehouseData?.meta ?? { total: 0, page: 1, limit: 25, pages: 0 };
+  const filteredItems = items;
+
   const { data: batches = [], isLoading: isBatchesLoading } = useWarehouseBatches();
   const { data: movements = [], isLoading: isMovementsLoading } = useWarehouseMovements();
   const { data: purchaseRequests = [], isLoading: isPurchasesLoading } = usePurchaseRequests();
@@ -164,19 +211,6 @@ function WarehouseContent() {
   const deleteSupplierOrderMutation = useDeleteSupplierOrder();
   const exportMutation = useExportWarehouseItems();
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
-
-  // Фильтрация номенклатуры
-  const filteredItems = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (item) =>
-        item.name.toLowerCase().includes(q) ||
-        item.sku.toLowerCase().includes(q) ||
-        (item.brand && item.brand.toLowerCase().includes(q)) ||
-        item.category.toLowerCase().includes(q),
-    );
-  }, [items, searchQuery]);
 
   const handleToggleSelectAll = () => {
     if (selectedItemIds.size === filteredItems.length && filteredItems.length > 0) {
@@ -257,7 +291,7 @@ function WarehouseContent() {
 
   // Статистика склада
   const stats = useMemo(() => {
-    const totalItemsCount = items.length;
+    const totalItemsCount = meta.total > 0 ? meta.total : items.length;
     const lowStockCount = items.filter((i) => i.availableStock <= i.minStock).length;
     const totalValuation = items.reduce((sum, i) => sum + i.totalStock * i.costPrice, 0);
     const pendingPurchasesCount = aggregatedPurchases.filter(
@@ -265,7 +299,7 @@ function WarehouseContent() {
     ).length;
 
     return { totalItemsCount, lowStockCount, totalValuation, pendingPurchasesCount };
-  }, [items, aggregatedPurchases]);
+  }, [items, meta.total, aggregatedPurchases]);
 
   const handleToggleNegativeStock = async (checked: boolean) => {
     try {
@@ -713,7 +747,7 @@ function WarehouseContent() {
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             placeholder="Поиск по названию, артикулу..."
             className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
@@ -753,7 +787,12 @@ function WarehouseContent() {
       {activeTab === "items" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className={cn(
+                "w-full transition-opacity duration-150",
+                isPlaceholderData && "opacity-50 pointer-events-none",
+              )}
+            >
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
                   <th className="w-[38px] px-3 py-2.5 text-center">
@@ -892,13 +931,31 @@ function WarehouseContent() {
                 {filteredItems.length === 0 && (
                   <tr>
                     <td colSpan={11} className="px-4 py-12 text-center text-sm text-[#888888]">
-                      {isItemsLoading ? "Загрузка каталога склада..." : "Товаров не найдено."}
+                      {isItemsLoading ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
+                          <span>Загрузка каталога склада...</span>
+                        </div>
+                      ) : (
+                        "Товаров не найдено."
+                      )}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {/* Серверная пагинация и селектор лимита */}
+          <WarehousePagination
+            total={meta.total}
+            page={meta.page}
+            pages={meta.pages}
+            limit={meta.limit}
+            onPageChange={(newPage) => updateUrl({ page: newPage })}
+            onLimitChange={(newLimit) => updateUrl({ limit: newLimit, page: 1 })}
+            disabled={isItemsLoading}
+          />
         </div>
       )}
 
