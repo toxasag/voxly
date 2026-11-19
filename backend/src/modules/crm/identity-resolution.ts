@@ -319,6 +319,15 @@ const STOP_WORDS_SET = new Set([
   "почта",
   "email",
   "mail",
+  "voxly",
+  "voxly check",
+  "getvoxly",
+  "voxlybot",
+  "voxly bot",
+  "система",
+  "system",
+  "менеджер",
+  "manager",
 ]);
 
 /**
@@ -368,6 +377,8 @@ export function isPlaceholderName(
   }
 
   if (/^noname\d*$/i.test(full)) return true;
+  if (/^(?:voxly|getvoxly|voxlybot)(?:\s*[\+\d\s\(\)\-_a-zа-яё]+)?$/i.test(full)) return true;
+  if (/^(?:voxly|getvoxly|voxlybot)$/i.test(f)) return true;
   if (/^(?:отладчик|тестер|тестировщик|debugger|tester)(?:\s*[\+\d\s\(\)\-_a-zа-яё]+)?$/i.test(full)) {
     return true;
   }

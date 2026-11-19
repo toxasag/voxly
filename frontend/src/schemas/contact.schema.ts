@@ -81,6 +81,8 @@ export const createContactSchema = z.object({
   birth_date: z.string().optional().nullable().or(z.literal("")),
   contact_type: contactTypeSchema.default("customer").optional(),
   channel: contactChannelSchema.default("phone").optional(),
+  messenger_id: z.string().max(100).optional().nullable().or(z.literal("")),
+  messenger_name: z.string().max(100).optional().nullable().or(z.literal("")),
   /** Twenty: person.linkedinLink. Пустая строка разрешена — поле необязательное. */
   linkedin_link: z.string().url("Некорректная ссылка").max(300).optional().or(z.literal("")),
   city: z.string().max(200).optional().or(z.literal("")),
