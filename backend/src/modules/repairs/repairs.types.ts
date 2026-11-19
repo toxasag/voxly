@@ -714,8 +714,12 @@ export interface ExistingContactDTO {
   contactId: string | null;
   fullName: string;
   phone?: string | null;
+  email?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
   repairsCount: number;
   activeDealsCount: number;
+  matchedBy?: "phone" | "name" | null;
 }
 
 export interface ClientLookupResultDTO {

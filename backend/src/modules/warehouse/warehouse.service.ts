@@ -2151,6 +2151,109 @@ export class WarehouseService {
       return { deletedCount, errors: errors.length > 0 ? errors : undefined };
     });
   }
+
+  /**
+   * Returns all categories for the tenant: combines categories from warehouse_categories
+   * table and distinct categories from existing warehouse_items.
+   */
+  async listCategories(tenantId: string): Promise<string[]> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{ name: string }>(
+        `SELECT DISTINCT btrim(name) AS name
+         FROM (
+           SELECT name FROM warehouse_categories WHERE tenant_id = $1
+           UNION
+           SELECT category AS name FROM warehouse_items WHERE tenant_id = $1 AND category <> '' AND deleted_at IS NULL
+         ) sub
+         WHERE btrim(name) <> ''
+         ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      const list = rows.map((r) => r.name);
+      if (list.length === 0) {
+        return [
+          "Запчасти",
+          "Расходники",
+          "Дисплеи",
+          "Аккумуляторы",
+          "Корпуса",
+          "Шлейфы",
+          "Инструменты",
+          "Оборудование",
+          "Аксессуары",
+          "Химия и пайка",
+        ];
+      }
+      return list;
+    });
+  }
+
+  /**
+   * Creates or ensures a warehouse category for the tenant.
+   */
+  async createCategory(tenantId: string, name: string): Promise<{ id: string; name: string }> {
+    const trimmed = name.trim();
+    return withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOneOrThrow<{ id: string; name: string }>(
+        `INSERT INTO warehouse_categories (tenant_id, name)
+         VALUES ($1, $2)
+         ON CONFLICT (tenant_id, name) DO UPDATE SET updated_at = now()
+         RETURNING id, name`,
+        [tenantId, trimmed],
+      );
+      return { id: row.id, name: row.name };
+    });
+  }
+
+  /**
+   * Returns all brands for the tenant: combines equipment_brands
+   * and distinct brands from warehouse_items.
+   */
+  async listBrands(tenantId: string): Promise<string[]> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{ name: string }>(
+        `SELECT DISTINCT btrim(name) AS name
+         FROM (
+           SELECT name FROM equipment_brands WHERE tenant_id = $1
+           UNION
+           SELECT brand AS name FROM warehouse_items WHERE tenant_id = $1 AND brand <> '' AND deleted_at IS NULL
+         ) sub
+         WHERE btrim(name) <> ''
+         ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      const list = rows.map((r) => r.name);
+      if (list.length === 0) {
+        return ["Apple", "Samsung", "Xiaomi", "Huawei", "Honor", "Realme", "Toua", "Makita", "Bosch", "DeWalt"];
+      }
+      return list;
+    });
+  }
+
+  /**
+   * Creates or ensures a brand in equipment_brands for the tenant.
+   */
+  async createBrand(tenantId: string, name: string): Promise<{ id: string; name: string }> {
+    const trimmed = name.trim();
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+        [tenantId, trimmed],
+      );
+      if (existing) {
+        return existing;
+      }
+      const row = await tx.queryOneOrThrow<{ id: string; name: string }>(
+        `INSERT INTO equipment_brands (tenant_id, name)
+         VALUES ($1, $2)
+         RETURNING id, name`,
+        [tenantId, trimmed],
+      );
+      return { id: row.id, name: row.name };
+    });
+  }
 }
 
 export const warehouseService = new WarehouseService();

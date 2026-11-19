@@ -311,4 +311,59 @@ describe("RepairClientSection Component (Unified Reactive Flow)", () => {
       expect(screen.getByText("Контакт совпадает с владельцем ИП")).toBeDefined();
     });
   });
+
+  it("handles existingContact match, populates all contact fields on bind, and renders name suggestion", async () => {
+    currentLookupResponse = {
+      data: {
+        found: true,
+        client: null,
+        company: null,
+        activeDeals: [],
+        repairsCount: 3,
+        suggestedName: "Плахов Сергей",
+        suggestedSource: "telegram",
+        sources: [],
+        channelsChecked: ["telegram"],
+        messengerLookupStatus: "found",
+        existsInCrm: true,
+        existingContact: {
+          contactId: "contact-99",
+          fullName: "Плахов Сергей Николаевич",
+          phone: "+7 (964) 562-40-20",
+          email: "plakhov@example.com",
+          companyId: "comp-99",
+          companyName: "ООО ПлаховТрейд",
+          repairsCount: 3,
+          activeDealsCount: 1,
+          matchedBy: "phone",
+        },
+      },
+      isLoading: false,
+      isFetching: false,
+    };
+
+    render(<TestWrapper />);
+
+    // Telegram suggested name is rendered with full text without truncation
+    expect(screen.getByText("Плахов Сергей")).toBeDefined();
+    expect(screen.getByText("Использовать")).toBeDefined();
+
+    // Existing contact banner is rendered
+    expect(screen.getByText("Клиент уже есть в базе CRM")).toBeDefined();
+    expect(screen.getByText("Плахов Сергей Николаевич")).toBeDefined();
+    expect(screen.getByText("+7 (964) 562-40-20")).toBeDefined();
+
+    // Click "Привязать"
+    const bindBtn = screen.getByText("Привязать");
+    fireEvent.click(bindBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("form-customer-id").textContent).toBe("contact-99");
+      expect(screen.getByTestId("form-customer-name").textContent).toBe("Плахов Сергей Николаевич");
+      expect(screen.getByTestId("form-customer-phone").textContent).toBe("+7 (964) 562-40-20");
+      expect(screen.getByTestId("form-customer-email").textContent).toBe("plakhov@example.com");
+      expect(screen.getByTestId("form-company-id").textContent).toBe("comp-99");
+      expect(screen.getByTestId("form-company-name").textContent).toBe("ООО ПлаховТрейд");
+    });
+  });
 });

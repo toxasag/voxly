@@ -6,8 +6,13 @@ import { toast } from "sonner";
 import {
   useWarehouseItem,
   useUpdateWarehouseItem,
+  useWarehouseCategories,
+  useCreateWarehouseCategory,
+  useWarehouseBrands,
+  useCreateWarehouseBrand,
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
+import { CreatableCombobox } from "@/components/ui/creatable-combobox";
 
 interface EditItemModalProps {
   open: boolean;
@@ -35,6 +40,10 @@ export function EditItemModal({
 
   const itemQuery = useWarehouseItem(open && itemId ? itemId : null);
   const updateItemMutation = useUpdateWarehouseItem();
+  const categoriesQuery = useWarehouseCategories();
+  const createCategoryMutation = useCreateWarehouseCategory();
+  const brandsQuery = useWarehouseBrands();
+  const createBrandMutation = useCreateWarehouseBrand();
 
   useEffect(() => {
     const src = itemQuery.data ?? initialItem;
@@ -173,12 +182,21 @@ export function EditItemModal({
                 <label className="block text-xs font-medium text-[#111111] mb-1">
                   Бренд
                 </label>
-                <input
-                  type="text"
+                <CreatableCombobox
                   value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
+                  onChange={setBrand}
+                  options={brandsQuery.data ?? []}
                   placeholder="Apple, Samsung"
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  createLabelPrefix="Создать бренд"
+                  onCreateOption={async (newName) => {
+                    try {
+                      const created = await createBrandMutation.mutateAsync(newName);
+                      toast.success(`Бренд «${created.name}» создан`);
+                      return created.name;
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Не удалось создать бренд");
+                    }
+                  }}
                 />
               </div>
             </div>
@@ -187,12 +205,21 @@ export function EditItemModal({
               <label className="block text-xs font-medium text-[#111111] mb-1">
                 Категория
               </label>
-              <input
-                type="text"
+              <CreatableCombobox
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Например: Запчасти, Инструмент"
-                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                onChange={setCategory}
+                options={categoriesQuery.data ?? []}
+                placeholder="Запчасти, Инструмент"
+                createLabelPrefix="Создать категорию"
+                onCreateOption={async (newName) => {
+                  try {
+                    const created = await createCategoryMutation.mutateAsync(newName);
+                    toast.success(`Категория «${created.name}» создана`);
+                    return created.name;
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : "Не удалось создать категорию");
+                  }
+                }}
               />
             </div>
 

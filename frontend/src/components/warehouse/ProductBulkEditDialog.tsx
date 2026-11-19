@@ -6,9 +6,14 @@ import { toast } from "sonner";
 import {
   useBulkUpdateWarehouseItems,
   useWarehouseItem,
+  useWarehouseCategories,
+  useCreateWarehouseCategory,
+  useWarehouseBrands,
+  useCreateWarehouseBrand,
   type BulkUpdateWarehouseItemsPayload,
   type PriceAdjustmentAction,
 } from "@/lib/api/use-warehouse";
+import { CreatableCombobox } from "@/components/ui/creatable-combobox";
 import { cn } from "@/lib/utils";
 
 interface ProductBulkEditDialogProps {
@@ -49,6 +54,10 @@ export function ProductBulkEditDialog({
   const singleItemQuery = useWarehouseItem(
     open && selectedIds.length === 1 ? selectedIds[0] : null,
   );
+  const categoriesQuery = useWarehouseCategories();
+  const createCategoryMutation = useCreateWarehouseCategory();
+  const brandsQuery = useWarehouseBrands();
+  const createBrandMutation = useCreateWarehouseBrand();
 
   useEffect(() => {
     if (open && selectedIds.length === 1 && singleItemQuery.data) {
@@ -202,12 +211,21 @@ export function ProductBulkEditDialog({
               <span>Изменить категорию</span>
             </label>
             {enableCategory && (
-              <input
-                type="text"
+              <CreatableCombobox
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Новая категория (например: Дисплеи, Аккумуляторы)"
-                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                onChange={setCategory}
+                options={categoriesQuery.data ?? []}
+                placeholder="Выберите или создайте категорию"
+                createLabelPrefix="Создать категорию"
+                onCreateOption={async (newName) => {
+                  try {
+                    const created = await createCategoryMutation.mutateAsync(newName);
+                    toast.success(`Категория «${created.name}» создана`);
+                    return created.name;
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : "Не удалось создать категорию");
+                  }
+                }}
               />
             )}
           </div>
@@ -224,12 +242,21 @@ export function ProductBulkEditDialog({
               <span>Изменить бренд / производителя</span>
             </label>
             {enableBrand && (
-              <input
-                type="text"
+              <CreatableCombobox
                 value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                placeholder="Например: Apple, Samsung, Xiaomi"
-                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                onChange={setBrand}
+                options={brandsQuery.data ?? []}
+                placeholder="Выберите или создайте бренд"
+                createLabelPrefix="Создать бренд"
+                onCreateOption={async (newName) => {
+                  try {
+                    const created = await createBrandMutation.mutateAsync(newName);
+                    toast.success(`Бренд «${created.name}» создан`);
+                    return created.name;
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : "Не удалось создать бренд");
+                  }
+                }}
               />
             )}
           </div>

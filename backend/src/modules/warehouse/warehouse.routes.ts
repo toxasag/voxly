@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { warehouseService } from "./warehouse.service.js";
 import {
@@ -169,6 +170,34 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ success: ok });
   });
 
+  // Справочник категорий склада
+  app.get("/categories", async (request, reply) => {
+    const { tenant_id } = request;
+    const categories = await warehouseService.listCategories(tenant_id);
+    return reply.send({ data: categories });
+  });
+
+  app.post("/categories", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = z.object({ name: z.string().min(1).max(100) }).parse(request.body);
+    const category = await warehouseService.createCategory(tenant_id, body.name.trim());
+    return reply.status(201).send({ data: category });
+  });
+
+  // Справочник брендов склада
+  app.get("/brands", async (request, reply) => {
+    const { tenant_id } = request;
+    const brands = await warehouseService.listBrands(tenant_id);
+    return reply.send({ data: brands });
+  });
+
+  app.post("/brands", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = z.object({ name: z.string().min(1).max(100) }).parse(request.body);
+    const brand = await warehouseService.createBrand(tenant_id, body.name.trim());
+    return reply.status(201).send({ data: brand });
+  });
+
   // Получение одной позиции (прямой алиас /:id)
   app.get("/:id", async (request, reply) => {
     const { tenant_id } = request;
@@ -184,6 +213,8 @@ export async function warehouseRoutes(app: FastifyInstance) {
       "import",
       "intake",
       "items",
+      "categories",
+      "brands",
     ];
     if (reserved.includes(id)) {
       return reply.status(404).send({ error: "Not found" });
@@ -210,6 +241,8 @@ export async function warehouseRoutes(app: FastifyInstance) {
       "import",
       "intake",
       "items",
+      "categories",
+      "brands",
     ];
     if (reserved.includes(id)) {
       return reply.status(404).send({ error: "Not found" });

@@ -642,23 +642,20 @@ export class RepairsService {
       if (!customerId) {
         // Проверяем дедупликацию по номеру телефона
         const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
-        if (canonicalPhone) {
-          const last10 = canonicalPhone.slice(-10);
+        const rawDigits = payload.customer_phone.replace(/\D/g, "");
+        const searchSuffix = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+
+        if (searchSuffix.length >= 6) {
           const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
             `SELECT id, company_id FROM contacts
              WHERE tenant_id = $1 AND deleted_at IS NULL
                AND (
-                 phone = $2
-                 OR phone LIKE '%' || $3
-                 OR whatsapp = $2
-                 OR whatsapp LIKE '%' || $3
-                 OR EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
-                   WHERE (p->>'number') LIKE '%' || $3
-                 )
+                 regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR additional_phones::text LIKE '%' || $2 || '%'
                )
              ORDER BY created_at ASC LIMIT 1`,
-            [tenantId, canonicalPhone, last10],
+            [tenantId, searchSuffix],
           );
           if (existingContact) {
             customerId = existingContact.id;
@@ -701,6 +698,16 @@ export class RepairsService {
             companyId = existingContact.company_id;
           }
         }
+      }
+
+      // Обновляем email контакта, если он был пустым, но передан в форме приёмки
+      if (customerId && payload.customer_email && payload.customer_email.trim()) {
+        await tx.query(
+          `UPDATE contacts
+           SET email = $1, updated_at = now()
+           WHERE tenant_id = $2 AND id = $3 AND (email IS NULL OR email = '')`,
+          [payload.customer_email.trim(), tenantId, customerId],
+        );
       }
 
       // 2.1. Если у контакта еще нет компании, или пользователь ввел новую/другую компанию, привязываем контакт к компании
@@ -949,23 +956,20 @@ export class RepairsService {
       // 1. Клиент
       if (!customerId) {
         const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
-        if (canonicalPhone) {
-          const last10 = canonicalPhone.slice(-10);
+        const rawDigits = payload.customer_phone.replace(/\D/g, "");
+        const searchSuffix = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+
+        if (searchSuffix.length >= 6) {
           const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
             `SELECT id, company_id FROM contacts
              WHERE tenant_id = $1 AND deleted_at IS NULL
                AND (
-                 phone = $2
-                 OR phone LIKE '%' || $3
-                 OR whatsapp = $2
-                 OR whatsapp LIKE '%' || $3
-                 OR EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
-                   WHERE (p->>'number') LIKE '%' || $3
-                 )
+                 regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR additional_phones::text LIKE '%' || $2 || '%'
                )
              ORDER BY created_at ASC LIMIT 1`,
-            [tenantId, canonicalPhone, last10],
+            [tenantId, searchSuffix],
           );
           if (existingContact) {
             customerId = existingContact.id;
@@ -1004,6 +1008,16 @@ export class RepairsService {
         if (existingContact?.company_id) {
           companyId = existingContact.company_id;
         }
+      }
+
+      // Обновляем email контакта, если он был пустым, но передан в форме пакетной приёмки
+      if (customerId && payload.customer_email && payload.customer_email.trim()) {
+        await tx.query(
+          `UPDATE contacts
+           SET email = $1, updated_at = now()
+           WHERE tenant_id = $2 AND id = $3 AND (email IS NULL OR email = '')`,
+          [payload.customer_email.trim(), tenantId, customerId],
+        );
       }
 
       // 1.1. Привязываем контакт к компании при наличии обоих идентификаторов
@@ -2171,6 +2185,7 @@ export class RepairsService {
         company_id: string | null;
         company_name: string | null;
       } | null = null;
+      let matchedBy: "phone" | "name" | null = null;
 
       // 1. Try search by phone digits if phone is provided
       if (phoneDigits.length >= 6) {
@@ -2196,10 +2211,14 @@ export class RepairsService {
            LIMIT 1`,
           [tenantId, searchSuffix],
         );
+        if (contact) {
+          matchedBy = "phone";
+        }
       }
 
-      // 2. If not found by phone and query is provided (or search by name)
-      if (!contact && rawQuery.length >= 2) {
+      // 2. Search by name ONLY if phone is not provided (phoneDigits.length < 6).
+      // If a valid phone was entered, never fallback to loose name search (prevents false matches like "Рязанский Дмитрий").
+      if (!contact && phoneDigits.length < 6 && rawQuery.length >= 2) {
         contact = await tx.queryOne<{
           id: string;
           first_name: string;
@@ -2223,6 +2242,9 @@ export class RepairsService {
            LIMIT 1`,
           [tenantId, rawQuery],
         );
+        if (contact) {
+          matchedBy = "name";
+        }
       }
 
       // 3. If not found in contacts, check previous repair_orders by phone
@@ -2242,6 +2264,7 @@ export class RepairsService {
           [tenantId, searchSuffix],
         );
         if (ro) {
+          matchedBy = "phone";
           if (ro.customer_id) {
             contact = await tx.queryOne<{
               id: string;
@@ -2391,10 +2414,10 @@ export class RepairsService {
       }
 
       if (!contact && repairsCount === 0) {
-        return { contact: null, company: null, activeDeals: [], repairsCount: 0 };
+        return { contact: null, company: null, activeDeals: [], repairsCount: 0, matchedBy: null };
       }
 
-      return { contact, company, activeDeals, repairsCount };
+      return { contact, company, activeDeals, repairsCount, matchedBy };
     });
 
     const messengerRes = await messengerPromise;
@@ -2403,10 +2426,12 @@ export class RepairsService {
     const company = dbResult.company;
     const activeDeals = dbResult.activeDeals;
     const repairsCount = dbResult.repairsCount;
+    let matchedBy = dbResult.matchedBy;
 
     // Если контакт не найден по прямому запросу, но найден через глубокий поиск мессенджеров
     if (!contact && messengerRes?.existingClient) {
       const ec = messengerRes.existingClient;
+      matchedBy = "phone";
       contact = {
         id: ec.id,
         first_name: ec.firstName,
@@ -2428,8 +2453,12 @@ export class RepairsService {
           contactId: (contact && contact.id) ? contact.id : null,
           fullName: fullName || "Клиент",
           phone: contact?.phone ?? (rawPhone || null),
+          email: contact?.email ?? null,
+          companyId: contact?.company_id ?? null,
+          companyName: contact?.company_name ?? (company?.name ?? null),
           repairsCount,
           activeDealsCount: activeDeals.length,
+          matchedBy,
         }
       : null;
 

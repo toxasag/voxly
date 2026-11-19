@@ -226,6 +226,8 @@ export const warehouseKeys = {
   items: (search?: string) => [...warehouseKeys.all, "items", search ?? ""] as const,
   batches: (itemId?: string) => [...warehouseKeys.all, "batches", itemId ?? ""] as const,
   movements: () => [...warehouseKeys.all, "movements"] as const,
+  categories: () => [...warehouseKeys.all, "categories"] as const,
+  brands: () => [...warehouseKeys.all, "brands"] as const,
   purchases: (status?: string, orderId?: string) => {
     const key = [...warehouseKeys.all, "purchases"] as string[];
     if (status !== undefined || orderId !== undefined) {
@@ -771,6 +773,60 @@ export function useBulkDeleteWarehouseItems() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+    },
+  });
+}
+
+export function useWarehouseCategories() {
+  return useQuery({
+    queryKey: warehouseKeys.categories(),
+    queryFn: async (): Promise<string[]> => {
+      const res = await apiClient.get<{ data: string[] }>("/api/v1/warehouse/categories");
+      return res.data.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateWarehouseCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string): Promise<{ id: string; name: string }> => {
+      const res = await apiClient.post<{ data: { id: string; name: string } }>(
+        "/api/v1/warehouse/categories",
+        { name },
+      );
+      return res.data.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.categories() });
+    },
+  });
+}
+
+export function useWarehouseBrands() {
+  return useQuery({
+    queryKey: warehouseKeys.brands(),
+    queryFn: async (): Promise<string[]> => {
+      const res = await apiClient.get<{ data: string[] }>("/api/v1/warehouse/brands");
+      return res.data.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateWarehouseBrand() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string): Promise<{ id: string; name: string }> => {
+      const res = await apiClient.post<{ data: { id: string; name: string } }>(
+        "/api/v1/warehouse/brands",
+        { name },
+      );
+      return res.data.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.brands() });
     },
   });
 }
