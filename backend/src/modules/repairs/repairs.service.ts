@@ -2517,6 +2517,9 @@ export class RepairsService {
       case "malfunction":
       case "malfunctions":
         return "equipment_malfunctions";
+      case "category":
+      case "categories":
+        return "warehouse_categories";
       default:
         throw new ValidationError(`Unknown dictionary category: ${category}`, {});
     }
@@ -2552,12 +2555,41 @@ export class RepairsService {
         [tenantId],
       );
 
+      const categoryRows = await tx.query<{ name: string }>(
+        `SELECT DISTINCT btrim(name) AS name
+         FROM (
+           SELECT name FROM warehouse_categories WHERE tenant_id = $1
+           UNION
+           SELECT name FROM equipment_types WHERE tenant_id = $1
+           UNION
+           SELECT category AS name FROM warehouse_items WHERE tenant_id = $1 AND category <> '' AND deleted_at IS NULL
+         ) sub
+         WHERE btrim(name) <> ''
+         ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      const defaultCategoryNames = [
+        "Запчасти",
+        "Расходники",
+        "Дисплеи",
+        "Аккумуляторы",
+        "Корпуса",
+        "Шлейфы",
+        "Инструменты",
+        "Оборудование",
+        "Аксессуары",
+        "Химия и пайка",
+      ];
+      const categoryNames = categoryRows.length > 0 ? categoryRows.map((r) => r.name) : defaultCategoryNames;
+
       return {
         types: types.map((r) => ({ id: r.id, name: r.name })),
         brands: brands.map((r) => ({ id: r.id, name: r.name })),
         models: models.map((r) => ({ id: r.id, name: r.name, brandId: r.brand_id, brandName: r.brand_name })),
         accessories: accessories.map((r) => ({ id: r.id, name: r.name })),
         malfunctions: malfunctions.map((r) => ({ id: r.id, name: r.name })),
+        categories: categoryNames.map((name) => ({ id: name, name })),
       };
     });
   }
@@ -2830,6 +2862,13 @@ export class RepairsService {
         const res = await tx.queryOne<{ count: string }>(
           `SELECT count(*)::text AS count FROM repair_orders
            WHERE tenant_id = $1 AND ($2 = ANY(malfunctions) OR defect_description ILIKE '%' || $2 || '%') AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      } else if (normCategory === "category" || normCategory === "categories") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM warehouse_items
+           WHERE tenant_id = $1 AND category = $2 AND deleted_at IS NULL`,
           [tenantId, itemName],
         );
         count = Number(res?.count ?? 0);

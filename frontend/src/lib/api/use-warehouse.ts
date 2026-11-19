@@ -846,8 +846,8 @@ export function useWarehouseCategories() {
   return useQuery({
     queryKey: warehouseKeys.categories(),
     queryFn: async (): Promise<string[]> => {
-      const res = await apiClient.get<{ data: string[] }>("/api/v1/warehouse/categories");
-      return res.data.data;
+      const res = await apiClient.get<string[]>("/api/v1/warehouse/categories");
+      return res.data;
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -857,14 +857,16 @@ export function useCreateWarehouseCategory() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (name: string): Promise<{ id: string; name: string }> => {
-      const res = await apiClient.post<{ data: { id: string; name: string } }>(
+      const res = await apiClient.post<{ id: string; name: string }>(
         "/api/v1/warehouse/categories",
         { name },
       );
-      return res.data.data;
+      return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.categories() });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
     },
   });
 }
@@ -873,8 +875,8 @@ export function useWarehouseBrands() {
   return useQuery({
     queryKey: warehouseKeys.brands(),
     queryFn: async (): Promise<string[]> => {
-      const res = await apiClient.get<{ data: string[] }>("/api/v1/warehouse/brands");
-      return res.data.data;
+      const res = await apiClient.get<string[]>("/api/v1/warehouse/brands");
+      return res.data;
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -884,14 +886,16 @@ export function useCreateWarehouseBrand() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (name: string): Promise<{ id: string; name: string }> => {
-      const res = await apiClient.post<{ data: { id: string; name: string } }>(
+      const res = await apiClient.post<{ id: string; name: string }>(
         "/api/v1/warehouse/brands",
         { name },
       );
-      return res.data.data;
+      return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.brands() });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
     },
   });
 }
