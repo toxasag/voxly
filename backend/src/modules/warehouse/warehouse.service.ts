@@ -220,23 +220,79 @@ export class WarehouseService {
           ? total - reserved
           : Math.max(total - reserved, 0);
 
+        const retailPrice = Number(r.retail_price ?? 0);
         return {
           id: r.id,
           sku: r.sku,
           name: r.name,
           brand: r.brand ?? "",
-          category: r.category,
+          category: r.category ?? "",
           unit: r.unit,
           minStock: Number(r.min_stock ?? 0),
-          retailPrice: Number(r.retail_price ?? 0),
+          retailPrice,
+          price: retailPrice,
           costPrice: Number(r.cost_price ?? 0),
           totalStock: total,
+          quantity: total,
           reservedStock: reserved,
           availableStock: available,
           createdAt: toIso(r.created_at),
           updatedAt: toIso(r.updated_at),
         };
       });
+    });
+  }
+
+  async getItem(tenantId: string, itemId: string): Promise<WarehouseItemDTO | null> {
+    const settings = await this.getSettings(tenantId);
+
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<WarehouseItemRow>(
+        `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
+                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
+                COALESCE((
+                  SELECT SUM(r.quantity)
+                  FROM warehouse_reservations r
+                  WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
+                ), 0) AS reserved_stock
+         FROM warehouse_items i
+         LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+         WHERE i.tenant_id = $1 AND i.id = $2 AND i.deleted_at IS NULL
+         GROUP BY i.id`,
+        [tenantId, itemId],
+      );
+
+      if (rows.length === 0 || !rows[0]) return null;
+      const r = rows[0];
+
+      const total = Number(r.total_stock ?? 0);
+      const reserved = Number(r.reserved_stock ?? 0);
+      const available = settings.allowNegativeStock
+        ? total - reserved
+        : Math.max(total - reserved, 0);
+
+      const retailPrice = Number(r.retail_price ?? 0);
+      const costPrice = Number(r.cost_price ?? 0);
+
+      return {
+        id: r.id,
+        sku: r.sku,
+        name: r.name,
+        brand: r.brand ?? "",
+        category: r.category ?? "",
+        unit: r.unit,
+        minStock: Number(r.min_stock ?? 0),
+        retailPrice,
+        price: retailPrice,
+        costPrice,
+        totalStock: total,
+        quantity: total,
+        reservedStock: reserved,
+        availableStock: available,
+        createdAt: toIso(r.created_at),
+        updatedAt: toIso(r.updated_at),
+      };
     });
   }
 
@@ -302,22 +358,20 @@ export class WarehouseService {
     if (payload.cost_price !== undefined) add("cost_price", payload.cost_price);
 
     if (fields.length === 0) {
-      const items = await this.listItems(tenantId);
-      return items.find((i) => i.id === itemId) ?? null;
+      return this.getItem(tenantId, itemId);
     }
 
     add("updated_at", new Date());
 
-    return withTenant(tenantId, async (tx) => {
+    await withTenant(tenantId, async (tx) => {
       await tx.query(
         `UPDATE warehouse_items SET ${fields.join(", ")}
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         params,
       );
-
-      const items = await this.listItems(tenantId);
-      return items.find((i) => i.id === itemId) ?? null;
     });
+
+    return this.getItem(tenantId, itemId);
   }
 
   async deleteItem(tenantId: string, itemId: string): Promise<boolean> {

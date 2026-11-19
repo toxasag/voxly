@@ -23,7 +23,17 @@ export const createWarehouseItemSchema = z.object({
 });
 export type CreateWarehouseItemPayload = z.infer<typeof createWarehouseItemSchema>;
 
-export const updateWarehouseItemSchema = createWarehouseItemSchema.partial();
+export const updateWarehouseItemSchema = createWarehouseItemSchema
+  .partial()
+  .extend({
+    price: z.number().nonnegative().optional(),
+  })
+  .transform((val) => {
+    if (val.price !== undefined && val.retail_price === undefined) {
+      val.retail_price = val.price;
+    }
+    return val;
+  });
 export type UpdateWarehouseItemPayload = z.infer<typeof updateWarehouseItemSchema>;
 
 export const intakeBatchSchema = z.object({
@@ -158,8 +168,10 @@ export interface WarehouseItemDTO {
   unit: string;
   minStock: number;
   retailPrice: number;
+  price?: number;
   costPrice: number;
   totalStock: number;
+  quantity?: number;
   reservedStock: number;
   availableStock: number;
   createdAt: string;

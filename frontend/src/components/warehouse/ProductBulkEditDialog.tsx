@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, SlidersHorizontal, Loader2, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   useBulkUpdateWarehouseItems,
+  useWarehouseItem,
   type BulkUpdateWarehouseItemsPayload,
   type PriceAdjustmentAction,
 } from "@/lib/api/use-warehouse";
@@ -45,6 +46,57 @@ export function ProductBulkEditDialog({
   const [costPriceValue, setCostPriceValue] = useState("");
 
   const bulkUpdateMutation = useBulkUpdateWarehouseItems();
+  const singleItemQuery = useWarehouseItem(
+    open && selectedIds.length === 1 ? selectedIds[0] : null,
+  );
+
+  useEffect(() => {
+    if (open && selectedIds.length === 1 && singleItemQuery.data) {
+      const it = singleItemQuery.data;
+      if (it.category) {
+        setEnableCategory(true);
+        setCategory(it.category);
+      }
+      if (it.brand) {
+        setEnableBrand(true);
+        setBrand(it.brand);
+      }
+      if (it.unit) {
+        setEnableUnit(true);
+        setUnit(it.unit);
+      }
+      if (it.minStock !== undefined) {
+        setEnableMinStock(true);
+        setMinStock(String(it.minStock));
+      }
+      const rPrice = it.retailPrice ?? it.price;
+      if (rPrice !== undefined && rPrice !== null) {
+        setEnableRetailPrice(true);
+        setRetailPriceMode("set");
+        setRetailPriceValue(String(rPrice));
+      }
+      if (it.costPrice !== undefined && it.costPrice !== null) {
+        setEnableCostPrice(true);
+        setCostPriceMode("set");
+        setCostPriceValue(String(it.costPrice));
+      }
+    } else if (!open) {
+      setEnableCategory(false);
+      setCategory("");
+      setEnableBrand(false);
+      setBrand("");
+      setEnableUnit(false);
+      setUnit("шт.");
+      setEnableMinStock(false);
+      setMinStock("0");
+      setEnableRetailPrice(false);
+      setRetailPriceMode("percent");
+      setRetailPriceValue("");
+      setEnableCostPrice(false);
+      setCostPriceMode("percent");
+      setCostPriceValue("");
+    }
+  }, [open, selectedIds, singleItemQuery.data]);
 
   if (!open) return null;
 

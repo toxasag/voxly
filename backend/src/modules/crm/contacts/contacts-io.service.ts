@@ -18,8 +18,12 @@ import type { CreateContactPayload, ContactPhonePayload, ContactSocialPayload } 
 // Схемы и типы импорта контактов
 // ---------------------------------------------------------------------------
 
+const cellSchema = z
+  .union([z.string(), z.number(), z.boolean(), z.null(), z.undefined()])
+  .transform((v) => (v == null ? "" : String(v)));
+
 export const contactImportValidateSchema = z.object({
-  rows: z.array(z.array(z.string())),
+  rows: z.array(z.array(cellSchema)),
   mapping: z.record(z.string()),
   skipFirstRow: z.boolean().default(true),
 });
@@ -27,7 +31,7 @@ export const contactImportValidateSchema = z.object({
 export type ContactImportValidatePayload = z.infer<typeof contactImportValidateSchema>;
 
 export const contactImportCommitSchema = z.object({
-  rows: z.array(z.array(z.string())),
+  rows: z.array(z.array(cellSchema)),
   mapping: z.record(z.string()),
   skipFirstRow: z.boolean().default(true),
   duplicateStrategy: z.enum(["skip", "update", "create_anyway"]).default("skip"),
@@ -49,6 +53,8 @@ export type ContactImportCommitPayload = z.infer<typeof contactImportCommitSchem
 export interface ContactImportParseResultDTO {
   headers: string[];
   sampleRows: string[][];
+  rows?: string[][];
+  allRows?: string[][];
   totalRows: number;
   detectedDelimiter?: string;
   suggestedMapping: Record<string, string>;
@@ -65,10 +71,20 @@ export interface ContactImportDuplicateDTO {
 
 export interface ContactImportValidateResultDTO {
   totalRows: number;
+  validRows: number;
   validCount: number;
+  duplicatesCount: number;
   duplicateCount: number;
+  errorsCount: number;
   errorCount: number;
   duplicates: ContactImportDuplicateDTO[];
+  sampleParsed: Array<{
+    rowIndex: number;
+    fullName: string;
+    phone: string;
+    email?: string;
+    companyName?: string;
+  }>;
   sampleValid: Array<{
     first_name: string;
     last_name?: string;
@@ -82,10 +98,16 @@ export interface ContactImportValidateResultDTO {
 }
 
 export interface ContactImportCommitResultDTO {
+  total: number;
+  imported: number;
   importedCount: number;
+  updated: number;
   updatedCount: number;
+  skipped: number;
   skippedCount: number;
+  dealsCreated: number;
   dealsCreatedCount: number;
+  researchTriggered: number;
   researchTriggeredCount: number;
   errorCount: number;
   errors: Array<{ rowIndex: number; error: string }>;
@@ -148,6 +170,59 @@ function splitFullName(fullName: string): { first_name: string; last_name: strin
   };
 }
 
+/**
+ * Автоопределение типа поля по примерам значений в столбце, если заголовок не распознан.
+ */
+export function guessFieldFromSamples(samples: string[]): string | null {
+  const nonEmpties = samples.map((s) => s.trim()).filter((s) => s.length > 0);
+  if (nonEmpties.length === 0) return null;
+
+  // 1. E-mail
+  const emailMatches = nonEmpties.filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+  if (emailMatches.length >= Math.ceil(nonEmpties.length * 0.4)) {
+    return "email";
+  }
+
+  // 2. Телефон (10-15 цифр, опциональный плюс)
+  const phoneMatches = nonEmpties.filter((s) => {
+    const digits = cleanDigits(s);
+    return (
+      (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) ||
+      (digits.length >= 10 && digits.length <= 15)
+    );
+  });
+  if (phoneMatches.length >= Math.ceil(nonEmpties.length * 0.4)) {
+    return "phone";
+  }
+
+  // 3. ФИО (2-3 слова с заглавной буквы, кириллица или латиница)
+  const nameMatches = nonEmpties.filter((s) =>
+    /^[А-ЯЁA-Z][а-яёa-z]+(?:\s+[А-ЯЁA-Z][а-яёa-z]+){1,3}$/.test(s),
+  );
+  if (nameMatches.length >= Math.ceil(nonEmpties.length * 0.4)) {
+    return "full_name";
+  }
+
+  // 4. Дата рождения (YYYY-MM-DD или DD.MM.YYYY)
+  const dateMatches = nonEmpties.filter((s) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(s) || /^\d{2}\.\d{2}\.\d{4}$/.test(s),
+  );
+  if (dateMatches.length >= Math.ceil(nonEmpties.length * 0.4)) {
+    return "birth_date";
+  }
+
+  // 5. ИНН (10 или 12 цифр)
+  const innMatches = nonEmpties.filter((s) => {
+    const digits = cleanDigits(s);
+    return digits.length === 10 || (digits.length === 12 && !digits.startsWith("7") && !digits.startsWith("8"));
+  });
+  if (innMatches.length >= Math.ceil(nonEmpties.length * 0.4)) {
+    return "inn";
+  }
+
+  return null;
+}
+
 export class ContactsIOService {
   private readonly contactsService = new ContactsService();
   private readonly dealsService = new DealsService();
@@ -181,6 +256,8 @@ export class ContactsIOService {
       return {
         headers: [],
         sampleRows: [],
+        rows: [],
+        allRows: [],
         totalRows: 0,
         detectedDelimiter,
         suggestedMapping: {},
@@ -192,7 +269,11 @@ export class ContactsIOService {
     const suggestedMapping: Record<string, string> = {};
 
     headers.forEach((h, idx) => {
-      const matched = suggestContactFieldMapping(h);
+      let matched = suggestContactFieldMapping(h);
+      if (!matched) {
+        const colSamples = rows.slice(0, 10).map((r) => r[idx] || "");
+        matched = guessFieldFromSamples(colSamples);
+      }
       if (matched) {
         suggestedMapping[String(idx)] = matched;
       }
@@ -201,6 +282,8 @@ export class ContactsIOService {
     return {
       headers,
       sampleRows,
+      rows,
+      allRows: rows,
       totalRows: rows.length,
       detectedDelimiter,
       suggestedMapping,
@@ -218,10 +301,14 @@ export class ContactsIOService {
     if (allRows.length === 0) {
       return {
         totalRows: 0,
+        validRows: 0,
         validCount: 0,
+        duplicatesCount: 0,
         duplicateCount: 0,
+        errorsCount: 0,
         errorCount: 0,
         duplicates: [],
+        sampleParsed: [],
         sampleValid: [],
         errors: [],
       };
@@ -334,12 +421,24 @@ export class ContactsIOService {
       }
     });
 
+    const sampleParsed = sampleValid.map((s, idx) => ({
+      rowIndex: idx + 1,
+      fullName: `${s.first_name} ${s.last_name || ""}`.trim(),
+      phone: s.phone || "",
+      email: s.email,
+      companyName: s.company_name,
+    }));
+
     return {
       totalRows: dataRows.length,
+      validRows: validCount,
       validCount,
+      duplicatesCount: duplicates.length,
       duplicateCount: duplicates.length,
+      errorsCount: errors.length,
       errorCount: errors.length,
       duplicates,
+      sampleParsed,
       sampleValid,
       errors,
     };
@@ -447,8 +546,9 @@ export class ContactsIOService {
 
         // Формируем соцсети
         const socials: ContactSocialPayload[] = [];
-        if (mapped.telegram_username) {
-          socials.push({ kind: "telegram", value: mapped.telegram_username });
+        const telegramVal = mapped.telegram_username || mapped.telegram;
+        if (telegramVal) {
+          socials.push({ kind: "telegram", value: telegramVal });
         }
         if (mapped.whatsapp) {
           socials.push({ kind: "whatsapp", value: mapped.whatsapp });
@@ -492,7 +592,7 @@ export class ContactsIOService {
           address: mapped.address || companyLegalAddress || undefined,
           notes: mapped.notes || undefined,
           socials: socials.length > 0 ? socials : undefined,
-          channel: mapped.telegram_username ? "telegram" : mapped.whatsapp ? "whatsapp" : "phone",
+          channel: telegramVal ? "telegram" : mapped.whatsapp ? "whatsapp" : "phone",
         };
 
         // Поиск дубликата
@@ -605,10 +705,16 @@ export class ContactsIOService {
     }
 
     return {
+      total: dataRows.length,
+      imported: importedCount,
       importedCount,
+      updated: updatedCount,
       updatedCount,
+      skipped: skippedCount,
       skippedCount,
+      dealsCreated: dealsCreatedCount,
       dealsCreatedCount,
+      researchTriggered: researchTriggeredCount,
       researchTriggeredCount,
       errorCount: errors.length,
       errors,
@@ -800,10 +906,30 @@ export class ContactsIOService {
     for (const [colIdxStr, fieldKey] of Object.entries(mapping)) {
       if (fieldKey === "skip") continue;
       const colIdx = parseInt(colIdxStr, 10);
-      if (!Number.isNaN(colIdx) && row[colIdx] !== undefined) {
-        result[fieldKey] = row[colIdx].trim();
+      if (!Number.isNaN(colIdx) && row[colIdx] !== undefined && row[colIdx] !== null) {
+        result[fieldKey] = String(row[colIdx]).trim();
       }
     }
+
+    // Умный фоллбек: если в строке не распознано имя/телефон, но есть ячейка с названием компании (ООО/ИП/ЗАО...)
+    if (!result.company_name && !result.first_name && !result.full_name && !result.phone) {
+      const companyCell = row.find((c) => /^(?:ООО|ИП|ЗАО|ОАО|ПАО|АО)\s+["«]?[^"»\r\n]+["»]?/i.test(String(c).trim()));
+      if (companyCell) {
+        result.company_name = String(companyCell).trim();
+      }
+    }
+
+    // Если ИНН не был явно смапплен, но в строке есть 10- или 12-значный ИНН
+    if (!result.inn && !result.company_inn) {
+      const innCell = row.find((c) => {
+        const d = cleanDigits(String(c));
+        return (d.length === 10 || d.length === 12) && !String(c).includes("+") && !d.startsWith("79") && !d.startsWith("89");
+      });
+      if (innCell) {
+        result.inn = String(innCell).trim();
+      }
+    }
+
     return result;
   }
 }
