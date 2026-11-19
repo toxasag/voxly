@@ -2217,6 +2217,8 @@ export class WarehouseService {
          FROM (
            SELECT name FROM warehouse_categories WHERE tenant_id = $1
            UNION
+           SELECT name FROM equipment_types WHERE tenant_id = $1
+           UNION
            SELECT category AS name FROM warehouse_items WHERE tenant_id = $1 AND category <> '' AND deleted_at IS NULL
          ) sub
          WHERE btrim(name) <> ''

@@ -437,12 +437,12 @@ function WarehouseContent() {
 
   const editParam = searchParams.get("edit") || searchParams.get("record");
   useEffect(() => {
-    if (editParam && items.length > 0 && !editItemModalOpen) {
+    if (editParam && !editItemModalOpen) {
       const found = items.find((i) => i.id === editParam);
       if (found) {
         setSelectedItemForEdit(found);
-        setEditItemModalOpen(true);
       }
+      setEditItemModalOpen(true);
     }
   }, [editParam, items, editItemModalOpen]);
 
@@ -1581,8 +1581,8 @@ function WarehouseContent() {
       />
 
       <EditItemModal
-        open={editItemModalOpen}
-        itemId={selectedItemForEdit?.id ?? null}
+        open={editItemModalOpen || Boolean(editParam)}
+        itemId={selectedItemForEdit?.id ?? editParam ?? null}
         initialItem={selectedItemForEdit}
         onClose={handleCloseEditItemModal}
         onSuccess={() => {

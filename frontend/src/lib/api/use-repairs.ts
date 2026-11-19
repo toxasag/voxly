@@ -182,6 +182,7 @@ export interface ServiceDictionariesDTO {
   models: DictionaryItemDTO[];
   accessories: DictionaryItemDTO[];
   malfunctions: DictionaryItemDTO[];
+  categories?: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {
@@ -833,6 +834,8 @@ export function useAddRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
@@ -854,6 +857,8 @@ export function useRenameRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
@@ -873,6 +878,8 @@ export function useDeleteRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
