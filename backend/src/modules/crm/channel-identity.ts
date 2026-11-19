@@ -561,6 +561,14 @@ export function isBotSender(input: {
   isBot?: boolean | null;
   sourceMetadata?: Record<string, unknown> | null;
 }): boolean {
+  // 0. Системный бот уведомлений и авторизации (TELEGRAM_AUTH_BOT_TOKEN / TELEGRAM_AUTH_BOT_USERNAME)
+  const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+  const systemBotUsername = (process.env.TELEGRAM_AUTH_BOT_USERNAME || "GetVoxlybot").trim().toLowerCase().replace(/^@/, "");
+
+  if (systemBotId) {
+    if (input.chatId === systemBotId || input.senderName === systemBotId) return true;
+  }
+
   // 1. Нативный или явно переданный признак бота
   if (input.isBot === true) return true;
   if (input.profile?.isBot === true) return true;
@@ -582,6 +590,7 @@ export function isBotSender(input: {
   for (const rawUsername of usernameCandidates) {
     if (!rawUsername || typeof rawUsername !== "string") continue;
     const clean = rawUsername.trim().replace(/^@/, "");
+    if (clean.toLowerCase() === systemBotUsername) return true;
     // По спецификации Telegram юзернеймы ботов обязаны заканчиваться на 'bot' (например, 'kupmsk_bot', 'myBot')
     if (clean.length >= 3 && /(?:_bot|bot)$/i.test(clean)) {
       return true;
@@ -591,6 +600,7 @@ export function isBotSender(input: {
   // 4. Анализ senderName: если в качестве имени передан юзернейм бота вида @kupmsk_bot или my_bot
   if (input.senderName && typeof input.senderName === "string") {
     const trimmedSender = input.senderName.trim().replace(/^@/, "");
+    if (trimmedSender.toLowerCase() === systemBotUsername) return true;
     if (/^[a-zA-Z0-9_]{3,}(?:_bot|bot)$/i.test(trimmedSender)) {
       return true;
     }

@@ -254,6 +254,25 @@ export class CrmPipelineService {
       }
     }
 
+    // Защита CRM-воронки: запрет автогенерации контактов и сделок для внутренних уведомлений CRM
+    if (
+      rawText.startsWith("Новая заявка:") ||
+      (rawText.includes("Этап: Новый лид") && rawText.includes("Суть обращения:")) ||
+      rawText.includes("Открыть сделку в CRM")
+    ) {
+      this.log.info(
+        { tenantId: input.tenantId, channel: input.channel, chatId: input.chatId },
+        "Skipping lead/contact creation: internal CRM notification message",
+      );
+      return {
+        contactId: "",
+        dealId: "",
+        isNewContact: false,
+        isNewDeal: false,
+        isBot: true,
+      };
+    }
+
     const extractedPhone = extractPhoneNumber(rawText);
     const validatedSenderPhone = baseInput.senderPhone ? extractPhoneNumber(baseInput.senderPhone) : null;
     const effectiveSenderPhone = validatedSenderPhone || extractedPhone || undefined;
@@ -349,12 +368,28 @@ export class CrmPipelineService {
         contactId = contact.id;
 
         // Обогащение существующего контакта (enrichment):
-        // 1. Привязываем telegram_chat_id, если его ещё не было
-        if (input.senderTelegramChatId && !contact.telegram_chat_id) {
+        // 1. Привязываем telegram_chat_id, если его ещё не было, отправитель верифицирован и НЕ является ботом
+        const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+        const isSenderBot =
+          isBotSender(input) ||
+          (systemBotId !== undefined && input.senderTelegramChatId === systemBotId);
+
+        // Привязывать telegram_chat_id к СУЩЕСТВУЮЩЕМУ контакту разрешено ТОЛЬКО если:
+        // - Отправитель НЕ является ботом
+        // - Сообщение получено напрямую из канала Telegram
+        // - Отправитель верифицирован (совпадает проверенный телефон контакта или telegram_username)
+        const isVerifiedTelegramSender =
+          input.channel === "telegram" &&
+          (Boolean(validatedSenderPhone && contact.phone && validatedSenderPhone === extractPhoneNumber(contact.phone)) ||
+           Boolean(input.senderTelegramUsername && contact.telegram_username && input.senderTelegramUsername.replace(/^@/, "").toLowerCase() === contact.telegram_username.replace(/^@/, "").toLowerCase()) ||
+           (!contact.phone && !contact.telegram_chat_id));
+
+        if (input.senderTelegramChatId && !contact.telegram_chat_id && !isSenderBot && isVerifiedTelegramSender) {
           await tx.query(
             `UPDATE contacts SET telegram_chat_id = $1 WHERE id = $2 AND telegram_chat_id IS NULL`,
             [Number(input.senderTelegramChatId), contact.id],
           );
+          contact.telegram_chat_id = input.senderTelegramChatId;
         }
 
         // 1.1. Привязываем телефон, если он появился
@@ -986,8 +1021,8 @@ export class CrmPipelineService {
           const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
           const insertedMsg = await tx.queryOne<{ id: string }>(
             `INSERT INTO deal_messages
-               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
              RETURNING id`,
             [
               input.tenantId,
@@ -1001,6 +1036,7 @@ export class CrmPipelineService {
               deliveryStatus,
               input.attachment ?? null,
               input.attachmentType ?? null,
+              JSON.stringify(input.sourceMetadata ?? {}),
             ],
           );
           if (insertedMsg?.id) {
