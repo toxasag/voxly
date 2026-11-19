@@ -20,6 +20,7 @@ import {
   ExternalLink,
   FileSpreadsheet,
   FileText,
+  Forward,
   Languages,
   Loader2,
   MessageCircle,
@@ -1092,7 +1093,18 @@ export function CrmChatView({
     if (hasUserSelectedTabRef.current) return;
     if (messages.length === 0 && sendFromOptions.length === 0) return;
 
-    // Предпочитаем канал последнего сообщения в переписке
+    // Предпочитаем канал сообщения, у которого есть доступный аккаунт отправки
+    const lastAvailableMessageWithChannel = [...messages].reverse().find((m) => {
+      if (!m.channel || m.channel === "system") return false;
+      const slug = normalizeChannel(m.channel);
+      return sendFromOptions.some((o) => normalizeChannel(o.channel) === slug && o.available);
+    });
+    if (lastAvailableMessageWithChannel) {
+      setActiveChannel(normalizeChannel(lastAvailableMessageWithChannel.channel));
+      return;
+    }
+
+    // Если ни для одного из каналов сообщений нет доступной отправки, берём последний канал переписки
     const lastMessageWithChannel = [...messages].reverse().find((m) => m.channel && m.channel !== "system");
     if (lastMessageWithChannel) {
       setActiveChannel(normalizeChannel(lastMessageWithChannel.channel));
@@ -1711,6 +1723,19 @@ export function CrmChatView({
                           {message.channel}
                         </span>
                       </div>
+
+                      {/* Индикатор пересланного сообщения */}
+                      {Boolean(message.metadata?.is_forwarded) && (
+                        <div className="mb-1.5 flex items-center gap-1 text-[11px] italic text-[#666666]">
+                          <Forward className="h-3 w-3 text-[#888888]" />
+                          <span>
+                            Переслано
+                            {message.metadata?.forward_from_name
+                              ? ` от ${String(message.metadata.forward_from_name)}`
+                              : ""}
+                          </span>
+                        </div>
+                      )}
 
                       {/* Текст сообщения и Вложение */}
                       {(() => {
