@@ -148,22 +148,25 @@ export function RecordField({
   );
 }
 
-interface RecordFieldGroupProps { title: string; children: ReactNode; defaultExpanded?: boolean; }
+interface RecordFieldGroupProps { title: string; children: ReactNode; defaultExpanded?: boolean; action?: ReactNode; }
 
-export function RecordFieldGroup({ title, children, defaultExpanded = true }: RecordFieldGroupProps) {
+export function RecordFieldGroup({ title, children, defaultExpanded = true, action }: RecordFieldGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   return (
     <div className="mt-2">
-      <button
-        type="button"
-        title={`Свернуть / развернуть секцию «${title}»`}
-        onClick={() => setExpanded((prev) => !prev)}
-        aria-expanded={expanded}
-        className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-      >
-        <span>{title}</span>
-        <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !expanded && "rotate-180")} />
-      </button>
+      <div className="flex w-full items-center justify-between px-4 py-1.5">
+        <button
+          type="button"
+          title={`Свернуть / развернуть секцию «${title}»`}
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+          className="flex items-center gap-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+        >
+          <span>{title}</span>
+          <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !expanded && "rotate-180")} />
+        </button>
+        {action ? <div className="flex items-center">{action}</div> : null}
+      </div>
       {expanded && <div className="space-y-0.5 py-0.5">{children}</div>}
     </div>
   );

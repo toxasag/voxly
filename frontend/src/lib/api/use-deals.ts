@@ -250,6 +250,47 @@ export function useDeleteDeal(): UseMutationResult<null, ApiClientError, string>
   });
 }
 
+export interface BulkActionPayload {
+  mode: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+}
+
+export function useBulkDeleteDeals(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
+export function useBulkMoveDeals(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload & { stage_id: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-move`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
 export function useMarkDealPersonal(): UseMutationResult<
   { dealId: string; contactId: string | null; stageId: string },
   ApiClientError,

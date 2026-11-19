@@ -272,6 +272,30 @@ export function useDeleteContact(): UseMutationResult<
   });
 }
 
+export interface BulkActionPayload {
+  mode: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+}
+
+export function useBulkDeleteContacts(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE_PATH}/bulk-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
 export function useSetContactPersonal(): UseMutationResult<
   ContactDTO,
   ApiClientError,

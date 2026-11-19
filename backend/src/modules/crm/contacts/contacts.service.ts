@@ -23,6 +23,7 @@ import {
   type TransactionClient,
 } from "../../../db/client.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 import { ContactDedupeService } from "./dedupe.service.js";
 
 /**
@@ -604,6 +605,68 @@ export class ContactsService {
     );
 
     return row !== null;
+  }
+
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE contacts
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["c.tenant_id = $1", "c.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(c.first_name ILIKE ${placeholder}
+          OR c.last_name ILIKE ${placeholder}
+          OR c.email ILIKE ${placeholder}
+          OR c.phone ILIKE ${placeholder}
+          OR c.company_name ILIKE ${placeholder})`,
+      );
+    }
+
+    if (typeof filters.company_id === "string" && filters.company_id.trim().length > 0) {
+      params.push(filters.company_id.trim());
+      conditions.push(`c.company_id = $${params.length}`);
+    }
+
+    if (typeof filters.channel === "string" && filters.channel.trim().length > 0 && filters.channel !== "all") {
+      params.push(filters.channel.trim());
+      conditions.push(`c.channel = $${params.length}`);
+    }
+
+    if (typeof filters.contact_type === "string" && filters.contact_type.trim().length > 0 && filters.contact_type !== "all") {
+      params.push(filters.contact_type.trim());
+      conditions.push(`c.contact_type = $${params.length}`);
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (c.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE contacts c
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING c.id`,
+      params,
+    );
+
+    return { count: rows.length };
   }
 
   /**
