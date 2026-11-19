@@ -232,7 +232,15 @@ function resolveAttachmentUrl(attachment: string, download = false): string {
   }
   const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://api.getvoxly.ru";
   const cleanBase = apiBase.replace(/\/+$/, "");
-  const cleanPath = attachment.startsWith("/") ? attachment : `/${attachment}`;
+  const rawPath = attachment.startsWith("/") ? attachment : `/${attachment}`;
+  const [pathname, search] = rawPath.split("?");
+  let encodedPath = pathname;
+  try {
+    encodedPath = encodeURI(decodeURI(pathname));
+  } catch {
+    encodedPath = encodeURI(pathname);
+  }
+  const cleanPath = search ? `${encodedPath}?${search}` : encodedPath;
   return queryStr ? `${cleanBase}${cleanPath}${sep(cleanPath)}${queryStr}` : `${cleanBase}${cleanPath}`;
 }
 
@@ -256,8 +264,8 @@ function parseFilePlaceholder(content?: string): string | null {
 
 function isImageAttachment(attachment?: string | null, attachmentType?: string | null, fileName?: string | null): boolean {
   if (attachmentType && attachmentType.startsWith("image/")) return true;
-  if (attachment && /\.(jpe?g|png|webp|gif|svg)$/i.test(attachment.split("?")[0] || "")) return true;
-  if (fileName && /\.(jpe?g|png|webp|gif|svg)$/i.test(fileName)) return true;
+  if (attachment && /\.(jpe?g|png|webp|gif|svg|heic|bmp)$/i.test(attachment.split("?")[0] || "")) return true;
+  if (fileName && /\.(jpe?g|png|webp|gif|svg|heic|bmp)$/i.test(fileName)) return true;
   return false;
 }
 
@@ -289,7 +297,20 @@ function getAttachmentInfo(
   if (attachment) {
     resolvedUrl = resolveAttachmentUrl(attachment, false);
     downloadUrl = resolveAttachmentUrl(attachment, true);
-    if (content && content.trim() !== "." && content.trim() !== "[документ]" && !content.startsWith("/uploads/") && !content.startsWith("[файл:")) {
+    const isGenericPlaceholder =
+      !content ||
+      content.trim() === "." ||
+      content.trim() === "[документ]" ||
+      content.trim() === "[фото]" ||
+      content.trim() === "[photo]" ||
+      content.trim() === "[видео]" ||
+      content.trim() === "[video]" ||
+      content.trim() === "[аудио]" ||
+      content.trim() === "[audio]" ||
+      content.startsWith("/uploads/") ||
+      content.startsWith("[файл:");
+
+    if (!isGenericPlaceholder && content) {
       fileName = content.trim();
     } else {
       const rawBase = attachment.split("?")[0]?.split("/").pop() || "Документ";

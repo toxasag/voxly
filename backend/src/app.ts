@@ -79,6 +79,10 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const app = fastify({
     trustProxy: true,
+    maxParamLength: 5000,
+    routerOptions: {
+      maxParamLength: 5000,
+    },
     bodyLimit: 15 * 1024 * 1024,
     logger: {
       level: env.NODE_ENV === "production" ? "info" : "debug",
@@ -412,6 +416,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     ".gif": "image/gif",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
+    ".bmp": "image/bmp",
+    ".heic": "image/heic",
     ".mp3": "audio/mpeg",
     ".ogg": "audio/ogg",
     ".opus": "audio/ogg",
@@ -496,7 +502,17 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Конфиденциальные документы (PDF, XLSX, DOCX) требуют валидный JWT и проверку арендатора.
   app.get("/uploads/:filename", async (request, reply) => {
     const { filename } = request.params as { filename: string };
-    const safeFilename = path.basename(filename);
+    let safeFilename = path.basename(filename);
+    let filePath = path.join(process.cwd(), "uploads", safeFilename);
+    if (!existsSync(filePath)) {
+      try {
+        const decoded = decodeURIComponent(safeFilename);
+        if (decoded !== safeFilename && existsSync(path.join(process.cwd(), "uploads", decoded))) {
+          safeFilename = decoded;
+          filePath = path.join(process.cwd(), "uploads", decoded);
+        }
+      } catch {}
+    }
     const ext = path.extname(safeFilename).toLowerCase();
     const contentType = mimeMap[ext] ?? "application/octet-stream";
 
@@ -542,8 +558,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (!isAuthorized) {
       return reply.status(hasToken ? 404 : 401).send({ error: hasToken ? "File not found" : "Unauthorized" });
     }
-
-    const filePath = path.join(process.cwd(), "uploads", safeFilename);
 
     try {
       const stat = await fs.stat(filePath);
@@ -603,8 +617,17 @@ export async function buildApp(): Promise<FastifyInstance> {
           return reply.redirect(message.attachment, 302);
         }
 
-        const safeFilename = path.basename(message.attachment.split("?")[0] || "");
-        const filePath = path.join(process.cwd(), "uploads", safeFilename);
+        let safeFilename = path.basename(message.attachment.split("?")[0] || "");
+        let filePath = path.join(process.cwd(), "uploads", safeFilename);
+        if (!existsSync(filePath)) {
+          try {
+            const decoded = decodeURIComponent(safeFilename);
+            if (decoded !== safeFilename && existsSync(path.join(process.cwd(), "uploads", decoded))) {
+              safeFilename = decoded;
+              filePath = path.join(process.cwd(), "uploads", decoded);
+            }
+          } catch {}
+        }
 
         try {
           const stat = await fs.stat(filePath);
