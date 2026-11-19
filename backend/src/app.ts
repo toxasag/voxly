@@ -262,6 +262,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dictionariesRoutes, { prefix: "/api/dictionaries" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
   await app.register(warehouseRoutes, { prefix: "/api/v1/warehouse" });
+  await app.register(warehouseRoutes, { prefix: "/api/warehouse" });
+  await app.register(warehouseRoutes, { prefix: "/warehouse" });
   await app.register(servicesRoutes, { prefix: "/api/v1/services" });
   await app.register(servicesRoutes, { prefix: "/api/services" });
   await app.register(printTemplatesRoutes, { prefix: "/api/v1/print-templates" });

@@ -114,6 +114,14 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: updated });
   });
 
+  // Список деталей с остатками (корень)
+  app.get("/", async (request, reply) => {
+    const { tenant_id } = request;
+    const { search } = request.query as { search?: string };
+    const items = await warehouseService.listItems(tenant_id, search);
+    return reply.send({ data: items });
+  });
+
   // Список деталей с остатками
   app.get("/items", async (request, reply) => {
     const { tenant_id } = request;
@@ -122,12 +130,23 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: items });
   });
 
+  // Получение одной позиции
+  app.get("/items/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const item = await warehouseService.getItem(tenant_id, id);
+    if (!item) {
+      return reply.status(404).send({ error: "Item not found" });
+    }
+    return reply.send({ data: item, ...item });
+  });
+
   // Создание номенклатуры
   app.post("/items", async (request, reply) => {
     const { tenant_id } = request;
     const body = createWarehouseItemSchema.parse(request.body);
     const item = await warehouseService.createItem(tenant_id, body);
-    return reply.status(201).send({ data: item });
+    return reply.status(201).send({ data: item, ...item });
   });
 
   // Обновление номенклатуры
@@ -139,7 +158,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
     if (!updated) {
       return reply.status(404).send({ error: "Item not found" });
     }
-    return reply.send({ data: updated });
+    return reply.send({ data: updated, ...updated });
   });
 
   // Удаление номенклатуры
@@ -148,6 +167,59 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const ok = await warehouseService.deleteItem(tenant_id, id);
     return reply.send({ success: ok });
+  });
+
+  // Получение одной позиции (прямой алиас /:id)
+  app.get("/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const reserved = [
+      "settings",
+      "batches",
+      "movements",
+      "purchases",
+      "purchase-requests",
+      "supplier-orders",
+      "export",
+      "import",
+      "intake",
+      "items",
+    ];
+    if (reserved.includes(id)) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    const item = await warehouseService.getItem(tenant_id, id);
+    if (!item) {
+      return reply.status(404).send({ error: "Item not found" });
+    }
+    return reply.send({ data: item, ...item });
+  });
+
+  // Обновление позиции (прямой алиас /:id)
+  app.patch("/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const reserved = [
+      "settings",
+      "batches",
+      "movements",
+      "purchases",
+      "purchase-requests",
+      "supplier-orders",
+      "export",
+      "import",
+      "intake",
+      "items",
+    ];
+    if (reserved.includes(id)) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    const body = updateWarehouseItemSchema.parse(request.body);
+    const updated = await warehouseService.updateItem(tenant_id, id, body);
+    if (!updated) {
+      return reply.status(404).send({ error: "Item not found" });
+    }
+    return reply.send({ data: updated, ...updated });
   });
 
   // Оприходование партии
