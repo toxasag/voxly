@@ -170,6 +170,26 @@ export function ContactImportDialog({
     }
   };
 
+  const getImportRows = async (): Promise<string[][]> => {
+    if (!parsedData || !selectedFile) return [];
+
+    const allRows = parsedData.allRows || parsedData.rows;
+    if (allRows && allRows.length > 0) {
+      return allRows;
+    }
+
+    const isCsv = selectedFile.name.toLowerCase().endsWith(".csv");
+    if (isCsv) {
+      const text = await selectedFile.text();
+      const cleanText = text.replace(/^\uFEFF/, "");
+      const delim = delimiter !== "auto" ? delimiter : parsedData.detectedDelimiter || ";";
+      const lines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      return lines.map((line) => line.split(delim).map((c) => c.replace(/^"|"$/g, "").trim()));
+    }
+
+    return [parsedData.headers, ...parsedData.sampleRows];
+  };
+
   // Step 2 -> Step 3: Validate Mapping
   const handleValidateMapping = async () => {
     if (!parsedData || !selectedFile) return;
@@ -185,36 +205,20 @@ export function ContactImportDialog({
     }
 
     try {
-      const isCsv = selectedFile.name.toLowerCase().endsWith(".csv");
-      const reader = new FileReader();
-
-      reader.onload = async (e) => {
-        let rows: string[][] = [];
-        if (isCsv) {
-          const text = e.target?.result as string;
-          const cleanText = text.replace(/^\uFEFF/, "");
-          const delim = delimiter !== "auto" ? delimiter : parsedData.detectedDelimiter || ";";
-          const lines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0);
-          rows = lines.map((line) => line.split(delim).map((c) => c.replace(/^"|"$/g, "").trim()));
-        } else {
-          rows = [parsedData.headers, ...parsedData.sampleRows];
-        }
-
-        const res = await validateMutation.mutateAsync({
-          rows,
-          mapping: columnMapping,
-          skipFirstRow,
-        });
-
-        setValidationResult(res);
-        setStep(3);
-      };
-
-      if (isCsv) {
-        reader.readAsText(selectedFile);
-      } else {
-        reader.readAsDataURL(selectedFile);
+      const rows = await getImportRows();
+      if (rows.length === 0) {
+        toast.error("Не удалось прочитать строки для импорта");
+        return;
       }
+
+      const res = await validateMutation.mutateAsync({
+        rows,
+        mapping: columnMapping,
+        skipFirstRow,
+      });
+
+      setValidationResult(res);
+      setStep(3);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Ошибка проверки колонок");
     }
@@ -225,50 +229,36 @@ export function ContactImportDialog({
     if (!parsedData || !selectedFile) return;
 
     try {
-      const isCsv = selectedFile.name.toLowerCase().endsWith(".csv");
-      const reader = new FileReader();
-
-      reader.onload = async (e) => {
-        let rows: string[][] = [];
-        if (isCsv) {
-          const text = e.target?.result as string;
-          const cleanText = text.replace(/^\uFEFF/, "");
-          const delim = delimiter !== "auto" ? delimiter : parsedData.detectedDelimiter || ";";
-          const lines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0);
-          rows = lines.map((line) => line.split(delim).map((c) => c.replace(/^"|"$/g, "").trim()));
-        } else {
-          rows = [parsedData.headers, ...parsedData.sampleRows];
-        }
-
-        const res = await commitMutation.mutateAsync({
-          rows,
-          mapping: columnMapping,
-          skipFirstRow,
-          duplicateStrategy,
-          createDeal,
-          dealOptions: createDeal
-            ? {
-                titleMode: dealTitleMode,
-                titleField: dealTitleField,
-                titleTemplate: dealTitleTemplate,
-                pipelineId: selectedPipelineId || undefined,
-                stageId: selectedStageId || undefined,
-              }
-            : undefined,
-          triggerResearch,
-        });
-
-        setCommitResult(res);
-        setStep(4);
-        toast.success(`Импорт завершен: создано ${res.imported}, обновлено ${res.updated}`);
-        onSuccess?.();
-      };
-
-      if (isCsv) {
-        reader.readAsText(selectedFile);
-      } else {
-        reader.readAsDataURL(selectedFile);
+      const rows = await getImportRows();
+      if (rows.length === 0) {
+        toast.error("Не удалось прочитать строки для импорта");
+        return;
       }
+
+      const res = await commitMutation.mutateAsync({
+        rows,
+        mapping: columnMapping,
+        skipFirstRow,
+        duplicateStrategy,
+        createDeal,
+        dealOptions: createDeal
+          ? {
+              titleMode: dealTitleMode,
+              titleField: dealTitleField,
+              titleTemplate: dealTitleTemplate,
+              pipelineId: selectedPipelineId || undefined,
+              stageId: selectedStageId || undefined,
+            }
+          : undefined,
+        triggerResearch,
+      });
+
+      setCommitResult(res);
+      setStep(4);
+      const createdCount = res.imported ?? res.importedCount ?? 0;
+      const updatedCount = res.updated ?? res.updatedCount ?? 0;
+      toast.success(`Импорт завершен: создано ${createdCount}, обновлено ${updatedCount}`);
+      onSuccess?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось выполнить импорт");
     }
@@ -723,148 +713,163 @@ export function ContactImportDialog({
           )}
 
           {/* STEP 3: Duplicate Resolution */}
-          {step === 3 && validationResult && (
-            <div className="space-y-5">
-              {/* Summary Stats Banner */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
-                  <p className="text-[11px] text-[#666666]">Всего строк к импорту</p>
-                  <p className="text-lg font-bold text-[#111111]">{validationResult.totalRows}</p>
-                </div>
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3.5 shadow-2xs">
-                  <p className="text-[11px] text-emerald-800">Уникальных контактов</p>
-                  <p className="text-lg font-bold text-emerald-700">
-                    {validationResult.totalRows - validationResult.duplicatesCount}
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "rounded-xl border p-3.5 shadow-2xs",
-                    validationResult.duplicatesCount > 0
-                      ? "border-amber-200 bg-amber-50/50"
-                      : "border-[#e5e5e5] bg-white",
-                  )}
-                >
-                  <p className="text-[11px] text-amber-800">Найдено дубликатов</p>
-                  <p
+          {step === 3 && validationResult && (() => {
+            const totalRows = validationResult.totalRows ?? 0;
+            const dupsCount =
+              validationResult.duplicatesCount ??
+              validationResult.duplicateCount ??
+              0;
+            const uniqueCount = Math.max(0, totalRows - dupsCount);
+
+            return (
+              <div className="space-y-5">
+                {/* Summary Stats Banner */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
+                    <p className="text-[11px] text-[#666666]">Всего строк к импорту</p>
+                    <p className="text-lg font-bold text-[#111111]">{totalRows}</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3.5 shadow-2xs">
+                    <p className="text-[11px] text-emerald-800">Уникальных контактов</p>
+                    <p className="text-lg font-bold text-emerald-700">{uniqueCount}</p>
+                  </div>
+                  <div
                     className={cn(
-                      "text-lg font-bold",
-                      validationResult.duplicatesCount > 0 ? "text-amber-700" : "text-[#111111]",
+                      "rounded-xl border p-3.5 shadow-2xs",
+                      dupsCount > 0
+                        ? "border-amber-200 bg-amber-50/50"
+                        : "border-[#e5e5e5] bg-white",
                     )}
                   >
-                    {validationResult.duplicatesCount}
-                  </p>
-                </div>
-              </div>
-
-              {/* Strategy Selector */}
-              <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] p-4 space-y-3">
-                <p className="text-xs font-semibold text-[#111111]">
-                  Как поступить с найденными дубликатами по телефону или e-mail?
-                </p>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-xs text-[#111111] cursor-pointer">
-                    <input
-                      type="radio"
-                      name="strategy"
-                      checked={duplicateStrategy === "skip"}
-                      onChange={() => setDuplicateStrategy("skip")}
-                      className="text-[#4a38f5] focus:ring-[#4a38f5]"
-                    />
-                    <span>
-                      <strong>Пропускать дубликаты</strong> (сохранять существующий контакт без изменений)
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2 text-xs text-[#111111] cursor-pointer">
-                    <input
-                      type="radio"
-                      name="strategy"
-                      checked={duplicateStrategy === "update"}
-                      onChange={() => setDuplicateStrategy("update")}
-                      className="text-[#4a38f5] focus:ring-[#4a38f5]"
-                    />
-                    <span>
-                      <strong>Обновлять существующие контакты</strong> (дополнять новыми полями из файла)
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2 text-xs text-[#111111] cursor-pointer">
-                    <input
-                      type="radio"
-                      name="strategy"
-                      checked={duplicateStrategy === "create_anyway"}
-                      onChange={() => setDuplicateStrategy("create_anyway")}
-                      className="text-[#4a38f5] focus:ring-[#4a38f5]"
-                    />
-                    <span>
-                      <strong>Создавать новый контакт в любом случае</strong> (разрешить несколько записей)
-                    </span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Duplicate List Preview */}
-              {validationResult.duplicates.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-[#111111]">
-                    Список найденных совпадений ({validationResult.duplicates.length}):
-                  </h4>
-                  <div className="max-h-48 overflow-y-auto rounded-xl border border-[#e5e5e5] bg-white divide-y divide-[#f0f0f0] text-xs">
-                    {validationResult.duplicates.slice(0, 50).map((dup, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-2.5 hover:bg-[#fafafa]">
-                        <div>
-                          <span className="font-medium text-[#111111]">Строка #{dup.rowIndex}: </span>
-                          <span className="text-[#666666]">совпадение с «{dup.existingName}»</span>
-                        </div>
-                        <span className="rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                          {dup.field === "phone" ? "Телефон" : "E-mail"}: {dup.value}
-                        </span>
-                      </div>
-                    ))}
-                    {validationResult.duplicates.length > 50 && (
-                      <div className="p-2 text-center text-[11px] text-[#888888]">
-                        И ещё {validationResult.duplicates.length - 50} совпадений...
-                      </div>
-                    )}
+                    <p className="text-[11px] text-amber-800">Найдено дубликатов</p>
+                    <p
+                      className={cn(
+                        "text-lg font-bold",
+                        dupsCount > 0 ? "text-amber-700" : "text-[#111111]",
+                      )}
+                    >
+                      {dupsCount}
+                    </p>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+
+                {/* Strategy Selector */}
+                <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] p-4 space-y-3">
+                  <p className="text-xs font-semibold text-[#111111]">
+                    Как поступить с найденными дубликатами по телефону или e-mail?
+                  </p>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-[#111111] cursor-pointer">
+                      <input
+                        type="radio"
+                        name="strategy"
+                        checked={duplicateStrategy === "skip"}
+                        onChange={() => setDuplicateStrategy("skip")}
+                        className="text-[#4a38f5] focus:ring-[#4a38f5]"
+                      />
+                      <span>
+                        <strong>Пропускать дубликаты</strong> (сохранять существующий контакт без изменений)
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-[#111111] cursor-pointer">
+                      <input
+                        type="radio"
+                        name="strategy"
+                        checked={duplicateStrategy === "update"}
+                        onChange={() => setDuplicateStrategy("update")}
+                        className="text-[#4a38f5] focus:ring-[#4a38f5]"
+                      />
+                      <span>
+                        <strong>Обновлять существующие контакты</strong> (дополнять новыми полями из файла)
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-[#111111] cursor-pointer">
+                      <input
+                        type="radio"
+                        name="strategy"
+                        checked={duplicateStrategy === "create_anyway"}
+                        onChange={() => setDuplicateStrategy("create_anyway")}
+                        className="text-[#4a38f5] focus:ring-[#4a38f5]"
+                      />
+                      <span>
+                        <strong>Создавать новый контакт в любом случае</strong> (разрешить несколько записей)
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Duplicate List Preview */}
+                {validationResult.duplicates.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-semibold text-[#111111]">
+                      Список найденных совпадений ({validationResult.duplicates.length}):
+                    </h4>
+                    <div className="max-h-48 overflow-y-auto rounded-xl border border-[#e5e5e5] bg-white divide-y divide-[#f0f0f0] text-xs">
+                      {validationResult.duplicates.slice(0, 50).map((dup, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-2.5 hover:bg-[#fafafa]">
+                          <div>
+                            <span className="font-medium text-[#111111]">Строка #{dup.rowIndex}: </span>
+                            <span className="text-[#666666]">совпадение с «{dup.existingName}»</span>
+                          </div>
+                          <span className="rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                            {dup.field === "phone" ? "Телефон" : "E-mail"}: {dup.value}
+                          </span>
+                        </div>
+                      ))}
+                      {validationResult.duplicates.length > 50 && (
+                        <div className="p-2 text-center text-[11px] text-[#888888]">
+                          И ещё {validationResult.duplicates.length - 50} совпадений...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* STEP 4: Success / Done */}
-          {step === 4 && commitResult && (
-            <div className="space-y-6 py-4 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 border border-emerald-200 mx-auto">
-                <CheckCircle2 className="h-8 w-8 text-emerald-600" />
-              </div>
+          {step === 4 && commitResult && (() => {
+            const imported = commitResult.imported ?? commitResult.importedCount ?? 0;
+            const updated = commitResult.updated ?? commitResult.updatedCount ?? 0;
+            const dealsCreated = commitResult.dealsCreated ?? commitResult.dealsCreatedCount ?? 0;
+            const researchTriggered =
+              commitResult.researchTriggered ?? commitResult.researchTriggeredCount ?? 0;
 
-              <div className="space-y-1">
-                <h3 className="text-base font-bold text-[#111111]">Импорт успешно завершен!</h3>
-                <p className="text-xs text-[#666666]">
-                  База контактов обновлена в реальном времени. Все задачи и сделки распределены.
-                </p>
-              </div>
+            return (
+              <div className="space-y-6 py-4 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 border border-emerald-200 mx-auto">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-left">
-                <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
-                  <p className="text-[11px] text-[#666666]">Новых контактов</p>
-                  <p className="text-lg font-bold text-emerald-600">+{commitResult.imported}</p>
+                <div className="space-y-1">
+                  <h3 className="text-base font-bold text-[#111111]">Импорт успешно завершен!</h3>
+                  <p className="text-xs text-[#666666]">
+                    База контактов обновлена в реальном времени. Все задачи и сделки распределены.
+                  </p>
                 </div>
-                <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
-                  <p className="text-[11px] text-[#666666]">Обновлено контактов</p>
-                  <p className="text-lg font-bold text-[#4a38f5]">{commitResult.updated}</p>
-                </div>
-                <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
-                  <p className="text-[11px] text-[#666666]">Создано сделок</p>
-                  <p className="text-lg font-bold text-amber-600">+{commitResult.dealsCreated}</p>
-                </div>
-                <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
-                  <p className="text-[11px] text-[#666666]">Запущено ресёрчей</p>
-                  <p className="text-lg font-bold text-indigo-600">{commitResult.researchTriggered}</p>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-left">
+                  <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
+                    <p className="text-[11px] text-[#666666]">Новых контактов</p>
+                    <p className="text-lg font-bold text-emerald-600">+{imported}</p>
+                  </div>
+                  <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
+                    <p className="text-[11px] text-[#666666]">Обновлено контактов</p>
+                    <p className="text-lg font-bold text-[#4a38f5]">{updated}</p>
+                  </div>
+                  <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
+                    <p className="text-[11px] text-[#666666]">Создано сделок</p>
+                    <p className="text-lg font-bold text-amber-600">+{dealsCreated}</p>
+                  </div>
+                  <div className="rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-2xs">
+                    <p className="text-[11px] text-[#666666]">Запущено ресёрчей</p>
+                    <p className="text-lg font-bold text-indigo-600">{researchTriggered}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Footer Navigation */}

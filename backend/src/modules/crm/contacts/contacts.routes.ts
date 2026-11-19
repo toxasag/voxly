@@ -187,9 +187,9 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Парсинг загруженного файла импорта (XLSX / CSV)
-  app.post("/import/parse", { onRequest: canWrite }, async (request, reply) => {
+  app.post("/import/parse", { onRequest: canWrite, bodyLimit: 50 * 1024 * 1024 }, async (request, reply) => {
     if (request.isMultipart()) {
-      const file = await request.file({ limits: { fileSize: 20 * 1024 * 1024 } });
+      const file = await request.file({ limits: { fileSize: 50 * 1024 * 1024 } });
       if (!file) {
         return reply.status(400).send({ error: "Файл не передан" });
       }
@@ -222,14 +222,14 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Валидация колонок и превью дубликатов
-  app.post("/import/validate", { onRequest: canWrite }, async (request, reply) => {
+  app.post("/import/validate", { onRequest: canWrite, bodyLimit: 50 * 1024 * 1024 }, async (request, reply) => {
     const body = contactImportValidateSchema.parse(request.body);
     const result = await contactsIo.validateImport(request.tenant_id, body);
     return reply.send({ data: result });
   });
 
   // Фиксация импорта контактов (со сделками, дедупликацией и ресёрчем)
-  app.post("/import/commit", { onRequest: canWrite }, async (request, reply) => {
+  app.post("/import/commit", { onRequest: canWrite, bodyLimit: 50 * 1024 * 1024 }, async (request, reply) => {
     const body = contactImportCommitSchema.parse(request.body);
     const result = await contactsIo.commitImport(request.tenant_id, request.authUser.id, body);
     return reply.send({ data: result });

@@ -445,6 +445,8 @@ export function toContactFormValues(contact: ContactDTO): CreateContactPayload {
 export interface ContactImportParseResultDTO {
   headers: string[];
   sampleRows: string[][];
+  rows?: string[][];
+  allRows?: string[][];
   totalRows: number;
   detectedDelimiter?: string;
   suggestedMapping: Record<string, string>;
@@ -462,14 +464,18 @@ export interface ContactImportDuplicateDTO {
   existingName: string;
   field: "phone" | "email";
   value: string;
+  rowPreview?: string;
 }
 
 export interface ContactImportValidateResultDTO {
   totalRows: number;
   validRows: number;
+  validCount?: number;
   duplicatesCount: number;
+  duplicateCount?: number;
   duplicates: ContactImportDuplicateDTO[];
   errorsCount: number;
+  errorCount?: number;
   errors: { rowIndex: number; error: string }[];
   sampleParsed: {
     rowIndex: number;
@@ -478,6 +484,15 @@ export interface ContactImportValidateResultDTO {
     email?: string;
     companyName?: string;
   }[];
+  sampleValid?: Array<{
+    first_name: string;
+    last_name?: string;
+    phone?: string;
+    email?: string;
+    company_name?: string;
+    company_inn?: string;
+    birth_date?: string;
+  }>;
 }
 
 export interface ContactImportCommitPayload {
@@ -499,10 +514,17 @@ export interface ContactImportCommitPayload {
 export interface ContactImportCommitResultDTO {
   total: number;
   imported: number;
+  importedCount?: number;
   updated: number;
+  updatedCount?: number;
   skipped: number;
+  skippedCount?: number;
   dealsCreated: number;
+  dealsCreatedCount?: number;
   researchTriggered: number;
+  researchTriggeredCount?: number;
+  errorCount?: number;
+  errors?: { rowIndex: number; error: string }[];
 }
 
 export function useParseContactImport() {
