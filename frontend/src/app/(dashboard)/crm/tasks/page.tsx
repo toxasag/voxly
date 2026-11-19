@@ -17,6 +17,7 @@ import { UserAvatar } from "@/components/shared/UserAvatar";
 import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
 import {
   useTask,
   useTasks,
@@ -24,6 +25,7 @@ import {
   useCreateTask,
   useUpdateTask,
   useDeleteTask,
+  useBulkDeleteTasks,
   type TaskDTO,
   type TaskStatus,
 } from "@/lib/api/use-tasks";
@@ -91,6 +93,9 @@ function TasksContent() {
   const [deleteTarget, setDeleteTarget] = useState<TaskDTO | null>(null);
   const [quickTitle, setQuickTitle] = useState("");
   const [quickStatus, setQuickStatus] = useState<TaskStatus | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [isAllSelected, setIsAllSelected] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
 
   /**
    * У задачи нет отдельной страницы: карточка выражается параметром `?record=`,
@@ -110,6 +115,30 @@ function TasksContent() {
   const create = useCreateTask();
   const update = useUpdateTask();
   const remove = useDeleteTask();
+  const bulkDelete = useBulkDeleteTasks();
+
+  const handleBulkDelete = useCallback(async () => {
+    setBulkDeleteConfirmOpen(false);
+    try {
+      if (isAllSelected) {
+        const res = await bulkDelete.mutateAsync({
+          mode: "all",
+        });
+        toast.success(`Удалено задач: ${res.count}`);
+      } else {
+        const ids = Array.from(selected);
+        const res = await bulkDelete.mutateAsync({
+          mode: "ids",
+          ids,
+        });
+        toast.success(`Удалено задач: ${res.count}`);
+      }
+      setSelected(new Set());
+      setIsAllSelected(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось удалить задачи");
+    }
+  }, [isAllSelected, selected, bulkDelete]);
 
   const tasks = query.data?.items ?? [];
   const usersById = useMemo(() => indexTenantUsers(tenantUsers.data), [tenantUsers.data]);
@@ -598,6 +627,28 @@ function TasksContent() {
           getRowId={(task) => task.id}
           tableId="tasks"
           onRowClick={(task) => openTaskRecord(task.id)}
+          selectable={true}
+          selectedIds={selected}
+          onSelectionChange={(next) => {
+            setSelected(next);
+            if (next.size === 0) setIsAllSelected(false);
+          }}
+          bulkBar={
+            <TableBulkBar
+              selectedCount={isAllSelected ? filteredTasks.length : selected.size}
+              totalCount={filteredTasks.length}
+              isAllSelected={isAllSelected}
+              entityNamePlural="задач"
+              pageItemCount={filteredTasks.length}
+              onSelectAll={() => setIsAllSelected(true)}
+              onClearSelection={() => {
+                setSelected(new Set());
+                setIsAllSelected(false);
+              }}
+              onDelete={() => setBulkDeleteConfirmOpen(true)}
+              isDeleting={bulkDelete.isPending}
+            />
+          }
         />
       ) : view === "calendar" ? (
         <TasksCalendarView
@@ -732,6 +783,17 @@ function TasksContent() {
         confirmLabel="Удалить"
         variant="destructive"
         isPending={remove.isPending}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteConfirmOpen}
+        onClose={() => setBulkDeleteConfirmOpen(false)}
+        onConfirm={handleBulkDelete}
+        title={isAllSelected ? `Удалить все задачи (${filteredTasks.length})?` : `Удалить задачи: ${selected.size}?`}
+        description="Задачи будут безвозвратно удалены. Действие необратимо через интерфейс."
+        confirmLabel="Удалить"
+        variant="destructive"
+        isPending={bulkDelete.isPending}
       />
     </div>
   );

@@ -20,6 +20,7 @@ import { CrmEnrichmentService } from "../enrichment.service.js";
 import { ContactActivityService } from "./contact-activity.service.js";
 import { activityChannelSchema, activityKindSchema } from "./contact-activity.types.js";
 import { notificationEventBus } from "../../notifications/push-notification.service.js";
+import { bulkActionSchema } from "../shared/bulk-action.types.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
@@ -273,6 +274,12 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     if (contact === null) throw new NotFoundError("Contact not found");
 
     return reply.send({ data: contact });
+  });
+
+  app.post("/bulk-delete", { onRequest: canDelete }, async (request, reply) => {
+    const payload = bulkActionSchema.parse(request.body);
+    const result = await service.bulkDelete(request.tenant_id, payload);
+    return reply.send({ data: result });
   });
 
   app.delete("/:id", { onRequest: canDelete }, async (request, reply) => {

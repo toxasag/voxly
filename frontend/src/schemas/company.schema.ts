@@ -7,6 +7,7 @@ export const createCompanySchema=z.object({
   phone:z.string().max(30).optional().or(z.literal("")),
   email:z.string().email("Invalid email").optional().or(z.literal("")),
   inn:digits([10,12],"INN").optional(),
+  kpp:digits([9],"KPP").optional().or(z.literal("")),
   ogrn:digits([13,15],"OGRN").optional(),
   bik:digits([9],"BIK").optional(),
   account_number:digits([20],"Account number").optional(),
@@ -22,7 +23,7 @@ export const createCompanySchema=z.object({
   address_country:z.string().max(120).optional().or(z.literal("")),
   address_postcode:z.string().max(20).optional().or(z.literal("")),
   notes:z.string().max(4000).optional().or(z.literal("")),
-  custom_fields:z.record(z.string()).optional(),
+  custom_fields:z.record(z.unknown()).optional(),
 });
 export const updateCompanySchema=createCompanySchema.partial();
 export type CreateCompanyPayload=z.infer<typeof createCompanySchema>;export type UpdateCompanyPayload=z.infer<typeof updateCompanySchema>;

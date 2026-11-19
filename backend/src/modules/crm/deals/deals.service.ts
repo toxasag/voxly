@@ -31,6 +31,7 @@ import { conversionDispatcher } from "../../analytics/conversion-dispatcher.serv
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
 import { messageTranslationService } from "../translation/message-translation.service.js";
 import { chatEventBus } from "../chat/chat-events.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
@@ -791,6 +792,112 @@ export class DealsService {
     );
 
     return row !== null;
+  }
+
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.stage_id === "string" && filters.stage_id.trim().length > 0) {
+      params.push(filters.stage_id.trim());
+      conditions.push(`d.stage_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
+  }
+
+  async bulkMove(
+    tenantId: string,
+    payload: BulkActionPayload & { stage_id: string },
+  ): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET stage_id = $3, updated_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids, payload.stage_id],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId, payload.stage_id];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET stage_id = $2, updated_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
   }
 
   // -------------------------------------------------------------------------

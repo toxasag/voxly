@@ -9,6 +9,7 @@ import type {
 } from "./tasks.types.js";
 import { toTaskDTO } from "./tasks.types.js";
 import { query, queryOne, queryOneOrThrow, type SqlParam } from "../../../db/client.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 
 const TASK_COLUMNS = `
   id, tenant_id, deal_id, contact_id, company_id, title, description,
@@ -396,5 +397,54 @@ export class TasksService {
     );
 
     return row !== null;
+  }
+
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE crm_tasks
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["tenant_id = $1", "deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(title ILIKE ${placeholder}
+          OR description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (typeof filters.status === "string" && filters.status.trim().length > 0 && filters.status !== "all") {
+      params.push(filters.status.trim());
+      conditions.push(`status = $${params.length}`);
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE crm_tasks
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING id`,
+      params,
+    );
+
+    return { count: rows.length };
   }
 }

@@ -2,11 +2,11 @@
 
 import { memo, useCallback, useMemo, useState } from "react";
 import {
-  CalendarClock, Check, FileText, Globe, Handshake, Linkedin, Loader2,
-  Mail, MapPin, Phone, Plus, Tag, UserCircle2, X,
+  Building2, CalendarClock, Check, FileText, Globe, Handshake, Linkedin, Loader2,
+  Mail, MapPin, Phone, Plus, Sparkles, Tag, UserCircle2, X,
 } from "lucide-react";
 import type { CompanyDTO, CompanyStatsDTO } from "@/lib/api/use-companies";
-import { useUpdateCompany } from "@/lib/api/use-companies";
+import { useUpdateCompany, useEnrichCompanyInn } from "@/lib/api/use-companies";
 import { contactFullName, useContacts, useCreateContact, useUpdateContact } from "@/lib/api/use-contacts";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
 import { formatPhone } from "@/lib/utils/phone";
@@ -86,6 +86,7 @@ export const CompanyCard = memo(function CompanyCard({
   company, stats, statsLoading, onClose, onEdit, onDelete, isDeleting = false, onOpenContact, onOpenDeal,
 }: CompanyCardProps) {
   const update = useUpdateCompany();
+  const enrichCompanyInn = useEnrichCompanyInn();
   // Сотрудники компании: секция показывает сами записи, а не только счётчик.
   const contacts = useContacts({ companyId: company.id, limit: 100 });
   const allContactsQuery = useContacts({ limit: 100 });
@@ -96,6 +97,25 @@ export const CompanyCard = memo(function CompanyCard({
   const [addContactPickerOpen, setAddContactPickerOpen] = useState(false);
   const [addContactSearch, setAddContactSearch] = useState("");
   const [isCreatingNewContact, setIsCreatingNewContact] = useState(false);
+  const [innPromptOpen, setInnPromptOpen] = useState(false);
+  const [innPromptInput, setInnPromptInput] = useState(company.requisites.inn ?? "");
+
+  const handleEnrichInn = useCallback(async (innOverride?: string) => {
+    const targetInn = (innOverride || company.requisites.inn || "").replace(/\D/g, "").trim();
+    if (!targetInn) {
+      setInnPromptInput("");
+      setInnPromptOpen(true);
+      return;
+    }
+    try {
+      toast.info(`Поиск реквизитов организации по ИНН ${targetInn}...`);
+      const updated = await enrichCompanyInn.mutateAsync({ id: company.id, inn: targetInn });
+      toast.success(`Реквизиты компании «${updated.name}» успешно заполнены по ИНН`);
+      setInnPromptOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось получить реквизиты по ИНН");
+    }
+  }, [company.id, company.requisites.inn, enrichCompanyInn]);
 
   const unlinkedContacts = useMemo(() => {
     const list = allContactsQuery.data?.items ?? [];
@@ -123,18 +143,17 @@ export const CompanyCard = memo(function CompanyCard({
     onCancel: () => setEditing(null),
   });
 
-  const requisites: ReadonlyArray<[string, string]> = [
-    ["ИНН", company.requisites.inn],
-    ["ОГРН", company.requisites.ogrn],
-    ["БИК", company.requisites.bik],
-    ["Счёт", company.requisites.accountNumber],
-    ["Юр. адрес", company.requisites.legalAddress],
-  ];
-  const filledRequisites = requisites.filter(([, value]) => value !== "");
-
   const homeTab = (
     <div className="py-2">
       <RecordFieldGroup title="Общее">
+        <RecordField
+          icon={Building2}
+          label="Название"
+          value={company.name}
+          validate={(v) => (v.trim() === "" ? "Название компании обязательно" : null)}
+          {...field("name")}
+          onCommit={(value) => commit({ name: value.trim() })}
+        />
         <RecordField
           icon={Globe}
           label="Домен"
@@ -152,6 +171,134 @@ export const CompanyCard = memo(function CompanyCard({
           value={company.managerName}
           {...field("manager")}
           onCommit={(value) => commit({ manager_name: value.trim() })}
+        />
+        <RecordField
+          icon={Handshake}
+          label="Годовой доход"
+          value={company.annualRevenue !== null ? formatMoney(company.annualRevenue) : ""}
+          {...field("annualRevenue")}
+          onCommit={(value) => {
+            const raw = value.trim();
+            if (!raw) {
+              commit({ annual_revenue: null });
+              return;
+            }
+            const num = Number(raw.replace(/[^\d.-]/g, ""));
+            commit({ annual_revenue: Number.isNaN(num) ? null : num });
+          }}
+        />
+      </RecordFieldGroup>
+
+      {/* Реквизиты юридического лица — ключевой блок в Twenty-стиле */}
+      <RecordFieldGroup
+        title="Реквизиты организации"
+        action={
+          <button
+            type="button"
+            onClick={() => void handleEnrichInn()}
+            disabled={enrichCompanyInn.isPending}
+            className="flex items-center gap-1 rounded-[6px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2 py-0.5 text-[11px] font-medium text-[#4a38f5] shadow-2xs hover:bg-[#4a38f5]/10 transition-colors cursor-pointer disabled:opacity-50"
+            title="Автоматически найти и заполнить реквизиты по ИНН в ФНС/ЕГРЮЛ"
+          >
+            {enrichCompanyInn.isPending ? (
+              <Loader2 className="h-3 w-3 animate-spin text-[#4a38f5]" />
+            ) : (
+              <Sparkles className="h-3 w-3 text-[#4a38f5]" />
+            )}
+            <span>Заполнить по ИНН</span>
+          </button>
+        }
+      >
+        <RecordField
+          icon={FileText}
+          label="ИНН"
+          value={company.requisites.inn}
+          {...field("inn")}
+          onCommit={(value) => commit({ inn: value.trim() })}
+        />
+        <RecordField
+          icon={FileText}
+          label="КПП"
+          value={company.requisites.kpp ?? ""}
+          {...field("kpp")}
+          onCommit={(value) => commit({ kpp: value.trim() })}
+        />
+        <RecordField
+          icon={FileText}
+          label="ОГРН"
+          value={company.requisites.ogrn}
+          {...field("ogrn")}
+          onCommit={(value) => commit({ ogrn: value.trim() })}
+        />
+        <RecordField
+          icon={FileText}
+          label="БИК"
+          value={company.requisites.bik}
+          {...field("bik")}
+          onCommit={(value) => commit({ bik: value.trim() })}
+        />
+        <RecordField
+          icon={FileText}
+          label="Расчётный счёт"
+          value={company.requisites.accountNumber}
+          {...field("accountNumber")}
+          onCommit={(value) => commit({ account_number: value.trim() })}
+        />
+        <RecordField
+          icon={MapPin}
+          label="Юр. адрес"
+          value={company.requisites.legalAddress}
+          {...field("legalAddress")}
+          onCommit={(value) => commit({ legal_address: value.trim() })}
+        />
+        <RecordField
+          icon={UserCircle2}
+          label="Руководитель"
+          value={String(company.customFields?.director ?? "")}
+          {...field("director")}
+          onCommit={(value) => commit({ custom_fields: { director: value.trim() } })}
+        />
+        <RecordField
+          icon={UserCircle2}
+          label="Должность"
+          value={String(company.customFields?.director_post ?? "")}
+          {...field("director_post")}
+          onCommit={(value) => commit({ custom_fields: { director_post: value.trim() } })}
+        />
+        <RecordField
+          icon={Tag}
+          label="ОКВЭД"
+          value={String(company.customFields?.okved ?? "")}
+          {...field("okved")}
+          onCommit={(value) => commit({ custom_fields: { okved: value.trim() } })}
+        />
+        <RecordField
+          icon={FileText}
+          label="Банк"
+          value={String(company.customFields?.bank_name ?? "")}
+          {...field("bank_name")}
+          onCommit={(value) => commit({ custom_fields: { bank_name: value.trim() } })}
+        />
+        <RecordField
+          icon={FileText}
+          label="Корр. счёт"
+          value={String(company.customFields?.corr_account ?? "")}
+          {...field("corr_account")}
+          onCommit={(value) => commit({ custom_fields: { corr_account: value.trim() } })}
+        />
+        <RecordField
+          icon={Tag}
+          label="Статус"
+          value={String(company.customFields?.status ?? "")}
+          {...field("status")}
+          onCommit={(value) => commit({ custom_fields: { status: value.trim() } })}
+        />
+        <RecordField
+          icon={FileText}
+          label="ИФНС"
+          value={String(company.customFields?.ifns ?? "")}
+          {...field("ifns")}
+          onCommit={(value) => commit({ custom_fields: { ifns: value.trim() } })}
         />
       </RecordFieldGroup>
 
@@ -242,13 +389,35 @@ export const CompanyCard = memo(function CompanyCard({
           {...field("postcode")}
           onCommit={(value) => commit({ address_postcode: value.trim() })}
         />
-        {filledRequisites.map(([label, value]) => (
-          <RecordField key={label} icon={FileText} label={label} value={value} readOnly />
-        ))}
         {Object.entries(company.customFields)
-          .filter(([, value]) => value !== null && value !== undefined && String(value) !== "")
+          .filter(
+            ([key, value]) =>
+              value !== null &&
+              value !== undefined &&
+              String(value) !== "" &&
+              ![
+                "director",
+                "director_post",
+                "director_from",
+                "ogrn_date",
+                "registration_date",
+                "status",
+                "okved",
+                "bank_name",
+                "corr_account",
+                "ifns",
+                "legal_type",
+              ].includes(key),
+          )
           .map(([key, value]) => (
-            <RecordField key={key} icon={Tag} label={key.replace(/_/g, " ")} value={String(value)} readOnly />
+            <RecordField
+              key={key}
+              icon={Tag}
+              label={key.replace(/_/g, " ")}
+              value={String(value)}
+              {...field(`cf_${key}`)}
+              onCommit={(v) => commit({ custom_fields: { [key]: v.trim() } })}
+            />
           ))}
       </RecordFieldGroup>
 
@@ -451,6 +620,7 @@ export const CompanyCard = memo(function CompanyCard({
     <>
       <RecordDetailShell
         name={company.name}
+        onNameCommit={(name) => commit({ name })}
         subtitle={company.domainName}
         domain={company.domainName}
         createdAt={company.createdAt}
@@ -459,8 +629,72 @@ export const CompanyCard = memo(function CompanyCard({
         onEdit={onEdit}
         onDelete={onDelete}
         isDeleting={isDeleting}
+        headerActions={
+          <button
+            type="button"
+            onClick={() => void handleEnrichInn()}
+            disabled={enrichCompanyInn.isPending}
+            title="Заполнить реквизиты по ИНН в ФНС/ЕГРЮЛ"
+            className="flex items-center gap-1.5 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2.5 py-1 text-xs font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/10 cursor-pointer disabled:opacity-50"
+          >
+            {enrichCompanyInn.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+            )}
+            <span>Заполнить по ИНН</span>
+          </button>
+        }
         ariaLabel={`Карточка компании: ${company.name}`}
       />
+
+      {innPromptOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-sm rounded-[12px] border border-[#e5e5e5] bg-white p-5 shadow-xl space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-[#111111]">Заполнить реквизиты по ИНН</h3>
+              <p className="text-xs text-[#666666] mt-1">
+                Введите ИНН организации (10 или 12 цифр) для автоматического поиска в ЕГРЮЛ/ФНС:
+              </p>
+            </div>
+            <input
+              type="text"
+              autoFocus
+              placeholder="ИНН (10 или 12 цифр)"
+              value={innPromptInput}
+              onChange={(e) => setInnPromptInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleEnrichInn(innPromptInput);
+                }
+                if (e.key === "Escape") {
+                  setInnPromptOpen(false);
+                }
+              }}
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setInnPromptOpen(false)}
+                className="h-8 rounded-[8px] border border-[#e5e5e5] px-3 text-xs text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={enrichCompanyInn.isPending || !innPromptInput.trim()}
+                onClick={() => void handleEnrichInn(innPromptInput)}
+                className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                {enrichCompanyInn.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                <span>Найти и заполнить</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isCreatingNewContact && (
         <ContactModal
