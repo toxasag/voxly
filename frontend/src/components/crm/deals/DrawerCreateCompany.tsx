@@ -22,11 +22,13 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Sparkles,
   UserCircle2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useCreateCompany } from "@/lib/api/use-companies";
+import { useCreateCompany, type CompanyInnLookupResult } from "@/lib/api/use-companies";
+import { apiClient } from "@/lib/api/apiClient";
 import { useTenantUsers } from "@/lib/api/use-tenant-users";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
 import { UserAvatar } from "@/components/shared/UserAvatar";
@@ -82,12 +84,45 @@ export function DrawerCreateCompany({
   const [name, setName] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [domainName, setDomainName] = useState("");
+  const [inn, setInn] = useState("");
+  const [kpp, setKpp] = useState("");
+  const [ogrn, setOgrn] = useState("");
+  const [legalAddress, setLegalAddress] = useState("");
+  const [isLookingUpInn, setIsLookingUpInn] = useState(false);
   const [accountOwner, setAccountOwner] = useState("");
   const [accountOwnerId, setAccountOwnerId] = useState("");
   const [address, setAddress] = useState("");
   const [linkedin, setLinkedin] = useState("");
   const [isFavorite, setIsFavorite] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+
+  const handleLookupInn = async (rawInn: string) => {
+    const cleanInn = rawInn.replace(/\D/g, "").trim();
+    if (cleanInn.length !== 10 && cleanInn.length !== 12) {
+      toast.error("ИНН должен содержать 10 или 12 цифр");
+      return;
+    }
+    setIsLookingUpInn(true);
+    try {
+      toast.info(`Поиск по ИНН ${cleanInn}...`);
+      const res = await apiClient.get<CompanyInnLookupResult>("/api/v1/crm/companies/lookup-inn", {
+        query: { inn: cleanInn },
+      });
+      if (res.data) {
+        if (!name.trim() || name === "Новая компания" || name.startsWith("Компания")) {
+          setName(res.data.name);
+        }
+        if (res.data.kpp) setKpp(res.data.kpp);
+        if (res.data.ogrn) setOgrn(res.data.ogrn);
+        if (res.data.legalAddress) setLegalAddress(res.data.legalAddress);
+        toast.success(`Найдено: ${res.data.name}`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Организация по ИНН не найдена");
+    } finally {
+      setIsLookingUpInn(false);
+    }
+  };
 
   useEffect(() => {
     if (!moreMenuOpen) return;
@@ -126,6 +161,10 @@ export function DrawerCreateCompany({
       {
         name: trimmedName,
         domain_name: domainName.trim(),
+        inn: inn.trim() || undefined,
+        kpp: kpp.trim() || undefined,
+        ogrn: ogrn.trim() || undefined,
+        legal_address: legalAddress.trim() || undefined,
         address_street: address.trim(),
         linkedin_link: linkedin.trim(),
         manager_name: accountOwner.trim() || currentUserName,
@@ -319,6 +358,37 @@ export function DrawerCreateCompany({
           </button>
           {generalOpen && (
             <div className="space-y-0.5 py-0.5">
+              <FieldRow icon={FileText} label="ИНН">
+                <div className="flex items-center justify-between gap-2">
+                  <input
+                    type="text"
+                    placeholder="ИНН (10 или 12 цифр)"
+                    value={inn}
+                    onChange={(e) => setInn(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleLookupInn(inn);
+                      }
+                    }}
+                    className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleLookupInn(inn)}
+                    disabled={isLookingUpInn || !inn.trim()}
+                    title="Заполнить название и реквизиты по ИНН в ФНС/ЕГРЮЛ"
+                    className="flex shrink-0 items-center gap-1 rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2 py-0.5 text-[10px] font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 disabled:opacity-40 transition-colors cursor-pointer"
+                  >
+                    {isLookingUpInn ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3 w-3" />
+                    )}
+                    <span>По ИНН</span>
+                  </button>
+                </div>
+              </FieldRow>
               <FieldRow icon={Link2} label="Доменное имя">
                 <input
                   type="text"

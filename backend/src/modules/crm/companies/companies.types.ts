@@ -18,6 +18,7 @@ const digitsOnly = (length: number[], label: string) =>
     );
 
 export const innSchema = digitsOnly([10, 12], "INN");
+export const kppSchema = digitsOnly([9], "KPP");
 export const ogrnSchema = digitsOnly([13, 15], "OGRN");
 export const bikSchema = digitsOnly([9], "BIK");
 export const accountNumberSchema = digitsOnly([20], "Account number");
@@ -31,6 +32,7 @@ export const createCompanySchema = z.object({
   phone: z.string().max(30).optional().or(z.literal("")),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   inn: innSchema.optional(),
+  kpp: kppSchema.optional().or(z.literal("")),
   ogrn: ogrnSchema.optional(),
   bik: bikSchema.optional(),
   account_number: accountNumberSchema.optional(),
@@ -67,6 +69,7 @@ export interface CompanyRow {
   phone: string;
   email: string;
   inn: string;
+  kpp: string;
   ogrn: string;
   bik: string;
   account_number: string;
@@ -93,6 +96,7 @@ export interface CompanyRow {
 
 export interface CompanyRequisitesDTO {
   inn: string;
+  kpp: string;
   ogrn: string;
   bik: string;
   accountNumber: string;
@@ -145,6 +149,7 @@ export function toCompanyDTO(row: CompanyRow): CompanyDTO {
     email: row.email,
     requisites: {
       inn: row.inn,
+      kpp: row.kpp ?? "",
       ogrn: row.ogrn,
       bik: row.bik,
       accountNumber: row.account_number,

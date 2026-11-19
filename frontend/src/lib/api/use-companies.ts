@@ -13,7 +13,7 @@ export interface CompanyDTO {
   domainName: string;
   phone: string;
   email: string;
-  requisites: { inn: string; ogrn: string; bik: string; accountNumber: string; legalAddress: string };
+  requisites: { inn: string; kpp?: string; ogrn: string; bik: string; accountNumber: string; legalAddress: string };
   managerName: string;
   managerId: string | null;
   /** Twenty: company.annualRevenue. null — доход неизвестен, это не 0. */
@@ -89,6 +89,48 @@ export function useDeleteCompany():UseMutationResult<null,ApiClientError,string>
   return useMutation({mutationFn:async(id)=>{await apiClient.delete<null>(`${BASE}/${id}`);return null;},onSuccess:(_,id)=>{qc.removeQueries({queryKey:companyKeys.detail(id)});void qc.invalidateQueries({queryKey:companyKeys.all});}});
 }
 
+export interface BulkActionPayload {
+  mode: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+}
+
+export function useEnrichCompanyInn(): UseMutationResult<
+  CompanyDTO,
+  ApiClientError,
+  { id: string; inn?: string }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, inn }) => {
+      const res = await apiClient.post<CompanyDTO>(`${BASE}/${id}/enrich-inn`, { inn });
+      return res.data;
+    },
+    onSuccess: (updated) => {
+      qc.setQueryData(companyKeys.detail(updated.id), updated);
+      void qc.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteCompanies(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: companyKeys.all });
+    },
+  });
+}
+
 export function toCompanyFormValues(x:CompanyDTO):CreateCompanyPayload{
   return {
     name: x.name,
@@ -98,6 +140,7 @@ export function toCompanyFormValues(x:CompanyDTO):CreateCompanyPayload{
     phone: x.phone,
     email: x.email,
     inn: x.requisites.inn,
+    kpp: x.requisites.kpp ?? "",
     ogrn: x.requisites.ogrn,
     bik: x.requisites.bik,
     account_number: x.requisites.accountNumber,
