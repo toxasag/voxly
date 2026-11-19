@@ -654,7 +654,8 @@ export class WarehouseService {
     return withTenant(tenantId, async (tx) => {
       const res = await tx.query(
         `UPDATE warehouse_items SET deleted_at = now()
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         RETURNING id`,
         [tenantId, itemId],
       );
       return res.length > 0;
