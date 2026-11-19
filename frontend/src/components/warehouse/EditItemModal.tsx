@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { X, Loader2, SquarePen, Tag, Layers } from "lucide-react";
+import { X, Loader2, SquarePen, Tag, Layers, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import {
   useWarehouseItem,
@@ -35,6 +35,7 @@ export function EditItemModal({
   const [sku, setSku] = useState("");
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
+  const [modelNames, setModelNames] = useState<string[]>([]);
   const [unit, setUnit] = useState("шт.");
   const [minStock, setMinStock] = useState("0");
   const [retailPrice, setRetailPrice] = useState("");
@@ -102,6 +103,9 @@ export function EditItemModal({
       setSku(src.sku ?? "");
       setBrand(src.brand ?? "");
       setCategory(src.category ?? "");
+      const initialModelNames =
+        src.modelNames ?? (src.models ? src.models.map((m) => m.name) : []);
+      setModelNames(initialModelNames);
       setUnit(src.unit ?? "шт.");
       setMinStock(src.minStock !== undefined ? String(src.minStock) : "0");
       setRetailPrice(
@@ -148,6 +152,7 @@ export function EditItemModal({
           sku: sku.trim(),
           brand: brand.trim(),
           category: category.trim(),
+          models: modelNames,
           unit: unit.trim() || "шт.",
           min_stock: parseFloat(minStock) || 0,
           retail_price: retailPrice !== "" ? parseFloat(retailPrice) : 0,
@@ -252,6 +257,20 @@ export function EditItemModal({
                 items={categoryItems}
                 value={category}
                 onChange={(val) => setCategory((val as string) || "")}
+              />
+            </div>
+
+            <div>
+              <DictionarySelectField
+                label="Подходит к моделям"
+                icon={Cpu}
+                category="model"
+                mode="multi"
+                brandName={brand}
+                placeholder="Выберите одну или несколько моделей..."
+                items={dictionaries.models}
+                value={modelNames}
+                onChange={(val) => setModelNames(Array.isArray(val) ? val : val ? [val] : [])}
               />
             </div>
 

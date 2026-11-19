@@ -32,6 +32,7 @@ import {
   Eye,
   Edit2,
   SquarePen,
+  Filter,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -56,6 +57,8 @@ import {
   useUpdatePurchaseRequest,
   useExportWarehouseItems,
   useBulkDeleteWarehouseItems,
+  useWarehouseCategories,
+  useWarehouseBrands,
   type WarehouseItemDTO,
   type PurchaseRequestDTO,
   type AggregatedPurchaseRequestDTO,
@@ -75,6 +78,7 @@ import { ReceiptSupplierOrderModal } from "@/components/warehouse/ReceiptSupplie
 import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
 import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
 import { EditItemModal } from "@/components/warehouse/EditItemModal";
+import { WarehouseDictionariesModal } from "@/components/warehouse/WarehouseDictionariesModal";
 import { cn } from "@/lib/utils";
 
 type WarehouseTab = "items" | "batches" | "purchases" | "supplier_orders" | "movements";
@@ -126,7 +130,7 @@ function WarehouseContent() {
   const [activeTab, setActiveTab] = useState<WarehouseTab>("items");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Параметры серверной пагинации номенклатуры склада
+  // Параметры серверной пагинации и фильтрации номенклатуры склада
   const rawPage = parseInt(searchParams.get("page") ?? "1", 10);
   const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
 
@@ -135,7 +139,37 @@ function WarehouseContent() {
     ? (rawLimit as WarehouseLimit)
     : 25;
 
-  const updateUrl = (updates: { page?: number; limit?: number }) => {
+  const categoryParam = searchParams.get("category") ?? "";
+  const brandParam = searchParams.get("brand") ?? "";
+
+  const [selectedCategory, setSelectedCategory] = useState<string>(categoryParam);
+  const [selectedBrand, setSelectedBrand] = useState<string>(brandParam);
+
+  useEffect(() => {
+    setSelectedCategory(categoryParam);
+  }, [categoryParam]);
+
+  useEffect(() => {
+    setSelectedBrand(brandParam);
+  }, [brandParam]);
+
+  const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
+  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  useClickOutside(filterPopoverRef, () => setFilterPopoverOpen(false), filterPopoverOpen);
+
+  const [dictionariesModalOpen, setDictionariesModalOpen] = useState(false);
+
+  const { data: warehouseCategoriesList = [] } = useWarehouseCategories();
+  const { data: warehouseBrandsList = [] } = useWarehouseBrands();
+
+  const activeFiltersCount = (selectedCategory ? 1 : 0) + (selectedBrand ? 1 : 0);
+
+  const updateUrl = (updates: {
+    page?: number;
+    limit?: number;
+    category?: string;
+    brand?: string;
+  }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (updates.page !== undefined) {
       params.set("page", String(updates.page));
@@ -143,7 +177,28 @@ function WarehouseContent() {
     if (updates.limit !== undefined) {
       params.set("limit", String(updates.limit));
     }
+    if (updates.category !== undefined) {
+      if (updates.category) {
+        params.set("category", updates.category);
+      } else {
+        params.delete("category");
+      }
+    }
+    if (updates.brand !== undefined) {
+      if (updates.brand) {
+        params.set("brand", updates.brand);
+      } else {
+        params.delete("brand");
+      }
+    }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleClearFilters = () => {
+    setSelectedCategory("");
+    setSelectedBrand("");
+    setFilterPopoverOpen(false);
+    updateUrl({ page: 1, category: "", brand: "" });
   };
 
   const handleSearchChange = (newVal: string) => {
@@ -192,6 +247,8 @@ function WarehouseContent() {
     page,
     limit,
     search: searchQuery,
+    category: selectedCategory || undefined,
+    brand: selectedBrand || undefined,
   });
 
   const items = warehouseData?.items ?? [];
@@ -572,6 +629,16 @@ function WarehouseContent() {
             )}
           </div>
 
+          {/* Справочники */}
+          <button
+            type="button"
+            onClick={() => setDictionariesModalOpen(true)}
+            className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors"
+          >
+            <BookOpen className="h-4 w-4 text-[#666666]" />
+            Справочники
+          </button>
+
           {/* Импорт */}
           <button
             type="button"
@@ -740,18 +807,119 @@ function WarehouseContent() {
         })}
       </div>
 
-      {/* Поисковая строка для активной вкладки */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="Поиск по названию, артикулу..."
-            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-          />
-        </div>
+      {/* Поисковая строка и фильтры для активной вкладки */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-1 max-w-md">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Поиск по названию, артикулу..."
+                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              />
+            </div>
+
+            {activeTab === "items" && (
+              <div ref={filterPopoverRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setFilterPopoverOpen((prev) => !prev)}
+                  className={cn(
+                    "flex h-8 items-center gap-1.5 rounded-[8px] border px-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+                    activeFiltersCount > 0
+                      ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                      : "border-[#e5e5e5] bg-white text-[#111111] hover:bg-[#fafafa] hover:border-[#cccccc]",
+                  )}
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  <span>Фильтры</span>
+                  {activeFiltersCount > 0 && (
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#4a38f5] text-[10px] font-bold text-white">
+                      {activeFiltersCount}
+                    </span>
+                  )}
+                </button>
+
+                {filterPopoverOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 z-30 w-72 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#f0f0f0]">
+                      <span className="text-xs font-semibold text-[#111111]">
+                        Фильтры склада
+                      </span>
+                      {activeFiltersCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleClearFilters}
+                          className="text-[11px] text-[#4a38f5] hover:underline"
+                        >
+                          Сбросить
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <label className="block text-[11px] font-medium text-[#666666] mb-1">
+                          Категория
+                        </label>
+                        <select
+                          value={selectedCategory}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedCategory(val);
+                            updateUrl({ page: 1, category: val, brand: selectedBrand });
+                          }}
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                        >
+                          <option value="">Все категории</option>
+                          {warehouseCategoriesList.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-medium text-[#666666] mb-1">
+                          Бренд
+                        </label>
+                        <select
+                          value={selectedBrand}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedBrand(val);
+                            updateUrl({ page: 1, category: selectedCategory, brand: val });
+                          }}
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                        >
+                          <option value="">Все бренды</option>
+                          {warehouseBrandsList.map((b) => (
+                            <option key={b} value={b}>
+                              {b}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-end gap-2 border-t border-[#f0f0f0]">
+                        <button
+                          type="button"
+                          onClick={() => setFilterPopoverOpen(false)}
+                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                        >
+                          Готово
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
         {activeTab === "purchases" && (
           <div className="flex items-center gap-1.5 text-xs">
@@ -782,6 +950,53 @@ function WarehouseContent() {
           </div>
         )}
       </div>
+
+      {/* Активные фильтры (чипы) */}
+      {activeTab === "items" && activeFiltersCount > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <span className="text-[11px] text-[#888888]">Активно:</span>
+          {selectedCategory && (
+            <span className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs text-[#4a38f5] font-medium">
+              <span>Категория: {selectedCategory}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCategory("");
+                  updateUrl({ page: 1, category: "", brand: selectedBrand });
+                }}
+                className="hover:text-[#3d2ee0]"
+                title="Удалить фильтр"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {selectedBrand && (
+            <span className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs text-[#4a38f5] font-medium">
+              <span>Бренд: {selectedBrand}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBrand("");
+                  updateUrl({ page: 1, category: selectedCategory, brand: "" });
+                }}
+                className="hover:text-[#3d2ee0]"
+                title="Удалить фильтр"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleClearFilters}
+            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1"
+          >
+            Сбросить все
+          </button>
+        </div>
+      )}
+    </div>
 
       {/* Вкладка 1: Номенклатура и остатки */}
       {activeTab === "items" && (
@@ -860,6 +1075,18 @@ function WarehouseContent() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-[13px] text-[#111111]">{item.name}</div>
+                        {item.models && item.models.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {item.models.map((m) => (
+                              <span
+                                key={m.id}
+                                className="inline-flex items-center rounded-[4px] bg-slate-100 border border-slate-200/80 px-1.5 py-0.2 text-[10px] font-mono text-slate-700"
+                              >
+                                {m.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#666666]">{item.category || "—"}</span>
@@ -1502,6 +1729,11 @@ function WarehouseContent() {
       )}
 
       {/* Модалки */}
+      <WarehouseDictionariesModal
+        open={dictionariesModalOpen}
+        onClose={() => setDictionariesModalOpen(false)}
+      />
+
       <CreateItemModal
         open={createItemModalOpen}
         onClose={() => setCreateItemModalOpen(false)}

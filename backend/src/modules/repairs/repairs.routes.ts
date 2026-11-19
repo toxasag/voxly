@@ -53,7 +53,7 @@ const categoryParamSchema = z.object({
 
 const dictionaryItemParamsSchema = z.object({
   category: z.string().min(1).max(50),
-  id: z.string().uuid("id must be a UUID"),
+  id: z.string().min(1).max(150),
 });
 
 const serialQuerySchema = z.object({

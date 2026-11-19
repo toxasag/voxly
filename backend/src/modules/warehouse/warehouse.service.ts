@@ -1,4 +1,4 @@
-import { query, queryOneOrThrow, withTenant, type SqlParam } from "../../db/client.js";
+import { query, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import {
   type AggregatedPurchaseRequestDTO,
   type BulkDeleteWarehouseItemsPayload,
@@ -33,6 +33,7 @@ import {
   type WarehouseBatchDTO,
   type WarehouseBatchRow,
   type WarehouseItemDTO,
+  type WarehouseItemModelDTO,
   type WarehouseItemRow,
   type WarehouseMovementDTO,
   type WarehouseMovementRow,
@@ -184,10 +185,79 @@ export class WarehouseService {
   // Warehouse Items & Batches
   // ---------------------------------------------------------------------------
 
+  private async syncItemModels(
+    tx: TransactionClient,
+    tenantId: string,
+    itemId: string,
+    brandName?: string,
+    modelIds?: string[],
+    modelNames?: string[],
+  ): Promise<void> {
+    if (modelIds === undefined && modelNames === undefined) return;
+
+    await tx.query(
+      `DELETE FROM warehouse_item_models WHERE tenant_id = $1 AND item_id = $2`,
+      [tenantId, itemId],
+    );
+
+    const targetModelIds = new Set<string>();
+
+    if (modelIds && modelIds.length > 0) {
+      for (const mid of modelIds) {
+        if (mid) targetModelIds.add(mid);
+      }
+    }
+
+    if (modelNames && modelNames.length > 0) {
+      for (const name of modelNames) {
+        const trimmed = name.trim();
+        if (!trimmed) continue;
+
+        let modelRow = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM equipment_models WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+          [tenantId, trimmed],
+        );
+
+        if (!modelRow) {
+          const bName = brandName?.trim() || "Общий";
+          let brandRow = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+            [tenantId, bName],
+          );
+          if (!brandRow) {
+            brandRow = await tx.queryOneOrThrow<{ id: string }>(
+              `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2)
+               ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+               RETURNING id`,
+              [tenantId, bName],
+            );
+          }
+
+          modelRow = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (tenant_id, brand_id, lower(name)) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [tenantId, brandRow.id, bName, trimmed],
+          );
+        }
+
+        targetModelIds.add(modelRow.id);
+      }
+    }
+
+    for (const mid of targetModelIds) {
+      await tx.query(
+        `INSERT INTO warehouse_item_models (tenant_id, item_id, model_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [tenantId, itemId, mid],
+      );
+    }
+  }
+
   async listItems(
     tenantId: string,
     search?: string,
-    options?: { page?: number; limit?: number; all?: boolean },
+    options?: { page?: number; limit?: number; all?: boolean; category?: string; brand?: string },
   ): Promise<PaginatedWarehouseItemsDTO> {
     const page = Math.max(1, options?.page ?? 1);
     const limit = options?.limit ?? 25;
@@ -198,13 +268,21 @@ export class WarehouseService {
 
     if (search && search.trim()) {
       params.push(`%${search.trim().toLowerCase()}%`);
-      searchFilter = `AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length} OR lower(COALESCE(i.brand, '')) LIKE $${params.length})`;
+      searchFilter += ` AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length} OR lower(COALESCE(i.brand, '')) LIKE $${params.length})`;
+    }
+    if (options?.category && options.category.trim()) {
+      params.push(options.category.trim());
+      searchFilter += ` AND i.category = $${params.length}`;
+    }
+    if (options?.brand && options.brand.trim()) {
+      params.push(options.brand.trim());
+      searchFilter += ` AND i.brand = $${params.length}`;
     }
 
     const settings = await this.getSettings(tenantId);
 
     return withTenant(tenantId, async (tx) => {
-      // 1. Подсчет общего количества позиций для текущего тенанта с учетом поиска
+      // 1. Подсчет общего количества позиций для текущего тенанта с учетом поиска и фильтров
       const countRow = await tx.queryOne<{ count: string | number }>(
         `SELECT count(*)::int AS count
          FROM warehouse_items i
@@ -245,7 +323,13 @@ export class WarehouseService {
                   SELECT SUM(r.quantity)
                   FROM warehouse_reservations r
                   WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
-                ), 0) AS reserved_stock
+                ), 0) AS reserved_stock,
+                COALESCE((
+                  SELECT json_agg(json_build_object('id', em.id, 'name', em.name, 'brandId', em.brand_id, 'brandName', em.brand_name) ORDER BY em.name ASC)
+                  FROM warehouse_item_models wim
+                  JOIN equipment_models em ON em.id = wim.model_id AND em.tenant_id = wim.tenant_id
+                  WHERE wim.tenant_id = i.tenant_id AND wim.item_id = i.id
+                ), '[]'::json) AS models_json
          FROM warehouse_items i
          LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
          WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
@@ -264,6 +348,7 @@ export class WarehouseService {
           : Math.max(totalStock - reserved, 0);
 
         const retailPrice = Number(r.retail_price ?? 0);
+        const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
         return {
           id: r.id,
           sku: r.sku,
@@ -279,6 +364,9 @@ export class WarehouseService {
           quantity: totalStock,
           reservedStock: reserved,
           availableStock: available,
+          models,
+          modelIds: models.map((m) => m.id),
+          modelNames: models.map((m) => m.name),
           createdAt: toIso(r.created_at),
           updatedAt: toIso(r.updated_at),
         };
@@ -308,7 +396,13 @@ export class WarehouseService {
                   SELECT SUM(r.quantity)
                   FROM warehouse_reservations r
                   WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
-                ), 0) AS reserved_stock
+                ), 0) AS reserved_stock,
+                COALESCE((
+                  SELECT json_agg(json_build_object('id', em.id, 'name', em.name, 'brandId', em.brand_id, 'brandName', em.brand_name) ORDER BY em.name ASC)
+                  FROM warehouse_item_models wim
+                  JOIN equipment_models em ON em.id = wim.model_id AND em.tenant_id = wim.tenant_id
+                  WHERE wim.tenant_id = i.tenant_id AND wim.item_id = i.id
+                ), '[]'::json) AS models_json
          FROM warehouse_items i
          LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
          WHERE i.tenant_id = $1 AND i.id = $2 AND i.deleted_at IS NULL
@@ -327,6 +421,7 @@ export class WarehouseService {
 
       const retailPrice = Number(r.retail_price ?? 0);
       const costPrice = Number(r.cost_price ?? 0);
+      const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
 
       return {
         id: r.id,
@@ -343,6 +438,9 @@ export class WarehouseService {
         quantity: total,
         reservedStock: reserved,
         availableStock: available,
+        models,
+        modelIds: models.map((m) => m.id),
+        modelNames: models.map((m) => m.name),
         createdAt: toIso(r.created_at),
         updatedAt: toIso(r.updated_at),
       };
@@ -351,7 +449,7 @@ export class WarehouseService {
 
   async createItem(tenantId: string, payload: CreateWarehouseItemPayload): Promise<WarehouseItemDTO> {
     const row = await withTenant(tenantId, async (tx) => {
-      return tx.queryOneOrThrow<WarehouseItemRow>(
+      const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
         `INSERT INTO warehouse_items
            (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -368,24 +466,17 @@ export class WarehouseService {
           payload.cost_price ?? 0,
         ],
       );
+
+      if (payload.model_ids !== undefined || payload.models !== undefined) {
+        await this.syncItemModels(tx, tenantId, inserted.id, payload.brand, payload.model_ids, payload.models);
+      }
+
+      return inserted;
     });
 
-    return {
-      id: row.id,
-      sku: row.sku,
-      name: row.name,
-      brand: row.brand ?? "",
-      category: row.category,
-      unit: row.unit,
-      minStock: Number(row.min_stock),
-      retailPrice: Number(row.retail_price),
-      costPrice: Number(row.cost_price),
-      totalStock: 0,
-      reservedStock: 0,
-      availableStock: 0,
-      createdAt: toIso(row.created_at),
-      updatedAt: toIso(row.updated_at),
-    };
+    const item = await this.getItem(tenantId, row.id);
+    if (!item) throw new Error("Failed to retrieve created warehouse item");
+    return item;
   }
 
   async updateItem(
@@ -410,21 +501,153 @@ export class WarehouseService {
     if (payload.retail_price !== undefined) add("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) add("cost_price", payload.cost_price);
 
-    if (fields.length === 0) {
-      return this.getItem(tenantId, itemId);
-    }
-
-    add("updated_at", new Date());
-
     await withTenant(tenantId, async (tx) => {
-      await tx.query(
-        `UPDATE warehouse_items SET ${fields.join(", ")}
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
-        params,
-      );
+      if (fields.length > 0) {
+        add("updated_at", new Date());
+        await tx.query(
+          `UPDATE warehouse_items SET ${fields.join(", ")}
+           WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          params,
+        );
+      }
+      if (payload.model_ids !== undefined || payload.models !== undefined) {
+        await this.syncItemModels(tx, tenantId, itemId, payload.brand, payload.model_ids, payload.models);
+      }
     });
 
     return this.getItem(tenantId, itemId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Справочник Модели
+  // ---------------------------------------------------------------------------
+
+  async listModels(
+    tenantId: string,
+    brandId?: string,
+    brandName?: string,
+  ): Promise<WarehouseItemModelDTO[]> {
+    return withTenant(tenantId, async (tx) => {
+      let filter = "";
+      const params: (string | number)[] = [tenantId];
+      if (brandId) {
+        params.push(brandId);
+        filter += ` AND em.brand_id = $${params.length}`;
+      } else if (brandName && brandName.trim()) {
+        params.push(brandName.trim());
+        filter += ` AND lower(em.brand_name) = lower($${params.length})`;
+      }
+
+      const rows = await tx.query<{ id: string; name: string; brand_id: string; brand_name: string }>(
+        `SELECT em.id, em.name, em.brand_id, COALESCE(eb.name, em.brand_name) AS brand_name
+         FROM equipment_models em
+         LEFT JOIN equipment_brands eb ON eb.id = em.brand_id
+         WHERE em.tenant_id = $1 ${filter}
+         ORDER BY em.name ASC`,
+        params,
+      );
+
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        brandId: r.brand_id,
+        brandName: r.brand_name,
+      }));
+    });
+  }
+
+  async createModel(
+    tenantId: string,
+    payload: { name: string; brand_id?: string; brand_name?: string },
+  ): Promise<WarehouseItemModelDTO> {
+    const trimmed = payload.name.trim();
+    if (!trimmed) throw new Error("Model name is required");
+
+    return withTenant(tenantId, async (tx) => {
+      let brandId = payload.brand_id;
+      let brandName = payload.brand_name?.trim();
+
+      if (brandId) {
+        const brandRow = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, brandId],
+        );
+        if (brandRow) brandName = brandRow.name;
+      } else if (brandName) {
+        let brandRow = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, brandName],
+        );
+        if (!brandRow) {
+          brandRow = await tx.queryOneOrThrow<{ id: string; name: string }>(
+            `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id, name`,
+            [tenantId, brandName],
+          );
+        }
+        brandId = brandRow.id;
+      } else {
+        let brandRow = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 ORDER BY name ASC LIMIT 1`,
+          [tenantId],
+        );
+        if (!brandRow) {
+          brandRow = await tx.queryOneOrThrow<{ id: string; name: string }>(
+            `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, 'Общий')
+             ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id, name`,
+            [tenantId],
+          );
+        }
+        brandId = brandRow.id;
+        brandName = brandRow.name;
+      }
+
+      const row = await tx.queryOneOrThrow<{ id: string; name: string; brand_id: string }>(
+        `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id, brand_id, lower(name)) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id, name, brand_id`,
+        [tenantId, brandId, brandName ?? "", trimmed],
+      );
+
+      return {
+        id: row.id,
+        name: row.name,
+        brandId: row.brand_id,
+        brandName,
+      };
+    });
+  }
+
+  async renameModel(tenantId: string, id: string, name: string): Promise<WarehouseItemModelDTO> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("Model name is required");
+
+    return withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOne<{ id: string; name: string; brand_id: string; brand_name: string }>(
+        `UPDATE equipment_models
+         SET name = $1
+         WHERE tenant_id = $2 AND id = $3
+         RETURNING id, name, brand_id, brand_name`,
+        [trimmed, tenantId, id],
+      );
+      if (!row) throw new Error("Model not found");
+      return {
+        id: row.id,
+        name: row.name,
+        brandId: row.brand_id,
+        brandName: row.brand_name,
+      };
+    });
+  }
+
+  async deleteModel(tenantId: string, id: string): Promise<{ success: boolean; id: string }> {
+    return withTenant(tenantId, async (tx) => {
+      await tx.query(`DELETE FROM equipment_models WHERE tenant_id = $1 AND id = $2`, [tenantId, id]);
+      return { success: true, id };
+    });
   }
 
   async deleteItem(tenantId: string, itemId: string): Promise<boolean> {

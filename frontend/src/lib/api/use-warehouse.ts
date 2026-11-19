@@ -4,6 +4,13 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tansta
 import { apiClient, API_BASE_URL } from "./apiClient";
 import { readAccessToken } from "@/lib/auth/session";
 
+export interface WarehouseItemModelDTO {
+  id: string;
+  name: string;
+  brandId?: string;
+  brandName?: string;
+}
+
 export interface WarehouseItemDTO {
   id: string;
   sku: string;
@@ -19,6 +26,9 @@ export interface WarehouseItemDTO {
   availableStock: number;
   price?: number;
   quantity?: number;
+  models?: WarehouseItemModelDTO[];
+  modelIds?: string[];
+  modelNames?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -77,6 +87,8 @@ export interface CreateWarehouseItemPayload {
   min_stock?: number;
   retail_price?: number;
   cost_price?: number;
+  model_ids?: string[];
+  models?: string[];
 }
 
 export interface IntakeBatchPayload {
@@ -228,6 +240,8 @@ export const warehouseKeys = {
   movements: () => [...warehouseKeys.all, "movements"] as const,
   categories: () => [...warehouseKeys.all, "categories"] as const,
   brands: () => [...warehouseKeys.all, "brands"] as const,
+  models: (brandId?: string, brand?: string) =>
+    [...warehouseKeys.all, "models", brandId ?? "", brand ?? ""] as const,
   purchases: (status?: string, orderId?: string) => {
     const key = [...warehouseKeys.all, "purchases"] as string[];
     if (status !== undefined || orderId !== undefined) {
@@ -256,6 +270,8 @@ export interface WarehousePaginationParams {
   page?: number;
   limit?: number;
   search?: string;
+  category?: string;
+  brand?: string;
   all?: boolean;
 }
 
@@ -263,10 +279,21 @@ export function useWarehouse(params?: WarehousePaginationParams) {
   const page = params?.page ?? 1;
   const limit = params?.limit ?? 25;
   const search = params?.search;
+  const category = params?.category;
+  const brand = params?.brand;
   const all = params?.all;
 
   return useQuery({
-    queryKey: ["warehouse", "items", page, limit, search ?? "", Boolean(all)],
+    queryKey: [
+      "warehouse",
+      "items",
+      page,
+      limit,
+      search ?? "",
+      category ?? "",
+      brand ?? "",
+      Boolean(all),
+    ],
     queryFn: async (): Promise<PaginatedWarehouseResponse> => {
       const q = new URLSearchParams();
       if (!all) {
@@ -277,6 +304,12 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       }
       if (search && search.trim()) {
         q.set("search", search.trim());
+      }
+      if (category && category.trim()) {
+        q.set("category", category.trim());
+      }
+      if (brand && brand.trim()) {
+        q.set("brand", brand.trim());
       }
 
       const qs = q.toString();
@@ -894,6 +927,86 @@ export function useCreateWarehouseBrand() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.brands() });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+export function useWarehouseModels(params?: { brandId?: string; brand?: string }) {
+  return useQuery({
+    queryKey: warehouseKeys.models(params?.brandId, params?.brand),
+    queryFn: async (): Promise<WarehouseItemModelDTO[]> => {
+      const q = new URLSearchParams();
+      if (params?.brandId) q.set("brandId", params.brandId);
+      if (params?.brand) q.set("brand", params.brand);
+      const qs = q.toString();
+      const res = await apiClient.get<WarehouseItemModelDTO[]>(
+        `/api/v1/warehouse/models${qs ? `?${qs}` : ""}`,
+      );
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateWarehouseModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      name: string;
+      brand_id?: string;
+      brand?: string;
+    }): Promise<WarehouseItemModelDTO> => {
+      const res = await apiClient.post<WarehouseItemModelDTO>(
+        "/api/v1/warehouse/models",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+export function useUpdateWarehouseModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: { name: string; brand_id?: string; brand?: string };
+    }): Promise<WarehouseItemModelDTO> => {
+      const res = await apiClient.patch<WarehouseItemModelDTO>(
+        `/api/v1/warehouse/models/${id}`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+export function useDeleteWarehouseModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<{ success: boolean; id: string }> => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(
+        `/api/v1/warehouse/models/${id}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "models"] });
       void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
       void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
     },

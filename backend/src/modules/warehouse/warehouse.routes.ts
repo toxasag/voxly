@@ -136,6 +136,8 @@ export async function warehouseRoutes(app: FastifyInstance) {
       page: query.page,
       limit: query.limit,
       all: query.all,
+      category: query.category,
+      brand: query.brand,
     });
     return reply.send(result);
   });
@@ -207,6 +209,40 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.status(201).send({ data: brand });
   });
 
+  // Справочник моделей склада
+  app.get("/models", async (request, reply) => {
+    const { tenant_id } = request;
+    const q = request.query as { brand_id?: string; brand?: string };
+    const models = await warehouseService.listModels(tenant_id, q.brand_id, q.brand);
+    return reply.send({ data: models });
+  });
+
+  app.post("/models", async (request, reply) => {
+    const { tenant_id } = request;
+    const body = z.object({
+      name: z.string().min(1).max(200),
+      brand_id: z.string().uuid().optional(),
+      brand_name: z.string().max(200).optional(),
+    }).parse(request.body);
+    const model = await warehouseService.createModel(tenant_id, body);
+    return reply.status(201).send({ data: model });
+  });
+
+  app.patch("/models/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = z.object({ name: z.string().min(1).max(200) }).parse(request.body);
+    const updated = await warehouseService.renameModel(tenant_id, id, body.name);
+    return reply.send({ data: updated });
+  });
+
+  app.delete("/models/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const result = await warehouseService.deleteModel(tenant_id, id);
+    return reply.send({ data: result });
+  });
+
   // Получение одной позиции (прямой алиас /:id)
   app.get("/:id", async (request, reply) => {
     const { tenant_id } = request;
@@ -224,6 +260,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
       "items",
       "categories",
       "brands",
+      "models",
     ];
     if (reserved.includes(id)) {
       return reply.status(404).send({ error: "Not found" });
@@ -252,6 +289,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
       "items",
       "categories",
       "brands",
+      "models",
     ];
     if (reserved.includes(id)) {
       return reply.status(404).send({ error: "Not found" });

@@ -20,6 +20,8 @@ export const createWarehouseItemSchema = z.object({
   min_stock: z.number().nonnegative().default(0),
   retail_price: z.number().nonnegative().default(0),
   cost_price: z.number().nonnegative().default(0),
+  model_ids: z.array(z.string().uuid()).optional(),
+  models: z.array(z.string()).optional(),
 });
 export type CreateWarehouseItemPayload = z.infer<typeof createWarehouseItemSchema>;
 
@@ -155,8 +157,16 @@ export interface WarehouseItemRow {
   cost_price: string | number;
   total_stock?: string | number;
   reserved_stock?: string | number;
+  models_json?: WarehouseItemModelDTO[] | null;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+export interface WarehouseItemModelDTO {
+  id: string;
+  name: string;
+  brandId?: string;
+  brandName?: string;
 }
 
 export interface WarehouseItemDTO {
@@ -174,6 +184,9 @@ export interface WarehouseItemDTO {
   quantity?: number;
   reservedStock: number;
   availableStock: number;
+  models?: WarehouseItemModelDTO[];
+  modelIds?: string[];
+  modelNames?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -191,6 +204,8 @@ export const warehousePaginationQuerySchema = z.object({
     })
     .default(25),
   search: z.string().optional(),
+  category: z.string().optional(),
+  brand: z.string().optional(),
   all: z.preprocess((v) => v === "true" || v === true, z.boolean().optional()),
 });
 export type WarehousePaginationQuery = z.infer<typeof warehousePaginationQuerySchema>;

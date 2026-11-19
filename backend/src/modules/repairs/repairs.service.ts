@@ -2555,33 +2555,36 @@ export class RepairsService {
         [tenantId],
       );
 
-      const categoryRows = await tx.query<{ name: string }>(
-        `SELECT DISTINCT btrim(name) AS name
-         FROM (
-           SELECT name FROM warehouse_categories WHERE tenant_id = $1
-           UNION
-           SELECT name FROM equipment_types WHERE tenant_id = $1
-           UNION
-           SELECT category AS name FROM warehouse_items WHERE tenant_id = $1 AND category <> '' AND deleted_at IS NULL
-         ) sub
-         WHERE btrim(name) <> ''
-         ORDER BY name ASC`,
+      // Загружаем категории из warehouse_categories
+      let categoryRows = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 ORDER BY name ASC`,
         [tenantId],
       );
 
-      const defaultCategoryNames = [
-        "Запчасти",
-        "Расходники",
-        "Дисплеи",
-        "Аккумуляторы",
-        "Корпуса",
-        "Шлейфы",
-        "Инструменты",
-        "Оборудование",
-        "Аксессуары",
-        "Химия и пайка",
-      ];
-      const categoryNames = categoryRows.length > 0 ? categoryRows.map((r) => r.name) : defaultCategoryNames;
+      if (categoryRows.length === 0) {
+        const defaultCategoryNames = [
+          "Запчасти",
+          "Расходники",
+          "Дисплеи",
+          "Аккумуляторы",
+          "Корпуса",
+          "Шлейфы",
+          "Инструменты",
+          "Оборудование",
+          "Аксессуары",
+          "Химия и пайка",
+        ];
+        for (const defName of defaultCategoryNames) {
+          await tx.query(
+            `INSERT INTO warehouse_categories (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
+            [tenantId, defName],
+          );
+        }
+        categoryRows = await tx.query<{ id: string; name: string }>(
+          `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 ORDER BY name ASC`,
+          [tenantId],
+        );
+      }
 
       return {
         types: types.map((r) => ({ id: r.id, name: r.name })),
@@ -2589,7 +2592,7 @@ export class RepairsService {
         models: models.map((r) => ({ id: r.id, name: r.name, brandId: r.brand_id, brandName: r.brand_name })),
         accessories: accessories.map((r) => ({ id: r.id, name: r.name })),
         malfunctions: malfunctions.map((r) => ({ id: r.id, name: r.name })),
-        categories: categoryNames.map((name) => ({ id: name, name })),
+        categories: categoryRows.map((r) => ({ id: r.id, name: r.name })),
       };
     });
   }
@@ -2784,6 +2787,42 @@ export class RepairsService {
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
 
+      if (table === "warehouse_categories") {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const existing = await tx.queryOne<{ id: string; name: string }>(
+          isUuid
+            ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
+            : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+
+        let row: { id: string; name: string } | null = null;
+        const oldName = existing ? existing.name : id;
+
+        if (existing) {
+          row = await tx.queryOne<{ id: string; name: string }>(
+            `UPDATE warehouse_categories SET name = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+            [trimmed, tenantId, existing.id],
+          );
+        } else {
+          row = await tx.queryOne<{ id: string; name: string }>(
+            `INSERT INTO warehouse_categories (tenant_id, name) VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO UPDATE SET updated_at = now()
+             RETURNING id, name`,
+            [tenantId, trimmed],
+          );
+        }
+
+        // Синхронизируем переименование категории в товарах на складе
+        await tx.query(
+          `UPDATE warehouse_items SET category = $1, updated_at = now()
+           WHERE tenant_id = $2 AND category = $3 AND deleted_at IS NULL`,
+          [trimmed, tenantId, oldName],
+        );
+
+        return row ?? { id, name: trimmed };
+      }
+
       if (table === "equipment_brands") {
         const row = await tx.queryOne<{ id: string; name: string }>(
           `UPDATE equipment_brands SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
@@ -2821,6 +2860,36 @@ export class RepairsService {
   ): Promise<{ success: boolean; id: string }> {
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
+
+      if (table === "warehouse_categories") {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const existing = await tx.queryOne<{ id: string; name: string }>(
+          isUuid
+            ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
+            : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+
+        const targetId = existing ? existing.id : id;
+        const categoryName = existing ? existing.name : id;
+
+        await tx.query(
+          isUuid
+            ? `DELETE FROM warehouse_categories WHERE tenant_id = $1 AND (id = $2 OR lower(name) = lower($3))`
+            : `DELETE FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          isUuid ? [tenantId, targetId, categoryName] : [tenantId, categoryName],
+        );
+
+        // Безопасное отвязывание: у связанных товаров категория сбрасывается в пустую
+        await tx.query(
+          `UPDATE warehouse_items SET category = '', updated_at = now()
+           WHERE tenant_id = $1 AND category = $2 AND deleted_at IS NULL`,
+          [tenantId, categoryName],
+        );
+
+        return { success: true, id: targetId };
+      }
+
       const existing = await tx.queryOne<{ id: string; name: string }>(
         `SELECT id, name FROM ${table} WHERE tenant_id = $1 AND id = $2`,
         [tenantId, id],
