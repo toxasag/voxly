@@ -910,6 +910,26 @@ export class ContactsIOService {
         result[fieldKey] = String(row[colIdx]).trim();
       }
     }
+
+    // Умный фоллбек: если в строке не распознано имя/телефон, но есть ячейка с названием компании (ООО/ИП/ЗАО...)
+    if (!result.company_name && !result.first_name && !result.full_name && !result.phone) {
+      const companyCell = row.find((c) => /^(?:ООО|ИП|ЗАО|ОАО|ПАО|АО)\s+["«]?[^"»\r\n]+["»]?/i.test(String(c).trim()));
+      if (companyCell) {
+        result.company_name = String(companyCell).trim();
+      }
+    }
+
+    // Если ИНН не был явно смапплен, но в строке есть 10- или 12-значный ИНН
+    if (!result.inn && !result.company_inn) {
+      const innCell = row.find((c) => {
+        const d = cleanDigits(String(c));
+        return (d.length === 10 || d.length === 12) && !String(c).includes("+") && !d.startsWith("79") && !d.startsWith("89");
+      });
+      if (innCell) {
+        result.inn = String(innCell).trim();
+      }
+    }
+
     return result;
   }
 }
