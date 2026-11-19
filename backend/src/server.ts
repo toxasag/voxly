@@ -12,7 +12,7 @@ import { scheduleInvoiceReminders } from "./modules/finance/invoice-reminders.se
 import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
 import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
-import { MaxBridgeService } from "./modules/channels/max-bridge.service.js";
+import { messagingRegistry } from "./modules/messaging/messaging-registry.js";
 import { WhatsappEvolutionService } from "./modules/channels/whatsapp-evolution.service.js";
 import { resolveOutboundMedia, isMeaningfulCaption } from "./modules/channels/media-resolver.js";
 
@@ -159,60 +159,8 @@ async function main(): Promise<void> {
   const transport = new TelegramTransportService(app.log);
   const stopTransport = transport.start();
 
-  // Регистрация исходящих сообщений через личный аккаунт MAX (max-bridge) или бота платформы MAX
-  const unregisterMaxOutbound = registerOutboundSender("max", async (message) => {
-    const maxBridge = new MaxBridgeService();
-    try {
-      const account = await queryOne<{ id: string; label: string }>(
-        `SELECT id, label FROM channel_accounts
-         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
-        [message.tenantId, message.channelAccountId],
-      );
-      if (account) {
-        let mediaBase64: string | undefined;
-        let fileName: string | undefined;
-        let mimeType: string | undefined;
-        let textToSend = message.text;
-
-        if (message.attachment) {
-          const media = await resolveOutboundMedia(
-            message.attachment,
-            message.tenantId,
-            message.attachmentType,
-          );
-          if (media) {
-            mediaBase64 = media.buffer.toString("base64");
-            fileName = media.filename;
-            mimeType = media.mimeType;
-            textToSend = isMeaningfulCaption(message.text, media.filename) ? message.text : "";
-          }
-        }
-
-        const res = await maxBridge.sendMessage({
-          tenantId: message.tenantId,
-          name: account.label,
-          botId: account.id,
-          recipient: message.recipient,
-          text: textToSend,
-          mediaBase64,
-          fileName,
-          mimeType,
-        });
-        if (res.ok) return { ok: true };
-        return { ok: false, reason: res.error || "Ошибка отправки MAX через подключенный аккаунт" };
-      }
-    } catch (err) {
-      app.log.warn({ err, message }, "Exception during maxBridge sendMessage");
-    }
-
-    const max = new MaxService();
-    if (!max.isConfigured) {
-      return { ok: false, reason: "MAX не настроен на платформе" };
-    }
-    const res = await max.sendMessage(message.recipient, message.text);
-    if (res.ok) return { ok: true };
-    return { ok: false, reason: res.reason ?? "Неизвестная ошибка платформы MAX" };
-  });
+  // Регистрация исходящих сообщений через единый MessagingRegistry (MaxBridgeAdapter / MaxTsAdapter / MaxGreenApiAdapter)
+  const unregisterMaxOutbound = registerOutboundSender("max", messagingRegistry.createMaxOutboundSender());
 
   // Регистрация исходящих сообщений через WhatsApp Evolution API
   const unregisterWhatsappOutbound = registerOutboundSender("whatsapp", async (message) => {
@@ -275,6 +223,7 @@ async function main(): Promise<void> {
       stopTransport();
       unregisterMaxOutbound();
       unregisterWhatsappOutbound();
+      messagingRegistry.destroy();
       await app.close();
       await closePool();
       process.exit(0);
