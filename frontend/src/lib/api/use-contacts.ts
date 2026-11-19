@@ -58,6 +58,9 @@ export interface ContactDTO {
   companyInn?: string | null;
   birthDate?: string | null;
   channel: ContactChannel;
+  name?: string | null;
+  messengerId?: string | null;
+  messengerName?: string | null;
   contactType: ContactType;
   /** Twenty: person.linkedinLink, группа social на карточке. */
   linkedinLink: string;

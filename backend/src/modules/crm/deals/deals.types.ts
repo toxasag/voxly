@@ -26,6 +26,8 @@ export const createDealSchema = z.object({
   owner_id: optionalUuid,
   source_widget_id: optionalUuid,
   close_date: optionalDate,
+  chat_thread_id: z.string().optional(),
+  status: z.string().optional(),
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
 });
@@ -41,6 +43,8 @@ export const updateDealSchema = z.object({
   owner_id: optionalUuid,
   source_widget_id: optionalUuid,
   close_date: optionalDate,
+  chat_thread_id: z.string().optional(),
+  status: z.string().optional(),
   position: z.number().optional(),
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
@@ -124,6 +128,8 @@ export interface DealRow {
   position: number;
   closed_at: Date | string | null;
   lead_notified_at?: Date | string | null;
+  chat_thread_id?: string | null;
+  status?: string;
   created_at: Date | string;
   updated_at: Date | string;
   /**
@@ -177,6 +183,8 @@ export interface DealDTO {
   position: number;
   closedAt: string | null;
   leadNotifiedAt?: string | null;
+  chatThreadId?: string | null;
+  status?: string;
   createdAt: string;
   updatedAt: string;
   /** Денормализованные подписи связей для таблицы и канбана. */
@@ -244,6 +252,8 @@ export function toDealDTO(row: DealRow): DealDTO {
     position: Number(row.position),
     closedAt: toIsoOrNull(row.closed_at),
     leadNotifiedAt: toIsoOrNull(row.lead_notified_at ?? null),
+    chatThreadId: row.chat_thread_id ?? null,
+    status: row.status ?? "active",
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     companyName: row.company_name ?? null,

@@ -455,7 +455,11 @@ export const ContactCard = memo(function ContactCard({
           contact.whatsapp || enrichmentData?.channels?.whatsapp?.exists,
         );
         const hasMax = Boolean(
-          contact.socials.some((s) => s.kind === "max") ||
+          contact.channel === "max" ||
+            contact.messengerName === "Макс" ||
+            contact.messengerId ||
+            contact.customFields?.max_chat_id ||
+            contact.socials.some((s) => s.kind === "max") ||
             enrichmentData?.channels?.max?.exists,
         );
 
@@ -527,10 +531,12 @@ export const ContactCard = memo(function ContactCard({
                     : "border-[#e5e5e5] bg-white text-[#888888]",
                 )}
               >
-                <span className="font-semibold">MAX:</span>
+                <span className="font-semibold">Макс:</span>
                 <span>
-                  {contact.socials.find((s) => s.kind === "max")?.value ||
-                    (hasMax ? "Найден" : "Не найден")}
+                  {contact.messengerName ||
+                    contact.socials.find((s) => s.kind === "max")?.value ||
+                    (contact.customFields?.max_chat_id ? `ID: ${contact.customFields.max_chat_id}` : null) ||
+                    (hasMax ? "Активен" : "Не найден")}
                 </span>
               </div>
             </div>
@@ -593,6 +599,33 @@ export const ContactCard = memo(function ContactCard({
           }
           {...field("contactType")}
           onCommit={(value) => commit({ contact_type: value as "customer" | "vendor" })}
+        />
+        <RecordField
+          icon={MessageCircle}
+          label="Мессенджер"
+          value={contact.messengerName || contact.channel || "Не указан"}
+          display={
+            contact.channel === "max" || contact.messengerName === "Макс" || contact.messengerId || contact.customFields?.max_chat_id ? (
+              <TagPill color="violet" className="gap-1">
+                <MessageCircle className="h-3 w-3" />
+                Макс
+              </TagPill>
+            ) : contact.channel === "telegram" ? (
+              <TagPill color="sky" className="gap-1">
+                <MessageCircle className="h-3 w-3" />
+                Telegram
+              </TagPill>
+            ) : contact.channel === "whatsapp" ? (
+              <TagPill color="emerald" className="gap-1">
+                <MessageCircle className="h-3 w-3" />
+                WhatsApp
+              </TagPill>
+            ) : (
+              <TagPill color="slate">
+                {contact.messengerName || "Не указан"}
+              </TagPill>
+            )
+          }
         />
         <RecordField
           icon={Mail}

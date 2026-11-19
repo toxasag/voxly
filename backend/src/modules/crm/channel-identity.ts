@@ -107,12 +107,21 @@ export function contactChannelFor(channel: string): ContactChannel {
  * `123456789`. Он остаётся запасным вариантом только если не похож на
  * идентификатор — тогда это осмысленное имя из другого канала.
  */
+export function isBannedName(name?: string | null): boolean {
+  if (!name) return false;
+  return /^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)(?:\s+.*)?$/i.test(name.trim());
+}
+
 export function contactNameFrom(identity: SenderIdentity): {
   first_name: string;
   last_name: string;
 } {
-  const first = identity.profile?.firstName?.trim() ?? "";
+  let first = identity.profile?.firstName?.trim() ?? "";
   const last = identity.profile?.lastName?.trim() ?? "";
+
+  if (/^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)$/i.test(first)) {
+    first = "";
+  }
 
   if (first !== "" || last !== "") {
     return { first_name: first === "" ? UNKNOWN_CONTACT_NAME : first, last_name: last };
@@ -128,6 +137,11 @@ function nameFromSender(senderName: string): { first_name: string; last_name: st
   // Только цифры (и «@» с цифрами) — это идентификатор канала: у Telegram
   // peerId, у MAX числовой профиль. Именем такое быть не может.
   if (trimmed === "" || /^@?\d+$/.test(trimmed)) return null;
+
+  // Системные имена сервисов и ботов не признаются именем контакта
+  if (/^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)(?:\s+.*)?$/i.test(trimmed)) {
+    return null;
+  }
 
   // Системные заглушки сайта вида «Посетитель сайта (...)» или «Клиент ...» не режем по пробелу
   if (/^Посетитель\s+сайта/i.test(trimmed) || /^Клиент(?:\s+.*)?$/i.test(trimmed)) {

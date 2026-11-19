@@ -39,6 +39,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
   c.job_title, c.company_name, c.company_id, c.company_inn, c.birth_date, c.channel,
   c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.contact_type, c.created_by, c.created_at, c.updated_at,
+  c.name, c.messenger_id, c.messenger_name,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
   u.name AS created_by_name
@@ -389,9 +390,10 @@ export class ContactsService {
           email, telegram_username, telegram_chat_id, whatsapp, socials,
           job_title, company_name, company_id, company_inn, birth_date, channel, linkedin_link,
           city, address,
-          custom_fields, source_metadata, notes, contact_type, created_by)
+          custom_fields, source_metadata, notes, contact_type, created_by,
+          messenger_id, messenger_name)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb,
-               $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25, $26, $27)
+               $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25, $26, $27, $28, $29)
        RETURNING id`,
       [
         tenantId,
@@ -421,6 +423,8 @@ export class ContactsService {
         payload.notes ?? "",
         payload.contact_type ?? "customer",
         createdBy ?? null,
+        nullIfBlank(payload.messenger_id),
+        nullIfBlank(payload.messenger_name),
       ],
     );
 
@@ -516,6 +520,8 @@ export class ContactsService {
       }
 
       if (payload.channel !== undefined) push("channel", payload.channel);
+      if (payload.messenger_id !== undefined) push("messenger_id", nullIfBlank(payload.messenger_id));
+      if (payload.messenger_name !== undefined) push("messenger_name", nullIfBlank(payload.messenger_name));
       if (payload.contact_type !== undefined) push("contact_type", payload.contact_type);
       if (payload.linkedin_link !== undefined) push("linkedin_link", payload.linkedin_link ?? "");
       if (payload.city !== undefined) push("city", payload.city ?? "");

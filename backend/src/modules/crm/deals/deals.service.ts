@@ -36,7 +36,7 @@ import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
   budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
-  closed_at, lead_notified_at, created_at, updated_at
+  closed_at, lead_notified_at, created_at, updated_at, chat_thread_id, status
 `;
 
 /**
@@ -50,6 +50,7 @@ const DEAL_COLUMNS_WITH_LABELS = `
   d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.source_widget_id, d.title,
   d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
+  d.chat_thread_id, d.status,
   co.name AS company_name,
   co.phone AS company_phone,
   co.email AS company_email,
@@ -469,8 +470,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id, chat_thread_id, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -491,6 +492,8 @@ export class DealsService {
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
           resolvedSourceWidgetId,
+          payload.chat_thread_id ?? null,
+          payload.status ?? "active",
         ],
       );
 
@@ -537,6 +540,8 @@ export class DealsService {
     if (payload.owner_id !== undefined) push("owner_id", nullIfBlank(payload.owner_id));
     if (payload.close_date !== undefined) push("close_date", nullIfBlank(payload.close_date));
     if (payload.position !== undefined) push("position", payload.position);
+    if (payload.chat_thread_id !== undefined) push("chat_thread_id", nullIfBlank(payload.chat_thread_id));
+    if (payload.status !== undefined) push("status", payload.status);
 
     if (payload.custom_fields !== undefined) {
       params.push(JSON.stringify(payload.custom_fields));
