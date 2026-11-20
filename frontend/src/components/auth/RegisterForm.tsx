@@ -78,7 +78,7 @@ export function slugify(input: string): string {
 }
 
 export function RegisterForm() {
-  const { register: registerTenant } = useAuth();
+  const { register: registerTenant, tenant, isAuthenticated } = useAuth();
   const code = useCodeFlow("register");
 
   const [slugStatus, setSlugStatus] = useState<SlugStatus>({ kind: "idle" });
@@ -107,6 +107,17 @@ export function RegisterForm() {
   useEffect(() => {
     codeRef.current = code;
   }, [code]);
+
+  /**
+   * Редирект в портал, если пользователь уже авторизован (например, вернулся
+   * на /register по кнопке бота после завершённой регистрации).
+   * Middleware делает это на сервере, но cookie может отсутствовать, пока
+   * сессия восстанавливается по refresh-токену.
+   */
+  useEffect(() => {
+    if (!isAuthenticated || tenant === null) return;
+    window.location.href = tenantPortalUrl(tenant.slug, "/dashboard");
+  }, [isAuthenticated, tenant]);
 
   /** Автофокус на поле кода, как только код доставлен. */
   useEffect(() => {
