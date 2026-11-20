@@ -366,7 +366,7 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
              tenant_id, channel_type, destination, extra_meta, is_active, is_verified
            )
            VALUES ($1, 'telegram', $2, $3, true, true)
-           ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+           ON CONFLICT (tenant_id, channel_type, destination) WHERE channel_type IN ('email', 'telegram', 'whatsapp') DO UPDATE
            SET is_active = true,
                is_verified = true,
                extra_meta = $3,
