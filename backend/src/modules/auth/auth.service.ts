@@ -1131,10 +1131,11 @@ export class AuthService {
         // Аудит-лог регистрации нового арендатора
         await tx.query(
           `INSERT INTO tenant_audit_log (tenant_id, actor_user_id, action, entity_type, entity_id, details)
-           VALUES ($1, $2, 'tenant.register', 'tenant', $1, $3)`,
+           VALUES ($1, $2, 'tenant.register', 'tenant', $3, $4::jsonb)`,
           [
             tenant.id,
             user.id,
+            tenant.id,
             JSON.stringify({
               slug,
               email: maskEmail(email),
