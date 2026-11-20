@@ -102,6 +102,11 @@ export function RegisterForm() {
   const slugValue = form.watch("slug");
   const channel = form.watch("channel");
   const otpInputRef = useRef<HTMLInputElement>(null);
+  const codeRef = useRef(code);
+
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
 
   /** Автофокус на поле кода, как только код доставлен. */
   useEffect(() => {
@@ -182,10 +187,25 @@ export function RegisterForm() {
   }, [form, code, slugStatus]);
 
   const handleSubmit = useCallback(async () => {
-    if (code.sessionId === null) return;
+    const currentCode = codeRef.current;
+    if (currentCode.sessionId === null) {
+      toast.error("Сначала запросите код подтверждения");
+      return;
+    }
 
-    if (!code.verified && !/^\d{6}$/.test(otp)) {
+    if (!currentCode.verified && !/^\d{6}$/.test(otp)) {
       setOtpError("Код состоит из 6 цифр");
+      toast.error("Введите 6-значный код подтверждения");
+      return;
+    }
+
+    const valid = await form.trigger();
+    if (!valid) {
+      toast.error("Заполните обязательные поля формы");
+      return;
+    }
+    if (slugStatus.kind === "taken") {
+      toast.error(slugStatus.message);
       return;
     }
 
@@ -199,7 +219,7 @@ export function RegisterForm() {
         email: values.email,
         phone: values.phone,
         password: values.password,
-        session_id: code.sessionId,
+        session_id: currentCode.sessionId,
         code: otp.length === 6 ? otp : "000000",
       });
 
@@ -236,7 +256,7 @@ export function RegisterForm() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [code.sessionId, otp, form, registerTenant]);
+  }, [code.sessionId, code.verified, otp, form, slugStatus, registerTenant]);
 
   const errors = form.formState.errors;
   const codeRequested = code.stage === "sent" || code.stage === "awaiting_bot";
@@ -454,11 +474,18 @@ className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 
       )}
 
       {/* Код подтверждения */}
-      {code.stage === "sent" && !code.verified && (
-<div className="space-y-2">
-          <label htmlFor="reg_code" className="block text-[13px] font-medium text-[#111111]">
-            Код подтверждения
-          </label>
+      {code.stage === "sent" && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label htmlFor="reg_code" className="block text-[13px] font-medium text-[#111111]">
+              Код подтверждения
+            </label>
+            {code.verified && (
+              <span className="text-xs text-emerald-600 font-medium">
+                Подтверждён (ввод не обязателен)
+              </span>
+            )}
+          </div>
           <input
             id="reg_code"
             ref={otpInputRef}
@@ -466,15 +493,16 @@ className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 
             inputMode="numeric"
             maxLength={6}
             autoComplete="one-time-code"
-            placeholder="------"
+            placeholder={code.verified ? "------ (код подтверждён)" : "------"}
             value={otp}
             onChange={(e) => {
               setOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
               setOtpError(null);
             }}
             className={cn(
-"w-full rounded-[8px] border bg-white py-3 text-center font-mono text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#cccccc] transition-colors tabular-nums",
+              "w-full rounded-[8px] border bg-white py-3 text-center font-mono text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#cccccc] transition-colors tabular-nums",
               "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+              code.verified && !otpError ? "border-emerald-500/50 bg-emerald-50/20" : "",
               otpError !== null ? "border-rose-500" : "border-[#e5e5e5]",
             )}
           />
@@ -484,7 +512,7 @@ className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 
 
           <div className="flex justify-end">
             {code.cooldown > 0 ? (
-<span className="text-xs text-[#666666]">
+              <span className="text-xs text-[#666666]">
                 Отправить повторно через {code.cooldown} с
               </span>
             ) : (

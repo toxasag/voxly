@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
   ArrowRight,
+  CheckCircle2,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -85,6 +86,11 @@ export function LoginForm() {
   const [showRecovery, setShowRecovery] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
   const otpInputRef = useRef<HTMLInputElement>(null);
+  const codeRef = useRef(code);
+
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
 
   const form = useForm<Omit<LoginWithCodeValues, "code">>({
     resolver: zodResolver(loginWithCodeSchema.omit({ code: true })),
@@ -199,9 +205,10 @@ export function LoginForm() {
   }, [form, forgotPassword, describeError]);
 
   const handleSubmit = useCallback(async () => {
-    if (code.sessionId === null) return;
+    const currentCode = codeRef.current;
+    if (currentCode.sessionId === null) return;
 
-    if (!/^\d{6}$/.test(otp)) {
+    if (!currentCode.verified && !/^\d{6}$/.test(otp)) {
       setOtpError("Код состоит из 6 цифр");
       return;
     }
@@ -214,8 +221,8 @@ export function LoginForm() {
       const session = await loginWithCode({
         email: values.email,
         password: values.password,
-        session_id: code.sessionId,
-        code: otp,
+        session_id: currentCode.sessionId,
+        code: otp.length === 6 ? otp : "000000",
       });
 
       window.location.href = postLoginTarget(session.slug);
@@ -242,7 +249,7 @@ export function LoginForm() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [code.sessionId, otp, form, loginWithCode, describeError]);
+  }, [code.sessionId, code.verified, otp, form, loginWithCode, describeError]);
 
   const errors = form.formState.errors;
   const channelLabel = CHANNEL_LABEL[channel];
@@ -405,11 +412,28 @@ export function LoginForm() {
         </div>
       )}
 
+      {/* Успешное подтверждение через бота */}
+      {code.verified && (
+        <div className="flex items-center gap-2.5 rounded-[8px] border border-emerald-500/20 bg-emerald-50/60 p-3 text-emerald-800">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+          <div className="text-[13px]">
+            <span className="font-medium">{CHANNEL_LABEL[code.channel]} подтверждён!</span> Нажмите «Войти» для завершения.
+          </div>
+        </div>
+      )}
+
       {code.stage === "sent" && (
         <div className="space-y-2">
-          <label htmlFor="login_code" className="block text-[13px] font-medium text-[#111111]">
-            Код подтверждения
-          </label>
+          <div className="flex items-center justify-between">
+            <label htmlFor="login_code" className="block text-[13px] font-medium text-[#111111]">
+              Код подтверждения
+            </label>
+            {code.verified && (
+              <span className="text-xs text-emerald-600 font-medium">
+                Подтверждён (ввод не обязателен)
+              </span>
+            )}
+          </div>
           <input
             id="login_code"
             ref={otpInputRef}
@@ -417,7 +441,7 @@ export function LoginForm() {
             inputMode="numeric"
             maxLength={6}
             autoComplete="one-time-code"
-            placeholder="------"
+            placeholder={code.verified ? "------ (код подтверждён)" : "------"}
             value={otp}
             onChange={(e) => {
               setOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
@@ -426,6 +450,7 @@ export function LoginForm() {
             className={cn(
               "w-full rounded-[8px] border bg-white py-3 text-center font-mono text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#cccccc] transition-colors tabular-nums",
               "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+              code.verified && !otpError ? "border-emerald-500/50 bg-emerald-50/20" : "",
               otpError !== null ? "border-rose-500" : "border-[#e5e5e5]",
             )}
           />
@@ -449,10 +474,10 @@ export function LoginForm() {
         </div>
       )}
 
-      {code.stage === "sent" && (
+      {(code.stage === "sent" || code.verified) && (
         <button
           type="submit"
-          disabled={isSubmitting || otp.length !== 6}
+          disabled={isSubmitting || (!code.verified && otp.length !== 6)}
           className={cn(
             "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
             "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
