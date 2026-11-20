@@ -1824,6 +1824,9 @@ CREATE TABLE IF NOT EXISTS print_templates (
   is_custom BOOLEAN NOT NULL DEFAULT false,
   parent_template_id UUID REFERENCES print_templates(id) ON DELETE SET NULL,
   is_hidden BOOLEAN NOT NULL DEFAULT false,
+  tool_info TEXT NOT NULL DEFAULT '',
+  client_info TEXT NOT NULL DEFAULT '',
+  comments TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

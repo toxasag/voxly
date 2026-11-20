@@ -1116,7 +1116,6 @@ export const RepairsTable = memo(function RepairsTable({
             setSelectedTicketForSettings(null);
           }}
           orderId={selectedTicketForSettings?.id}
-          order={selectedTicketForSettings}
         />
       </div>
     </TooltipProvider>

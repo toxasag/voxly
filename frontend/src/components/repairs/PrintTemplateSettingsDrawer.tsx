@@ -1,5 +1,6 @@
 "use client";
 
+import { Sheet } from "@/components/ui/sheet";
 import { VisualPrintTemplateEditor, type VisualPrintTemplateEditorProps } from "./VisualPrintTemplateEditor";
 
 export interface PrintTemplateSettingsDrawerProps {
@@ -18,13 +19,22 @@ export function PrintTemplateSettingsDrawer({
   order,
 }: PrintTemplateSettingsDrawerProps) {
   return (
-    <VisualPrintTemplateEditor
+    <Sheet
       open={open}
       onClose={onClose}
-      initialDocumentType={initialDocumentType}
-      orderId={orderId}
-      order={order}
-    />
+      side="right"
+      width="w-full md:w-[1450px]"
+      resizable
+    >
+      <VisualPrintTemplateEditor
+        open={open}
+        onClose={onClose}
+        initialDocumentType={initialDocumentType}
+        orderId={orderId}
+        order={order}
+        isDrawer
+      />
+    </Sheet>
   );
 }
 

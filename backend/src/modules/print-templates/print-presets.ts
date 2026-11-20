@@ -48,7 +48,7 @@ export const INTAKE_ACT_PRESET: PresetDefinition = {
       companyOgrn: "",
       workingHours: "",
       documentTitle: "АКТ ПРИЕМА-ПЕРЕДАЧИ ОБОРУДОВАНИЯ",
-      documentSubtitle: "Заказ-наряд на проведение диагностики и ремонтных работ",
+      documentSubtitle: "",
       showDate: true,
       showDocNumber: true,
     },
@@ -113,10 +113,10 @@ export const INTAKE_ACT_PRESET: PresetDefinition = {
     },
     tearOffTicket: {
       visible: true,
-      title: "ОТРЫВНОЙ ТАЛОН КЛИЕНТА (СОХРАНЯЙТЕ ДО ВЫДАЧИ)",
+      title: "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)",
       showBarcodeOrQr: true,
       customNote:
-        "Выдача оборудования производится строго при наличии данного талона либо документа, удостоверяющего личность.",
+        "Экземпляр сервисного центра. Оборудование и клиент проверены при приёмке.",
     },
   },
 };
