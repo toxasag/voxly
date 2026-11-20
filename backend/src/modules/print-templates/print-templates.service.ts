@@ -967,6 +967,7 @@ export class PrintTemplatesService {
       defect_description: string;
       appearance: string;
       package_contents: string;
+      malfunctions?: string[];
       master_name: string;
       estimated_cost: string;
       received_at: Date;
@@ -1005,6 +1006,19 @@ export class PrintTemplatesService {
       const termsBody = cfg.terms.termsText || settings.intakeTerms || INTAKE_ACT_PRESET.layoutConfig.terms.termsText;
       const cleanNumShort = cleanNumber.replace(/\D/g, "") || cleanNumber;
 
+      const mainDefect =
+        Array.isArray(order.malfunctions) && order.malfunctions.length > 0
+          ? order.malfunctions.join(", ")
+          : order.defect_description || "—";
+
+      const extraDefect =
+        order.defect_description &&
+        order.defect_description.trim() !== mainDefect.trim()
+          ? order.defect_description.trim()
+          : "";
+
+      const orderNotes = (order.notes || cfg.tearOffTicket.customNote || "").trim();
+
       return `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -1033,10 +1047,24 @@ export class PrintTemplatesService {
       width: 210mm;
       min-height: 297mm;
       margin: 15px auto;
-      padding: 8mm 12mm;
+      padding: 7mm 10mm;
       background: #ffffff;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
       position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-sizing: border-box;
+    }
+    .intake-main-agreement {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+    }
+    .intake-bottom-section {
+      margin-top: auto;
+      flex-shrink: 0;
     }
 
     /* Хедер */
@@ -1218,13 +1246,14 @@ export class PrintTemplatesService {
 
     .cut-perforation {
       text-align: center;
-      letter-spacing: 2px;
+      letter-spacing: 1px;
       font-family: monospace;
-      color: #888888;
-      margin: 12px 0 8px;
+      color: #666666;
+      margin: 8px 0 6px;
       font-size: 9.5px;
-      border-top: 1px dashed #cccccc;
-      padding-top: 6px;
+      font-weight: 600;
+      border-top: 1.5px dashed #888888;
+      padding-top: 4px;
       position: relative;
     }
 
@@ -1277,7 +1306,13 @@ export class PrintTemplatesService {
         padding: 5mm 8mm !important;
         box-shadow: none !important;
         width: 100% !important;
-        min-height: auto !important;
+        min-height: 297mm !important;
+        height: 297mm !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: space-between !important;
+        page-break-after: avoid;
+        page-break-inside: avoid;
       }
       @page {
         size: A4 portrait;
@@ -1288,138 +1323,144 @@ export class PrintTemplatesService {
 </head>
 <body>
   <div class="page-sheet">
-    <div class="intake-header">
-      <div class="header-main">
-        ${logoUrl ? `<img src="${logoUrl}" alt="Logo" onerror="this.style.display='none'" />` : ""}
-        <div>
-          <div class="company-title">${companyName || "Ремонт инструмента ИП Сагайдак А.Г."}</div>
-          <div class="company-meta">
-            ${companyAddress ? `<div>${companyAddress}</div>` : ""}
-            <div>
-              ${companyPhone ? `тел. <strong>${companyPhone}</strong>` : ""}
-              ${companyInn ? ` | ИНН: ${companyInn}` : ""}
-              ${companyOgrn ? ` | ОГРН: ${companyOgrn}` : ""}
+    <div class="intake-main-agreement">
+      <div class="intake-header">
+        <div class="header-main">
+          ${logoUrl ? `<img src="${logoUrl}" alt="Logo" onerror="this.style.display='none'" />` : ""}
+          <div>
+            <div class="company-title">${companyName || "Ремонт инструмента ИП Сагайдак А.Г."}</div>
+            <div class="company-meta">
+              ${companyAddress ? `<div>${companyAddress}</div>` : ""}
+              <div>
+                ${companyPhone ? `тел. <strong>${companyPhone}</strong>` : ""}
+                ${companyInn ? ` | ИНН: ${companyInn}` : ""}
+                ${companyOgrn ? ` | ОГРН: ${companyOgrn}` : ""}
+              </div>
+              ${cfg.header.companyWebsite ? `<div style="font-weight: 600; color: #4a38f5; text-transform: uppercase;">САЙТ: ${cfg.header.companyWebsite}</div>` : ""}
             </div>
-            ${cfg.header.companyWebsite ? `<div style="font-weight: 600; color: #4a38f5; text-transform: uppercase;">САЙТ: ${cfg.header.companyWebsite}</div>` : ""}
+          </div>
+        </div>
+
+        <div class="header-doc-title">
+          <h1 class="doc-h1">${cfg.header.documentTitle || "Договор"}</h1>
+          <div class="doc-number-row">
+            ${cfg.header.showDocNumber ? `<span class="doc-num-badge">${cleanNumber}</span>` : ""}
+            ${cfg.header.showDate ? `<span class="doc-date">от ${dateFormatted}</span>` : ""}
+          </div>
+          ${cfg.header.documentSubtitle ? `<div class="doc-sub">${cfg.header.documentSubtitle}</div>` : ""}
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="info-card">
+          <div class="card-head">Заказчик / Клиент</div>
+          <div class="card-body">
+            ${order.company_name ? `<div><span style="color: #888888;">Организация:</span> <strong>${order.company_name}</strong>${order.company_inn ? ` (ИНН: ${order.company_inn})` : ""}</div>` : ""}
+            <div><span style="color: #888888;">${order.company_name ? "Представитель:" : "ФИО:"}</span> <strong>${order.customer_name || "—"}</strong></div>
+            ${order.customer_phone ? `<div><span style="color: #888888;">Телефон:</span> ${order.customer_phone}</div>` : ""}
+          </div>
+        </div>
+
+        <div class="info-card">
+          <div class="card-head">Оборудование и дефект</div>
+          <div class="card-body">
+            <div><span style="color: #888888;">Техника:</span> <strong>${toolLine}</strong></div>
+            <div><span style="color: #888888;">Неисправность:</span> <strong>${mainDefect}</strong></div>
+            ${extraDefect ? `<div style="font-size: 9.5px; color: #555555; font-style: italic;"><span style="color: #888888; font-style: normal;">Доп. описание:</span> ${extraDefect}</div>` : ""}
           </div>
         </div>
       </div>
 
-      <div class="header-doc-title">
-        <h1 class="doc-h1">${cfg.header.documentTitle || "Договор"}</h1>
-        <div class="doc-number-row">
-          ${cfg.header.showDocNumber ? `<span class="doc-num-badge">${cleanNumber}</span>` : ""}
-          ${cfg.header.showDate ? `<span class="doc-date">от ${dateFormatted}</span>` : ""}
-        </div>
-        ${cfg.header.documentSubtitle ? `<div class="doc-sub">${cfg.header.documentSubtitle}</div>` : ""}
-      </div>
-    </div>
-
-    <div class="grid-2">
-      <div class="info-card">
-        <div class="card-head">Заказчик / Клиент</div>
-        <div class="card-body">
-          ${order.company_name ? `<div><span style="color: #888888;">Организация:</span> <strong>${order.company_name}</strong>${order.company_inn ? ` (ИНН: ${order.company_inn})` : ""}</div>` : ""}
-          <div><span style="color: #888888;">${order.company_name ? "Представитель:" : "ФИО:"}</span> <strong>${order.customer_name || "—"}</strong></div>
-          ${order.customer_phone ? `<div><span style="color: #888888;">Телефон:</span> ${order.customer_phone}</div>` : ""}
-        </div>
-      </div>
-
-      <div class="info-card">
-        <div class="card-head">Оборудование и дефект</div>
-        <div class="card-body">
-          <div><span style="color: #888888;">Техника:</span> <strong>${toolLine}</strong></div>
-          <div><span style="color: #888888;">Неисправность:</span> ${order.defect_description || "—"}</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="info-card" style="margin-bottom: 8px;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th style="width: 50%;">Комплектация при приеме</th>
-            <th style="width: 50%;">Внешний вид / состояние</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>${order.package_contents || "Без комплекта"}</td>
-            <td>${order.appearance || "Б/У, следы нормальной эксплуатации"}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="terms-block">
-      <div class="intake-preamble">
-        ${companyName ? companyName.replace(/ИП.*$/, "").trim() || "ИП Сагайдак Антон Геннадьевич" : "ИП Сагайдак Антон Геннадьевич"}, именуемый в дальнейшем «Исполнитель» с одной стороны, и ${order.company_name ? `${order.company_name} в лице ${order.customer_name || "представителя"}` : (order.customer_name || "Заказчик")}, именуемый в дальнейшем «Заказчик», с другой стороны, заключили настоящий договор о нижеследующем:
-      </div>
-      <div class="terms-heading">${cfg.terms.title || "ПРЕДМЕТ ДОГОВОРА И УСЛОВИЯ ПРИЕМА"}</div>
-      <div class="terms-body">${(termsBody || "").replace(/\n/g, "<br>")}</div>
-    </div>
-
-    <div class="intake-signatures">
-      <div class="sig-col">
-        <div class="sig-line"><span>Заказчик:</span> ___________________</div>
-        <div class="sig-sub">${order.company_name ? `${order.company_name} / ` : ""}${order.customer_name} ${order.customer_phone || ""}</div>
-      </div>
-      <div class="sig-col">
-        <div class="sig-line"><span>Исполнитель:</span> ___________________</div>
-        <div class="sig-sub">${order.master_name || "ИП Сагайдак Антон Геннадьевич"}</div>
-      </div>
-    </div>
-
-    <div class="cut-perforation">
-      ✂ - - - - - - - - - - - - - - - - - - - - - - - ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА) - - - - - - - - - - - - - - - - - - - - - - - ✂
-    </div>
-
-    <div class="master-stub tear-off-block">
-      <div class="stub-title">
-        <span>${cfg.tearOffTicket.title && !cfg.tearOffTicket.title.includes("Заказ-наряд") ? cfg.tearOffTicket.title : "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"} № ${cleanNumber.replace(/^№\s*/, "")}</span>
-        <span style="font-size: 10px; font-weight: normal; color: #666666;">от ${dateFormatted}</span>
-      </div>
-
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10.5px; margin-bottom: 6px;">
-        <div>
-          ${order.company_name ? `<div><span style="color: #888888;">Организация:</span> <strong>${order.company_name}</strong>${order.company_inn ? ` (ИНН: ${order.company_inn})` : ""}</div>` : ""}
-          <div><span style="color: #888888;">${order.company_name ? "Представитель:" : "Клиент:"}</span> <strong>${order.customer_name || "—"}</strong> ${order.customer_phone ? `(${order.customer_phone})` : ""}</div>
-        </div>
-        <div>
-          <div><span style="color: #888888;">Устройство:</span> <strong>${toolLine}</strong></div>
-          <div><span style="color: #888888;">Дефект:</span> ${order.defect_description || "—"}</div>
-        </div>
-      </div>
-
-      <div class="info-card" style="margin-bottom: 6px;">
+      <div class="info-card" style="margin-bottom: 8px;">
         <table class="data-table">
           <thead>
             <tr>
-              <th style="width: 42%;">Комплектация</th>
-              <th style="width: 42%;">Внешний вид</th>
-              <th style="width: 16%; text-align: center;">Номер</th>
+              <th style="width: 50%;">Комплектация при приеме</th>
+              <th style="width: 50%;">Внешний вид / состояние</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>${order.package_contents || "—"}</td>
-              <td>${order.appearance || "Б/У"}</td>
-              <td class="stub-num">${cleanNumShort}</td>
+              <td>${order.package_contents || "Без комплекта"}</td>
+              <td>${order.appearance || "Б/У, следы нормальной эксплуатации"}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      ${order.notes || cfg.tearOffTicket.customNote ? `<div class="stub-notes"><strong>Комментарии / примечания:</strong> ${order.notes || cfg.tearOffTicket.customNote}</div>` : ""}
+      <div class="terms-block">
+        <div class="intake-preamble">
+          ${companyName ? companyName.replace(/ИП.*$/, "").trim() || "ИП Сагайдак Антон Геннадьевич" : "ИП Сагайдак Антон Геннадьевич"}, именуемый в дальнейшем «Исполнитель» с одной стороны, и ${order.company_name ? `${order.company_name} в лице ${order.customer_name || "представителя"}` : (order.customer_name || "Заказчик")}, именуемый в дальнейшем «Заказчик», с другой стороны, заключили настоящий договор о нижеследующем:
+        </div>
+        <div class="terms-heading">${cfg.terms.title || "ПРЕДМЕТ ДОГОВОРА И УСЛОВИЯ ПРИЕМА"}</div>
+        <div class="terms-body">${(termsBody || "").replace(/\n/g, "<br>")}</div>
+      </div>
 
-      <div class="intake-signatures" style="margin-top: 6px;">
+      <div class="intake-signatures">
         <div class="sig-col">
           <div class="sig-line"><span>Заказчик:</span> ___________________</div>
-          <div class="sig-sub">${order.customer_name}</div>
+          <div class="sig-sub">${order.company_name ? `${order.company_name} / ` : ""}${order.customer_name} ${order.customer_phone || ""}</div>
         </div>
         <div class="sig-col">
-          <div class="sig-line"><span>Мастер:</span> ___________________</div>
+          <div class="sig-line"><span>Исполнитель:</span> ___________________</div>
           <div class="sig-sub">${order.master_name || "ИП Сагайдак Антон Геннадьевич"}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="intake-bottom-section">
+      <div class="cut-perforation">
+        ✂ - - - - - - - - - - - - - - - - - - - - - - - ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА) - - - - - - - - - - - - - - - - - - - - - - - ✂
+      </div>
+
+      <div class="master-stub tear-off-block">
+        <div class="stub-title">
+          <span>${cfg.tearOffTicket.title && !cfg.tearOffTicket.title.includes("Заказ-наряд") ? cfg.tearOffTicket.title : "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"} № ${cleanNumber.replace(/^№\s*/, "")}</span>
+          <span style="font-size: 10px; font-weight: normal; color: #666666;">от ${dateFormatted}</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10.5px; margin-bottom: 6px;">
+          <div>
+            ${order.company_name ? `<div><span style="color: #888888;">Организация:</span> <strong>${order.company_name}</strong>${order.company_inn ? ` (ИНН: ${order.company_inn})` : ""}</div>` : ""}
+            <div><span style="color: #888888;">${order.company_name ? "Представитель:" : "Клиент:"}</span> <strong>${order.customer_name || "—"}</strong> ${order.customer_phone ? `(${order.customer_phone})` : ""}</div>
+          </div>
+          <div>
+            <div><span style="color: #888888;">Устройство:</span> <strong>${toolLine}</strong></div>
+            <div><span style="color: #888888;">Неисправность:</span> <strong>${mainDefect}</strong></div>
+            ${extraDefect ? `<div style="font-size: 9.5px; color: #444444; font-style: italic;"><span style="color: #888888; font-style: normal;">Со слов клиента:</span> ${extraDefect}</div>` : ""}
+          </div>
+        </div>
+
+        <div class="info-card" style="margin-bottom: 6px;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 42%;">Комплектация</th>
+                <th style="width: 42%;">Внешний вид</th>
+                <th style="width: 16%; text-align: center;">Номер</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>${order.package_contents || "—"}</td>
+                <td>${order.appearance || "Б/У"}</td>
+                <td class="stub-num">${cleanNumShort}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        ${orderNotes ? `<div class="stub-notes"><strong>Примечание к наряду:</strong> ${orderNotes}</div>` : ""}
+
+        <div class="intake-signatures" style="margin-top: 6px;">
+          <div class="sig-col">
+            <div class="sig-line"><span>Заказчик:</span> ___________________</div>
+            <div class="sig-sub">${order.customer_name}</div>
+          </div>
+          <div class="sig-col">
+            <div class="sig-line"><span>Мастер:</span> ___________________</div>
+            <div class="sig-sub">${order.master_name || "ИП Сагайдак Антон Геннадьевич"}</div>
+          </div>
         </div>
       </div>
     </div>

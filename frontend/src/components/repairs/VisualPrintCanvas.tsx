@@ -175,19 +175,22 @@ export function VisualPrintCanvas({
     >
       {/* A4 Sheet Container */}
       <div
+        id="visual-print-canvas-sheet"
         className={cn(
           "bg-white text-[#111111] shadow-2xl border border-[#e5e5e5] transition-shadow",
           fontClass,
           fontSizeStyle,
           marginClass,
           "w-[210mm] min-h-[297mm] print:w-full print:min-h-0 print:p-6 print:border-none print:shadow-none",
+          isIntakeAct && "flex flex-col justify-between",
         )}
         style={{
           boxSizing: "border-box",
         }}
       >
         {isIntakeAct ? (
-          <div className="space-y-3">
+          <div className="flex flex-col justify-between min-h-[275mm] h-full space-y-3">
+            <div className="space-y-3 flex-1 flex flex-col justify-start">
             {/* 1. Header: Logo Left, Company Details Right */}
             <div
               {...getSectionInteractiveProps("header", "Шапка и реквизиты")}
@@ -435,123 +438,134 @@ export function VisualPrintCanvas({
                 </div>
               </div>
             </div>
-
-            {/* 6. Perforation Cut Line */}
-            <div className="my-3 relative flex items-center justify-center">
-              <div className="w-full border-t border-dashed border-[#cccccc]" />
-              <span className="absolute bg-white px-3 text-[10px] text-[#888888] font-mono flex items-center gap-1.5">
-                <Scissors className="h-3 w-3 text-[#888888]" />
-                ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА)
-              </span>
+            {/* End of upper agreement container */}
             </div>
 
-            {/* 7. Lower Part: Master Stub */}
-            <div
-              {...getSectionInteractiveProps("tear_off_ticket", "Талон мастера")}
-              className={cn(
-                "rounded border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2 text-[11px] text-[#111111]",
-                getSectionInteractiveProps("tear_off_ticket", "Талон мастера").className,
-              )}
-            >
-              {renderSectionBadge("tear_off_ticket", "Отрывной талон мастера")}
-              <div className="flex items-center justify-between border-b border-[#e5e5e5] pb-1.5">
-                <span className="font-bold text-[12px] uppercase text-[#111111] tracking-wide">
-                  {tearOffTicket.title && !tearOffTicket.title.includes("Заказ-наряд") ? tearOffTicket.title : "ТАЛОН МАСТЕРА (АКТ ПРИЕМА)"} № {sampleData.orderNumber?.replace(/^№\s*/, "")}
-                </span>
-                <span className="text-[10.5px] font-mono text-[#666666]">
-                  от {sampleData.orderDate}
+            {/* Bottom Section: Cut Line + Master Stub docked to bottom */}
+            <div className="mt-auto pt-2 shrink-0">
+              {/* 6. Perforation Cut Line - Stabilized */}
+              <div className="my-2.5 relative flex items-center justify-center">
+                <div className="w-full border-t-2 border-dashed border-[#888888]" />
+                <span className="absolute bg-white px-3 text-[10px] text-[#555555] font-mono font-semibold flex items-center gap-1.5 uppercase tracking-wider">
+                  <Scissors className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА)
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-[11px]">
-                <div className="space-y-0.5">
-                  {sampleData.companyName && (
+              {/* 7. Lower Part: Master Stub */}
+              <div
+                {...getSectionInteractiveProps("tear_off_ticket", "Талон мастера")}
+                className={cn(
+                  "rounded border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2 text-[11px] text-[#111111]",
+                  getSectionInteractiveProps("tear_off_ticket", "Талон мастера").className,
+                )}
+              >
+                {renderSectionBadge("tear_off_ticket", "Отрывной талон мастера")}
+                <div className="flex items-center justify-between border-b border-[#e5e5e5] pb-1.5">
+                  <span className="font-bold text-[12px] uppercase text-[#111111] tracking-wide">
+                    {tearOffTicket.title && !tearOffTicket.title.includes("Заказ-наряд") ? tearOffTicket.title : "ТАЛОН МАСТЕРА (АКТ ПРИЕМА)"} № {sampleData.orderNumber?.replace(/^№\s*/, "")}
+                  </span>
+                  <span className="text-[10.5px] font-mono text-[#666666]">
+                    от {sampleData.orderDate}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-[11px]">
+                  <div className="space-y-0.5">
+                    {sampleData.companyName && (
+                      <div>
+                        <span className="text-[#888888]">Организация: </span>
+                        <span className="font-semibold text-[#111111]">{sampleData.companyName}</span>
+                        {sampleData.companyInn && (
+                          <span className="text-[10px] font-mono text-[#666666] ml-1">(ИНН: {sampleData.companyInn})</span>
+                        )}
+                      </div>
+                    )}
                     <div>
-                      <span className="text-[#888888]">Организация: </span>
-                      <span className="font-semibold text-[#111111]">{sampleData.companyName}</span>
-                      {sampleData.companyInn && (
-                        <span className="text-[10px] font-mono text-[#666666] ml-1">(ИНН: {sampleData.companyInn})</span>
+                      <span className="text-[#888888]">{sampleData.companyName ? "Представитель: " : "Клиент: "}</span>
+                      <span className="font-medium text-[#111111]">{sampleData.customerName || "—"}</span>
+                      {sampleData.customerPhone && (
+                        <span className="font-mono text-[#666666] ml-1.5">{sampleData.customerPhone}</span>
                       )}
                     </div>
-                  )}
-                  <div>
-                    <span className="text-[#888888]">{sampleData.companyName ? "Представитель: " : "Клиент: "}</span>
-                    <span className="font-medium text-[#111111]">{sampleData.customerName || "—"}</span>
-                    {sampleData.customerPhone && (
-                      <span className="font-mono text-[#666666] ml-1.5">{sampleData.customerPhone}</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div>
+                      <span className="text-[#888888]">Устройство: </span>
+                      <span className="font-semibold text-[#111111]">{toolDisplay}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#888888]">Неисправность: </span>
+                      <strong className="text-[#111111]">{sampleData.defectDescription || "—"}</strong>
+                    </div>
+                    {sampleData.additionalDefectDescription && (
+                      <div className="text-[10px] text-[#444444]">
+                        <span className="text-[#888888]">Доп. описание: </span>
+                        <span className="italic">{sampleData.additionalDefectDescription}</span>
+                      </div>
                     )}
                   </div>
                 </div>
-                <div className="space-y-0.5">
-                  <div>
-                    <span className="text-[#888888]">Устройство: </span>
-                    <span className="font-semibold text-[#111111]">{toolDisplay}</span>
-                  </div>
-                  <div>
-                    <span className="text-[#888888]">Неисправность: </span>
-                    <span className="text-[#111111]">{sampleData.defectDescription || "—"}</span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Stub Table with Number Badge */}
-              <div className="rounded border border-[#e5e5e5] bg-white overflow-hidden my-1">
-                <table className="w-full border-collapse text-[11px]">
-                  <thead>
-                    <tr className="bg-[#fbfbfb] border-b border-[#e5e5e5] text-[#555555]">
-                      <th className="border-r border-[#e5e5e5] px-2.5 py-1 text-left font-semibold w-[42%]">
-                        Комплектация
-                      </th>
-                      <th className="border-r border-[#e5e5e5] px-2.5 py-1 text-left font-semibold w-[42%]">
-                        Внешний вид
-                      </th>
-                      <th className="px-2.5 py-1 text-center font-semibold w-[16%]">
-                        Номер
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td className="border-r border-[#e5e5e5] px-2.5 py-1.5 align-top text-[#222222]">
-                        {sampleData.packageContents || "—"}
-                      </td>
-                      <td className="border-r border-[#e5e5e5] px-2.5 py-1.5 align-top text-[#222222]">
-                        {sampleData.appearance || "Б/У"}
-                      </td>
-                      <td className="px-2 py-1.5 align-middle text-center bg-[#fafafa]">
-                        <span className="font-mono font-black text-2xl text-[#4a38f5]">
-                          {shortTicketNumber}
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {(sampleData.comments || tearOffTicket.customNote) && (
-                <div className="rounded border border-[#e5e5e5] bg-white p-2 text-[10.5px] text-[#333333]">
-                  <span className="font-semibold text-[#111111]">Комментарии / примечания: </span>
-                  <span>{sampleData.comments || tearOffTicket.customNote}</span>
+                {/* Stub Table with Number Badge */}
+                <div className="rounded border border-[#e5e5e5] bg-white overflow-hidden my-1">
+                  <table className="w-full border-collapse text-[11px]">
+                    <thead>
+                      <tr className="bg-[#fbfbfb] border-b border-[#e5e5e5] text-[#555555]">
+                        <th className="border-r border-[#e5e5e5] px-2.5 py-1 text-left font-semibold w-[42%]">
+                          Комплектация
+                        </th>
+                        <th className="border-r border-[#e5e5e5] px-2.5 py-1 text-left font-semibold w-[42%]">
+                          Внешний вид
+                        </th>
+                        <th className="px-2.5 py-1 text-center font-semibold w-[16%]">
+                          Номер
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border-r border-[#e5e5e5] px-2.5 py-1.5 align-top text-[#222222]">
+                          {sampleData.packageContents || "—"}
+                        </td>
+                        <td className="border-r border-[#e5e5e5] px-2.5 py-1.5 align-top text-[#222222]">
+                          {sampleData.appearance || "Б/У"}
+                        </td>
+                        <td className="px-2 py-1.5 align-middle text-center bg-[#fafafa]">
+                          <span className="font-mono font-black text-2xl text-[#4a38f5]">
+                            {shortTicketNumber}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
-              )}
 
-              <div className="pt-1 grid grid-cols-2 gap-8 text-[10.5px]">
-                <div className="space-y-0.5">
-                  <div className="flex items-end gap-2">
-                    <span className="font-bold">Заказчик:</span>
-                    <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
+                {(sampleData.notes || sampleData.comments || tearOffTicket.customNote) && (
+                  <div className="rounded border border-[#e5e5e5] bg-white p-2 text-[10.5px] text-[#333333]">
+                    <span className="font-semibold text-[#111111]">Примечание к наряду: </span>
+                    <span>{sampleData.notes || sampleData.comments || tearOffTicket.customNote}</span>
                   </div>
-                  <div className="text-[10px] text-[#666666]">
-                    {sampleData.customerName}
+                )}
+
+                <div className="pt-1 grid grid-cols-2 gap-8 text-[10.5px]">
+                  <div className="space-y-0.5">
+                    <div className="flex items-end gap-2">
+                      <span className="font-bold">Заказчик:</span>
+                      <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
+                    </div>
+                    <div className="text-[10px] text-[#666666]">
+                      {sampleData.customerName}
+                    </div>
                   </div>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="flex items-end gap-2">
-                    <span className="font-bold">Мастер:</span>
-                    <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
-                  </div>
-                  <div className="text-[10px] text-[#666666]">
-                    {sampleData.masterName || "ИП Сагайдак Антон Геннадьевич"}
+                  <div className="space-y-0.5">
+                    <div className="flex items-end gap-2">
+                      <span className="font-bold">Мастер:</span>
+                      <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
+                    </div>
+                    <div className="text-[10px] text-[#666666]">
+                      {sampleData.masterName || "ИП Сагайдак Антон Геннадьевич"}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1072,18 +1086,18 @@ export function VisualPrintCanvas({
           <div
             {...getSectionInteractiveProps("tear_off_ticket", "Талон мастера")}
             className={cn(
-              "mt-8 pt-4",
+              "mt-auto pt-2 shrink-0",
               getSectionInteractiveProps("tear_off_ticket", "Талон").className,
             )}
           >
             {renderSectionBadge("tear_off_ticket", "Талон мастера")}
 
-            {/* Perforation Line */}
-            <div className="relative flex items-center justify-center mb-3">
-              <div className="absolute inset-x-0 border-t-2 border-dashed border-[#999999]" />
-              <div className="relative bg-white px-3 flex items-center gap-1.5 text-[10px] text-[#666666] font-mono uppercase">
-                <Scissors className="h-3.5 w-3.5 rotate-90 text-[#4a38f5]" />
-                <span>Линия отреза талона (экземпляр мастера)</span>
+            {/* Perforation Line - Fixed & stabilized */}
+            <div className="relative flex items-center justify-center my-2">
+              <div className="absolute inset-x-0 border-t-2 border-dashed border-[#888888]" />
+              <div className="relative bg-white px-3 flex items-center gap-1.5 text-[10px] text-[#555555] font-mono uppercase tracking-wider font-semibold">
+                <Scissors className="h-3.5 w-3.5 text-[#4a38f5]" />
+                <span>ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА)</span>
               </div>
             </div>
 
@@ -1115,25 +1129,37 @@ export function VisualPrintCanvas({
                       <span className="text-[#666666]"> (S/N: {sampleData.equipmentSerial})</span>
                     )}
                   </div>
-                  {(sampleData.defectDescription || sampleData.appearance || sampleData.packageContents) && (
-                    <div className="text-[9.5px] text-[#555555] grid grid-cols-2 gap-x-2 pt-0.5">
-                      {sampleData.defectDescription && (
-                        <div>Неисправность: <span className="text-[#111111]">{sampleData.defectDescription}</span></div>
-                      )}
+
+                  {/* Defect details */}
+                  <div className="text-[9.5px] text-[#555555] space-y-0.5 pt-0.5">
+                    <div>
+                      <span className="font-semibold text-[#111111]">Неисправность: </span>
+                      <span className="text-[#111111] font-medium">{sampleData.defectDescription || "—"}</span>
+                    </div>
+                    {sampleData.additionalDefectDescription && (
+                      <div>
+                        <span className="font-semibold text-[#111111]">Доп. описание (со слов клиента): </span>
+                        <span className="text-[#222222] italic">{sampleData.additionalDefectDescription}</span>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-x-2 pt-0.5">
                       {sampleData.packageContents && (
                         <div>Комплектация: <span className="text-[#111111]">{sampleData.packageContents}</span></div>
                       )}
                       {sampleData.appearance && (
-                        <div className="col-span-2">Внешний вид: <span className="text-[#111111]">{sampleData.appearance}</span></div>
+                        <div>Внешний вид: <span className="text-[#111111]">{sampleData.appearance}</span></div>
                       )}
                     </div>
-                  )}
-                  {(sampleData.comments || tearOffTicket.customNote) && (
-                    <div className="text-[9px] text-[#555555] pt-1 border-t border-[#e5e5e5] italic">
-                      <span className="font-semibold text-[#111111] not-italic">Комментарии: </span>
-                      {sampleData.comments || tearOffTicket.customNote}
+                  </div>
+
+                  {/* Notes / Comments */}
+                  {(sampleData.notes || sampleData.comments || tearOffTicket.customNote) && (
+                    <div className="text-[9px] text-[#333333] pt-1 border-t border-[#e5e5e5]">
+                      <span className="font-semibold text-[#111111]">Примечание к наряду: </span>
+                      <span>{sampleData.notes || sampleData.comments || tearOffTicket.customNote}</span>
                     </div>
                   )}
+
                   <div className="text-[9.5px] text-[#666666] pt-0.5">
                     Мастер: <span className="font-medium text-[#111111]">{sampleData.masterName}</span>
                     {header.companyPhone && (

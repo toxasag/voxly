@@ -305,14 +305,91 @@ export function VisualPrintTemplateEditor({
     }
   };
 
-  // Test Print
+  // Test Print: isolates only the A4 document sheet into a dedicated print frame
   const handlePrint = useCallback(() => {
-    setIsPrinting(true);
-    setTimeout(() => {
+    const printSheet = document.getElementById("visual-print-canvas-sheet");
+    if (!printSheet) {
       window.print();
-      setIsPrinting(false);
-    }, 150);
-  }, []);
+      return;
+    }
+
+    let iframe = document.getElementById("print-isolation-iframe") as HTMLIFrameElement | null;
+    if (!iframe) {
+      iframe = document.createElement("iframe");
+      iframe.id = "print-isolation-iframe";
+      iframe.style.position = "fixed";
+      iframe.style.right = "0";
+      iframe.style.bottom = "0";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "0";
+      iframe.style.visibility = "hidden";
+      document.body.appendChild(iframe);
+    }
+
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!doc) {
+      window.print();
+      return;
+    }
+
+    const styles = Array.from(document.querySelectorAll("link[rel='stylesheet'], style"))
+      .map((el) => el.outerHTML)
+      .join("\n");
+
+    doc.open();
+    doc.write(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>${currentTemplate?.name || "Печать бланка"}</title>
+  ${styles}
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 0mm;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+    html, body {
+      background: #ffffff !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .print-root-container {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      background: #ffffff;
+      box-sizing: border-box;
+    }
+    [data-section], button {
+      box-shadow: none !important;
+      outline: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="print-root-container">
+    ${printSheet.outerHTML}
+  </div>
+</body>
+</html>`);
+    doc.close();
+
+    setTimeout(() => {
+      try {
+        iframe?.contentWindow?.focus();
+        iframe?.contentWindow?.print();
+      } catch (err) {
+        console.error("Print error:", err);
+        window.print();
+      }
+    }, 250);
+  }, [currentTemplate?.name]);
 
   // Keyboard shortcut Ctrl+S / Cmd+S
   useEffect(() => {
@@ -338,7 +415,7 @@ export function VisualPrintTemplateEditor({
       {/* ================================================================= */}
       {/* TOP BAR / HEADER                                                  */}
       {/* ================================================================= */}
-      <div className="shrink-0 flex items-center justify-between border-b border-[#e5e5e5] bg-[#ffffff] px-4 py-2.5">
+      <div className="shrink-0 flex items-center justify-between border-b border-[#e5e5e5] bg-[#ffffff] px-4 py-2.5 print:hidden">
         {/* Left: Title & Active Template Badge (Single source of truth) */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
@@ -545,7 +622,7 @@ export function VisualPrintTemplateEditor({
       {/* ================================================================= */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Inspector Panel (390px) */}
-        <div className="w-[390px] shrink-0 h-full overflow-hidden">
+        <div className="w-[390px] shrink-0 h-full overflow-hidden print:hidden">
           <VisualPrintInspector
             activeTab={activeTab}
             onTabChange={setActiveTab}
@@ -575,9 +652,9 @@ export function VisualPrintTemplateEditor({
         </div>
 
         {/* Right Live A4 Canvas Preview Area */}
-        <div className="flex-1 h-full bg-[#eef0f3] overflow-auto p-6 flex flex-col items-center">
+        <div className="flex-1 h-full bg-[#eef0f3] overflow-auto p-6 flex flex-col items-center print:bg-white print:p-0 print:overflow-visible">
           {/* Sheet Page Info Tag */}
-          <div className="mb-3 shrink-0 flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-medium text-[#666666] shadow-xs backdrop-blur-xs border border-[#e5e5e5]">
+          <div className="mb-3 shrink-0 flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-medium text-[#666666] shadow-xs backdrop-blur-xs border border-[#e5e5e5] print:hidden">
             <Eye className="h-3 w-3 text-[#4a38f5]" />
             <span>Лист 1 из 1 (A4 • 210 × 297 мм)</span>
             <span className="text-[#cccccc]">•</span>
