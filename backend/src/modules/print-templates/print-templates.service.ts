@@ -507,70 +507,6 @@ export class PrintTemplatesService {
       if (!current) return null;
       const docType = payload.document_type ?? current.document_type;
 
-      // Если редактируется системный/базовый шаблон (is_custom = false),
-      // прямое переименование запрещено, а при правке макета автоматически
-      // создается новая пользовательская (клиентская) версия.
-      if (!current.is_custom) {
-        if (payload.name && !payload.layout_config && !payload.body_template) {
-          throw new AppError(
-            403,
-            "SYSTEM_TEMPLATE_READONLY",
-            "Системные базовые шаблоны защищены от изменения. Создайте пользовательскую копию для переименования.",
-          );
-        }
-        const clientName =
-          payload.name && payload.name !== current.name
-            ? payload.name
-            : `${current.name} (пользовательский)`;
-        const slug = `${docType}_custom_${Date.now().toString(36)}`;
-        const pageSize = payload.page_size ?? current.page_size;
-        const orientation = payload.orientation ?? current.orientation;
-        const bodyTemplate = payload.body_template ?? current.body_template;
-        const layoutConfig = payload.layout_config ?? current.layout_config;
-        const isDefault = payload.is_default !== undefined ? payload.is_default : true;
-        const isHidden = payload.is_hidden !== undefined ? payload.is_hidden : false;
-        const toolInfo = payload.toolInfo ?? payload.tool_info ?? (current as any).tool_info ?? "";
-        const clientInfo = payload.clientInfo ?? payload.client_info ?? (current as any).client_info ?? "";
-        const comments = payload.comments ?? (current as any).comments ?? "";
-
-        if (isDefault) {
-          await tx.query(
-            `UPDATE print_templates SET is_default = false WHERE tenant_id = $1 AND document_type = $2`,
-            [tenantId, docType],
-          );
-        }
-
-        const rows = await tx.query<PrintTemplateRow>(
-          `INSERT INTO print_templates (
-            tenant_id, slug, name, description, document_type, page_size, orientation,
-            body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
-            tool_info, client_info, comments
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, $12, $13, $14, $15)
-          RETURNING *`,
-          [
-            tenantId,
-            slug,
-            clientName,
-            payload.description ?? current.description,
-            docType,
-            pageSize,
-            orientation,
-            bodyTemplate,
-            JSON.stringify(layoutConfig),
-            isDefault,
-            current.id,
-            isHidden,
-            toolInfo,
-            clientInfo,
-            comments,
-          ],
-        );
-        const createdRow = rows[0];
-        if (!createdRow) return null;
-        return toTemplateDto(createdRow);
-      }
-
-      // Обновление существующей пользовательской копии
       if (payload.is_default) {
         await tx.query(
           `UPDATE print_templates SET is_default = false WHERE tenant_id = $1 AND document_type = $2 AND id != $3`,
@@ -1037,6 +973,298 @@ export class PrintTemplatesService {
     // Margin styles
     const marginMm = cfg.theme.margins === "compact" ? "8mm" : cfg.theme.margins === "spacious" ? "20mm" : "14mm";
     const baseFontSize = cfg.theme.fontSize === "small" ? "11px" : cfg.theme.fontSize === "large" ? "13px" : "12px";
+
+    const isIntakeAct =
+      data.tpl.documentType === "work_order" ||
+      data.tpl.slug === "work_order" ||
+      (cfg.tearOffTicket.visible && (!cfg.table.visible || (!cfg.table.showWorks && !cfg.table.showParts)));
+
+    if (isIntakeAct) {
+      const customerLine = [order.customer_name, order.customer_phone ? `тел. ${order.customer_phone}` : ""].filter(Boolean).join(", ");
+      const toolLine = [order.equipment_type, order.equipment_brand, order.equipment_model].filter(Boolean).join(" ") +
+        (order.equipment_serial ? ` S/N: ${order.equipment_serial}` : "");
+      const termsBody = cfg.terms.termsText || settings.intakeTerms || INTAKE_ACT_PRESET.layoutConfig.terms.termsText;
+      const cleanNumShort = cleanNumber.replace(/\D/g, "") || cleanNumber;
+
+      return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${cfg.header.documentTitle || "Договор"} ${cleanNumber}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: '${cfg.theme.fontFamily || "Inter"}', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: ${baseFontSize};
+      color: #111111;
+      background: #f5f5f5;
+      line-height: 1.35;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page-sheet {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 15px auto;
+      padding: 8mm 12mm;
+      background: #ffffff;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      position: relative;
+    }
+
+    .intake-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding-bottom: 6px;
+    }
+    .intake-logo img {
+      max-height: 80px;
+      max-width: 140px;
+      object-fit: contain;
+    }
+    .intake-company {
+      text-align: right;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .company-title {
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .company-site {
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .intake-title {
+      text-align: center;
+      margin: 6px 0;
+    }
+    .intake-title h1 {
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .intake-subtitle {
+      font-size: 11.5px;
+      color: #333333;
+    }
+    .intake-details {
+      font-size: 11.5px;
+      line-height: 1.5;
+      margin: 6px 0;
+    }
+    .intake-table, .stub-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid #111111;
+      margin: 6px 0;
+      font-size: 11px;
+    }
+    .intake-table th, .intake-table td,
+    .stub-table th, .stub-table td {
+      border: 1px solid #111111;
+      padding: 4px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .stub-num {
+      text-align: center !important;
+      vertical-align: middle !important;
+      font-size: 26px !important;
+      font-weight: 900 !important;
+      font-family: monospace;
+    }
+    .intake-preamble {
+      font-size: 9.5px;
+      line-height: 1.4;
+      margin: 5px 0;
+      color: #222222;
+    }
+    .intake-terms {
+      font-size: 9px;
+      line-height: 1.35;
+      margin: 5px 0;
+      color: #222222;
+    }
+    .terms-heading {
+      font-weight: 700;
+      font-size: 9.5px;
+      margin-bottom: 2px;
+    }
+    .intake-signatures {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 10.5px;
+    }
+    .sig-col {
+      width: 45%;
+    }
+    .sig-line {
+      margin-bottom: 2px;
+    }
+    .sig-sub {
+      font-size: 10px;
+      color: #333333;
+    }
+    .cut-perforation {
+      text-align: center;
+      letter-spacing: 2px;
+      font-family: monospace;
+      color: #555555;
+      margin: 8px 0;
+      font-size: 10px;
+      border-top: 1px dashed #111111;
+      padding-top: 4px;
+    }
+    .master-stub {
+      margin-top: 2px;
+    }
+    .stub-title {
+      text-align: center;
+      font-weight: 700;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .stub-notes {
+      font-size: 10px;
+      margin-top: 3px;
+      font-style: italic;
+    }
+
+    @media print {
+      body {
+        background: transparent !important;
+        font-size: 10.5px !important;
+      }
+      .page-sheet {
+        margin: 0 !important;
+        padding: 5mm 8mm !important;
+        box-shadow: none !important;
+        width: 100% !important;
+        min-height: auto !important;
+      }
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-sheet">
+    <div class="intake-header">
+      <div class="intake-logo">
+        <img src="${logoUrl || "/service-logo.png"}" alt="Logo" onerror="this.style.display='none'" />
+      </div>
+      <div class="intake-company">
+        <div class="company-title">${companyName || "Ремонт инструмента (Toua, Hybest, VAPP) ИП Сагайдак А.Г."}</div>
+        <div class="company-addr">${companyAddress || "Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214"}</div>
+        <div class="company-contacts">тел. <strong>${companyPhone || "+7 977 628 20 49"}</strong> ${cfg.header.workingHours || "Пн-Пт 10:00-19:00"}</div>
+        <div class="company-site">САЙТ: <strong>${cfg.header.companyWebsite || "РЕМОНТ-ИНСТРУМЕНТ.РФ"}</strong></div>
+      </div>
+    </div>
+
+    <div class="intake-title">
+      <h1>${cfg.header.documentTitle || "Договор"} № ${cleanNumber.replace(/^№\s*/, "")} от ${dateFormatted}</h1>
+      <div class="intake-subtitle">${cfg.header.documentSubtitle || "на оказание услуг по ремонту инструмента"}</div>
+    </div>
+
+    <div class="intake-details">
+      <div><strong>Заказчик:</strong> ${customerLine}</div>
+      <div><strong>Устройство:</strong> ${toolLine}</div>
+      <div><strong>Неисправность:</strong> ${order.defect_description || "—"}</div>
+    </div>
+
+    <table class="intake-table">
+      <thead>
+        <tr>
+          <th style="width: 50%;">Комплектация</th>
+          <th style="width: 50%;">Внешний вид</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>${order.package_contents || "—"}</td>
+          <td>${order.appearance || ""}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="intake-preamble">
+      ${companyName ? companyName.replace(/ИП.*$/, "").trim() || "ИП Сагайдак Антон Геннадьевич" : "ИП Сагайдак Антон Геннадьевич"}, именуемый в дальнейшем «Исполнитель» с одной стороны, и гражданин ${order.customer_name || "Заказчик"}, именуемый в дальнейшем «Заказчик», с другой стороны, заключили настоящий договор о ниже следующем:
+    </div>
+
+    <div class="intake-terms">
+      <div class="terms-heading">${cfg.terms.title || "ПРЕДМЕТ ДОГОВОРА"}</div>
+      <div class="terms-body">${(termsBody || "").replace(/\n/g, "<br>")}</div>
+    </div>
+
+    <div class="intake-signatures">
+      <div class="sig-col">
+        <div class="sig-line"><strong>Заказчик</strong> ___________________</div>
+        <div class="sig-sub">${order.customer_name} ${order.customer_phone || ""}</div>
+      </div>
+      <div class="sig-col">
+        <div class="sig-line"><strong>Исполнитель</strong> ___________________</div>
+        <div class="sig-sub">${order.master_name || "ИП Сагайдак Антон Геннадьевич"}</div>
+      </div>
+    </div>
+
+    <div class="cut-perforation">
+      - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    </div>
+
+    <div class="master-stub">
+      <div class="stub-title"><strong>${cfg.tearOffTicket.title || "Заказ-наряд на выполнение работ"} № ${cleanNumber.replace(/^№\s*/, "")} от ${dateFormatted}</strong></div>
+      <div class="intake-details">
+        <div><strong>Заказчик:</strong> ${customerLine}</div>
+        <div><strong>Устройство:</strong> ${toolLine}</div>
+        <div><strong>Неисправность:</strong> ${order.defect_description || "—"}</div>
+      </div>
+
+      <table class="stub-table">
+        <thead>
+          <tr>
+            <th style="width: 40%;">Комплектация</th>
+            <th style="width: 40%;">Внешний вид</th>
+            <th style="width: 20%; text-align: center;">№</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>${order.package_contents || "—"}</td>
+            <td>${order.appearance || ""}</td>
+            <td class="stub-num">${cleanNumShort}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      ${order.notes || cfg.tearOffTicket.customNote ? `<div class="stub-notes"><strong>Комментарии:</strong> ${order.notes || cfg.tearOffTicket.customNote}</div>` : ""}
+
+      <div class="intake-signatures" style="margin-top: 8px;">
+        <div class="sig-col">
+          <div class="sig-line"><strong>Заказчик</strong> ___________________</div>
+          <div class="sig-sub">${order.customer_name} ${order.customer_phone || ""}</div>
+        </div>
+        <div class="sig-col">
+          <div class="sig-line"><strong>Исполнитель</strong> ___________________</div>
+          <div class="sig-sub">${order.master_name || "ИП Сагайдак Антон Геннадьевич"}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+    }
 
     // Секции по порядку
     const sectionsHtml: string[] = [];
