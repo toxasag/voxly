@@ -227,7 +227,6 @@ export function VisualPrintInspector({
 
   const DOC_TYPE_LABELS: Record<string, string> = {
     work_order: "Акт приема",
-    repair_order: "Заказ-наряд",
     completion_act: "Акт вып. работ",
     receipt: "Товарный чек",
     warranty_ticket: "Гарантийный талон",

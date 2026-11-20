@@ -31,6 +31,7 @@ interface VisualPrintCanvasProps {
   zoom?: number;
   className?: string;
   isPrinting?: boolean;
+  documentType?: string;
 }
 
 export function VisualPrintCanvas({
@@ -41,10 +42,39 @@ export function VisualPrintCanvas({
   zoom = 1,
   className,
   isPrinting = false,
+  documentType,
 }: VisualPrintCanvasProps) {
   const [hoveredSection, setHoveredSection] = useState<PrintSectionType | null>(null);
 
   const { theme, header, customer, equipment, table, terms, signatures, tearOffTicket } = layoutConfig;
+
+  const customerDisplay =
+    sampleData.clientInfo ||
+    [
+      sampleData.customerName,
+      sampleData.customerPhone ? `тел. ${sampleData.customerPhone}` : "",
+      sampleData.customerAddress,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+  const toolDisplay =
+    sampleData.toolInfo ||
+    [
+      sampleData.equipmentType,
+      sampleData.equipmentBrand,
+      sampleData.equipmentModel,
+      sampleData.equipmentSerial ? `S/N: ${sampleData.equipmentSerial}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+  const shortTicketNumber =
+    sampleData.orderNumber?.replace(/\D/g, "") || sampleData.orderNumber || "269";
+
+  const isIntakeAct =
+    documentType === "work_order" ||
+    (tearOffTicket.visible && (!table.visible || (!table.showWorks && !table.showParts)));
 
   // Font family class
   const fontClass =
@@ -149,6 +179,259 @@ export function VisualPrintCanvas({
           boxSizing: "border-box",
         }}
       >
+        {isIntakeAct ? (
+          <div className="space-y-2">
+            {/* 1. Header: Logo Left, Company Details Right */}
+            <div
+              {...getSectionInteractiveProps("header", "Шапка и реквизиты")}
+              className={cn(
+                "pb-2 border-b border-[#111111]",
+                getSectionInteractiveProps("header", "Шапка").className,
+              )}
+            >
+              {renderSectionBadge("header", "Шапка и реквизиты")}
+              <div className="flex items-start justify-between gap-4">
+                {header.showLogo && (
+                  <div className="flex shrink-0 items-center overflow-hidden">
+                    <img
+                      src={header.logoUrl || "/service-logo.png"}
+                      alt="Логотип"
+                      className="h-20 w-auto object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = "none";
+                      }}
+                    />
+                  </div>
+                )}
+                <div className="text-right space-y-0.5 text-[#111111]">
+                  <div className="text-[13px] font-bold">
+                    {header.companyName || "Ремонт инструмента (Toua, Hybest, VAPP) ИП Сагайдак А.Г."}
+                  </div>
+                  <div className="text-[11px] text-[#222222]">
+                    {header.companyAddress || "Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214"}
+                  </div>
+                  <div className="text-[11px] text-[#222222]">
+                    тел. <span className="font-semibold">{header.companyPhone || "+7 977 628 20 49"}</span> {header.workingHours || "Пн-Пт 10:00-19:00"}
+                  </div>
+                  <div className="text-[11px] font-bold text-[#111111] uppercase tracking-wide">
+                    САЙТ: {header.companyWebsite || "РЕМОНТ-ИНСТРУМЕНТ.РФ"}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Document Title */}
+            <div className="text-center py-1.5">
+              <h1 className="text-[15px] font-bold text-[#111111]">
+                {header.documentTitle || "Договор"} № {sampleData.orderNumber?.replace(/^№\s*/, "")} от {sampleData.orderDate}
+              </h1>
+              <div className="text-[11.5px] text-[#333333]">
+                {header.documentSubtitle || "на оказание услуг по ремонту инструмента"}
+              </div>
+            </div>
+
+            {/* 3. Order Details */}
+            <div
+              {...getSectionInteractiveProps("customer", "Данные заказа")}
+              className={cn(
+                "space-y-0.5 text-[11px] py-1 text-[#111111]",
+                getSectionInteractiveProps("customer", "Данные").className,
+              )}
+            >
+              {renderSectionBadge("customer", "Данные заказа")}
+              <div>
+                <span className="font-bold">Заказчик: </span>
+                <span>{customerDisplay}</span>
+              </div>
+              <div>
+                <span className="font-bold">Устройство: </span>
+                <span>{toolDisplay}</span>
+              </div>
+              <div>
+                <span className="font-bold">Неисправность: </span>
+                <span>{sampleData.defectDescription || "—"}</span>
+              </div>
+            </div>
+
+            {/* 4. Table: Комплектация & Внешний вид */}
+            <div
+              {...getSectionInteractiveProps("equipment", "Комплектация и внешний вид")}
+              className={cn(
+                "my-1",
+                getSectionInteractiveProps("equipment", "Комплектация").className,
+              )}
+            >
+              {renderSectionBadge("equipment", "Комплектация и внешний вид")}
+              <table className="w-full border-collapse border border-[#111111] text-[11px]">
+                <thead>
+                  <tr className="border-b border-[#111111]">
+                    <th className="border-r border-[#111111] px-2.5 py-1 text-left font-bold text-[#111111] w-1/2">
+                      Комплектация
+                    </th>
+                    <th className="px-2.5 py-1 text-left font-bold text-[#111111] w-1/2">
+                      Внешний вид
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="border-r border-[#111111] px-2.5 py-1.5 align-top min-h-[28px] text-[#222222]">
+                      {sampleData.packageContents || "—"}
+                    </td>
+                    <td className="px-2.5 py-1.5 align-top min-h-[28px] text-[#222222]">
+                      {sampleData.appearance || ""}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* 5. Preamble */}
+            <div className="text-[9.5px] leading-relaxed text-[#222222] my-1">
+              {header.companyName ? header.companyName.replace(/ИП.*$/, "").trim() || "ИП Сагайдак Антон Геннадьевич" : "ИП Сагайдак Антон Геннадьевич"}, именуемый в дальнейшем «Исполнитель» с одной стороны, и гражданин {sampleData.customerName || "Заказчик"}, именуемый в дальнейшем «Заказчик», с другой стороны, заключили настоящий договор о ниже следующем:
+            </div>
+
+            {/* 6. Terms: ПРЕДМЕТ ДОГОВОРА */}
+            <div
+              {...getSectionInteractiveProps("terms", "Предмет договора (Условия)")}
+              className={cn(
+                "space-y-0.5 text-[9px] leading-[1.3] text-[#222222]",
+                getSectionInteractiveProps("terms", "Условия").className,
+              )}
+            >
+              {renderSectionBadge("terms", "Предмет договора")}
+              <div className="font-bold text-[9.5px] uppercase text-[#111111]">
+                {terms.title || "ПРЕДМЕТ ДОГОВОРА"}
+              </div>
+              <div className="whitespace-pre-line space-y-0.5">
+                {terms.termsText}
+              </div>
+            </div>
+
+            {/* 7. Signatures: Upper part */}
+            <div
+              {...getSectionInteractiveProps("signatures", "Подписи сторон")}
+              className={cn(
+                "mt-2 pt-1 grid grid-cols-2 gap-8 text-[10.5px] text-[#111111]",
+                getSectionInteractiveProps("signatures", "Подписи").className,
+              )}
+            >
+              {renderSectionBadge("signatures", "Подписи сторон")}
+              <div className="space-y-1">
+                <div className="flex items-end gap-2">
+                  <span className="font-bold">Заказчик</span>
+                  <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
+                </div>
+                <div className="text-[10px] text-[#333333]">
+                  {sampleData.customerName} {sampleData.customerPhone}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-end gap-2">
+                  <span className="font-bold">Исполнитель</span>
+                  <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
+                </div>
+                <div className="text-[10px] text-[#333333]">
+                  {sampleData.masterName || "ИП Сагайдак Антон Геннадьевич"}
+                </div>
+              </div>
+            </div>
+
+            {/* 8. Cut Line */}
+            <div className="my-2 relative flex items-center justify-center">
+              <div className="w-full border-t border-dashed border-[#111111]" />
+            </div>
+
+            {/* 9. Lower Part: Master Stub */}
+            <div
+              {...getSectionInteractiveProps("tear_off_ticket", "Отрывной талон мастера")}
+              className={cn(
+                "space-y-1 text-[11px] text-[#111111]",
+                getSectionInteractiveProps("tear_off_ticket", "Талон мастера").className,
+              )}
+            >
+              {renderSectionBadge("tear_off_ticket", "Отрывной талон мастера")}
+              <div className="text-center font-bold text-[13px] text-[#111111]">
+                {tearOffTicket.title || "Заказ-наряд на выполнение работ"} № {sampleData.orderNumber?.replace(/^№\s*/, "")} от {sampleData.orderDate}
+              </div>
+
+              <div className="space-y-0.5 text-[11px]">
+                <div>
+                  <span className="font-bold">Заказчик: </span>
+                  <span>{customerDisplay}</span>
+                </div>
+                <div>
+                  <span className="font-bold">Устройство: </span>
+                  <span>{toolDisplay}</span>
+                </div>
+                <div>
+                  <span className="font-bold">Неисправность: </span>
+                  <span>{sampleData.defectDescription || "—"}</span>
+                </div>
+              </div>
+
+              <div className="my-1">
+                <table className="w-full border-collapse border border-[#111111] text-[11px]">
+                  <thead>
+                    <tr className="border-b border-[#111111]">
+                      <th className="border-r border-[#111111] px-2 py-1 text-left font-bold text-[#111111] w-[40%]">
+                        Комплектация
+                      </th>
+                      <th className="border-r border-[#111111] px-2 py-1 text-left font-bold text-[#111111] w-[40%]">
+                        Внешний вид
+                      </th>
+                      <th className="px-2 py-1 text-center font-bold text-[#111111] w-[20%]">
+                        №
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="border-r border-[#111111] px-2 py-1.5 align-top text-[#222222]">
+                        {sampleData.packageContents || "—"}
+                      </td>
+                      <td className="border-r border-[#111111] px-2 py-1.5 align-top text-[#222222]">
+                        {sampleData.appearance || ""}
+                      </td>
+                      <td className="px-2 py-1.5 align-middle text-center font-mono font-black text-2xl text-[#111111]">
+                        {shortTicketNumber}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {(sampleData.comments || tearOffTicket.customNote) && (
+                <div className="text-[10px] text-[#333333] pt-0.5">
+                  <span className="font-bold">Комментарии: </span>
+                  <span>{sampleData.comments || tearOffTicket.customNote}</span>
+                </div>
+              )}
+
+              <div className="mt-1.5 pt-0.5 grid grid-cols-2 gap-8 text-[10.5px]">
+                <div className="space-y-1">
+                  <div className="flex items-end gap-2">
+                    <span className="font-bold">Заказчик</span>
+                    <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
+                  </div>
+                  <div className="text-[10px] text-[#333333]">
+                    {sampleData.customerName} {sampleData.customerPhone}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-end gap-2">
+                    <span className="font-bold">Исполнитель</span>
+                    <span className="border-b border-[#111111] flex-1 pb-0.5"></span>
+                  </div>
+                  <div className="text-[10px] text-[#333333]">
+                    {sampleData.masterName || "ИП Сагайдак Антон Геннадьевич"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div>
         {/* ================================================================= */}
         {/* HEADER SECTION                                                    */}
         {/* ================================================================= */}
@@ -733,6 +1016,8 @@ export function VisualPrintCanvas({
                 )}
               </div>
             </div>
+          </div>
+        )}
           </div>
         )}
       </div>

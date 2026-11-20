@@ -112,37 +112,7 @@ export function VisualPrintTemplateEditor({
   const [config, setConfig] = useState<PrintLayoutConfig>(fallbackPreset.layoutConfig);
   const [hasChanges, setHasChanges] = useState<boolean>(false);
 
-  // Quick editable fields state: toolInfo, clientInfo, comments
-  const [toolInfoInput, setToolInfoInput] = useState<string>("");
-  const [clientInfoInput, setClientInfoInput] = useState<string>("");
-  const [commentsInput, setCommentsInput] = useState<string>("");
-
-  useEffect(() => {
-    if (currentTemplate) {
-      setToolInfoInput(currentTemplate.toolInfo || effectiveSampleData.toolInfo || "");
-      setClientInfoInput(currentTemplate.clientInfo || effectiveSampleData.clientInfo || "");
-      setCommentsInput(currentTemplate.comments || effectiveSampleData.comments || "");
-    } else {
-      setToolInfoInput(effectiveSampleData.toolInfo || "");
-      setClientInfoInput(effectiveSampleData.clientInfo || "");
-      setCommentsInput(effectiveSampleData.comments || "");
-    }
-  }, [
-    currentTemplate?.id,
-    currentTemplate?.toolInfo,
-    currentTemplate?.clientInfo,
-    currentTemplate?.comments,
-    effectiveSampleData,
-  ]);
-
-  const activeSampleData = useMemo(() => {
-    return {
-      ...effectiveSampleData,
-      toolInfo: toolInfoInput || effectiveSampleData.toolInfo,
-      clientInfo: clientInfoInput || effectiveSampleData.clientInfo,
-      comments: commentsInput || effectiveSampleData.comments,
-    };
-  }, [effectiveSampleData, toolInfoInput, clientInfoInput, commentsInput]);
+  const activeSampleData = effectiveSampleData;
 
   // Template rename state
   const [isEditingName, setIsEditingName] = useState<boolean>(false);
@@ -252,9 +222,6 @@ export function VisualPrintTemplateEditor({
           payload: {
             layout_config: config,
             document_type: documentType,
-            toolInfo: toolInfoInput,
-            clientInfo: clientInfoInput,
-            comments: commentsInput,
           },
         });
         if (updated) {
@@ -276,9 +243,6 @@ export function VisualPrintTemplateEditor({
           layout_config: config,
           is_default: true,
           is_custom: true,
-          toolInfo: toolInfoInput,
-          clientInfo: clientInfoInput,
-          comments: commentsInput,
         });
         setSelectedTemplateId(created.id);
         toast.success("Новый шаблон создан и сохранен");
@@ -577,60 +541,6 @@ export function VisualPrintTemplateEditor({
       </div>
 
       {/* ================================================================= */}
-      {/* QUICK FIELDS BAR: toolInfo, clientInfo, comments                 */}
-      {/* ================================================================= */}
-      <div className="shrink-0 border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-2 flex flex-col md:flex-row items-stretch md:items-center gap-2.5">
-        <div className="flex-1 min-w-[190px]">
-          <label htmlFor="input-tool-info" className="sr-only">Инструмент</label>
-          <input
-            id="input-tool-info"
-            name="toolInfo"
-            aria-label="Инструмент"
-            type="text"
-            value={toolInfoInput}
-            onChange={(e) => {
-              setToolInfoInput(e.target.value);
-              setHasChanges(true);
-            }}
-            placeholder="Инструмент (модель, серийный номер)"
-            className="w-full h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-hidden"
-          />
-        </div>
-        <div className="flex-1 min-w-[190px]">
-          <label htmlFor="input-client-info" className="sr-only">Клиент</label>
-          <input
-            id="input-client-info"
-            name="clientInfo"
-            aria-label="Клиент"
-            type="text"
-            value={clientInfoInput}
-            onChange={(e) => {
-              setClientInfoInput(e.target.value);
-              setHasChanges(true);
-            }}
-            placeholder="Клиент (ФИО, телефон)"
-            className="w-full h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-hidden"
-          />
-        </div>
-        <div className="flex-1 min-w-[240px]">
-          <label htmlFor="input-comments" className="sr-only">Свободные комментарии мастера</label>
-          <textarea
-            id="input-comments"
-            name="comments"
-            aria-label="Свободные комментарии мастера"
-            rows={1}
-            value={commentsInput}
-            onChange={(e) => {
-              setCommentsInput(e.target.value);
-              setHasChanges(true);
-            }}
-            placeholder="Свободные комментарии мастера"
-            className="w-full h-7 resize-none rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-hidden"
-          />
-        </div>
-      </div>
-
-      {/* ================================================================= */}
       {/* SPLIT VIEW WORKSPACE                                              */}
       {/* ================================================================= */}
       <div className="flex-1 flex overflow-hidden">
@@ -684,6 +594,7 @@ export function VisualPrintTemplateEditor({
               activeSection={activeSection}
               onSelectSection={handleSelectSectionFromCanvas}
               zoom={zoom}
+              documentType={documentType}
               isPrinting={isPrinting}
             />
           </div>

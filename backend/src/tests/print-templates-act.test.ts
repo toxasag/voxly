@@ -25,10 +25,10 @@ describe("PrintTemplatesService - Act of Acceptance & Master Tear-Off Ticket", (
     vi.clearAllMocks();
   });
 
-  it("INTAKE_ACT_PRESET removes reference to Заказ-наряд and designates lower part for master", () => {
-    expect(INTAKE_ACT_PRESET.layoutConfig.header.documentTitle).toBe("АКТ ПРИЕМА-ПЕРЕДАЧИ ОБОРУДОВАНИЯ");
-    expect(INTAKE_ACT_PRESET.layoutConfig.header.documentSubtitle).not.toContain("Заказ-наряд");
-    expect(INTAKE_ACT_PRESET.layoutConfig.tearOffTicket.title).toContain("ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)");
+  it("INTAKE_ACT_PRESET matches exact intake contract format", () => {
+    expect(INTAKE_ACT_PRESET.layoutConfig.header.documentTitle).toBe("Договор");
+    expect(INTAKE_ACT_PRESET.layoutConfig.header.documentSubtitle).toContain("на оказание услуг по ремонту инструмента");
+    expect(INTAKE_ACT_PRESET.layoutConfig.terms.title).toBe("ПРЕДМЕТ ДОГОВОРА");
   });
 
   it("saves toolInfo, clientInfo, comments with RLS condition WHERE tenant_id = $10 AND id = $11", async () => {
