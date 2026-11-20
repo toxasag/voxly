@@ -32,6 +32,7 @@ export interface CodeFlowState {
   channel: AuthChannel;
   cooldown: number;
   error: string | null;
+  verified: boolean;
 }
 
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -65,6 +66,7 @@ export function useCodeFlow(purpose: "register" | "login") {
     channel: "telegram",
     cooldown: 0,
     error: null,
+    verified: false,
   });
 
   // Таймеры держим в ref, чтобы очистить их при размонтировании: иначе опрос
@@ -128,10 +130,20 @@ export function useCodeFlow(purpose: "register" | "login") {
               return;
             }
 
-            if (status.delivered) {
+            if (status.verified || status.delivered) {
               stopPolling();
-              setState((prev) => ({ ...prev, stage: "sent", deepLink: null, error: null }));
-              toast.success(`Код отправлен в ${CHANNEL_LABEL[channel]}`);
+              setState((prev) => ({
+                ...prev,
+                stage: "sent",
+                verified: status.verified,
+                deepLink: null,
+                error: null,
+              }));
+              if (status.verified) {
+                toast.success(`${CHANNEL_LABEL[channel]} подтверждён!`);
+              } else {
+                toast.success(`Код отправлен в ${CHANNEL_LABEL[channel]}`);
+              }
             }
           } catch {
             // Разовая сетевая ошибка не должна прерывать ожидание: следующая
@@ -221,6 +233,7 @@ export function useCodeFlow(purpose: "register" | "login") {
       channel: "telegram",
       cooldown: 0,
       error: null,
+      verified: false,
     });
   }, [stopPolling]);
 
