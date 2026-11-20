@@ -319,6 +319,8 @@ const CREDENTIAL_PATHS: ReadonlySet<string> = new Set([
   "/auth/otp/send",
   "/auth/otp/verify",
   "/auth/register",
+  "/auth/register/complete",
+  "/auth/register/draft",
   "/auth/code/request",
   "/auth/code/status",
   // Восстановление пароля выполняется без сессии: отказ здесь окончателен, и

@@ -10,7 +10,7 @@ import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
-import { UnauthorizedError, PermissionDeniedError, NotFoundError } from "../../plugins/errorHandler.js";
+import { AppError, UnauthorizedError, PermissionDeniedError, NotFoundError } from "../../plugins/errorHandler.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import {
   setAuthCookies,
@@ -90,6 +90,12 @@ const requestCodeBody = z
     channel: channelField,
     phone: z.string().trim().optional(),
     email: z.string().trim().toLowerCase().email("Некорректный e-mail").optional(),
+    slug: slugField.optional(),
+    password: z
+      .string()
+      .min(8, "Пароль должен быть не короче 8 символов")
+      .max(200)
+      .optional(),
   })
   .superRefine((value, ctx) => {
     if (value.purpose === "register") {
@@ -111,6 +117,15 @@ const requestCodeBody = z
       });
     }
   });
+
+const completeRegisterBody = z.object({
+  token: z.string().min(16, "Некорректный токен").max(256),
+  slug: slugField.optional(),
+});
+
+const registerDraftQuery = z.object({
+  token: z.string().min(16, "Некорректный токен").max(256),
+});
 
 const sessionQuery = z.object({ session_id: z.string().uuid() });
 
@@ -271,7 +286,44 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
         },
         "Handling /auth/code/request",
       );
-      const result = await sessions.requestCode(body);
+
+      let passwordHash: string | undefined;
+      if (body.purpose === "register") {
+        if (body.slug !== undefined) {
+          const availability = await service.isSlugAvailable(body.slug);
+          if (!availability.available) {
+            throw new AppError(400, "VALIDATION_ERROR", "Subdomain is not available", {
+              slug: [
+                availability.reason === "RESERVED"
+                  ? "Этот поддомен зарезервирован"
+                  : availability.reason === "INVALID_FORMAT"
+                    ? "Допустимы латиница, цифры и дефис (3–63 символа)"
+                    : "Этот поддомен уже занят",
+              ],
+            });
+          }
+        }
+        if (body.email !== undefined) {
+          const emailAvailable = await service.isEmailAvailable(body.email);
+          if (!emailAvailable) {
+            throw new AppError(400, "VALIDATION_ERROR", "Email already registered", {
+              email: ["Этот e-mail уже зарегистрирован"],
+            });
+          }
+        }
+        if (body.password !== undefined) {
+          passwordHash = await AuthService.hashPassword(body.password);
+        }
+      }
+
+      const result = await sessions.requestCode({
+        purpose: body.purpose,
+        channel: body.channel,
+        ...(body.phone !== undefined && { phone: body.phone }),
+        ...(body.email !== undefined && { email: body.email }),
+        ...(body.slug !== undefined && { slug: body.slug }),
+        ...(passwordHash !== undefined && { passwordHash }),
+      });
       return reply.status(200).send({ data: result });
     },
   );
@@ -609,9 +661,98 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
       }
     });
 
+    await sessions.deleteRegistrationDraft(body.session_id);
+
     setAuthCookies(request, reply, result);
     return reply.status(201).send({ data: result });
   });
+
+  /**
+   * Завершение регистрации по одноразовому токену из кнопки возврата бота.
+   */
+  app.post(
+    "/register/complete",
+    {
+      config: {
+        rateLimit: {
+          max: 20,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = completeRegisterBody.parse(request.body);
+      const ctx = await sessions.getResumeRegistrationContext(body.token);
+      const targetSlug = body.slug ?? ctx.draft.slug;
+
+      app.log.info(
+        {
+          slug: targetSlug,
+          email: maskEmail(ctx.draft.email),
+          phone: maskPhone(ctx.draft.phone),
+          sessionId: ctx.sessionId,
+        },
+        "Handling /auth/register/complete request",
+      );
+
+      const result = await service.register({
+        slug: targetSlug,
+        email: ctx.draft.email,
+        phone: ctx.draft.phone,
+        passwordHash: ctx.draft.passwordHash,
+        telegram_chat_id: ctx.recipient.telegram_chat_id,
+        max_user_id: ctx.recipient.max_user_id,
+        consumeSession: (tx) =>
+          sessions.consumeVerifiedIn(tx, {
+            sessionId: ctx.sessionId,
+            purpose: "register",
+            phone: ctx.draft.phone,
+            email: ctx.draft.email,
+          }),
+      });
+
+      await sessions.finalizeResumeRegistration(body.token, ctx.sessionId);
+
+      app.log.info(
+        {
+          tenantId: result.tenant.id,
+          slug: result.tenant.slug,
+          userId: result.user.id,
+        },
+        "/auth/register/complete: company successfully registered",
+      );
+
+      void EmailService.sendWelcomeEmail(ctx.draft.email, targetSlug).then((sent) => {
+        if (!sent.sent) {
+          app.log.warn({ email: ctx.draft.email, reason: sent.error }, "Welcome email not sent");
+        }
+      });
+
+      setAuthCookies(request, reply, result);
+      return reply.status(201).send({ data: result });
+    },
+  );
+
+  /**
+   * Несекретные данные черновика для восстановления формы, если при возврате
+   * по ?token=... произошёл конфликт поддомена или адреса.
+   */
+  app.get(
+    "/register/draft",
+    {
+      config: {
+        rateLimit: {
+          max: 20,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const { token } = registerDraftQuery.parse(request.query);
+      const draft = await sessions.getPublicRegistrationDraft(token);
+      return reply.status(200).send({ data: draft });
+    },
+  );
 
   /**
    * Live availability check for the subdomain field.

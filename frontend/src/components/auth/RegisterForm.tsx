@@ -77,14 +77,46 @@ export function slugify(input: string): string {
   return out.replace(/-+/g, "-").replace(/^-/, "").slice(0, 63).replace(/-$/, "");
 }
 
+/** Ключ sessionStorage для восстановления незавершённой сессии при кнопке «Назад». */
+const REG_STORAGE_KEY = "getvoxly_reg_pending";
+const REG_STORAGE_TTL_MS = 5 * 60_000;
+
+interface StoredRegDraft {
+  sessionId: string;
+  slug: string;
+  email: string;
+  phone: string;
+  channel: AuthChannel;
+  deepLink: string | null;
+  createdAt: number;
+}
+
+interface PublicDraftDTO {
+  session_id: string;
+  slug: string;
+  email: string;
+  phone: string;
+}
+
 export function RegisterForm() {
-  const { register: registerTenant, tenant, isAuthenticated } = useAuth();
+  const {
+    register: registerTenant,
+    completeBotRegistration,
+    tenant,
+    isAuthenticated,
+    isLoading: authLoading,
+  } = useAuth();
   const code = useCodeFlow("register");
 
   const [slugStatus, setSlugStatus] = useState<SlugStatus>({ kind: "idle" });
   const [otp, setOtp] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [otpError, setOtpError] = useState<string | null>(null);
+  const [resumeStatus, setResumeStatus] = useState<"idle" | "completing" | "already_completed">(
+    "idle",
+  );
+  const [resumeToken, setResumeToken] = useState<string | null>(null);
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   const form = useForm<RegisterDetailsValues>({
     resolver: zodResolver(registerDetailsSchema),
@@ -103,21 +135,162 @@ export function RegisterForm() {
   const channel = form.watch("channel");
   const otpInputRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef(code);
+  const completedTokenRef = useRef<string | null>(null);
+  const restoredStorageRef = useRef(false);
 
   useEffect(() => {
     codeRef.current = code;
   }, [code]);
 
   /**
-   * Редирект в портал, если пользователь уже авторизован (например, вернулся
-   * на /register по кнопке бота после завершённой регистрации).
+   * Редирект в портал, если пользователь уже авторизован.
    * Middleware делает это на сервере, но cookie может отсутствовать, пока
    * сессия восстанавливается по refresh-токену.
    */
   useEffect(() => {
     if (!isAuthenticated || tenant === null) return;
+    try {
+      sessionStorage.removeItem(REG_STORAGE_KEY);
+    } catch {
+      // Ignore storage failures
+    }
     window.location.href = tenantPortalUrl(tenant.slug, "/dashboard");
   }, [isAuthenticated, tenant]);
+
+  /**
+   * Автозавершение регистрации при возврате по кнопке из бота (`/register?token=...`)
+   * либо восстановление незавершённой сессии из `sessionStorage`.
+   */
+  useEffect(() => {
+    if (authLoading || isAuthenticated) return;
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+
+    if (token !== null && token.length >= 16) {
+      if (completedTokenRef.current === token) return;
+      completedTokenRef.current = token;
+
+      // Сразу убираем одноразовый токен из адресной строки, чтобы обновление
+      // страницы не повторяло запрос после потребления или истечения срока.
+      window.history.replaceState(null, "", window.location.pathname);
+      setResumeStatus("completing");
+      setResumeError(null);
+
+      void (async () => {
+        try {
+          const session = await completeBotRegistration({ token });
+          try {
+            sessionStorage.removeItem(REG_STORAGE_KEY);
+          } catch {
+            // Ignore storage failures
+          }
+          toast.success(`Компания создана: ${session.slug}.getvoxly.ru`);
+          window.location.href = tenantPortalUrl(session.slug, "/dashboard");
+        } catch (error) {
+          if (error instanceof ApiClientError && error.code === "SESSION_ALREADY_COMPLETED") {
+            try {
+              sessionStorage.removeItem(REG_STORAGE_KEY);
+            } catch {
+              // Ignore storage failures
+            }
+            setResumeStatus("already_completed");
+            return;
+          }
+
+          const isRecoverable =
+            error instanceof ApiClientError &&
+            (error.code === "SLUG_TAKEN" ||
+              error.code === "VALIDATION_ERROR" ||
+              error.code === "TELEGRAM_ALREADY_LINKED" ||
+              error.code === "MAX_ALREADY_LINKED");
+
+          if (isRecoverable) {
+            try {
+              const draftRes = await apiClient.get<PublicDraftDTO>("/auth/register/draft", {
+                query: { token },
+                retrying: true,
+              });
+              const draft = draftRes.data;
+              form.setValue("slug", draft.slug, { shouldValidate: true });
+              form.setValue("email", draft.email, { shouldValidate: true });
+              form.setValue("phone", formatPhone(draft.phone), { shouldValidate: true });
+              codeRef.current.hydrateSession({
+                sessionId: draft.session_id,
+                channel: "telegram",
+                verified: true,
+              });
+              setResumeToken(token);
+              setResumeStatus("idle");
+
+              const fields = error.fieldErrors();
+              if (fields.slug) form.setError("slug", { message: fields.slug });
+              if (fields.email) form.setError("email", { message: fields.email });
+              if (fields.phone) form.setError("phone", { message: fields.phone });
+              if (error.code === "SLUG_TAKEN") {
+                setSlugStatus({ kind: "taken", message: "Этот поддомен только что занят" });
+              }
+              toast.error(fields.slug ?? fields.email ?? fields.phone ?? error.message);
+              return;
+            } catch {
+              // Если черновик недоступен — показываем ошибку ниже.
+            }
+          }
+
+          setResumeStatus("idle");
+          const msg =
+            error instanceof ApiClientError
+              ? error.message
+              : "Не удалось завершить регистрацию. Запросите код заново.";
+          setResumeError(msg);
+          toast.error(msg);
+        }
+      })();
+      return;
+    }
+
+    if (restoredStorageRef.current) return;
+    restoredStorageRef.current = true;
+
+    try {
+      const raw = sessionStorage.getItem(REG_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as StoredRegDraft;
+      if (Date.now() - saved.createdAt > REG_STORAGE_TTL_MS) {
+        sessionStorage.removeItem(REG_STORAGE_KEY);
+        return;
+      }
+      if (form.getValues("slug") === "" && saved.slug) {
+        form.setValue("slug", saved.slug, { shouldValidate: true });
+        form.setValue("email", saved.email, { shouldValidate: true });
+        form.setValue("phone", formatPhone(saved.phone), { shouldValidate: true });
+        form.setValue("channel", saved.channel, { shouldValidate: true });
+      }
+      codeRef.current.hydrateSession({
+        sessionId: saved.sessionId,
+        channel: saved.channel,
+        deepLink: saved.deepLink,
+      });
+    } catch {
+      // Игнорируем повреждённый черновик в sessionStorage.
+    }
+  }, [authLoading, isAuthenticated, completeBotRegistration, form]);
+
+  /** Подсветка ошибок полей от /auth/code/request (например, занятый slug или e-mail). */
+  useEffect(() => {
+    if (code.fieldErrors === null) return;
+    if (code.fieldErrors.slug) {
+      form.setError("slug", { message: code.fieldErrors.slug });
+      setSlugStatus({ kind: "taken", message: code.fieldErrors.slug });
+    }
+    if (code.fieldErrors.email) {
+      form.setError("email", { message: code.fieldErrors.email });
+    }
+    if (code.fieldErrors.phone) {
+      form.setError("phone", { message: code.fieldErrors.phone });
+    }
+  }, [code.fieldErrors, form]);
 
   /** Автофокус на поле кода, как только код доставлен. */
   useEffect(() => {
@@ -176,7 +349,7 @@ export function RegisterForm() {
     [form],
   );
 
-  /** «Получить код»: валидируем поля до кода, затем запрашиваем доставку. */
+  /** «Получить код»: валидируем поля, сохраняем черновик на сервере и открываем бота. */
   const handleRequestCode = useCallback(async () => {
     const valid = await form.trigger();
     if (!valid) {
@@ -190,14 +363,71 @@ export function RegisterForm() {
 
     const values = form.getValues();
     setOtpError(null);
+    setResumeError(null);
     await code.request({
       channel: values.channel,
       phone: values.phone,
       email: values.email,
+      slug: values.slug,
+      password: values.password,
+      onSessionCreated: (sessionId, deepLink) => {
+        try {
+          const payload: StoredRegDraft = {
+            sessionId,
+            slug: values.slug,
+            email: values.email,
+            phone: values.phone,
+            channel: values.channel,
+            deepLink,
+            createdAt: Date.now(),
+          };
+          sessionStorage.setItem(REG_STORAGE_KEY, JSON.stringify(payload));
+        } catch {
+          // Ignore storage failures
+        }
+      },
     });
   }, [form, code, slugStatus]);
 
   const handleSubmit = useCallback(async () => {
+    if (resumeToken !== null) {
+      const slugValid = await form.trigger("slug");
+      if (!slugValid) {
+        toast.error("Укажите корректный поддомен");
+        return;
+      }
+      if (slugStatus.kind === "taken") {
+        toast.error(slugStatus.message);
+        return;
+      }
+      const nextSlug = form.getValues("slug");
+      setIsSubmitting(true);
+      try {
+        const session = await completeBotRegistration({ token: resumeToken, slug: nextSlug });
+        try {
+          sessionStorage.removeItem(REG_STORAGE_KEY);
+        } catch {
+          // Ignore storage failures
+        }
+        toast.success(`Компания создана: ${session.slug}.getvoxly.ru`);
+        window.location.href = tenantPortalUrl(session.slug, "/dashboard");
+      } catch (error) {
+        if (error instanceof ApiClientError) {
+          const fields = error.fieldErrors();
+          if (fields.slug) form.setError("slug", { message: fields.slug });
+          if (error.code === "SLUG_TAKEN") {
+            setSlugStatus({ kind: "taken", message: "Этот поддомен только что занят" });
+          }
+          toast.error(fields.slug ?? error.message);
+        } else {
+          toast.error("Нет связи с сервером. Проверьте подключение и повторите попытку.");
+        }
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     const currentCode = codeRef.current;
     if (currentCode.sessionId === null) {
       toast.error("Сначала запросите код подтверждения");
@@ -234,6 +464,11 @@ export function RegisterForm() {
         code: otp.length === 6 ? otp : "000000",
       });
 
+      try {
+        sessionStorage.removeItem(REG_STORAGE_KEY);
+      } catch {
+        // Ignore storage failures
+      }
       toast.success(`Компания создана: ${session.slug}.getvoxly.ru`);
       // Полная навигация: целевой поддомен — другой origin.
       window.location.href = tenantPortalUrl(session.slug, "/dashboard");
@@ -267,10 +502,56 @@ export function RegisterForm() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [code.sessionId, code.verified, otp, form, slugStatus, registerTenant]);
+  }, [
+    resumeToken,
+    completeBotRegistration,
+    code.sessionId,
+    code.verified,
+    otp,
+    form,
+    slugStatus,
+    registerTenant,
+  ]);
 
   const errors = form.formState.errors;
   const codeRequested = code.stage === "sent" || code.stage === "awaiting_bot";
+
+  if (resumeStatus === "completing") {
+    return (
+      <div className="flex flex-col items-center justify-center space-y-3 py-8 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-[#4a38f5]" />
+        <p className="text-sm font-medium text-[#111111]">
+          Подтверждаем Telegram и создаём компанию...
+        </p>
+        <p className="text-xs text-[#666666]">
+          Это займёт пару секунд, страница перенаправит вас автоматически.
+        </p>
+      </div>
+    );
+  }
+
+  if (resumeStatus === "already_completed" || code.consumed) {
+    return (
+      <div className="space-y-4 py-4 text-center">
+        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+          <CheckCircle2 className="h-5 w-5" />
+        </div>
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-[#111111]">Регистрация завершена!</p>
+          <p className="text-xs text-[#666666]">
+            Учётная запись и рабочее пространство уже созданы. Войдите в личный кабинет.
+          </p>
+        </div>
+        <a
+          href="/login"
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5] text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+        >
+          Перейти ко входу
+          <ArrowRight className="h-4 w-4" />
+        </a>
+      </div>
+    );
+  }
 
   const inputClass = (hasError: boolean): string =>
     cn(
@@ -331,7 +612,7 @@ hasError ? "border-rose-500" : "border-[#e5e5e5]",
       </div>
 
       {/* E-mail */}
-<div className="space-y-2">
+      <div className="space-y-2">
         <label htmlFor="email" className="block text-[13px] font-medium text-[#111111]">
           E-mail
         </label>
@@ -341,37 +622,45 @@ hasError ? "border-rose-500" : "border-[#e5e5e5]",
             id="email"
             type="email"
             autoComplete="email"
+            readOnly={resumeToken !== null}
             placeholder="you@company.ru"
             {...form.register("email")}
-            className={inputClass(errors.email !== undefined)}
+            className={cn(
+              inputClass(errors.email !== undefined),
+              resumeToken !== null && "bg-[#fafafa] text-[#666666]",
+            )}
           />
         </div>
         {errors.email && <p className="text-xs text-rose-600">{errors.email.message}</p>}
       </div>
 
-      {/* Пароль */}
-      <PasswordField
-        id="reg_password"
-        label="Пароль"
-        autoComplete="new-password"
-        placeholder="••••••••"
-        error={errors.password?.message}
-        hint="Минимум 8 символов"
-        {...form.register("password")}
-      />
+      {resumeToken === null && (
+        <>
+          {/* Пароль */}
+          <PasswordField
+            id="reg_password"
+            label="Пароль"
+            autoComplete="new-password"
+            placeholder="••••••••"
+            error={errors.password?.message}
+            hint="Минимум 8 символов"
+            {...form.register("password")}
+          />
 
-      {/* Повторите пароль */}
-      <PasswordField
-        id="reg_password_confirm"
-        label="Повторите пароль"
-        autoComplete="new-password"
-        placeholder="••••••••"
-        error={errors.password_confirm?.message}
-        {...form.register("password_confirm")}
-      />
+          {/* Повторите пароль */}
+          <PasswordField
+            id="reg_password_confirm"
+            label="Повторите пароль"
+            autoComplete="new-password"
+            placeholder="••••••••"
+            error={errors.password_confirm?.message}
+            {...form.register("password_confirm")}
+          />
+        </>
+      )}
 
       {/* Телефон */}
-<div className="space-y-2">
+      <div className="space-y-2">
         <label htmlFor="reg_phone" className="block text-[13px] font-medium text-[#111111]">
           Телефон
         </label>
@@ -381,43 +670,50 @@ hasError ? "border-rose-500" : "border-[#e5e5e5]",
             id="reg_phone"
             type="tel"
             autoComplete="tel"
+            readOnly={resumeToken !== null}
             placeholder="+7 999 999 99 99"
             value={form.watch("phone")}
             onChange={handlePhoneChange}
-            className={cn(inputClass(errors.phone !== undefined), "font-mono tabular-nums")}
+            className={cn(
+              inputClass(errors.phone !== undefined),
+              "font-mono tabular-nums",
+              resumeToken !== null && "bg-[#fafafa] text-[#666666]",
+            )}
           />
         </div>
         {errors.phone && <p className="text-xs text-rose-600">{errors.phone.message}</p>}
       </div>
 
       {/* Способ доставки кода */}
-<fieldset className="space-y-2">
-        <legend className="block text-[13px] font-medium text-[#111111]">
-          Способ доставки кода
-        </legend>
-        <div className="grid grid-cols-2 gap-2">
-          {CHANNELS.map(({ value, label, icon: Icon }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => form.setValue("channel", value, { shouldValidate: true })}
-              className={cn(
-                "flex items-center justify-center gap-2 rounded-[8px] border px-4 py-2.5 text-[13px] font-medium transition-colors",
-                channel === value
-                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-: "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </button>
-          ))}
-        </div>
-<p className="text-xs text-[#666666]">
-          Код придёт в {CHANNEL_LABEL[channel]}. Если бот ещё не привязан, появится ссылка на
-          подключение.
-        </p>
-      </fieldset>
+      {resumeToken === null && (
+        <fieldset className="space-y-2">
+          <legend className="block text-[13px] font-medium text-[#111111]">
+            Способ доставки кода
+          </legend>
+          <div className="grid grid-cols-2 gap-2">
+            {CHANNELS.map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => form.setValue("channel", value, { shouldValidate: true })}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-[8px] border px-4 py-2.5 text-[13px] font-medium transition-colors",
+                  channel === value
+                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-[#666666]">
+            Код придёт в {CHANNEL_LABEL[channel]}. Если бот ещё не привязан, появится ссылка на
+            подключение.
+          </p>
+        </fieldset>
+      )}
 
       {/* Получить код */}
       {!codeRequested && (
@@ -443,6 +739,13 @@ hasError ? "border-rose-500" : "border-[#e5e5e5]",
             </>
           )}
         </button>
+      )}
+
+      {/* Ошибка возврата по ссылке из бота */}
+      {resumeError !== null && (
+        <p role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          {resumeError}
+        </p>
       )}
 
       {/* Привязка бота: код придёт после нажатия Start */}
@@ -485,7 +788,7 @@ className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 
       )}
 
       {/* Код подтверждения */}
-      {code.stage === "sent" && (
+      {code.stage === "sent" && resumeToken === null && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label htmlFor="reg_code" className="block text-[13px] font-medium text-[#111111]">
