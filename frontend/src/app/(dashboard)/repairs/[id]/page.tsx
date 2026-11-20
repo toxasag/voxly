@@ -1504,6 +1504,7 @@ export default function RepairDetailPage() {
         open={settingsDrawerOpen}
         onClose={() => setSettingsDrawerOpen(false)}
         orderId={ticket?.id}
+        order={ticket}
       />
       <ContactPickerModal
         open={contactPickerOpen}

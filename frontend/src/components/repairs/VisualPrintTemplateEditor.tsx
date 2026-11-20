@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Printer,
   X,
@@ -19,6 +19,7 @@ import {
   FileCheck2,
   Check,
   Eye,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -33,10 +34,12 @@ import {
   type PrintSectionType,
   type PrintTemplateDTO,
 } from "@/lib/api/use-print-templates";
+import { useRepair } from "@/lib/api/use-repairs";
 import {
   ALL_CLIENT_PRESETS,
   getPresetByDocumentType,
   DEFAULT_PREVIEW_SAMPLE_DATA,
+  mapRepairToPreviewSampleData,
   type PreviewSampleData,
 } from "@/lib/repairs/print-presets-client";
 import { VisualPrintCanvas } from "./VisualPrintCanvas";
@@ -51,6 +54,7 @@ export interface VisualPrintTemplateEditorProps {
   onClose: () => void;
   initialDocumentType?: string;
   orderId?: string;
+  order?: any;
   sampleData?: PreviewSampleData;
 }
 
@@ -59,6 +63,7 @@ export function VisualPrintTemplateEditor({
   onClose,
   initialDocumentType = "work_order",
   orderId,
+  order,
   sampleData = DEFAULT_PREVIEW_SAMPLE_DATA,
 }: VisualPrintTemplateEditorProps) {
   const [documentType, setDocumentType] = useState<string>(initialDocumentType);
@@ -70,12 +75,27 @@ export function VisualPrintTemplateEditor({
 
   // Queries & Mutations
   const { data: allTemplates = [], isLoading } = usePrintTemplates();
+  const { data: orderDetail } = useRepair(orderId ?? null);
   const createMutation = useCreatePrintTemplate();
   const updateMutation = useUpdatePrintTemplate();
   const setDefaultMutation = useSetDefaultPrintTemplate();
   const deleteMutation = useDeletePrintTemplate();
   const toggleVisibilityMutation = useTogglePrintTemplateVisibility();
   const duplicateMutation = useDuplicatePrintTemplate();
+
+  // Resolve effective sample data from active order if provided
+  const effectiveSampleData = useMemo(() => {
+    if (order) {
+      return mapRepairToPreviewSampleData(order);
+    }
+    if (orderDetail) {
+      return mapRepairToPreviewSampleData(orderDetail);
+    }
+    if (sampleData && sampleData !== DEFAULT_PREVIEW_SAMPLE_DATA) {
+      return sampleData;
+    }
+    return DEFAULT_PREVIEW_SAMPLE_DATA;
+  }, [order, orderDetail, sampleData]);
 
   // Active template: resolves by selected ID across all templates, or default for documentType
   const currentTemplate =
@@ -89,6 +109,54 @@ export function VisualPrintTemplateEditor({
   const fallbackPreset = getPresetByDocumentType(documentType);
   const [config, setConfig] = useState<PrintLayoutConfig>(fallbackPreset.layoutConfig);
   const [hasChanges, setHasChanges] = useState<boolean>(false);
+
+  // Template rename state
+  const [isEditingName, setIsEditingName] = useState<boolean>(false);
+  const [nameInputValue, setNameInputValue] = useState<string>("");
+
+  useEffect(() => {
+    if (currentTemplate) {
+      setNameInputValue(currentTemplate.name);
+      setIsEditingName(false);
+    }
+  }, [currentTemplate?.id, currentTemplate?.name]);
+
+  const handleSaveName = async (customName?: string) => {
+    const trimmed = (customName ?? nameInputValue).trim();
+    if (!currentTemplate || !currentTemplate.isCustom) return;
+    if (!trimmed || trimmed === currentTemplate.name) {
+      setIsEditingName(false);
+      setNameInputValue(currentTemplate.name);
+      return;
+    }
+    try {
+      await updateMutation.mutateAsync({
+        id: currentTemplate.id,
+        payload: {
+          name: trimmed,
+        },
+      });
+      setIsEditingName(false);
+      toast.success("Название шаблона обновлено");
+    } catch {
+      toast.error("Не удалось обновить название шаблона");
+    }
+  };
+
+  const handleRenameFromInspector = async (template: PrintTemplateDTO, newName: string) => {
+    if (!template.isCustom) return;
+    try {
+      await updateMutation.mutateAsync({
+        id: template.id,
+        payload: {
+          name: newName,
+        },
+      });
+      toast.success("Название шаблона обновлено");
+    } catch {
+      toast.error("Не удалось обновить название шаблона");
+    }
+  };
 
   // Sync config when template changes
   useEffect(() => {
@@ -288,9 +356,68 @@ export function VisualPrintTemplateEditor({
               <>
                 <div className="h-5 w-px bg-[#e5e5e5] hidden sm:block" />
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-[#fafafa] border border-[#e5e5e5] text-xs">
-                  <span className="font-semibold text-[#111111] max-w-[160px] sm:max-w-[260px] truncate">
-                    {currentTemplate.name}
-                  </span>
+                  {isEditingName && currentTemplate.isCustom ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void handleSaveName();
+                      }}
+                      className="flex items-center gap-1"
+                    >
+                      <input
+                        type="text"
+                        value={nameInputValue}
+                        onChange={(e) => setNameInputValue(e.target.value)}
+                        onBlur={() => void handleSaveName()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            setIsEditingName(false);
+                            setNameInputValue(currentTemplate.name);
+                          }
+                        }}
+                        autoFocus
+                        className="h-6 px-1.5 py-0.5 rounded border border-[#4a38f5] bg-white text-xs font-semibold text-[#111111] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5] min-w-[200px]"
+                      />
+                      <button
+                        type="submit"
+                        className="flex h-6 w-6 items-center justify-center rounded bg-[#4a38f5] text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer shrink-0"
+                        title="Сохранить название"
+                      >
+                        <Check className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingName(false);
+                          setNameInputValue(currentTemplate.name);
+                        }}
+                        className="flex h-6 w-6 items-center justify-center rounded text-[#888888] hover:bg-[#f0f0f0] transition-colors cursor-pointer shrink-0"
+                        title="Отмена"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-[#111111] max-w-[160px] sm:max-w-[260px] truncate">
+                        {currentTemplate.name}
+                      </span>
+                      {currentTemplate.isCustom && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNameInputValue(currentTemplate.name);
+                            setIsEditingName(true);
+                          }}
+                          className="flex h-5 w-5 items-center justify-center text-[#888888] hover:text-[#4a38f5] rounded hover:bg-black/5 transition-colors cursor-pointer"
+                          title="Переименовать пользовательский шаблон"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <span
                     className={cn(
                       "rounded-[4px] px-1.5 py-0.2 text-[10px] font-medium",
@@ -312,6 +439,17 @@ export function VisualPrintTemplateEditor({
                     </span>
                   )}
                 </div>
+
+                {(orderId || order) && effectiveSampleData?.orderNumber && (
+                  <div className="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-[4px] bg-[#4a38f5]/5 border border-[#4a38f5]/20 text-[#4a38f5] text-[11px] font-medium">
+                    <span className="font-semibold">Заказ: {effectiveSampleData.orderNumber}</span>
+                    {effectiveSampleData.equipmentBrand && (
+                      <span className="text-[#666666]">
+                        ({effectiveSampleData.equipmentType} {effectiveSampleData.equipmentBrand} {effectiveSampleData.equipmentModel})
+                      </span>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -424,6 +562,7 @@ export function VisualPrintTemplateEditor({
               onToggleVisibility={(id) => void handleToggleVisibility(id)}
               onSetDefaultTemplate={handleSetDefault}
               onDeleteTemplate={handleDelete}
+              onRenameTemplate={handleRenameFromInspector}
               onResetToPreset={() => {
                 const preset = getPresetByDocumentType(documentType);
                 setConfig(preset.layoutConfig);
@@ -448,7 +587,7 @@ export function VisualPrintTemplateEditor({
             <div className="flex-1 w-full flex items-start justify-center pb-12">
               <VisualPrintCanvas
                 layoutConfig={config}
-                sampleData={sampleData}
+                sampleData={effectiveSampleData}
                 activeSection={activeSection}
                 onSelectSection={handleSelectSectionFromCanvas}
                 zoom={zoom}

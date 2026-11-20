@@ -572,6 +572,161 @@ export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
   ],
 };
 
+/**
+ * Преобразует реальные поля заказ-наряда (RepairOrderDTO / RepairTicket)
+ * в структуру PreviewSampleData для конструктора и превью бланков.
+ */
+export function mapRepairToPreviewSampleData(
+  order: any,
+): PreviewSampleData {
+  if (!order) return DEFAULT_PREVIEW_SAMPLE_DATA;
+
+  const rawNumber = String(order.ticketNumber || order.ticket_number || "");
+  const orderNumber = rawNumber
+    ? rawNumber.startsWith("№")
+      ? rawNumber
+      : `№${rawNumber}`
+    : DEFAULT_PREVIEW_SAMPLE_DATA.orderNumber;
+
+  const rawDate =
+    order.receivedAt || order.received_at || order.createdAt || order.created_at;
+  let orderDate = DEFAULT_PREVIEW_SAMPLE_DATA.orderDate;
+  if (rawDate) {
+    try {
+      const d = new Date(rawDate);
+      if (!isNaN(d.getTime())) {
+        orderDate = d.toLocaleDateString("ru-RU");
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const customerName =
+    order.customerName ||
+    order.customer_name ||
+    order.customer?.name ||
+    order.companyName ||
+    order.company_name ||
+    DEFAULT_PREVIEW_SAMPLE_DATA.customerName;
+
+  const customerPhone =
+    order.customerPhone ||
+    order.customer_phone ||
+    order.customer?.phone ||
+    "";
+
+  const customerEmail =
+    order.customerEmail ||
+    order.customer_email ||
+    order.customer?.email ||
+    "";
+
+  const customerAddress =
+    order.customerAddress ||
+    order.customer_address ||
+    order.companyLegalAddress ||
+    order.legalAddress ||
+    order.company?.legalAddress ||
+    "";
+
+  const customerPassport =
+    order.customerPassport ||
+    order.customer_passport ||
+    "";
+
+  const eq = order.equipment || {};
+  const equipmentType = eq.type || "";
+  const equipmentBrand = eq.brand || "";
+  const equipmentModel = eq.model || "";
+  const equipmentSerial = eq.serialNumber || eq.serial_number || eq.serial || "";
+
+  const defectDescription =
+    order.defectDescription ||
+    order.defect_description ||
+    (Array.isArray(order.malfunctions) && order.malfunctions.length > 0
+      ? order.malfunctions.join(", ")
+      : "") ||
+    "";
+
+  const appearance = eq.appearance || "";
+  const packageContents =
+    eq.packageContents ||
+    eq.package_contents ||
+    (Array.isArray(eq.packageContentsItems) ? eq.packageContentsItems.join(", ") : "") ||
+    "";
+
+  const masterName =
+    order.masterName ||
+    order.master_name ||
+    DEFAULT_PREVIEW_SAMPLE_DATA.masterName;
+
+  const estimatedCost = Number(
+    order.estimatedCost ??
+      order.estimated_cost ??
+      order.finalCost ??
+      order.final_cost ??
+      0,
+  );
+
+  const rawWorks = order.works || order.work_items || [];
+  const works =
+    Array.isArray(rawWorks) && rawWorks.length > 0
+      ? rawWorks.map((w: any, idx: number) => {
+          const qty = Number(w.quantity ?? 1) || 1;
+          const price = Number(w.unitPrice ?? w.unit_price ?? w.cost ?? 0);
+          const total = Number(w.cost ?? qty * price);
+          return {
+            id: String(w.id || `w-${idx}`),
+            name: String(w.description || w.name || `Работа ${idx + 1}`),
+            qty,
+            unit: String(w.unit || "усл."),
+            price,
+            total,
+          };
+        })
+      : DEFAULT_PREVIEW_SAMPLE_DATA.works;
+
+  const rawParts = order.parts || order.parts_used || [];
+  const parts =
+    Array.isArray(rawParts) && rawParts.length > 0
+      ? rawParts.map((p: any, idx: number) => {
+          const qty = Number(p.quantity ?? 1) || 1;
+          const price = Number(p.retailPrice ?? p.retail_price ?? p.price ?? 0);
+          const total = Number(p.total ?? qty * price);
+          return {
+            id: String(p.id || `p-${idx}`),
+            name: String(p.name || p.article || `Запчасть ${idx + 1}`),
+            qty,
+            unit: String(p.unit || "шт."),
+            price,
+            total,
+          };
+        })
+      : DEFAULT_PREVIEW_SAMPLE_DATA.parts;
+
+  return {
+    orderNumber,
+    orderDate,
+    customerName,
+    customerPhone,
+    customerEmail,
+    customerAddress,
+    customerPassport,
+    equipmentType,
+    equipmentBrand,
+    equipmentModel,
+    equipmentSerial,
+    defectDescription,
+    appearance,
+    packageContents,
+    masterName,
+    estimatedCost,
+    works,
+    parts,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Client Russian Number to Words Formatter
 // ---------------------------------------------------------------------------

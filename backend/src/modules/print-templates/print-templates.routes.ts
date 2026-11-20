@@ -113,6 +113,17 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
     return reply.send({ data: updated });
   });
 
+  app.patch("/:id", async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = updatePrintTemplateSchema.parse(request.body);
+    const updated = await printTemplatesService.update(tenant_id, id, body);
+    if (!updated) {
+      return reply.status(404).send({ error: "Print template not found" });
+    }
+    return reply.send({ data: updated });
+  });
+
   // Рендер шаблона для наряда (возвращает готовый HTML)
   app.get("/:idOrSlug/render", async (request, reply) => {
     const { tenant_id } = request;

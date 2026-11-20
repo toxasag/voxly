@@ -568,6 +568,7 @@ export const RepairsTable = memo(function RepairsTable({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const [selectedTicketForSettings, setSelectedTicketForSettings] = useState<RepairTicket | null>(null);
   const [selectedBulkStatus, setSelectedBulkStatus] = useState<string>("");
   const [selectedBulkPaymentStatus, setSelectedBulkPaymentStatus] = useState<string>("");
 
@@ -851,7 +852,10 @@ export const RepairsTable = memo(function RepairsTable({
             <Printer className="h-3.5 w-3.5 text-[#666666]" />
             <button
               type="button"
-              onClick={() => setSettingsDrawerOpen(true)}
+              onClick={() => {
+                setSelectedTicketForSettings(null);
+                setSettingsDrawerOpen(true);
+              }}
               className="flex h-5 w-5 items-center justify-center rounded text-[#888888] hover:text-[#4a38f5] hover:bg-black/5 transition-colors cursor-pointer"
               title="Настроить бланки"
             >
@@ -867,7 +871,10 @@ export const RepairsTable = memo(function RepairsTable({
               ticket={ticket}
               onPrintReceipt={onPrintReceipt}
               onPrintWorkOrder={onPrintWorkOrder}
-              onOpenSettings={() => setSettingsDrawerOpen(true)}
+              onOpenSettings={() => {
+                setSelectedTicketForSettings(ticket);
+                setSettingsDrawerOpen(true);
+              }}
             />
           </RecordCellShell>
         ),
@@ -1104,7 +1111,12 @@ export const RepairsTable = memo(function RepairsTable({
         {/* Шторка настроек конструктора печатных форм */}
         <PrintTemplateSettingsDrawer
           open={settingsDrawerOpen}
-          onClose={() => setSettingsDrawerOpen(false)}
+          onClose={() => {
+            setSettingsDrawerOpen(false);
+            setSelectedTicketForSettings(null);
+          }}
+          orderId={selectedTicketForSettings?.id}
+          order={selectedTicketForSettings}
         />
       </div>
     </TooltipProvider>
