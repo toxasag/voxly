@@ -756,23 +756,22 @@ hasError ? "border-rose-500" : "border-[#e5e5e5]",
       )}
 
       {code.stage === "awaiting_bot" && code.deepLink !== null && (
-<div className="space-y-3 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
-          <p className="text-[13px] text-[#111111]">
-            Откройте бота <span className="font-semibold text-[#4a38f5]">@{code.botUsername}</span> и
-            нажмите «Start» — код придёт автоматически.
+        <div className="space-y-2.5 rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] p-4">
+          <p className="flex items-center gap-2 text-[13px] font-medium text-[#111111]">
+            <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
+            Переходим в @{code.botUsername} — нажмите «Start» в боте
           </p>
-          <a
-            href={code.deepLink}
-            target="_blank"
-            rel="noopener noreferrer"
-className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 px-4 py-2.5 text-[13px] font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/15"
-          >
-            <ExternalLink className="h-4 w-4" />
-            Подключить {CHANNEL_LABEL[code.channel]} через @{code.botUsername}
-          </a>
-<p className="flex items-center gap-2 text-xs text-[#666666]">
-            <Loader2 className="h-3 w-3 animate-spin text-[#4a38f5]" />
-            Ожидаем подтверждения из {CHANNEL_LABEL[code.channel]}...
+          <p className="text-xs text-[#666666]">
+            После запуска бота подтверждение сработает автоматически.{" "}
+            <a
+              href={code.deepLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-medium text-[#4a38f5] hover:underline"
+            >
+              Открыть бота вручную
+              <ExternalLink className="h-3 w-3" />
+            </a>
           </p>
         </div>
       )}

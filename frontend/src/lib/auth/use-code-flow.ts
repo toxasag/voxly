@@ -35,21 +35,54 @@ export interface CodeFlowState {
   fieldErrors: Record<string, string> | null;
   verified: boolean;
   consumed: boolean;
+  popupBlocked: boolean;
 }
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
-function tryOpenDeepLink(url: string): void {
-  if (typeof window === "undefined") return;
-  const ua = navigator.userAgent || "";
-  if (/Android|iPhone|iPad|iPod|Telegram/i.test(ua)) {
-    window.location.href = url;
-    return;
+function buildNativeTelegramUrl(deepLink: string): string {
+  try {
+    const parsed = new URL(deepLink);
+    const domain = parsed.pathname.replace(/^\/+/, "");
+    const start = parsed.searchParams.get("start");
+    if (domain.length > 0 && start !== null && start.length > 0) {
+      return `tg://resolve?domain=${encodeURIComponent(domain)}&start=${encodeURIComponent(start)}`;
+    }
+  } catch {
+    // Используем исходный URL, если разбор не удался.
   }
+  return deepLink;
+}
+
+function tryOpenDeepLink(
+  url: string,
+  channel: AuthChannel,
+  purpose: "register" | "login",
+): { opened: boolean } {
+  if (typeof window === "undefined") return { opened: false };
+  const ua = navigator.userAgent || "";
+  const isMobileOrWebView = /Android|iPhone|iPad|iPod|Telegram/i.test(ua);
+  const targetUrl = channel === "telegram" && isMobileOrWebView ? buildNativeTelegramUrl(url) : url;
+
+  if (isMobileOrWebView) {
+    window.location.href = targetUrl;
+    return { opened: true };
+  }
+
   const popup = window.open(url, "_blank");
   if (popup !== null) {
     popup.opener = null;
+    return { opened: true };
   }
+
+  // Если браузер заблокировал всплывающее окно при регистрации, переводим
+  // текущую вкладку: черновик уже сохранён на сервере, кнопка в боте вернёт назад.
+  if (purpose === "register") {
+    window.location.href = url;
+    return { opened: true };
+  }
+
+  return { opened: false };
 }
 
 /** Человекочитаемое имя канала: используется в тостах и подсказках форм. */
@@ -84,6 +117,7 @@ export function useCodeFlow(purpose: "register" | "login") {
     fieldErrors: null,
     verified: false,
     consumed: false,
+    popupBlocked: false,
   });
 
   // Таймеры держим в ref, чтобы очистить их при размонтировании: иначе опрос
@@ -261,9 +295,14 @@ export function useCodeFlow(purpose: "register" | "login") {
           // Чат ещё не привязан: начинаем polling и открываем deep-link бота.
           beginPolling(result.session_id, result.channel);
           if (result.deep_link !== null) {
-            tryOpenDeepLink(result.deep_link);
+            const { opened } = tryOpenDeepLink(result.deep_link, result.channel, purpose);
+            if (!opened) {
+              setState((prev) => ({ ...prev, popupBlocked: true }));
+            }
           }
-          toast.info("Откройте бота и нажмите «Start» — код придёт автоматически");
+          if (purpose === "login") {
+            toast.info("Откройте бота и нажмите «Start» — код придёт автоматически");
+          }
         }
 
         return true;
@@ -301,6 +340,7 @@ export function useCodeFlow(purpose: "register" | "login") {
         stage: input.verified ? "sent" : "awaiting_bot",
         verified: Boolean(input.verified),
         consumed: false,
+        popupBlocked: false,
         error: null,
         fieldErrors: null,
       }));
@@ -324,6 +364,7 @@ export function useCodeFlow(purpose: "register" | "login") {
       fieldErrors: null,
       verified: false,
       consumed: false,
+      popupBlocked: false,
     });
   }, [stopPolling]);
 
