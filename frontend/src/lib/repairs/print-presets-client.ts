@@ -48,7 +48,7 @@ export const INTAKE_ACT_CLIENT_PRESET: PresetClientDefinition = {
       companyOgrn: "",
       workingHours: "",
       documentTitle: "АКТ ПРИЕМА-ПЕРЕДАЧИ ОБОРУДОВАНИЯ",
-      documentSubtitle: "Заказ-наряд на проведение диагностики и ремонтных работ",
+      documentSubtitle: "",
       showDate: true,
       showDocNumber: true,
     },
@@ -114,10 +114,10 @@ export const INTAKE_ACT_CLIENT_PRESET: PresetClientDefinition = {
     },
     tearOffTicket: {
       visible: true,
-      title: "ОТРЫВНОЙ ТАЛОН КЛИЕНТА",
+      title: "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)",
       showBarcodeOrQr: true,
       customNote:
-        "Предъявите данный талон при получении оборудования из сервисного центра. Без талона выдача производится только по паспорту Заказчика.",
+        "Экземпляр сервисного центра. Оборудование и клиент проверены при приёмке.",
     },
   },
 };
@@ -491,6 +491,9 @@ export interface PreviewSampleData {
   packageContents: string;
   masterName: string;
   estimatedCost: number;
+  toolInfo?: string;
+  clientInfo?: string;
+  comments?: string;
   works: Array<{
     id: string;
     name: string;
@@ -526,6 +529,9 @@ export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
   packageContents: "Фирменный пластиковый кейс, дополнительная рукоятка, ограничитель глубины",
   masterName: "Иванов Алексей (Мастер 1 категории)",
   estimatedCost: 4500,
+  toolInfo: "Перфоратор Bosch GBH 2-26 DRE Professional (S/N: SN-948271038)",
+  clientInfo: "Константинопольский Александр Сергеевич, тел. +7 (999) 123-45-67",
+  comments: "Принято в чистом виде в кейсе. Срок предварительной диагностики — до 24 часов.",
   works: [
     {
       id: "w1",
@@ -705,6 +711,25 @@ export function mapRepairToPreviewSampleData(
         })
       : DEFAULT_PREVIEW_SAMPLE_DATA.parts;
 
+  const toolInfo =
+    order.toolInfo ||
+    order.tool_info ||
+    [equipmentType, equipmentBrand, equipmentModel].filter(Boolean).join(" ") +
+      (equipmentSerial ? ` (S/N: ${equipmentSerial})` : "");
+
+  const clientInfo =
+    order.clientInfo ||
+    order.client_info ||
+    [customerName, customerPhone ? `тел. ${customerPhone}` : ""].filter(Boolean).join(", ");
+
+  const comments =
+    order.comments ||
+    order.comment ||
+    order.intakeComments ||
+    order.intake_comments ||
+    order.notes ||
+    "";
+
   return {
     orderNumber,
     orderDate,
@@ -722,6 +747,9 @@ export function mapRepairToPreviewSampleData(
     packageContents,
     masterName,
     estimatedCost,
+    toolInfo,
+    clientInfo,
+    comments,
     works,
     parts,
   };

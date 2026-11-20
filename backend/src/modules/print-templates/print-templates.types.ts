@@ -252,6 +252,11 @@ export const createPrintTemplateSchema = z.object({
   parent_template_id: z.string().uuid().optional().nullable(),
   is_hidden: z.boolean().default(false),
   clone_from_id: z.string().uuid().optional(),
+  toolInfo: z.string().optional(),
+  tool_info: z.string().optional(),
+  clientInfo: z.string().optional(),
+  client_info: z.string().optional(),
+  comments: z.string().optional(),
 });
 export type CreatePrintTemplatePayload = z.infer<typeof createPrintTemplateSchema>;
 
@@ -267,8 +272,14 @@ export const updatePrintTemplateSchema = z.object({
   is_custom: z.boolean().optional(),
   parent_template_id: z.string().uuid().optional().nullable(),
   is_hidden: z.boolean().optional(),
+  toolInfo: z.string().optional(),
+  tool_info: z.string().optional(),
+  clientInfo: z.string().optional(),
+  client_info: z.string().optional(),
+  comments: z.string().optional(),
 });
 export type UpdatePrintTemplatePayload = z.infer<typeof updatePrintTemplateSchema>;
+export type UpdateTemplateDto = UpdatePrintTemplatePayload;
 
 export interface PrintTemplateRow {
   id: string;
@@ -285,6 +296,9 @@ export interface PrintTemplateRow {
   is_custom?: boolean;
   parent_template_id?: string | null;
   is_hidden?: boolean;
+  tool_info?: string | null;
+  client_info?: string | null;
+  comments?: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -303,6 +317,9 @@ export interface PrintTemplateDTO {
   isCustom: boolean;
   parentTemplateId?: string | null;
   isHidden: boolean;
+  toolInfo?: string;
+  clientInfo?: string;
+  comments?: string;
   createdAt: string;
   updatedAt: string;
 }

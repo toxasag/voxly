@@ -1427,9 +1427,9 @@ export function VisualPrintInspector({
             <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-semibold text-[#111111]">Отрывной талон клиента</div>
+                  <div className="text-xs font-semibold text-[#111111]">Талон мастера (нижняя часть)</div>
                   <div className="text-[10.5px] text-[#666666]">
-                    Квиток с линией отреза ножницами внизу листа
+                    Остаётся у мастера: данные об инструменте, клиенте и комментарии
                   </div>
                 </div>
                 <Switch
@@ -1446,8 +1446,8 @@ export function VisualPrintInspector({
                       type="text"
                       value={config.tearOffTicket.title}
                       onChange={(e) => updateConfig("tearOffTicket", { title: e.target.value })}
-                      placeholder="ОТРЫВНОЙ ТАЛОН КЛИЕНТА"
-                      className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                      placeholder="ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"
+                      className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-hidden"
                     />
                   </div>
 
@@ -1462,13 +1462,13 @@ export function VisualPrintInspector({
                   </div>
 
                   <div>
-                    <span className="text-[10px] text-[#888888]">Памятка клиенту</span>
+                    <span className="text-[10px] text-[#888888]">Свободные комментарии мастера / памятка</span>
                     <textarea
                       rows={2}
                       value={config.tearOffTicket.customNote}
                       onChange={(e) => updateConfig("tearOffTicket", { customNote: e.target.value })}
-                      placeholder="Предъявите данный талон при получении..."
-                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                      placeholder="Экземпляр сервисного центра. Оборудование и клиент проверены при приёмке..."
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-hidden"
                     />
                   </div>
                 </div>
