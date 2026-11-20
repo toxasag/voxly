@@ -498,8 +498,16 @@ export class PrintTemplatesService {
       const docType = payload.document_type ?? current.document_type;
 
       // Если редактируется системный/базовый шаблон (is_custom = false),
-      // автоматически создается новая пользовательская (клиентская) версия!
+      // прямое переименование запрещено, а при правке макета автоматически
+      // создается новая пользовательская (клиентская) версия.
       if (!current.is_custom) {
+        if (payload.name && !payload.layout_config && !payload.body_template) {
+          throw new AppError(
+            403,
+            "SYSTEM_TEMPLATE_READONLY",
+            "Системные базовые шаблоны защищены от изменения. Создайте пользовательскую копию для переименования.",
+          );
+        }
         const clientName =
           payload.name && payload.name !== current.name
             ? payload.name

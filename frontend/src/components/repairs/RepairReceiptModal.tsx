@@ -402,6 +402,7 @@ export const RepairReceiptModal = memo(function RepairReceiptModal({
         onClose={() => setSettingsOpen(false)}
         initialDocumentType="receipt"
         orderId={ticket?.id}
+        order={ticket}
       />
     </div>
   );

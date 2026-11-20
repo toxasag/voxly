@@ -7,6 +7,7 @@ export interface PrintTemplateSettingsDrawerProps {
   onClose: () => void;
   initialDocumentType?: string;
   orderId?: string;
+  order?: any;
 }
 
 export function PrintTemplateSettingsDrawer({
@@ -14,6 +15,7 @@ export function PrintTemplateSettingsDrawer({
   onClose,
   initialDocumentType = "work_order",
   orderId,
+  order,
 }: PrintTemplateSettingsDrawerProps) {
   return (
     <VisualPrintTemplateEditor
@@ -21,6 +23,7 @@ export function PrintTemplateSettingsDrawer({
       onClose={onClose}
       initialDocumentType={initialDocumentType}
       orderId={orderId}
+      order={order}
     />
   );
 }
