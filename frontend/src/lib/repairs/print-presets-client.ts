@@ -485,13 +485,16 @@ export interface PreviewSampleData {
   equipmentBrand: string;
   equipmentModel: string;
   equipmentSerial: string;
+  malfunctions?: string[];
   defectDescription: string;
+  additionalDefectDescription?: string;
   appearance: string;
   packageContents: string;
   masterName: string;
   estimatedCost: number;
   toolInfo?: string;
   clientInfo?: string;
+  notes?: string;
   comments?: string;
   works: Array<{
     id: string;
@@ -525,14 +528,17 @@ export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
   equipmentBrand: "Toua",
   equipmentModel: "GSN50",
   equipmentSerial: "7w1231266557",
+  malfunctions: ["Профилактика"],
   defectDescription: "Профилактика",
+  additionalDefectDescription: "Периодически клинит боёк при интенсивной стрельбе",
   appearance: "",
   packageContents: "Обойма",
   masterName: "ИП Сагайдак Антон Геннадьевич",
   estimatedCost: 0,
   toolInfo: "Монтажный пистолет Toua GSN50 S/N: 7w1231266557",
   clientInfo: "ООО \"Мега-Строй\" (ИНН: 2367016930), Представитель: Тагир (ref: Leha), тел. +7 928 949-45-43",
-  comments: "",
+  notes: "Срочный заказ, проверить поршневую группу и резиновые уплотнители",
+  comments: "Срочный заказ, проверить поршневую группу и резиновые уплотнители",
   works: [
     {
       id: "w1",
@@ -626,13 +632,28 @@ export function mapRepairToPreviewSampleData(
   const equipmentModel = eq.model || "";
   const equipmentSerial = eq.serialNumber || eq.serial_number || eq.serial || "";
 
+  const rawMalfunctions: string[] = Array.isArray(order.malfunctions)
+    ? order.malfunctions
+    : typeof order.malfunctions === "string" && order.malfunctions.trim()
+      ? [order.malfunctions.trim()]
+      : [];
+  const malfunctionsStr = rawMalfunctions.join(", ");
+
+  const rawDefectDesc = String(
+    order.defectDescription || order.defect_description || "",
+  ).trim();
+
+  // Primary defect / service (e.g. "Профилактика")
   const defectDescription =
-    order.defectDescription ||
-    order.defect_description ||
-    (Array.isArray(order.malfunctions) && order.malfunctions.length > 0
-      ? order.malfunctions.join(", ")
-      : "") ||
-    "";
+    malfunctionsStr ||
+    rawDefectDesc ||
+    DEFAULT_PREVIEW_SAMPLE_DATA.defectDescription;
+
+  // Additional defect description (details со слов клиента if distinct from main tag)
+  const additionalDefectDescription =
+    rawDefectDesc && rawDefectDesc !== malfunctionsStr
+      ? rawDefectDesc
+      : undefined;
 
   const appearance = eq.appearance || "";
   const packageContents =
@@ -712,12 +733,13 @@ export function mapRepairToPreviewSampleData(
       .join(", ") ||
     customerName;
 
+  const notes = String(order.notes || order.note || "").trim();
   const comments =
     order.comments ||
     order.comment ||
     order.intakeComments ||
     order.intake_comments ||
-    order.notes ||
+    notes ||
     "";
 
   return {
@@ -734,13 +756,16 @@ export function mapRepairToPreviewSampleData(
     equipmentBrand,
     equipmentModel,
     equipmentSerial,
+    malfunctions: rawMalfunctions.length > 0 ? rawMalfunctions : undefined,
     defectDescription,
+    additionalDefectDescription,
     appearance,
     packageContents,
     masterName,
     estimatedCost,
     toolInfo,
     clientInfo,
+    notes: notes || undefined,
     comments,
     works,
     parts,
