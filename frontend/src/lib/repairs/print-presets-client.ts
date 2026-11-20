@@ -479,6 +479,8 @@ export interface PreviewSampleData {
   customerEmail: string;
   customerAddress: string;
   customerPassport: string;
+  companyName?: string;
+  companyInn?: string;
   equipmentType: string;
   equipmentBrand: string;
   equipmentModel: string;
@@ -517,6 +519,8 @@ export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
   customerEmail: "",
   customerAddress: "ООО \"Мега-Строй\"",
   customerPassport: "",
+  companyName: "ООО \"Мега-Строй\"",
+  companyInn: "2367016930",
   equipmentType: "Монтажный пистолет",
   equipmentBrand: "Toua",
   equipmentModel: "GSN50",
@@ -527,7 +531,7 @@ export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
   masterName: "ИП Сагайдак Антон Геннадьевич",
   estimatedCost: 0,
   toolInfo: "Монтажный пистолет Toua GSN50 S/N: 7w1231266557",
-  clientInfo: "Тагир (ref: Leha) +7 928 949-45-43 ООО \"Мега-Строй\"",
+  clientInfo: "ООО \"Мега-Строй\" (ИНН: 2367016930), Представитель: Тагир (ref: Leha), тел. +7 928 949-45-43",
   comments: "",
   works: [
     {
@@ -572,12 +576,23 @@ export function mapRepairToPreviewSampleData(
     }
   }
 
+  const companyName =
+    order.companyName ||
+    order.company_name ||
+    order.company?.name ||
+    order.deal?.companyName ||
+    "";
+
+  const companyInn =
+    order.companyInn ||
+    order.company_inn ||
+    order.company?.inn ||
+    "";
+
   const customerName =
     order.customerName ||
     order.customer_name ||
     order.customer?.name ||
-    order.companyName ||
-    order.company_name ||
     DEFAULT_PREVIEW_SAMPLE_DATA.customerName;
 
   const customerPhone =
@@ -681,10 +696,21 @@ export function mapRepairToPreviewSampleData(
     [equipmentType, equipmentBrand, equipmentModel].filter(Boolean).join(" ") +
       (equipmentSerial ? ` (S/N: ${equipmentSerial})` : "");
 
+  const clientCompanyPart = companyName
+    ? `${companyName}${companyInn ? ` (ИНН: ${companyInn})` : ""}`
+    : "";
+
   const clientInfo =
     order.clientInfo ||
     order.client_info ||
-    [customerName, customerPhone ? `тел. ${customerPhone}` : ""].filter(Boolean).join(", ");
+    [
+      clientCompanyPart,
+      customerName ? (companyName ? `Представитель: ${customerName}` : customerName) : "",
+      customerPhone ? `тел. ${customerPhone}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ") ||
+    customerName;
 
   const comments =
     order.comments ||
@@ -702,6 +728,8 @@ export function mapRepairToPreviewSampleData(
     customerEmail,
     customerAddress,
     customerPassport,
+    companyName: companyName || undefined,
+    companyInn: companyInn || undefined,
     equipmentType,
     equipmentBrand,
     equipmentModel,

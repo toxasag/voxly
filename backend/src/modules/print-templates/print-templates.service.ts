@@ -252,20 +252,24 @@ export class PrintTemplatesService {
    */
   async ensureTemplates(tenantId: string): Promise<void> {
     await withTenant(tenantId, async (tx) => {
-      const tenantRow = await tx.queryOne<{ name: string }>(
-        `SELECT name FROM tenants WHERE id = $1`,
-        [tenantId],
-      );
-      const tenantName = tenantRow?.name || "Сервисный центр";
+      let tenantName: string | null = null;
 
       for (const preset of ALL_PRESETS) {
-        const existing = await tx.query<PrintTemplateRow>(
+        const existing = (await tx.query<PrintTemplateRow>(
           `SELECT id, layout_config, is_custom FROM print_templates WHERE tenant_id = $1 AND document_type = $2 LIMIT 1`,
           [tenantId, preset.documentType],
-        );
+        )) || [];
 
         const first = existing[0];
         if (!first) {
+          if (!tenantName) {
+            const tenantRow = await tx.queryOne<{ name: string }>(
+              `SELECT name FROM tenants WHERE id = $1`,
+              [tenantId],
+            );
+            tenantName = tenantRow?.name || "Сервисный центр";
+          }
+
           const cfg = {
             ...preset.layoutConfig,
             header: {
@@ -354,53 +358,59 @@ export class PrintTemplatesService {
   }
 
   async getBySlug(tenantId: string, slugOrType: string): Promise<PrintTemplateDTO | null> {
-    await this.ensureTemplates(tenantId);
+    const findTemplate = async (): Promise<PrintTemplateDTO | null> => {
+      return await withTenant(tenantId, async (tx) => {
+        // 1. Поиск по id (если это UUID)
+        const isUuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            slugOrType,
+          );
+        if (isUuid) {
+          const byId = await tx.queryOne<PrintTemplateRow>(
+            `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
+                    body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+                    created_at, updated_at
+             FROM print_templates
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, slugOrType],
+          );
+          if (byId) return toTemplateDto(byId);
+        }
 
-    return await withTenant(tenantId, async (tx) => {
-      // 1. Поиск по id (если это UUID)
-      const isUuid =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          slugOrType,
-        );
-      if (isUuid) {
-        const byId = await tx.queryOne<PrintTemplateRow>(
+        // 2. Поиск по слагу
+        const bySlug = await tx.queryOne<PrintTemplateRow>(
           `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
                   body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
                   created_at, updated_at
            FROM print_templates
-           WHERE tenant_id = $1 AND id = $2`,
+           WHERE tenant_id = $1 AND slug = $2
+           ORDER BY is_default DESC
+           LIMIT 1`,
           [tenantId, slugOrType],
         );
-        if (byId) return toTemplateDto(byId);
-      }
+        if (bySlug) return toTemplateDto(bySlug);
 
-      // 2. Поиск по слагу
-      const bySlug = await tx.queryOne<PrintTemplateRow>(
-        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
-                body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
-                created_at, updated_at
-         FROM print_templates
-         WHERE tenant_id = $1 AND slug = $2
-         ORDER BY is_default DESC
-         LIMIT 1`,
-        [tenantId, slugOrType],
-      );
-      if (bySlug) return toTemplateDto(bySlug);
+        // 3. Поиск по document_type (дефолтный шаблон этого типа)
+        const byDocType = await tx.queryOne<PrintTemplateRow>(
+          `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
+                  body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+                  created_at, updated_at
+           FROM print_templates
+           WHERE tenant_id = $1 AND document_type = $2 AND is_default = true
+           LIMIT 1`,
+          [tenantId, slugOrType],
+        );
+        if (byDocType) return toTemplateDto(byDocType);
 
-      // 3. Поиск по document_type (дефолтный шаблон этого типа)
-      const byDocType = await tx.queryOne<PrintTemplateRow>(
-        `SELECT id, tenant_id, slug, name, description, document_type, page_size, orientation,
-                body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
-                created_at, updated_at
-         FROM print_templates
-         WHERE tenant_id = $1 AND document_type = $2 AND is_default = true
-         LIMIT 1`,
-        [tenantId, slugOrType],
-      );
-      if (byDocType) return toTemplateDto(byDocType);
+        return null;
+      });
+    };
 
-      return null;
-    });
+    const existing = await findTemplate();
+    if (existing) return existing;
+
+    await this.ensureTemplates(tenantId);
+    return await findTemplate();
   }
 
   async create(
@@ -831,6 +841,8 @@ export class PrintTemplatesService {
         ticket_number: string;
         customer_name: string;
         customer_phone: string;
+        company_name?: string | null;
+        company_inn?: string | null;
         equipment_type: string;
         equipment_brand: string;
         equipment_model: string;
@@ -846,12 +858,18 @@ export class PrintTemplatesService {
         completed_at: Date | null;
         notes?: string;
       }>(
-        `SELECT ticket_number, customer_name, customer_phone,
-                equipment_type, equipment_brand, equipment_model, equipment_serial,
-                defect_description, appearance, package_contents, malfunctions,
-                master_name, estimated_cost, final_cost, received_at, completed_at, notes
-         FROM repair_orders
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        `SELECT ro.ticket_number, ro.customer_name, ro.customer_phone,
+                ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
+                ro.defect_description, ro.appearance, ro.package_contents, ro.malfunctions,
+                ro.master_name, ro.estimated_cost, ro.final_cost, ro.received_at, ro.completed_at, ro.notes,
+                COALESCE(comp.name, dcomp.name) AS company_name,
+                COALESCE(comp.inn, dcomp.inn) AS company_inn
+         FROM repair_orders ro
+         LEFT JOIN contacts c ON c.id = ro.customer_id AND c.tenant_id = ro.tenant_id
+         LEFT JOIN companies comp ON comp.id = c.company_id AND comp.tenant_id = ro.tenant_id
+         LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id
+         LEFT JOIN companies dcomp ON dcomp.id = d.company_id AND dcomp.tenant_id = ro.tenant_id
+         WHERE ro.tenant_id = $1 AND ro.id = $2 AND ro.deleted_at IS NULL`,
         [tenantId, orderId],
       );
 
@@ -940,6 +958,8 @@ export class PrintTemplatesService {
     order: {
       customer_name: string;
       customer_phone: string;
+      company_name?: string | null;
+      company_inn?: string | null;
       equipment_type: string;
       equipment_brand: string;
       equipment_model: string;
@@ -980,7 +1000,6 @@ export class PrintTemplatesService {
       (cfg.tearOffTicket.visible && (!cfg.table.visible || (!cfg.table.showWorks && !cfg.table.showParts)));
 
     if (isIntakeAct) {
-      const customerLine = [order.customer_name, order.customer_phone ? `тел. ${order.customer_phone}` : ""].filter(Boolean).join(", ");
       const toolLine = [order.equipment_type, order.equipment_brand, order.equipment_model].filter(Boolean).join(" ") +
         (order.equipment_serial ? ` S/N: ${order.equipment_serial}` : "");
       const termsBody = cfg.terms.termsText || settings.intakeTerms || INTAKE_ACT_PRESET.layoutConfig.terms.termsText;
@@ -1020,124 +1039,232 @@ export class PrintTemplatesService {
       position: relative;
     }
 
+    /* Хедер */
     .intake-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      padding-bottom: 6px;
+      border-bottom: 2px solid #111111;
+      padding-bottom: 8px;
+      gap: 16px;
     }
-    .intake-logo img {
-      max-height: 80px;
+    .header-main {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      max-width: 60%;
+    }
+    .header-main img {
+      max-height: 48px;
       max-width: 140px;
       object-fit: contain;
     }
-    .intake-company {
-      text-align: right;
-      font-size: 11px;
+    .company-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #111111;
+      line-height: 1.2;
+    }
+    .company-meta {
+      font-size: 10px;
+      color: #555555;
+      margin-top: 2px;
       line-height: 1.35;
     }
-    .company-title {
-      font-weight: 700;
-      font-size: 13px;
+    .header-doc-title {
+      text-align: right;
     }
-    .company-site {
-      font-weight: 700;
+    .doc-h1 {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: #111111;
       text-transform: uppercase;
     }
-    .intake-title {
-      text-align: center;
-      margin: 6px 0;
+    .doc-number-row {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 6px;
+      margin-top: 3px;
     }
-    .intake-title h1 {
-      font-size: 15px;
+    .doc-num-badge {
       font-weight: 700;
-    }
-    .intake-subtitle {
-      font-size: 11.5px;
-      color: #333333;
-    }
-    .intake-details {
-      font-size: 11.5px;
-      line-height: 1.5;
-      margin: 6px 0;
-    }
-    .intake-table, .stub-table {
-      width: 100%;
-      border-collapse: collapse;
-      border: 1px solid #111111;
-      margin: 6px 0;
-      font-size: 11px;
-    }
-    .intake-table th, .intake-table td,
-    .stub-table th, .stub-table td {
-      border: 1px solid #111111;
-      padding: 4px 8px;
-      text-align: left;
-      vertical-align: top;
-    }
-    .stub-num {
-      text-align: center !important;
-      vertical-align: middle !important;
-      font-size: 26px !important;
-      font-weight: 900 !important;
+      font-size: 13px;
+      color: #4a38f5;
       font-family: monospace;
     }
+    .doc-date {
+      font-size: 11px;
+      color: #666666;
+    }
+    .doc-sub {
+      font-size: 9.5px;
+      color: #777777;
+      margin-top: 2px;
+    }
+
+    /* Сетка карточек */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .info-card {
+      border: 1px solid #e5e5e5;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+    .card-head {
+      background: #fbfbfb;
+      font-weight: 600;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 4px 10px;
+      border-bottom: 1px solid #e5e5e5;
+      color: #666666;
+    }
+    .card-body {
+      padding: 6px 10px;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    /* Таблицы */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    .data-table th {
+      background: #fbfbfb;
+      border-bottom: 1px solid #e5e5e5;
+      border-right: 1px solid #e5e5e5;
+      padding: 4px 8px;
+      text-align: left;
+      font-weight: 600;
+      color: #555555;
+    }
+    .data-table th:last-child {
+      border-right: none;
+    }
+    .data-table td {
+      border-right: 1px solid #e5e5e5;
+      padding: 6px 8px;
+      vertical-align: top;
+      color: #222222;
+    }
+    .data-table td:last-child {
+      border-right: none;
+    }
+
     .intake-preamble {
       font-size: 9.5px;
       line-height: 1.4;
-      margin: 5px 0;
-      color: #222222;
+      color: #555555;
+      font-style: italic;
+      border-bottom: 1px solid #e5e5e5;
+      padding-bottom: 4px;
+      margin-bottom: 4px;
     }
-    .intake-terms {
-      font-size: 9px;
-      line-height: 1.35;
-      margin: 5px 0;
-      color: #222222;
+    .terms-block {
+      border: 1px solid #e5e5e5;
+      border-radius: 6px;
+      background: #fafafa;
+      padding: 8px 10px;
+      margin: 8px 0;
     }
     .terms-heading {
       font-weight: 700;
-      font-size: 9.5px;
-      margin-bottom: 2px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #111111;
+      margin-bottom: 3px;
     }
+    .terms-body {
+      font-size: 9px;
+      line-height: 1.35;
+      color: #444444;
+    }
+
     .intake-signatures {
       display: flex;
       justify-content: space-between;
+      gap: 24px;
       margin-top: 8px;
+      padding-top: 4px;
       font-size: 10.5px;
     }
     .sig-col {
-      width: 45%;
+      flex: 1;
     }
     .sig-line {
-      margin-bottom: 2px;
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      font-weight: 600;
+      border-bottom: 1px solid #111111;
+      padding-bottom: 2px;
+      margin-bottom: 3px;
     }
     .sig-sub {
-      font-size: 10px;
-      color: #333333;
+      font-size: 9.5px;
+      color: #666666;
     }
+
     .cut-perforation {
       text-align: center;
       letter-spacing: 2px;
       font-family: monospace;
-      color: #555555;
-      margin: 8px 0;
-      font-size: 10px;
-      border-top: 1px dashed #111111;
-      padding-top: 4px;
+      color: #888888;
+      margin: 12px 0 8px;
+      font-size: 9.5px;
+      border-top: 1px dashed #cccccc;
+      padding-top: 6px;
+      position: relative;
     }
+
     .master-stub {
-      margin-top: 2px;
+      border: 1px solid #e5e5e5;
+      border-radius: 6px;
+      background: #fafafa;
+      padding: 8px 10px;
+      margin-top: 4px;
     }
     .stub-title {
-      text-align: center;
       font-weight: 700;
-      font-size: 13px;
-      margin-bottom: 4px;
+      font-size: 11.5px;
+      color: #111111;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid #e5e5e5;
+      padding-bottom: 4px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .stub-num {
+      text-align: center !important;
+      vertical-align: middle !important;
+      font-size: 24px !important;
+      font-weight: 900 !important;
+      font-family: monospace;
+      color: #4a38f5 !important;
+      background: #fafafa;
     }
     .stub-notes {
       font-size: 10px;
-      margin-top: 3px;
-      font-style: italic;
+      margin-top: 6px;
+      padding: 5px 8px;
+      background: #ffffff;
+      border: 1px solid #e5e5e5;
+      border-radius: 4px;
+      color: #333333;
     }
 
     @media print {
@@ -1162,101 +1289,136 @@ export class PrintTemplatesService {
 <body>
   <div class="page-sheet">
     <div class="intake-header">
-      <div class="intake-logo">
-        <img src="${logoUrl || "/service-logo.png"}" alt="Logo" onerror="this.style.display='none'" />
+      <div class="header-main">
+        ${logoUrl ? `<img src="${logoUrl}" alt="Logo" onerror="this.style.display='none'" />` : ""}
+        <div>
+          <div class="company-title">${companyName || "Ремонт инструмента ИП Сагайдак А.Г."}</div>
+          <div class="company-meta">
+            ${companyAddress ? `<div>${companyAddress}</div>` : ""}
+            <div>
+              ${companyPhone ? `тел. <strong>${companyPhone}</strong>` : ""}
+              ${companyInn ? ` | ИНН: ${companyInn}` : ""}
+              ${companyOgrn ? ` | ОГРН: ${companyOgrn}` : ""}
+            </div>
+            ${cfg.header.companyWebsite ? `<div style="font-weight: 600; color: #4a38f5; text-transform: uppercase;">САЙТ: ${cfg.header.companyWebsite}</div>` : ""}
+          </div>
+        </div>
       </div>
-      <div class="intake-company">
-        <div class="company-title">${companyName || "Ремонт инструмента (Toua, Hybest, VAPP) ИП Сагайдак А.Г."}</div>
-        <div class="company-addr">${companyAddress || "Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214"}</div>
-        <div class="company-contacts">тел. <strong>${companyPhone || "+7 977 628 20 49"}</strong> ${cfg.header.workingHours || "Пн-Пт 10:00-19:00"}</div>
-        <div class="company-site">САЙТ: <strong>${cfg.header.companyWebsite || "РЕМОНТ-ИНСТРУМЕНТ.РФ"}</strong></div>
+
+      <div class="header-doc-title">
+        <h1 class="doc-h1">${cfg.header.documentTitle || "Договор"}</h1>
+        <div class="doc-number-row">
+          ${cfg.header.showDocNumber ? `<span class="doc-num-badge">${cleanNumber}</span>` : ""}
+          ${cfg.header.showDate ? `<span class="doc-date">от ${dateFormatted}</span>` : ""}
+        </div>
+        ${cfg.header.documentSubtitle ? `<div class="doc-sub">${cfg.header.documentSubtitle}</div>` : ""}
       </div>
     </div>
 
-    <div class="intake-title">
-      <h1>${cfg.header.documentTitle || "Договор"} № ${cleanNumber.replace(/^№\s*/, "")} от ${dateFormatted}</h1>
-      <div class="intake-subtitle">${cfg.header.documentSubtitle || "на оказание услуг по ремонту инструмента"}</div>
+    <div class="grid-2">
+      <div class="info-card">
+        <div class="card-head">Заказчик / Клиент</div>
+        <div class="card-body">
+          ${order.company_name ? `<div><span style="color: #888888;">Организация:</span> <strong>${order.company_name}</strong>${order.company_inn ? ` (ИНН: ${order.company_inn})` : ""}</div>` : ""}
+          <div><span style="color: #888888;">${order.company_name ? "Представитель:" : "ФИО:"}</span> <strong>${order.customer_name || "—"}</strong></div>
+          ${order.customer_phone ? `<div><span style="color: #888888;">Телефон:</span> ${order.customer_phone}</div>` : ""}
+        </div>
+      </div>
+
+      <div class="info-card">
+        <div class="card-head">Оборудование и дефект</div>
+        <div class="card-body">
+          <div><span style="color: #888888;">Техника:</span> <strong>${toolLine}</strong></div>
+          <div><span style="color: #888888;">Неисправность:</span> ${order.defect_description || "—"}</div>
+        </div>
+      </div>
     </div>
 
-    <div class="intake-details">
-      <div><strong>Заказчик:</strong> ${customerLine}</div>
-      <div><strong>Устройство:</strong> ${toolLine}</div>
-      <div><strong>Неисправность:</strong> ${order.defect_description || "—"}</div>
+    <div class="info-card" style="margin-bottom: 8px;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width: 50%;">Комплектация при приеме</th>
+            <th style="width: 50%;">Внешний вид / состояние</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>${order.package_contents || "Без комплекта"}</td>
+            <td>${order.appearance || "Б/У, следы нормальной эксплуатации"}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
-    <table class="intake-table">
-      <thead>
-        <tr>
-          <th style="width: 50%;">Комплектация</th>
-          <th style="width: 50%;">Внешний вид</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>${order.package_contents || "—"}</td>
-          <td>${order.appearance || ""}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="intake-preamble">
-      ${companyName ? companyName.replace(/ИП.*$/, "").trim() || "ИП Сагайдак Антон Геннадьевич" : "ИП Сагайдак Антон Геннадьевич"}, именуемый в дальнейшем «Исполнитель» с одной стороны, и гражданин ${order.customer_name || "Заказчик"}, именуемый в дальнейшем «Заказчик», с другой стороны, заключили настоящий договор о ниже следующем:
-    </div>
-
-    <div class="intake-terms">
-      <div class="terms-heading">${cfg.terms.title || "ПРЕДМЕТ ДОГОВОРА"}</div>
+    <div class="terms-block">
+      <div class="intake-preamble">
+        ${companyName ? companyName.replace(/ИП.*$/, "").trim() || "ИП Сагайдак Антон Геннадьевич" : "ИП Сагайдак Антон Геннадьевич"}, именуемый в дальнейшем «Исполнитель» с одной стороны, и ${order.company_name ? `${order.company_name} в лице ${order.customer_name || "представителя"}` : (order.customer_name || "Заказчик")}, именуемый в дальнейшем «Заказчик», с другой стороны, заключили настоящий договор о нижеследующем:
+      </div>
+      <div class="terms-heading">${cfg.terms.title || "ПРЕДМЕТ ДОГОВОРА И УСЛОВИЯ ПРИЕМА"}</div>
       <div class="terms-body">${(termsBody || "").replace(/\n/g, "<br>")}</div>
     </div>
 
     <div class="intake-signatures">
       <div class="sig-col">
-        <div class="sig-line"><strong>Заказчик</strong> ___________________</div>
-        <div class="sig-sub">${order.customer_name} ${order.customer_phone || ""}</div>
+        <div class="sig-line"><span>Заказчик:</span> ___________________</div>
+        <div class="sig-sub">${order.company_name ? `${order.company_name} / ` : ""}${order.customer_name} ${order.customer_phone || ""}</div>
       </div>
       <div class="sig-col">
-        <div class="sig-line"><strong>Исполнитель</strong> ___________________</div>
+        <div class="sig-line"><span>Исполнитель:</span> ___________________</div>
         <div class="sig-sub">${order.master_name || "ИП Сагайдак Антон Геннадьевич"}</div>
       </div>
     </div>
 
     <div class="cut-perforation">
-      - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+      ✂ - - - - - - - - - - - - - - - - - - - - - - - ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА) - - - - - - - - - - - - - - - - - - - - - - - ✂
     </div>
 
-    <div class="master-stub">
-      <div class="stub-title"><strong>${cfg.tearOffTicket.title || "Заказ-наряд на выполнение работ"} № ${cleanNumber.replace(/^№\s*/, "")} от ${dateFormatted}</strong></div>
-      <div class="intake-details">
-        <div><strong>Заказчик:</strong> ${customerLine}</div>
-        <div><strong>Устройство:</strong> ${toolLine}</div>
-        <div><strong>Неисправность:</strong> ${order.defect_description || "—"}</div>
+    <div class="master-stub tear-off-block">
+      <div class="stub-title">
+        <span>${cfg.tearOffTicket.title && !cfg.tearOffTicket.title.includes("Заказ-наряд") ? cfg.tearOffTicket.title : "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"} № ${cleanNumber.replace(/^№\s*/, "")}</span>
+        <span style="font-size: 10px; font-weight: normal; color: #666666;">от ${dateFormatted}</span>
       </div>
 
-      <table class="stub-table">
-        <thead>
-          <tr>
-            <th style="width: 40%;">Комплектация</th>
-            <th style="width: 40%;">Внешний вид</th>
-            <th style="width: 20%; text-align: center;">№</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>${order.package_contents || "—"}</td>
-            <td>${order.appearance || ""}</td>
-            <td class="stub-num">${cleanNumShort}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10.5px; margin-bottom: 6px;">
+        <div>
+          ${order.company_name ? `<div><span style="color: #888888;">Организация:</span> <strong>${order.company_name}</strong>${order.company_inn ? ` (ИНН: ${order.company_inn})` : ""}</div>` : ""}
+          <div><span style="color: #888888;">${order.company_name ? "Представитель:" : "Клиент:"}</span> <strong>${order.customer_name || "—"}</strong> ${order.customer_phone ? `(${order.customer_phone})` : ""}</div>
+        </div>
+        <div>
+          <div><span style="color: #888888;">Устройство:</span> <strong>${toolLine}</strong></div>
+          <div><span style="color: #888888;">Дефект:</span> ${order.defect_description || "—"}</div>
+        </div>
+      </div>
 
-      ${order.notes || cfg.tearOffTicket.customNote ? `<div class="stub-notes"><strong>Комментарии:</strong> ${order.notes || cfg.tearOffTicket.customNote}</div>` : ""}
+      <div class="info-card" style="margin-bottom: 6px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 42%;">Комплектация</th>
+              <th style="width: 42%;">Внешний вид</th>
+              <th style="width: 16%; text-align: center;">Номер</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>${order.package_contents || "—"}</td>
+              <td>${order.appearance || "Б/У"}</td>
+              <td class="stub-num">${cleanNumShort}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-      <div class="intake-signatures" style="margin-top: 8px;">
+      ${order.notes || cfg.tearOffTicket.customNote ? `<div class="stub-notes"><strong>Комментарии / примечания:</strong> ${order.notes || cfg.tearOffTicket.customNote}</div>` : ""}
+
+      <div class="intake-signatures" style="margin-top: 6px;">
         <div class="sig-col">
-          <div class="sig-line"><strong>Заказчик</strong> ___________________</div>
-          <div class="sig-sub">${order.customer_name} ${order.customer_phone || ""}</div>
+          <div class="sig-line"><span>Заказчик:</span> ___________________</div>
+          <div class="sig-sub">${order.customer_name}</div>
         </div>
         <div class="sig-col">
-          <div class="sig-line"><strong>Исполнитель</strong> ___________________</div>
+          <div class="sig-line"><span>Мастер:</span> ___________________</div>
           <div class="sig-sub">${order.master_name || "ИП Сагайдак Антон Геннадьевич"}</div>
         </div>
       </div>
@@ -1314,9 +1476,12 @@ export class PrintTemplatesService {
         sectionsHtml.push(`
           <div class="info-card section-block">
             <div class="card-head">${cfg.customer.title || "Заказчик / Клиент"}</div>
-            <div class="card-body grid-2">
-              <div><strong>ФИО:</strong> ${order.customer_name || "—"}</div>
-              <div><strong>Телефон:</strong> ${order.customer_phone || "—"}</div>
+            <div class="card-body">
+              ${order.company_name ? `<div><span style="color: #888888;">Организация:</span> <strong>${order.company_name}</strong>${order.company_inn ? ` (ИНН: ${order.company_inn})` : ""}</div>` : ""}
+              <div class="grid-2" style="margin-top: 2px;">
+                <div><span style="color: #888888;">${order.company_name ? "Представитель:" : "ФИО:"}</span> <strong>${order.customer_name || "—"}</strong></div>
+                <div><span style="color: #888888;">Телефон:</span> <strong>${order.customer_phone || "—"}</strong></div>
+              </div>
             </div>
           </div>
         `);
@@ -1467,7 +1632,7 @@ export class PrintTemplatesService {
                 <strong>${cfg.tearOffTicket.title || "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"}</strong> — Акт № ${cleanNumber} от ${dateFormatted}
               </div>
               <div class="tear-body">
-                <div>Заказчик: <strong>${order.customer_name || "—"}</strong>${order.customer_phone ? ` (тел: ${order.customer_phone})` : ""}</div>
+                <div>Заказчик: <strong>${order.company_name ? `${order.company_name} / ` : ""}${order.customer_name || "—"}</strong>${order.customer_phone ? ` (тел: ${order.customer_phone})` : ""}</div>
                 <div>Инструмент: <strong>${order.equipment_type || ""} ${order.equipment_brand || ""} ${order.equipment_model || ""}</strong>${order.equipment_serial ? ` (S/N: ${order.equipment_serial})` : ""}</div>
                 ${order.defect_description ? `<div>Неисправность: ${order.defect_description}</div>` : ""}
                 ${order.appearance ? `<div>Внешний вид: ${order.appearance}</div>` : ""}

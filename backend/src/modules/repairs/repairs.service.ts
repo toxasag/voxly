@@ -321,7 +321,7 @@ export class RepairsService {
            ) THEN 'invoiced'
            ELSE 'unpaid'
          END AS deal_payment_status,
-         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
+         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
          c.inn AS company_inn,
@@ -450,7 +450,7 @@ export class RepairsService {
            ) THEN 'invoiced'
            ELSE 'unpaid'
          END AS deal_payment_status,
-         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
+         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
          c.inn AS company_inn,
@@ -1117,14 +1117,6 @@ export class RepairsService {
           ],
         );
         dealId = newDeal.id;
-
-        if (payload.notes && payload.notes.trim()) {
-          await tx.query(
-            `INSERT INTO notes (tenant_id, deal_id, title, body, created_by)
-             VALUES ($1, $2, 'Заметка к приёмке', $3, $4)`,
-            [tenantId, dealId, payload.notes.trim(), author.id],
-          );
-        }
       }
 
       // 3. Создаем наряд-заказ на каждую единицу оборудования
@@ -1400,12 +1392,21 @@ export class RepairsService {
       ).catch(() => {});
     }
 
-    if (current.dealId && payload.deal_note && payload.deal_note.trim()) {
-      await query(
-        `INSERT INTO notes (tenant_id, deal_id, title, body)
-         VALUES ($1, $2, 'Заметка к заказу', $3)`,
-        [tenantId, current.dealId, payload.deal_note.trim()],
-      ).catch(() => {});
+    if (current.dealId && payload.deal_note !== undefined) {
+      const trimmedNote = (payload.deal_note ?? "").trim();
+      if (trimmedNote) {
+        await query(
+          `INSERT INTO notes (tenant_id, deal_id, title, body)
+           VALUES ($1, $2, 'Заметка к заказу', $3)`,
+          [tenantId, current.dealId, trimmedNote],
+        ).catch(() => {});
+      } else {
+        await query(
+          `UPDATE notes SET deleted_at = now()
+           WHERE tenant_id = $1 AND deal_id = $2 AND deleted_at IS NULL`,
+          [tenantId, current.dealId],
+        ).catch(() => {});
+      }
     }
 
     const updated = await this.get(tenantId, id);
@@ -1925,8 +1926,10 @@ export class RepairsService {
 
       // Clean up synced note in CRM notes table if exists
       await tx.query(
-        `DELETE FROM notes
-         WHERE tenant_id = $1 AND repair_order_id = $2 AND body = $3`,
+        `UPDATE notes SET deleted_at = now()
+         WHERE tenant_id = $1
+           AND (repair_order_id = $2 OR (body = $3 AND deal_id = (SELECT deal_id FROM repair_orders WHERE id = $2)))
+           AND deleted_at IS NULL`,
         [tenantId, orderId, existing.content],
       );
 
