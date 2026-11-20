@@ -43,10 +43,10 @@ const ALLOWED_TRANSITIONS: Record<RepairStatus, readonly RepairStatus[]> = {
   parts_order: ["ready", "issued", "intake", "rejected"],
   ready: ["issued", "waiting_parts", "parts_order", "intake"],
   issued: ["ready", "intake"],
-  // Legacy
-  diagnostics: ["waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
-  approval: ["waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
-  in_progress: ["waiting_parts", "parts_order", "ready", "issued", "rejected"],
+  // Active workflow & rollback transitions
+  diagnostics: ["intake", "waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
+  approval: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
+  in_progress: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "rejected"],
   rejected: ["intake"],
 };
 
