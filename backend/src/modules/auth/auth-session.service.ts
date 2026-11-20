@@ -112,6 +112,28 @@ function normalisePhone(phone: string): string {
   return phone.replace(/\D/g, "");
 }
 
+/** Маскирование телефона для безопасного логирования */
+export function maskPhone(phone: string): string {
+  const clean = phone.replace(/\s+/g, "");
+  return clean.length <= 5 ? "***" : `${clean.slice(0, 3)}***${clean.slice(-2)}`;
+}
+
+/** Маскирование email для безопасного логирования */
+export function maskEmail(email: string): string {
+  const parts = email.split("@");
+  if (parts.length !== 2) return "***";
+  const [local, domain] = parts;
+  if (!local || !domain) return "***";
+  const maskedLocal = local.length <= 2 ? `${local[0]}***` : `${local[0]}***${local[local.length - 1]}`;
+  return `${maskedLocal}@${domain}`;
+}
+
+/** Маскирование токена для безопасного логирования */
+export function maskToken(token: string): string {
+  if (token.length <= 6) return "***";
+  return `${token.slice(0, 4)}...${token.slice(-3)}`;
+}
+
 function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
@@ -410,6 +432,19 @@ export class AuthSessionService {
       }
     }
 
+    this.app.log.info(
+      {
+        purpose,
+        channel,
+        phone: maskPhone(phone),
+        email: input.email ? maskEmail(input.email) : undefined,
+        sessionId: session.id,
+        delivered,
+        hasDeepLink: deepLinkToken !== null,
+      },
+      "AuthSessionService.requestCode: session created",
+    );
+
     return {
       session_id: session.id,
       channel,
@@ -435,11 +470,21 @@ export class AuthSessionService {
 
     if (row === null) throw new UnauthorizedError("Session not found");
 
-    return {
+    const result = {
       delivered: row.delivered_at !== null,
       verified: row.verified_at !== null,
       expired: toDate(row.expires_at).getTime() < Date.now(),
     };
+
+    this.app.log.debug(
+      {
+        sessionId,
+        ...result,
+      },
+      "AuthSessionService.status: session checked",
+    );
+
+    return result;
   }
 
   /**
@@ -487,9 +532,12 @@ export class AuthSessionService {
 
       const column = channel === "telegram" ? "telegram_chat_id" : "max_user_id";
 
+      // При переходе по уникальному deep-link токену и запуске бота сессия
+      // автоматически считается верифицированной: пользователь доказал владение
+      // ботом. Это позволяет реализовать бесшовную авторизацию без ручного ввода цифр.
       await tx.query(
         `UPDATE auth_sessions
-         SET ${column} = $2, code_hash = $3, delivered_at = now(), deep_link_token = NULL
+         SET ${column} = $2, code_hash = $3, delivered_at = now(), verified_at = now(), deep_link_token = NULL
          WHERE id = $1`,
         [row.id, channel === "telegram" ? Number(recipient) : recipient, codeHash],
       );
@@ -503,34 +551,31 @@ export class AuthSessionService {
 
     if (!result.delivered) {
       this.app.log.error(
-        { channel, recipient, reason: result.reason },
+        { channel, recipient: maskPhone(recipient), reason: result.reason },
         "Code delivery failed right after /start",
       );
 
-      // Полный откат шага привязки, а не только `delivered_at = NULL`.
-      //
-      // Прежняя версия оставляла `code_hash` заполненным при уже погашенном
-      // deep-link токене. Последствия были двойные: `verifyCode` видел
-      // непустой хеш, поэтому вместо честного `CODE_NOT_DELIVERED` списывал
-      // попытки за код, которого пользователь не получал (пять таких попыток
-      // гасили сессию целиком), а повторное нажатие «Start» по той же ссылке
-      // уже ничего не находило — токен был снят.
-      //
-      // Токен возвращается тот же самый, а не новый: ссылка, показанная в
-      // браузере, должна продолжать работать. Значение свободно — строка
-      // единственная, кто им владел, а частичный уникальный индекс проверяет
-      // только не-NULL значения.
       const column = channel === "telegram" ? "telegram_chat_id" : "max_user_id";
 
       await query(
         `UPDATE auth_sessions
-         SET ${column} = NULL, code_hash = NULL, delivered_at = NULL, deep_link_token = $2
+         SET ${column} = NULL, code_hash = NULL, delivered_at = NULL, verified_at = NULL, deep_link_token = $2
          WHERE id = $1`,
         [session.id, input.token],
       );
 
       return { bound: false };
     }
+
+    this.app.log.info(
+      {
+        channel,
+        recipient: maskPhone(recipient),
+        sessionId: session.id,
+        purpose: session.purpose,
+      },
+      "AuthSessionService.bindRecipient: successfully verified via bot /start",
+    );
 
     // Адресат СОЗНАТЕЛЬНО не записывается в `users` на этом шаге.
     //
@@ -762,6 +807,12 @@ export class AuthSessionService {
         return { kind: "expired" };
       }
 
+      // Бесшовная авторизация: если сессия уже верифицирована (например, через запуск бота по deep-link),
+      // повторная проверка кода не требуется и сессия возвращается подтверждённой.
+      if (row.verified_at !== null) {
+        return { kind: "ok", row };
+      }
+
       if (!(await argon2.verify(row.code_hash, code))) {
         await tx.query(`UPDATE auth_sessions SET attempts = attempts + 1 WHERE id = $1`, [row.id]);
         return { kind: "wrong_code" };
@@ -771,6 +822,11 @@ export class AuthSessionService {
 
       return { kind: "ok", row: { ...row, verified_at: new Date() } };
     });
+
+    this.app.log.info(
+      { sessionId, outcome: outcome.kind },
+      "AuthSessionService.verifyCode: outcome",
+    );
 
     switch (outcome.kind) {
       case "ok":
@@ -857,6 +913,11 @@ export class AuthSessionService {
     }
 
     await tx.query(`UPDATE auth_sessions SET consumed_at = now() WHERE id = $1`, [row.id]);
+
+    this.app.log.info(
+      { sessionId: input.sessionId, purpose: input.purpose },
+      "AuthSessionService.consumeVerifiedIn: session successfully consumed",
+    );
   }
 
   /**

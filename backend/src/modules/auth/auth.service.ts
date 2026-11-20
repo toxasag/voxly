@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { createHash, randomInt, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
-import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
+import { query, queryOne, transaction, setRequestTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
 import { OWNER_PERMISSIONS, toPermissions } from "../../config/permissions.js";
@@ -169,6 +169,22 @@ export function activeUserPredicate(alias: string): string {
 /** Digits only, so `+7 999 123 45 67` and `+79991234567` resolve to one user. */
 function normalisePhone(phone: string): string {
   return phone.replace(/\D/g, "");
+}
+
+/** Маскирование телефона для безопасного логирования */
+export function maskPhone(phone: string): string {
+  const clean = phone.replace(/\s+/g, "");
+  return clean.length <= 5 ? "***" : `${clean.slice(0, 3)}***${clean.slice(-2)}`;
+}
+
+/** Маскирование email для безопасного логирования */
+export function maskEmail(email: string): string {
+  const parts = email.split("@");
+  if (parts.length !== 2) return "***";
+  const [local, domain] = parts;
+  if (!local || !domain) return "***";
+  const maskedLocal = local.length <= 2 ? `${local[0]}***` : `${local[0]}***${local[local.length - 1]}`;
+  return `${maskedLocal}@${domain}`;
 }
 
 /**
@@ -1056,8 +1072,13 @@ export class AuthService {
 
     const passwordHash = await argon2.hash(input.password);
 
+    this.app.log.info(
+      { slug, email: maskEmail(email), phone: maskPhone(input.phone) },
+      "AuthService.register: starting registration transaction",
+    );
+
     try {
-      return await transaction(async (tx) => {
+      const tokens = await transaction(async (tx) => {
         // Гашение первым шагом внутри транзакции: `FOR UPDATE` на строке сессии
         // сериализует две одновременные регистрации по одному коду, поэтому
         // второй достанется «Код уже использован», а не второй арендатор.
@@ -1072,6 +1093,11 @@ export class AuthService {
           [companyName, slug, TRIAL_DAYS],
         );
         if (tenant === null) throw new Error("Failed to create tenant");
+
+        // Переключаем контекст транзакции на только что созданный тенант,
+        // чтобы RLS-политики (ai_balance_topups, tenant_notification_channels) разрешали вставку.
+        await tx.query("SELECT set_config('app.tenant_id', $1, true)", [tenant.id]);
+        setRequestTenant(tenant.id);
 
         // Стартовый баланс для AI-ботов (500 руб = 50 000 коп)
         await tx.query(
@@ -1101,6 +1127,21 @@ export class AuthService {
           ],
         );
         if (user === null) throw new Error("Failed to create owner");
+
+        // Аудит-лог регистрации нового арендатора
+        await tx.query(
+          `INSERT INTO tenant_audit_log (tenant_id, actor_user_id, action, entity_type, entity_id, details)
+           VALUES ($1, $2, 'tenant.register', 'tenant', $1, $3)`,
+          [
+            tenant.id,
+            user.id,
+            JSON.stringify({
+              slug,
+              email: maskEmail(email),
+              has_telegram: input.telegram_chat_id !== undefined && input.telegram_chat_id !== null,
+            }),
+          ],
+        );
 
         if (input.telegram_chat_id) {
           await tx.query(
@@ -1132,7 +1173,18 @@ export class AuthService {
 
         return this.issueTokens(created, tx);
       });
+
+      this.app.log.info(
+        { tenantId: tokens.tenant.id, slug: tokens.tenant.slug, userId: tokens.user.id },
+        "AuthService.register: successfully completed",
+      );
+
+      return tokens;
     } catch (error) {
+      this.app.log.error(
+        { slug, email: maskEmail(email), err: error },
+        "AuthService.register: failed during transaction",
+      );
       // 23505 = unique_violation. Несколько разных ограничений дают этот код, и
       // сообщения должны отличаться, иначе занятый Telegram выглядел бы как
       // занятый поддомен.

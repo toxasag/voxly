@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
   ArrowRight,
   Check,
+  CheckCircle2,
   ExternalLink,
   Globe,
   Loader2,
@@ -183,7 +184,7 @@ export function RegisterForm() {
   const handleSubmit = useCallback(async () => {
     if (code.sessionId === null) return;
 
-    if (!/^\d{6}$/.test(otp)) {
+    if (!code.verified && !/^\d{6}$/.test(otp)) {
       setOtpError("Код состоит из 6 цифр");
       return;
     }
@@ -199,7 +200,7 @@ export function RegisterForm() {
         phone: values.phone,
         password: values.password,
         session_id: code.sessionId,
-        code: otp,
+        code: otp.length === 6 ? otp : "000000",
       });
 
       toast.success(`Компания создана: ${session.slug}.getvoxly.ru`);
@@ -442,8 +443,18 @@ className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 
         </div>
       )}
 
+      {/* Успешное подтверждение через бота */}
+      {code.verified && (
+        <div className="flex items-center gap-2.5 rounded-[8px] border border-emerald-500/20 bg-emerald-50/60 p-3 text-emerald-800">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+          <div className="text-[13px]">
+            <span className="font-medium">{CHANNEL_LABEL[code.channel]} подтверждён!</span> Нажмите «Зарегистрироваться» для завершения.
+          </div>
+        </div>
+      )}
+
       {/* Код подтверждения */}
-      {code.stage === "sent" && (
+      {code.stage === "sent" && !code.verified && (
 <div className="space-y-2">
           <label htmlFor="reg_code" className="block text-[13px] font-medium text-[#111111]">
             Код подтверждения
@@ -489,10 +500,10 @@ className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 
         </div>
       )}
 
-      {/* Зарегистрироваться — активна только после доставки кода */}
+      {/* Зарегистрироваться */}
       <button
         type="submit"
-        disabled={isSubmitting || code.stage !== "sent" || otp.length !== 6}
+        disabled={isSubmitting || (!code.verified && (code.stage !== "sent" || otp.length !== 6))}
         className={cn(
 "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium shadow-2xs transition-colors",
           "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",

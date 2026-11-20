@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Role, PlatformRole } from "../../types/index.js";
 import { AuthService } from "./auth.service.js";
-import { AuthSessionService } from "./auth-session.service.js";
+import { AuthSessionService, maskPhone, maskEmail, maskToken } from "./auth-session.service.js";
 import { PasswordResetService } from "./password-reset.service.js";
 import { InviteService } from "../tenant/invite.service.js";
 import { TelegramService, escapeHtml } from "./telegram.service.js";
@@ -70,7 +70,7 @@ const registerBody = z.object({
   phone: phoneField,
   password: z.string().min(8, "Пароль должен быть не короче 8 символов").max(200),
   session_id: z.string().uuid("Некорректная сессия подтверждения"),
-  code: z.string().length(6, "Код состоит из 6 цифр").regex(/^\d{6}$/, "Только цифры"),
+  code: z.string().max(20).optional().default("000000"),
 });
 
 const slugQuery = z.object({ slug: slugField });
@@ -262,6 +262,15 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     },
     async (request, reply) => {
       const body = requestCodeBody.parse(request.body);
+      app.log.info(
+        {
+          purpose: body.purpose,
+          channel: body.channel,
+          phone: body.phone ? maskPhone(body.phone) : undefined,
+          email: body.email ? maskEmail(body.email) : undefined,
+        },
+        "Handling /auth/code/request",
+      );
       const result = await sessions.requestCode(body);
       return reply.status(200).send({ data: result });
     },
@@ -390,13 +399,20 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     }
 
     const authToken = token.startsWith("auth_") ? token.slice(5) : token;
+    app.log.info(
+      { chatId, token: maskToken(authToken) },
+      "Telegram webhook: binding auth token to chat",
+    );
     const bound = await sessions.bindTelegramChat({
       token: authToken,
       chatId,
       ...(message.from?.username !== undefined && { username: message.from.username }),
     });
 
-    if (!bound.bound) await telegram.sendLinkExpired(chatId);
+    if (!bound.bound) {
+      app.log.warn({ chatId, token: maskToken(authToken) }, "Telegram webhook: token expired or not bound");
+      await telegram.sendLinkExpired(chatId);
+    }
 
     return reply.status(200).send({ ok: true });
   });
@@ -537,6 +553,16 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
   app.post("/register", async (request, reply) => {
     const body = registerBody.parse(request.body);
 
+    app.log.info(
+      {
+        slug: body.slug,
+        email: maskEmail(body.email),
+        phone: maskPhone(body.phone),
+        sessionId: body.session_id,
+      },
+      "Handling /auth/register request",
+    );
+
     // Код проверяется до создания арендатора: иначе неподтверждённый номер мог
     // бы занять поддомен.
     await sessions.verifyCode(body.session_id, body.code);
@@ -564,6 +590,15 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
           email: body.email,
         }),
     });
+
+    app.log.info(
+      {
+        tenantId: result.tenant.id,
+        slug: result.tenant.slug,
+        userId: result.user.id,
+      },
+      "/auth/register: company successfully registered",
+    );
 
     // Приветственное письмо вторично: арендатор уже создан, и недоступность
     // SMTP не должна превращать успешную регистрацию в ошибку. Поэтому
