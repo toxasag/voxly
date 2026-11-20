@@ -606,3 +606,14 @@ E-mail уникален в пределах платформы, а не арен
 Оба бот-токена и SMTP необязательны намеренно: недоступность одного канала не должна останавливать API, поэтому она проявляется как `503` этого канала, а не как отказ запуска. Но канал либо выключен целиком, либо настроен безопасно — токен без секрета webhook запуск останавливает.
 
 Пустая строка приравнивается к «не задано» (`optionalNonEmpty` в `config/env.ts`). Это требование docker-compose: форма `${VAR:-}` подставляет в контейнер именно `""`, а не отсутствие переменной, поэтому обычный `.optional()` проверял бы `""` против формата и превращал необязательную переменную в отказ запуска. Прежний инлайновый фолбэк `"change-me-in-production"` для `JWT_SECRET` удалён — production не может подняться с публично известным секретом. Полный список переменных — `backend/.env.example`.
+
+
+---
+
+## 16. Сквозной возврат регистрации из бота (2026-11-20)
+
+- `POST /auth/code/request`: для `purpose = "register"` принимает опциональные `slug` и `password`. При их наличии до создания сессии проверяются доступность `slug` и уникальность `email`, пароль хешируется (`argon2`) и черновик сохраняется в Redis (`reg:draft:<session_id>`, TTL = `OTP_TTL_MINUTES`).
+- `GET /auth/code/status?session_id=...`: кроме `delivered`, `verified`, `expired` возвращает `consumed: boolean`.
+- `POST /auth/telegram/webhook` (`/start auth_<token>`): при наличии черновика `reg:draft:<session_id>` генерируется одноразовый `reg:resume:<token>`, а кнопка «Вернуться к регистрации» ведёт на `/register?token=<token>`.
+- `POST /auth/register/complete` (публичный, в `PUBLIC_PATHS` и `CREDENTIAL_PATHS`, rate limit 20/мин): принимает `{ token, slug? }`, проверяет подтверждённую и непогашенную `auth_sessions`, создаёт арендатора и владельца через `AuthService.register({ ..., passwordHash })`, удаляет `reg:resume:*` и `reg:draft:*` из Redis, выставляет auth-cookies и возвращает `201 Created` с токенами.
+- `GET /auth/register/draft?token=...` (публичный, rate limit 20/мин): возвращает несекретные поля черновика `{ session_id, slug, email, phone }` для восстановления формы при конфликте полей.

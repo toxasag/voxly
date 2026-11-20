@@ -116,7 +116,12 @@ export class TelegramService {
    * (пользователь заблокировал бота, удалил чат) не должна превращаться в 500 —
    * вызывающий код показывает пользователю ссылку на бота.
    */
-  async sendCode(chatId: number, code: string, purpose: CodePurpose): Promise<TelegramSendResult> {
+  async sendCode(
+    chatId: number,
+    code: string,
+    purpose: CodePurpose,
+    returnUrl?: string,
+  ): Promise<TelegramSendResult> {
     const text =
       `<b>GETVOXLY</b>\n\nКод для ${CODE_PURPOSE_LABEL[purpose]}: <code>${escapeHtml(code)}</code>\n\n` +
       `${codeTtlSentence()} Если вы не запрашивали код — просто игнорируйте это сообщение.`;
@@ -129,7 +134,7 @@ export class TelegramService {
 
     const target = buttonConfig[purpose] ?? { text: "Вернуться на сайт", path: "/register" };
     const baseUrl = process.env.PUBLIC_WEB_URL || "https://getvoxly.ru";
-    const targetUrl = `${baseUrl.replace(/\/$/, "")}${target.path}`;
+    const targetUrl = returnUrl ?? `${baseUrl.replace(/\/$/, "")}${target.path}`;
 
     const res = await this.call("sendMessage", {
       chat_id: chatId,

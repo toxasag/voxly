@@ -1007,6 +1007,11 @@ export class AuthService {
     };
   }
 
+  async isEmailAvailable(email: string): Promise<boolean> {
+    const existing = await this.findByEmail(email.trim().toLowerCase());
+    return existing === null;
+  }
+
   /**
    * Creates a tenant with its own subdomain plus the owner account, and signs
    * the owner in immediately.
@@ -1022,7 +1027,8 @@ export class AuthService {
     slug: string;
     email: string;
     phone: string;
-    password: string;
+    password?: string;
+    passwordHash?: string;
     /** chat_id подтверждённой сессии; привязывается к владельцу. */
     telegram_chat_id?: number | null;
     /** MAX user_id подтверждённой сессии; привязывается к владельцу. */
@@ -1070,7 +1076,15 @@ export class AuthService {
       });
     }
 
-    const passwordHash = await argon2.hash(input.password);
+    let passwordHash = input.passwordHash;
+    if (passwordHash === undefined) {
+      if (input.password === undefined || input.password.length === 0) {
+        throw new AppError(400, "VALIDATION_ERROR", "Password is required", {
+          password: ["Укажите пароль"],
+        });
+      }
+      passwordHash = await argon2.hash(input.password);
+    }
 
     this.app.log.info(
       { slug, email: maskEmail(email), phone: maskPhone(input.phone) },

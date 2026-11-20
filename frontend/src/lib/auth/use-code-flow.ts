@@ -32,10 +32,25 @@ export interface CodeFlowState {
   channel: AuthChannel;
   cooldown: number;
   error: string | null;
+  fieldErrors: Record<string, string> | null;
   verified: boolean;
+  consumed: boolean;
 }
 
 const RESEND_COOLDOWN_SECONDS = 60;
+
+function tryOpenDeepLink(url: string): void {
+  if (typeof window === "undefined") return;
+  const ua = navigator.userAgent || "";
+  if (/Android|iPhone|iPad|iPod|Telegram/i.test(ua)) {
+    window.location.href = url;
+    return;
+  }
+  const popup = window.open(url, "_blank");
+  if (popup !== null) {
+    popup.opener = null;
+  }
+}
 
 /** Человекочитаемое имя канала: используется в тостах и подсказках форм. */
 export const CHANNEL_LABEL: Record<AuthChannel, string> = {
@@ -66,7 +81,9 @@ export function useCodeFlow(purpose: "register" | "login") {
     channel: "telegram",
     cooldown: 0,
     error: null,
+    fieldErrors: null,
     verified: false,
+    consumed: false,
   });
 
   // Таймеры держим в ref, чтобы очистить их при размонтировании: иначе опрос
@@ -123,6 +140,19 @@ export function useCodeFlow(purpose: "register" | "login") {
           try {
             const status = await codeStatus(sessionId);
 
+            if (status.consumed) {
+              stopPolling();
+              setState((prev) => ({
+                ...prev,
+                stage: "sent",
+                verified: true,
+                consumed: true,
+                deepLink: null,
+                error: null,
+              }));
+              return;
+            }
+
             if (status.expired) {
               stopPolling();
               setState((prev) => ({ ...prev, stage: "idle", sessionId: null, deepLink: null, error: "Срок действия кода истёк. Запросите код заново." }));
@@ -159,7 +189,7 @@ export function useCodeFlow(purpose: "register" | "login") {
     if (error instanceof ApiClientError) {
       if (error.isValidationError) {
         const fields = error.fieldErrors();
-        return fields.phone ?? fields.email ?? fields._root ?? error.message;
+        return fields.slug ?? fields.email ?? fields.phone ?? fields.password ?? fields._root ?? error.message;
       }
       switch (error.code) {
         case "TOO_MANY_REQUESTS":
@@ -180,18 +210,37 @@ export function useCodeFlow(purpose: "register" | "login") {
   }, []);
 
   const request = useCallback(
-    async (input: { channel: AuthChannel; phone: string; email?: string }): Promise<boolean> => {
+    async (input: {
+      channel: AuthChannel;
+      phone: string;
+      email?: string;
+      slug?: string;
+      password?: string;
+      onSessionCreated?: (sessionId: string, deepLink: string | null) => void;
+    }): Promise<boolean> => {
       setState((prev) => ({
         ...prev,
         stage: "requesting",
         channel: input.channel,
+        fieldErrors: null,
+        consumed: false,
+        verified: false,
         // Заранее подставляем бота выбранного канала: иначе на время запроса в
         // подсказке оставалось бы имя предыдущего.
         botUsername: DEFAULT_BOT_USERNAME[input.channel],
       }));
 
       try {
-        const result: RequestCodeResult = await requestCode({ purpose, ...input });
+        const result: RequestCodeResult = await requestCode({
+          purpose,
+          channel: input.channel,
+          phone: input.phone,
+          ...(input.email !== undefined && { email: input.email }),
+          ...(input.slug !== undefined && { slug: input.slug }),
+          ...(input.password !== undefined && { password: input.password }),
+        });
+
+        input.onSessionCreated?.(result.session_id, result.deep_link);
 
         setState((prev) => ({
           ...prev,
@@ -201,6 +250,7 @@ export function useCodeFlow(purpose: "register" | "login") {
           channel: result.channel,
           stage: result.delivered ? "sent" : "awaiting_bot",
           error: null,
+          fieldErrors: null,
         }));
 
         startCooldown();
@@ -208,19 +258,57 @@ export function useCodeFlow(purpose: "register" | "login") {
         if (result.delivered) {
           toast.success(`Код отправлен в ${CHANNEL_LABEL[result.channel]}`);
         } else {
-          // Чат ещё не привязан: код придёт после нажатия Start.
-          toast.info("Откройте бота и нажмите «Start» — код придёт автоматически");
+          // Чат ещё не привязан: начинаем polling и открываем deep-link бота.
           beginPolling(result.session_id, result.channel);
+          if (result.deep_link !== null) {
+            tryOpenDeepLink(result.deep_link);
+          }
+          toast.info("Откройте бота и нажмите «Start» — код придёт автоматически");
         }
 
         return true;
       } catch (error) {
-        setState((prev) => ({ ...prev, stage: "idle", error: describeError(error) }));
+        const fieldErrors =
+          error instanceof ApiClientError && error.isValidationError
+            ? error.fieldErrors()
+            : null;
+        setState((prev) => ({
+          ...prev,
+          stage: "idle",
+          error: describeError(error),
+          fieldErrors,
+        }));
         toast.error(describeError(error));
         return false;
       }
     },
     [purpose, requestCode, startCooldown, beginPolling, describeError],
+  );
+
+  const hydrateSession = useCallback(
+    (input: {
+      sessionId: string;
+      channel: AuthChannel;
+      verified?: boolean;
+      deepLink?: string | null;
+    }) => {
+      setState((prev) => ({
+        ...prev,
+        sessionId: input.sessionId,
+        channel: input.channel,
+        botUsername: DEFAULT_BOT_USERNAME[input.channel],
+        deepLink: input.deepLink ?? null,
+        stage: input.verified ? "sent" : "awaiting_bot",
+        verified: Boolean(input.verified),
+        consumed: false,
+        error: null,
+        fieldErrors: null,
+      }));
+      if (!input.verified) {
+        beginPolling(input.sessionId, input.channel);
+      }
+    },
+    [beginPolling],
   );
 
   const reset = useCallback(() => {
@@ -233,9 +321,11 @@ export function useCodeFlow(purpose: "register" | "login") {
       channel: "telegram",
       cooldown: 0,
       error: null,
+      fieldErrors: null,
       verified: false,
+      consumed: false,
     });
   }, [stopPolling]);
 
-  return { ...state, request, reset, describeError };
+  return { ...state, request, reset, hydrateSession, describeError };
 }
