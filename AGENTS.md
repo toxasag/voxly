@@ -1,724 +1,102 @@
 # GETVOXLY — B2B SaaS Modular Platform
 # Core CRM + Pluggable Modules: Service Center, Finance, AI Bots
 
----
-
 > ⚡ **Паспорт проекта GETVOXLY (Мгновенная память сессии):**
-> - **Деплой:** Команда `/usr/local/bin/vf-deploy GETVOXLY` (синхронизирует backend/frontend на 150.241.98.135 и перезапускает контейнеры).
-> - **Верификация:** Проверка https://api.getvoxly.ru/health и https://getvoxly.ru/login с реальным HTTP 200 ответом.
+> - **Деплой:** `/usr/local/bin/vf-deploy GETVOXLY` (синхронизирует backend/frontend на 150.241.98.135 и перезапускает контейнеры).
+> - **Верификация:** https://api.getvoxly.ru/health и https://getvoxly.ru/login с реальным HTTP 200 (health сам по себе не доказывает фичу — проверяй саму фичу).
 > - **Продукт:** B2B SaaS Modular CRM Platform (Fastify 5 + Next.js 15 + Postgres 16 RLS + Redis 7).
 > - **Боевой сервер (VPS):** IP 150.241.98.135, путь /opt/getvoxly (SSH root@150.241.98.135).
 > - **Боевой домен:** https://getvoxly.ru/ и https://api.getvoxly.ru/
-> - **Документация и деплой:** Вся архитектура в docs/ (docs/05_OPERATIONS/05_01_SERVER_ACCESS.md).
-> - **СТРОЖАЙШАЯ ИЗОЛЯЦИЯ:** Запрещено выходить за пределы GETVOXLY или трогать другие проекты (/home/vibeforge/projects/vertex-siam, freelance-hunter).
+> - **Документация и деплой:** вся архитектура в `docs/` (`docs/05_OPERATIONS/05_01_SERVER_ACCESS.md`).
+> - **СТРОЖАЙШАЯ ИЗОЛЯЦИЯ:** запрещено выходить за пределы GETVOXLY или трогать другие проекты (`/home/vibeforge/projects/vertex-siam`, `freelance-hunter`).
 
-## 5. АВТОПАМЯТЬ ПРОЕКТА И КАРТА ВЛИЯНИЯ (ОБЯЗАТЕЛЬНО ПЕРЕД ЛЮБОЙ ПРАВКОЙ КОДА)
+> 📚 Этот файл — короткое ядро правил. Подробные правила (код-примеры, палитра, шаблоны) лежат в `docs/agent-rules/` — читай нужный файл по таблице в конце.
 
-Сервис сам выгружает историю ВСЕХ сессий проекта в `<папка проекта>/.vibeforge-memory/` (обновляется раз в минуту, в git не попадает).
-В рабочей копии сессии она доступна как `./.vibeforge-memory/`; если ссылки нет — читай напрямую `/home/vibeforge/projects/<ИМЯ_ПРОЕКТА>/.vibeforge-memory/` (это папка ТВОЕГО проекта, изоляция не нарушается).
+---
+
+## 0. АВТОПАМЯТЬ ПРОЕКТА И КАРТА ВЛИЯНИЯ (ОБЯЗАТЕЛЬНО ПЕРЕД ЛЮБОЙ ПРАВКОЙ КОДА)
+
+Сервис сам выгружает историю ВСЕХ сессий проекта в `<папка проекта>/.vibeforge-memory/` (обновляется каждые ~15 секунд, в git не попадает). В рабочей копии сессии это `./.vibeforge-memory/`; если ссылки нет — читай напрямую `/home/vibeforge/projects/GETVOXLY/.vibeforge-memory/` (папка ТВОЕГО проекта, изоляция не нарушается).
+
+| Файл | Что внутри |
+|---|---|
+| `SESSIONS_INDEX.md` | таблица всех сессий: статус, влито ли в main, сколько файлов затронуто |
+| `SESSIONS_DIGEST.md` | запросы пользователя и итог агента по каждой сессии |
+| `sessions/<ID>.md` | подробная хронология одной сессии |
+| `FILE_HISTORY.md` | для каждого файла — какие сессии его меняли («горячие точки» сверху) |
+| `IMPORTED_BY.md` | для каждого файла — какие файлы его импортируют |
 
 ### Step 0 — перед первой правкой (без исключений)
-1. Прочитай `.vibeforge-memory/SESSIONS_INDEX.md` — какие задачи уже решались, что влито в main.
-2. Прочитай `.vibeforge-memory/FILE_HISTORY.md` — найди файлы, которые собираешься менять. Если файл менялся 4+ сессиями — это «горячая точка»: там чаще всего чинят и ломают, действуй особенно осторожно.
-3. Для релевантных сессий открой `.vibeforge-memory/sessions/<ID>.md` (или общий `SESSIONS_DIGEST.md`) — что делали и чем закончилось.
-4. Если папки нет или она пуста — честно скажи об этом пользователю, не выдумывай историю.
+1. Прочитай `SESSIONS_INDEX.md`: какие задачи уже решались и что влито в main.
+2. Найди файлы, которые будешь менять, в `FILE_HISTORY.md`. Файл менялся 4+ сессиями — «горячая точка», там чаще всего чинят и ломают: действуй осторожно.
+3. Для релевантных сессий открой `sessions/<ID>.md` (или `SESSIONS_DIGEST.md`).
+4. Если папки нет или она пуста — честно скажи пользователю, не выдумывай историю.
 
-### Карта влияния — до того, как менять функцию/компонент/поле/API/константу
-1. Найди ВСЕ места использования по текущему коду (`grep -rn`, `codegraph_explore`, импорты, роуты, SQL/схема, фронт-вызовы API, тесты, конфиги).
-2. Покажи пользователю список: «Эта функция используется здесь и здесь: <файл:строка — как используется>». Отдельно отметь места из истории сессий (какая сессия их касалась).
-3. Спроси: «Исправлять во всех этих местах или только в <X>?» — и жди ответа. Не расширяй и не сужай объём молча.
-4. Изменение делай так, чтобы не ломать остальных потребителей (обратная совместимость, либо правка всех мест по согласию).
+### Карта влияния — до того, как менять функцию / компонент / поле / API / константу
+1. Найди ВСЕ места использования: `IMPORTED_BY.md` (кто импортирует файл) + `grep -rn` / `codegraph_explore` (вызовы функции, роуты, SQL/схема, фронт-вызовы API, тесты, конфиги).
+2. Покажи пользователю список: «Эта функция используется здесь и здесь: `<файл:строка — как используется>`». Отдельно отметь места из истории сессий (какая сессия их касалась).
+3. Спроси: «Исправлять во всех этих местах или только в `<X>`?» — и жди ответа. Не расширяй и не сужай объём молча.
+4. Делай изменение так, чтобы не ломать остальных потребителей (обратная совместимость либо правка всех мест по согласию).
 5. После правки проверь каждое затронутое место вживую (тесты / сборка / запрос / браузер) и отчитайся по каждому.
 
 ### Если пользователь пишет «опять не работает / снова сломалось»
-Сначала найди в памяти, какая прошлая сессия правила это место и что именно меняла; сравни с текущим состоянием и объясни, что регрессировало и почему. Только потом чини.
+Сначала найди в памяти, какая прошлая сессия правила это место и что меняла; сравни с текущим состоянием и объясни, что регрессировало. Только потом чини.
 
 ### Final Step
-По завершении дополни `docs/PROJECT_MEMORY.md` (дата, что изменено, root cause, где ещё используется, что осталось). Не упоминай несуществующую папку `~/Session-Context` — её на сервере нет.
+По завершении дополни `docs/PROJECT_MEMORY.md`: дата, что изменено, root cause, где ещё используется, что осталось. Папки `~/Session-Context` на сервере нет — не ссылайся на неё.
 
 ---
 
-## SYSTEM IDENTITY
+## 1. SYSTEM IDENTITY & STACK
 
-You are a Senior Fullstack Architect working on GETVOXLY. Every change you make must respect
-multi-tenant isolation, module-boundary discipline, and strict TypeScript. You never cut corners.
+Ты — Senior Fullstack Architect проекта GETVOXLY. Каждое изменение обязано соблюдать multi-tenant изоляцию, границы модулей и strict TypeScript. Без срезания углов.
 
----
+- **Frontend:** Next.js 15 (App Router, только `app/`), Tailwind CSS 4 + shadcn/ui, Lucide Icons (никаких emoji в UI), React Hook Form + Zod, React Context для tenant/auth, TanStack Query v5 для серверного состояния. Без Redux/Zustand.
+- **Backend:** Fastify 5 (TypeScript, ESM), PostgreSQL 16 + JSONB, без ORM (raw SQL / тонкий query-builder), Redis 7 + BullMQ.
+- **AI Bots:** вызовы LLM только через абстракцию провайдеров (никакого прямого `fetch` к OpenAI/Anthropic); стриминг — SSE.
 
-## 1. STACK OVERVIEW
+## 2. ЖЁСТКИЕ ПРАВИЛА (кратко; детали и примеры — в `docs/agent-rules/`)
 
-### Frontend
-- **Framework:** Next.js 15 (App Router) — no `pages/`, only `app/` directory.
-- **Styling:** Tailwind CSS 4 + shadcn/ui (Radix primitives, `npx shadcn@latest add ...` to extend).
-- **Icons:** Lucide Icons exclusively. No emoji in UI.
-- **Forms / Validation:** React Hook Form + Zod (co-locate schemas with components).
-- **State:** React Context for tenant/auth state; TanStack Query (React Query v5) for all server state. No Redux, no Zustand.
+- **TypeScript:** никаких `any`, `@ts-ignore`, `as any`; неизвестное — `unknown` + type guards / Zod. `strictNullChecks` всегда. Типы PascalCase без `I`-префикса; `Row` — результат БД, `DTO` — API.
+- **Tenant isolation:** каждый запрос с `WHERE tenant_id = $1` (кроме системных операций); `tenant_id` берётся из сессии на бэкенде, НИКОГДА не приходит с клиента; RLS включён; у каждой таблицы `tenant_id UUID NOT NULL`.
+- **Права:** UI-`Guard` скрывает (не дизейблит) недоступное, но источник истины — проверка прав в каждом Fastify-роуте. Модуль не установлен → `notFound()` на фронте, `403 MODULE_NOT_INSTALLED` на бэкенде.
+- **Границы модулей:** импорты только в одну сторону (`app/modules/<m>` → `components/modules/<m>` → `lib/api/<m>`); общее выносится в `lib/`, `types/`, `schemas/`, никогда не лежит в соседнем модуле.
+- **UI — Twenty CRM Light Canvas (обязательный стандарт):**
+  - ЗАПРЕЩЕНО: тёмная тема и `slate-950/900/800` для фонов; `amber-500`/`orange-400` как дефолтный акцент; центрированные модалки для сущностей CRM (только правая шторка `Sheet.tsx` с `?record=<id>`); самодельные `<table>` (списки CRM — только `RecordTable`, строка 32px).
+  - Ключевые токены: фон `#ffffff`, сайдбар `#fbfbfb`, граница `#e5e5e5`, текст `#111111`/`#666666`, акцент `#4a38f5` (hover `#3d2ee0`), шрифт Inter 13px (числа — DM Mono).
+  - Один брейкпоинт `md:` (768px). Полная палитра и компоненты — `docs/agent-rules/03-design-system.md`.
+- **Формы:** Zod-схема в `schemas/` (не inline), `react-hook-form` + `zodResolver`, у мутаций loading/disabled/ошибки через `form.setError()`.
+- **Сервер (Fastify):** роуты с `authenticate` + `requirePermission`, ответы в конверте `{ data, meta? }` / `{ error: { code, message, details? } }`, BullMQ-задачи несут `tenant_id`.
+- **БД:** таблицы `snake_case` во множественном числе, PK `uuid`, `created_at`/`updated_at`, soft delete через `deleted_at`.
+- **Импорты:** алиас `@/`, группировка React/Next → сторонние → `@/`; без `../../../`.
+- **Git:** Conventional Commits; не коммитить `.env`, `node_modules`, `.next`, `dist`; lint + tsc перед push.
 
-### Backend
-- **Server:** Fastify 5 (TypeScript, ESM).
-- **Database:** PostgreSQL 16 with JSONB for custom/extension fields. No ORM — raw SQL or a thin query-builder (kysely / pg-typed).
-- **Queue / Cache:** Redis 7 + BullMQ for background jobs.
-- **Multi-tenancy:** Every table carries `tenant_id UUID NOT NULL`. Row-Level Security (RLS) enforced in PostgreSQL.
+## 3. FINAL CHECKLIST — ПЕРЕД ТЕМ КАК ПИСАТЬ КОД
 
-### AI Bots Module
-- LLM calls go through an abstraction layer (pluggable providers). No raw `fetch` to OpenAI/Anthropic directly.
-- Streaming responses use Server-Sent Events over the Fastify route.
+1. Запрос содержит `WHERE tenant_id = ...`?
+2. Нет `any` / `@ts-ignore`?
+3. Для модульного UI стоит `<Guard>`?
+4. Цвета строго из Twenty CRM Light Canvas (белый холст, граница `#e5e5e5`, акцент `#4a38f5`, никакого dark slate и дефолтного amber)?
+5. Zod-схема лежит в `schemas/`?
+6. У формы обработаны loading / error / empty?
+7. Импорты через `@/` и сгруппированы?
+8. Новый модуль зарегистрирован и в backend-, и во frontend-реестре?
+9. **Карта влияния построена и показана пользователю до правки общей функции/компонента/API/поля БД?**
 
----
+## 4. SPEC-DRIVEN DEVELOPMENT & DOCS DISCIPLINE
 
-## 2. TYPESCRIPT POLICE — ZERO TOLERANCE
+1. **Source of Truth:** `docs/` — источник правды по архитектуре и контрактам API.
+2. **Перед генерацией:** читай PRD из `docs/02_PRD_AND_MODULES/` или контракт из `docs/03_API_CONTRACTS/`.
+3. **Definition of Done:** `tsc --noEmit` без ошибок; статус задачи `[x]` в `docs/04_PROJECT_STATE/ROADMAP_TASKS.md`; запись в `docs/04_PROJECT_STATE/CHANGELOG.md`; запись в `docs/PROJECT_MEMORY.md`.
+4. **Нет расхождения документации:** изменил сигнатуру API или таблицу/поле БД — обнови документ в `docs/` в той же итерации.
 
-```typescript
-// 🚫 FORBIDDEN — instant rejection
-const data: any = fetchSomething();
-// @ts-ignore
-const id = user.id;
+## 5. ГДЕ ЧИТАТЬ ПОДРОБНОСТИ (читай нужный файл ДО работы в этой области)
 
-// 🚫 FORBIDDEN — type assertions that erase safety
-const x = response as any;
-const y = <any>someValue;
-
-// 🚫 FORBIDDEN — implicit any in callbacks
-arr.map(item => item.name);  // item must be explicitly typed via generic or contextual inference
-```
-
-### Mandatory Rules
-| Rule | Enforcement |
+| Задача | Файл |
 |---|---|
-| `any` | NEVER. Use `unknown` and narrow with type guards / Zod parsers. If generic constraint is truly needed, use `Record<string, unknown>` with a comment explaining why. |
-| `@ts-ignore` / `@ts-expect-error` | NEVER on production code. Only `@ts-expect-error` allowed **temporarily** in test files with a `// TODO:` linking to a Linear ticket. |
-| `as` cast narrowing | Allowed ONLY for well-known runtime guarantees: `as HTMLInputElement` on `event.target`. Never `as` to bypass missing properties. |
-| `strictNullChecks` | Always on. Use optional chaining `?.` and nullish coalescing `??`. |
-
-### Type Naming Convention
-- **Interfaces & Types:** PascalCase, no `I` prefix.
-  ```typescript
-  // ✅ GOOD
-  interface CreateContactPayload { ... }
-  type DealStage = 'lead' | 'qualified' | 'closed_won' | 'closed_lost';
-
-  // ❌ BAD
-  interface IContact { ... }
-  type deal_stage = ...
-  ```
-- **Query/Mutation Results:** Suffix with `Row` for DB results, `DTO` for API transfer objects.
-  ```typescript
-  type ContactRow = { id: string; tenant_id: string; ... };
-  type ContactDTO = { id: string; firstName: string; ... };
-  ```
-
----
-
-## 3. DIRECTORY STRUCTURE & MODULE ISOLATION
-
-```
-src/
-├── app/                          # Next.js App Router (pages, layouts, loading, error)
-│   ├── (auth)/                   # Route group — public auth pages
-│   ├── (main)/                   # Route group — authenticated tenant portal
-│   │   ├── layout.tsx            # Shell: sidebar, header, tenant context provider
-│   │   ├── contacts/
-│   │   ├── companies/
-│   │   ├── deals/
-│   │   └── modules/
-│   │       ├── service-center/   # Module: Service Center
-│   │       ├── finance/          # Module: Finance
-│   │       └── ai-bots/          # Module: AI Bots
-│   └── api/                      # Route handlers (thin proxies to backend)
-├── components/
-│   ├── ui/                       # shadcn/ui primitives (button, card, dialog, etc.)
-│   ├── core/                     # CRM-core shared components
-│   │   ├── contacts/
-│   │   ├── companies/
-│   │   ├── deals/
-│   │   └── tasks/
-│   └── modules/                  # One folder per optional module
-│       ├── service-center/
-│       ├── finance/
-│       └── ai-bots/
-├── lib/
-│   ├── api/                      # TanStack Query hooks (react-query)
-│   ├── auth/                     # Clerk/Auth.js client helpers
-│   ├── permissions/              # Permission check utilities
-│   └── utils/                    # Generic helpers (cn, formatDate, etc.)
-├── schemas/                      # Zod schemas (shared with server ideally)
-└── types/                        # Global type definitions
-```
-
-### Naming Conventions
-
-| Artifact | Convention | Example |
-|---|---|---|
-| Page files | `page.tsx` | `app/(main)/contacts/page.tsx` |
-| Layout files | `layout.tsx` | `app/(main)/layout.tsx` |
-| Loading / Error | `loading.tsx`, `error.tsx` | — |
-| Server Components | `*-server.tsx` suffix | `contact-list-server.tsx` |
-| Client Components | No suffix (default), but `"use client"` directive at top | `contact-table.tsx` |
-| React Hook Form | `*-form.tsx` | `create-contact-form.tsx` |
-| Zod schemas | `*.schema.ts` | `contact.schema.ts` |
-| TanStack Query hooks | Files named after resource: `use-*.ts` | `use-contacts.ts`, `use-deals.ts` |
-| Backend routes | `*-routes.ts` | `contact-routes.ts` |
-| Backend services | `*-service.ts` | `contact-service.ts` |
-
-### Module Coupling Rule
-**Modules imports are ONE-WAY only:**
-```
-app/modules/<module> → components/modules/<module> → lib/api/<module>
-```
-- `app/(main)/contacts/` **NEVER** imports from `components/modules/service-center/`.
-- `components/core/contacts/` **NEVER** imports from `components/modules/finance/`.
-- Shared logic lives in `lib/`, `types/`, or `schemas/` — never in a sibling module.
-
-If two modules need the same utility, lift it to `lib/utils/` first. File a review with the team before merging cross-module imports.
-
----
-
-## 4. MULTI-TENANCY — TENANT ISOLATION
-
-### Database Rules (Backend)
-- **Every query** MUST include `WHERE tenant_id = $tenantId` unless it's a system-level operation (auth, billing webhooks).
-- **Row-Level Security:** PostgreSQL RLS policies are defined per table. Service functions run as `SET LOCAL role = tenant_role`.
-- **Never** construct tenant-id in the frontend. It comes from the authenticated session on the backend, injected via middleware.
-  ```typescript
-  // ✅ Backend: tenant_id from Fastify `request` decorator (set by auth middleware)
-  const { tenant_id } = request;
-  const contacts = await db.query(
-    'SELECT * FROM contacts WHERE tenant_id = $1',
-    [tenant_id]
-  );
-
-  // ❌ NEVER pass tenant_id from the client
-  // POST /api/contacts body: { tenant_id: "..." }  ← FORBIDDEN
-  ```
-- **JSONB custom fields** live in a `custom_fields JSONB DEFAULT '{}'` column. Never create runtime columns.
-
-### Frontend Rules
-- Tenant context is fetched once on `(main)/layout.tsx` and provided via React Context.
-- API calls use a shared `apiClient` that attaches credentials (cookies / Bearer token) — NEVER pass tenant_id to the server.
-- `useTenant()` hook returns `{ tenantId, tenantName, plan, installedModules }`.
-
----
-
-## 5. PERMISSIONS & MODULE VISIBILITY
-
-### Permission Model
-```typescript
-type Permission = 
-  // Core CRM
-  | 'contacts:read' | 'contacts:write' | 'contacts:delete'
-  | 'companies:read' | 'companies:write' | 'companies:delete'
-  | 'deals:read' | 'deals:write'
-  | 'tasks:read' | 'tasks:write'
-  // Module: Service Center
-  | 'service_center:read' | 'service_center:write'
-  // Module: Finance
-  | 'finance:read' | 'finance:write' | 'finance:admin'
-  // Module: AI Bots
-  | 'ai_bots:read' | 'ai_bots:configure'
-  // Admin
-  | 'tenant:admin' | 'billing:manage';
-```
-
-### UI Guard — Dynamic Hiding
-**Components and navigation items are hidden, NOT disabled, when the user lacks permission or the module is not installed.**
-
-```typescript
-// lib/permissions/guards.ts
-export function hasPermission(user: CurrentUser, permission: Permission): boolean { ... }
-export function isModuleInstalled(modules: InstalledModule[], slug: ModuleSlug): boolean { ... }
-
-// components/core/guard.tsx — composable guard component
-interface GuardProps {
-  permission?: Permission;
-  module?: ModuleSlug;
-  children: React.ReactNode;
-  fallback?: React.ReactNode;
-}
-
-export function Guard({ permission, module, children, fallback = null }: GuardProps) {
-  const user = useCurrentUser();
-  const { installedModules } = useTenant();
-
-  if (permission && !hasPermission(user, permission)) return <>{fallback}</>;
-  if (module && !isModuleInstalled(installedModules, module)) return <>{fallback}</>;
-
-  return <>{children}</>;
-}
-```
-
-Usage:
-```tsx
-// Navigation sidebar
-<Guard permission="contacts:read">
-  <SidebarLink href="/contacts" icon={ContactIcon}>Contacts</SidebarLink>
-</Guard>
-
-// Module section — double check: permission + installed
-<Guard permission="service_center:read" module="service_center">
-  <SidebarLink href="/modules/service-center" icon={WrenchIcon}>Service Center</SidebarLink>
-</Guard>
-
-// Action button
-<Guard permission="contacts:write">
-  <Button onClick={openCreateDialog}>Add Contact</Button>
-</Guard>
-```
-- **No route-level redirect** for modules. If the module is not installed, the layout group `app/(main)/modules/<slug>/` returns 404 via `notFound()`. Navigation links for uninstalled modules never render.
-- **Permission checks happen on the backend too.** Every Fastify route handler verifies the permission from the JWT/session. The UI guard is cosmetic; the backend guard is the source of truth.
-
----
-
-## 6. UI / DESIGN SYSTEM (Twenty CRM Light Canvas — MANDATORY STANDARD)
-
-> ⚡ **СТРОЖАЙШИЙ СТАНДАРТ:** Проект полностью работает на **Twenty CRM Light Canvas**.
-> **КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:**
-> - Использовать тёмную тему и классы `slate-950`, `slate-900`, `slate-800` для фонов, панелей и карточек.
-> - Использовать `amber-500` / `orange-400` в качестве дефолтных акцентов или кнопок (янтарный допустим исключительно для семантических предупреждений и чипов заметок).
-> - Использовать центрированные модальные окна для сущностей CRM — только Slide-over шторки справа (`Sheet.tsx`) с URL-параметром `?record=<id>`.
-> - Использовать самодельные `<table>` — все списки сущностей CRM строятся строго на `RecordTable` со строгой высотой строки 32px, липкими заголовками и навигацией стрелками.
-> Полная документация — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `01_05_UI_CONVENTIONS.md`.
-
-### Color Palette & Design Tokens (Twenty CRM Light Canvas)
-
-| Role | Token / Value | Usage & Rules |
-|---|---|---|
-| **Page / Canvas Background** | `#ffffff` (`--color-bg`) | Чистый белый холст страниц, рабочих областей, основных панелей |
-| **Sidebar / Secondary Background** | `#fbfbfb` / `#fafafa` (`--color-bg-secondary`) | Навигационный сайдбар, подложки списков, свимлейны |
-| **Card / Surface** | `#ffffff` + `border-[#e5e5e5]` + `shadow-2xs` | Карточки записей, канбан-карточки, модальные поверхности |
-| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, дропдауны, поповеры, `hover:bg-black/[0.04]` |
-| **Borders & Dividers** | `#e5e5e5` (`--color-border`) | 1px solid разделители строк, границы карточек, колонок, полей ввода |
-| **Border (Hover)** | `#cccccc` | Рамка карточки или инпута при наведении |
-| **Border (Subtle Divider)** | `#f0f0f0` | Внутренние тонкие разделители шапок, сплиттеров и тулбаров |
-| **Text Primary (High Contrast)** | `#111111` / `#000000` | Заголовки, названия сделок/контактов, значения в ячейках, основной текст (WCAG AAA) |
-| **Text Secondary** | `#666666` | Вторичные подписи, лейблы колонок, описания, таймстампы |
-| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), служебные иконки в тулбарах, счетчики |
-| **Primary Brand Accent** | `#4a38f5` (Ультрамарин / Indigo) | Главная кнопка действия (CTA), бренд-маркер, активный таб, фокус |
-| **Primary Hover** | `#3d2ee0` | Наведение на primary-кнопки |
-| **Secondary Accent / Monochrome** | `#111111` / `#888888` | Второстепенные контролы, нейтральные тулбары, иконки |
-| **Focus State** | `#4a38f5` / `#03b2cb` | Рамка активного ввода (`focus:border-[#4a38f5] focus:ring-1 focus:ring-[#4a38f5]/20`) |
-| **Selection / DnD Highlight** | `#3b82f6` | Маркер перетаскивания колонок, активные чекбоксы |
-| **Success** | `emerald-700` (`#15803d`) / `bg-emerald-50` / `border-emerald-200` | Положительные статусы (closed_won, paid, ready, выполнено) |
-| **Danger / Destructive** | `rose-600` / `rose-700` / `bg-rose-50` / `border-rose-200` | Кнопки удаления, ошибки, отказ, closed_lost, просрочено |
-| **Warning / Note Chip** | `#854d0e` / `bg-[#fefce8]` / `border-[#fef08a]` | Чип заметки (Twenty UX), предупреждения |
-| **Info / Tag** | `sky-700` / `bg-sky-50` / `border-sky-200` | Информационные бейджи, теги, ссылки |
-
-### Typography & Spacing
-- **Шрифты:**
-  - `Inter` (13px, regular/medium/semibold) — основной UI-текст и заголовки.
-  - `DM Mono` с `tabular-nums` — числовые данные, ID записей, даты, суммы и валюты.
-- **Размеры:** Display `13.3px`, H1 `13px`, Body `13px` / `12px` (`text-xs`), Label `11px`, Tiny `10px`.
-- **Строка таблицы записей:** строго `32px` (`RECORD_TABLE_ROW_HEIGHT = 32`, `h-8`).
-- **Скругления:**
-  - `16px` (`rounded-2xl` / `rounded-[16px]`): боковые шторки (`Sheet`), контейнеры создания, диалоги.
-  - `8px` (`rounded-[8px]` / `rounded-lg`): карточки записей, канбан, поля ввода, кнопки действия.
-  - `4px` (`rounded-[4px]`): бейджи, теги, чипы заметок, чекбоксы.
-- **Анимации:** быстрые `75ms` (hover), стандартные `150ms` (дропдауны, табы), оверлеи `300ms` (slide-over sheet).
-
-### Component Patterns
-
-**Card:**
-```tsx
-<div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs hover:border-[#cccccc] transition-colors">
-```
-
-**Primary Button:**
-```tsx
-<Button className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0]">
-  Сохранить
-</Button>
-```
-
-**Destructive Button:**
-```tsx
-<Button className="h-8 rounded-[8px] border border-rose-200 bg-rose-50 px-3 text-[13px] font-medium text-rose-600 shadow-xs transition-colors hover:bg-rose-100">
-  Удалить
-</Button>
-```
-
-**Input:**
-```tsx
-<Input className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20" />
-```
-
-**Note Chip (Twenty UX Pattern):**
-```tsx
-<div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] p-2 text-xs text-[#854d0e] line-clamp-3">
-  {noteBody}
-</div>
-```
-
-**Status Badge (TagPill / StatusBadge):**
-```tsx
-import { TagPill, type TagColor } from "@/components/ui/tag";
-import { StatusBadge } from "@/components/shared/StatusBadge";
-
-<TagPill color="emerald">Активен</TagPill>
-<TagPill color="amber">В обработке</TagPill>
-<TagPill color="rose">Отменён</TagPill>
-
-<StatusBadge variant="success">Выполнено</StatusBadge>
-<StatusBadge variant="warning">Ожидает</StatusBadge>
-<StatusBadge variant="destructive">Отклонено</StatusBadge>
-```
-
-**Table (RecordTable — единственная таблица записей CRM):**
-```tsx
-<RecordTable
-  rows={items}
-  columns={columns}
-  getRowId={(item) => item.id}
-  tableId="module_table"
-  onRowClick={(item) => openRecord(item.id)}
-/>
-```
-
-### Layout Rules
-- **Паттерн боковых шторок (Slide-Over Drawers):** Просмотр и редактирование сущностей происходят в правой боковой шторке (`Sheet.tsx`), а не в центрированных модальных окнах. Синхронизируется с URL (`?record=<id>`).
-- **Строка таблицы:** Фиксированная высота `32px`, липкие колонки чекбокса (`28px`) и первой колонки (`COLLAPSED_IDENTIFIER_WIDTH = 38px`), ресайз колонок через CSS-переменные напрямую в DOM.
-- **Сайдбар:** фиксированная ширина `w-60` (складывается до `w-16`), `bg-[#fbfbfb] border-r border-[#e5e5e5]`. На мобильном (< 768px) скрывается (`hidden md:flex`), а навигация уходит в маршрут-меню и нижний бар.
-- **Шапка:** `h-14`, `bg-white border-b border-[#e5e5e5]`, sticky к верху.
-- **Один брейкпоинт:** `md:` (768px). Структурная раскладка строится на Tailwind-префиксах, а не на `useIsMobile`.
-- **Оверлеи:** Прокрутку фона и закрытие по Escape выполняет исключительно `useOverlay` (`lib/utils/use-scroll-lock.ts`).
-
-Полные правила вёрстки — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `docs/01_ARCHITECTURE/01_05_UI_CONVENTIONS.md`.
-
----
-
-## 7. FORM & VALIDATION STANDARDS
-
-Every form follows this pattern:
-
-```tsx
-// schemas/contact.schema.ts
-import { z } from 'zod';
-
-export const createContactSchema = z.object({
-  first_name: z.string().min(1, 'First name is required').max(100),
-  last_name: z.string().min(1, 'Last name is required').max(100),
-  email: z.string().email('Invalid email').optional().or(z.literal('')),
-  phone: z.string().max(30).optional(),
-  company_id: z.string().uuid().optional(),
-  custom_fields: z.record(z.unknown()).optional(),
-});
-
-export type CreateContactPayload = z.infer<typeof createContactSchema>;
-
-// components/core/contacts/create-contact-form.tsx
-'use client';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { createContactSchema, type CreateContactPayload } from '@/schemas/contact.schema';
-
-export function CreateContactForm({ onSuccess }: { onSuccess: () => void }) {
-  const form = useForm<CreateContactPayload>({
-    resolver: zodResolver(createContactSchema),
-    defaultValues: { first_name: '', last_name: '', email: '', phone: '', custom_fields: {} },
-  });
-
-  const mutation = useMutation({
-    mutationFn: (data: CreateContactPayload) => apiClient.post('/api/contacts', data),
-    onSuccess,
-  });
-
-  return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="first_name"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>First Name</FormLabel>
-              <FormControl>
-                <Input {...field} className="border-[#e5e5e5] bg-white text-[#111111] focus:border-[#4a38f5]" />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        {/* ...remaining fields */}
-        <Button type="submit" disabled={mutation.isPending} className="bg-[#4a38f5] text-white hover:bg-[#3d2ee0]">
-          {mutation.isPending ? 'Saving...' : 'Create Contact'}
-        </Button>
-      </form>
-    </Form>
-  );
-}
-```
-
-Rules:
-- Zod schemas live in `schemas/` and are reused for both client validation and server-side request validation (keep them in sync).
-- Field names in schemas use `snake_case` (database column convention), but the Zod `.transform()` can convert to camelCase for the frontend if the team decides.
-- All mutations show loading state (`isPending`), disable the submit button, and surface validation errors via `<FormMessage />`.
-- Server-side `4xx` errors are parsed and displayed via `form.setError()` using `onError` in `useMutation`.
-
----
-
-## 8. SERVER-SIDE CONVENTIONS (Fastify)
-
-### Route Definition Pattern
-
-```typescript
-// backend/src/routes/contact-routes.ts
-import type { FastifyInstance } from 'fastify';
-import { createContactSchema } from '../../shared/schemas/contact.schema'; // shared schemas package
-
-export async function contactRoutes(app: FastifyInstance) {
-  // All routes require authentication + tenant context
-  app.addHook('onRequest', app.authenticate);
-  app.addHook('onRequest', app.requirePermission('contacts:read'));
-
-  app.get('/contacts', {
-    schema: {
-      querystring: {
-        type: 'object',
-        properties: {
-          search: { type: 'string' },
-          page: { type: 'integer', default: 1 },
-          limit: { type: 'integer', default: 25, maximum: 100 },
-        },
-      },
-    },
-    handler: async (request, reply) => {
-      const { tenant_id } = request;
-      const { search, page, limit } = request.query as { search?: string; page: number; limit: number };
-      const offset = (page - 1) * limit;
-
-      const contacts = await app.db.query(
-        `SELECT * FROM contacts
-         WHERE tenant_id = $1
-           AND ($2::text IS NULL OR full_text @@ plainto_tsquery($2))
-         ORDER BY created_at DESC
-         LIMIT $3 OFFSET $4`,
-        [tenant_id, search ?? null, limit, offset]
-      );
-
-      return reply.send({ data: contacts, page, limit });
-    },
-  });
-
-  app.post('/contacts', {
-    schema: { body: createContactSchema }, // reuse Zod schema + ajv compilation
-    handler: async (request, reply) => {
-      const { tenant_id } = request;
-      const payload = request.body;
-
-      const [contact] = await app.db.query(
-        `INSERT INTO contacts (tenant_id, first_name, last_name, email, phone, company_id, custom_fields)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [tenant_id, payload.first_name, payload.last_name, payload.email, payload.phone, payload.company_id, JSON.stringify(payload.custom_fields ?? {})]
-      );
-
-      return reply.status(201).send(contact);
-    },
-  });
-}
-```
-
-### Middleware Decorators
-```typescript
-// backend/src/plugins/auth.ts
-declare module 'fastify' {
-  interface FastifyRequest {
-    tenant_id: string;
-    user_id: string;
-    permissions: Set<string>;
-    installed_modules: string[];
-  }
-}
-```
-
-### Background Jobs (BullMQ)
-- Queue names: `email`, `export`, `ai-bots`, `notifications`.
-- All job handlers read `tenant_id` from the job payload. Job data is scoped to the tenant.
-- Retry policies: exponential backoff, max 5 attempts, dead-letter to a `failed-jobs` queue.
-
-### API Response Envelope
-```typescript
-interface ApiResponse<T> {
-  data: T;
-  meta?: {
-    page: number;
-    limit: number;
-    total: number;
-  };
-}
-
-interface ApiError {
-  error: {
-    code: string;       // 'VALIDATION_ERROR', 'NOT_FOUND', 'PERMISSION_DENIED', etc.
-    message: string;
-    details?: Record<string, string[]>; // field-level errors
-  };
-}
-```
-
----
-
-## 9. MODULE SYSTEM — INSTALLATION & REGISTRY
-
-### Module Registration (Backend)
-```typescript
-// backend/src/modules/registry.ts
-interface ModuleDefinition {
-  slug: string;
-  name: string;
-  description: string;
-  icon: string;             // Lucide icon name
-  permissions: Permission[];
-  routes: (app: FastifyInstance) => Promise<void>;
-  menuItems: MenuItem[];
-}
-
-export const moduleRegistry: Record<string, ModuleDefinition> = {
-  service_center: { ... },
-  finance: { ... },
-  ai_bots: { ... },
-};
-```
-
-- On startup, the server queries `installed_modules` for the tenant and registers only active module routes.
-- Uninstalled module routes return `403` with `code: 'MODULE_NOT_INSTALLED'`.
-
-### Frontend Module Registration
-```typescript
-// lib/modules/registry.ts
-interface FrontendModule {
-  slug: string;
-  requiredPermissions: Permission[];
-  sidebar: React.ComponentType;    // sidebar nav item
-  pages: React.ComponentType;      // page component (lazy loaded via next/dynamic)
-}
-
-export const frontendModuleRegistry: Record<string, FrontendModule> = { ... };
-```
-
-- Dynamic imports use `next/dynamic` with `ssr: false` for heavy module UIs.
-- `Guard` component wraps every module page to double-check installation + permission on client mount.
-
----
-
-## 10. GENERAL CODE RULES
-
-### Imports
-- Use `@/` path alias for all project-internal imports.
-- Group imports: React/Next → Third-party → `@/` internal, separated by blank lines.
-- No relative `../../../` imports for anything beyond the same directory.
-
-### Error Handling
-- Backend: never leak stack traces. Use `app.setErrorHandler()` to unify error responses in the `ApiError` envelope.
-- Frontend: use React Error Boundaries around module sections. Wrap `useQuery` errors with `onError` for toast notifications. Use `toast({ variant: 'destructive', description: error.message })`.
-- Empty states: use a dedicated `<EmptyState icon={...} title="..." description="..." action={<Button>...</Button>} />` component. Never show a blank table.
-
-### Loading States
-- Tables/lists: use `<Skeleton className="h-12 w-full" />` (shadcn) × 5–10 rows.
-- Page transitions: Next.js `loading.tsx` with skeleton layout matching the page shape.
-- Mutations: spinner inside the button (`<Loader2 className="mr-2 h-4 w-4 animate-spin" />`).
-
-### Time & Date
-- All dates stored in UTC. Frontend converts to user timezone via `Intl.DateTimeFormat`, using the tenant timezone setting.
-- Relative times use a simple `timeAgo()` utility.
-
-### Database
-- Table names: `snake_case`, plural (`contacts`, `companies`, `deals`, `tasks`, `installed_modules`).
-- Primary keys: `id UUID DEFAULT gen_random_uuid() PRIMARY KEY`.
-- Timestamps: every table has `created_at TIMESTAMPTZ DEFAULT now()` and `updated_at TIMESTAMPTZ DEFAULT now()` with a trigger for auto-update.
-- Soft deletes: `deleted_at TIMESTAMPTZ` column. Queries filter `WHERE deleted_at IS NULL`. No hard deletes unless explicitly required (GDPR purge).
-
----
-
-## 11. TESTING
-
-- **Unit tests** (Vitest) for utilities, Zod schemas, permission logic.
-- **Integration tests** (Supertest + Fastify) for API routes with a test PostgreSQL.
-- **E2E** (Playwright) for critical flows: auth → create contact → create deal → view timeline.
-- Module tests are isolated — they run only if the module is installed in the test tenant fixture.
-
----
-
-## 12. GIT WORKFLOW
-
-- Branch naming: `feature/GETV-123-short-description`, `fix/GETV-456-bug-description`.
-- Commit messages: Conventional Commits — `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`.
-- No committing: `.env` files, `node_modules/`, `.next/`, `dist/`, coverage output.
-- Lint + TypeScript check must pass before push (enforced by `husky` pre-push hook).
-
----
-
-## 13. AI BOTS MODULE — ADDITIONAL RULES
-
-- Prompt templates are stored in the database, never hardcoded.
-- All LLM calls log `tenant_id`, `user_id`, `model`, `tokens_used`, `latency_ms` to an `ai_logs` table.
-- Streaming endpoints use SSE: `Content-Type: text/event-stream`. Fastify route returns a `ReadableStream`.
-- Chat timeline messages have `source: 'human' | 'ai' | 'system' | 'ai_bot'`.
-
----
-
-## 14. FINAL CHECKLIST — BEFORE YOU WRITE CODE
-
-1. Does this query include `WHERE tenant_id = ...`?
-2. Is there any `any` or `@ts-ignore`? → Remove it.
-3. Is the module guard (`<Guard>`) in place for module-specific UI?
-4. Are colors strictly from Twenty CRM Light Canvas (Canvas `#ffffff`, Border `#e5e5e5`, Accent `#4a38f5`, Text `#111111` / `#666666`, zero dark slate or default amber)?
-5. Is the Zod schema in `schemas/`, not inline?
-6. Does the form have loading/error/empty states handled?
-7. Is the import path using `@/` and properly grouped?
-8. For new modules: is it registered in both backend and frontend registries?
-
----
-
-## 15. SPEC-DRIVEN DEVELOPMENT & DOCS DISCIPLINE
-
-1. **Source of Truth:** Папка `docs/` является абсолютным источником правды для архитектуры и контрактов API.
-2. **Перед генерацией:** Всегда читай соответствующий PRD из `@docs/02_PRD_AND_MODULES/` или контракт из `@docs/03_API_CONTRACTS/`.
-3. **После генерации (Definition of Done):**
-   - Проверить типизацию: `tsc --noEmit` (0 ошибок).
-   - Обновить статус задачи `[x]` в `docs/04_PROJECT_STATE/ROADMAP_TASKS.md`.
-   - Зафиксировать изменения в `docs/04_PROJECT_STATE/CHANGELOG.md`.
-4. **Запрет на расхождение документации:** Если код меняет сигнатуру API или добавляет таблицу/поле в БД, соответствующий документ в `docs/` должен быть обновлен в той же итерации.
-
----
-
-## 16. AGENT SKILLS — ОБЯЗАТЕЛЬНЫЙ РИТУАЛ
-
-Набор `caveman-*` (17 скилов, `github.com/aidvizhhub/caveman-dvizh-skills`) установлен в
-`~/.config/kilo/skills/`. Это правила работы, а не справочник: они применяются к каждой задаче
-по этому проекту, а не по запросу.
-
-### Порядок применения
-
-| Когда | Скил | Что даёт |
-|---|---|---|
-| До задачи | `caveman-prevent` | Премортем: топ-3 причины провала закрыть до первой правки |
-| До задачи | `caveman-research` | Факты из официальной документации и исходников раньше блогов и памяти |
-| В процессе | `caveman-verify` | Снять факт «как есть» → сверить с «как должно» (план, `docs/`, канон) → расхождение чинить до следующего шага |
-| После задачи | `caveman-conclusion` | Вывод-вердикт: итог + что это значит + что делать дальше |
-| После задачи | `caveman-advise` | 3-4 варианта «куда дальше» с ценой каждого |
-
-Крупная задача идёт по `caveman-loop`: 8 шагов (память → разведка → рамки «готово =
-проверяемое условие» → план и премортем → дело с проверкой → доказательства → отчёт →
-запись), терминальный гейт «готово доказано фактами», кап 3 итерации → стоп и отчёт.
-
-При работе с кодом дополнительно: `caveman-code` (сначала как делают в индустрии, потом своё),
-`caveman-save` (границы файла 100-300 строк, max 500; тест до реализации),
-`caveman-diagnose` (баг — по уликам из логов, а не гаданием, одна переменная за раз).
-
-### Почему это в правилах проекта, а не в памяти сессии
-
-`AGENTS.md` и `.cursorrules` — единственные документы, которые читаются автоматически на каждой
-сессии. Канон `caveman-verify` прямо требует вшивать фикс в правила, иначе он не держится:
-скилы уже были установлены один раз и не подхватывались, потому что правила о них не знали.
-
-### Установка на новой машине
-
-```bash
-gh repo clone aidvizhhub/caveman-dvizh-skills
-mkdir -p ~/.config/kilo/skills
-cp -R caveman-dvizh-skills/skills/. ~/.config/kilo/skills/
-```
-
-`install.sh` из репозитория на macOS не работает: он использует `declare -A` (bash 4+), а
-системный `/bin/bash` — 3.2. Скрипт только копирует папки `skills/*`, поэтому `cp -R` даёт тот
-же результат. Штатные цели скрипта (`claude`, `opencode`, `codex`, `gemini`, `agents`) для Kilo
-не подходят — путь указывается явно.
+| Типы, структура папок, нейминг, границы модулей | `docs/agent-rules/01-typescript-and-structure.md` |
+| Мультитенантность, права, UI Guard | `docs/agent-rules/02-tenancy-and-permissions.md` |
+| Любая вёрстка / UI / цвета / компоненты | `docs/agent-rules/03-design-system.md` (+ `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md`, `01_05_UI_CONVENTIONS.md`) |
+| Формы, Zod, Fastify-роуты, BullMQ, формат ответов | `docs/agent-rules/04-forms-and-server.md` |
+| Реестр модулей, общие правила кода, тесты, git, AI Bots | `docs/agent-rules/05-modules-and-general.md` |
+| Набор `caveman-*` скилов (ритуал задач) | `docs/agent-rules/06-agent-skills-ritual.md` |
