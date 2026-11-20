@@ -20,10 +20,22 @@ export const createWarehouseItemSchema = z.object({
   min_stock: z.number().nonnegative().default(0),
   retail_price: z.number().nonnegative().default(0),
   cost_price: z.number().nonnegative().default(0),
+  model_ids: z.array(z.string().uuid()).optional(),
+  models: z.array(z.string()).optional(),
 });
 export type CreateWarehouseItemPayload = z.infer<typeof createWarehouseItemSchema>;
 
-export const updateWarehouseItemSchema = createWarehouseItemSchema.partial();
+export const updateWarehouseItemSchema = createWarehouseItemSchema
+  .partial()
+  .extend({
+    price: z.number().nonnegative().optional(),
+  })
+  .transform((val) => {
+    if (val.price !== undefined && val.retail_price === undefined) {
+      val.retail_price = val.price;
+    }
+    return val;
+  });
 export type UpdateWarehouseItemPayload = z.infer<typeof updateWarehouseItemSchema>;
 
 export const intakeBatchSchema = z.object({
@@ -68,23 +80,63 @@ export type SupplierOrderStatus = z.infer<typeof supplierOrderStatusSchema>;
 
 export const createSupplierOrderSchema = z.object({
   supplier_name: z.string().min(1, "Имя поставщика обязательно").max(200),
+  supplier_company_id: z.string().uuid().optional().nullable(),
   purchase_request_ids: z.array(z.string().uuid()).optional(),
   items: z
     .array(
       z.object({
-        purchase_request_id: z.string().uuid().optional(),
-        item_id: z.string().uuid().optional(),
+        purchase_request_id: z.string().uuid().optional().nullable(),
+        purchase_request_ids: z.array(z.string().uuid()).optional(),
+        item_id: z.string().uuid().optional().nullable(),
         item_name: z.string().min(1),
         sku: z.string().default(""),
+        requested_quantity: z.number().nonnegative().default(0),
+        extra_quantity: z.number().nonnegative().default(0),
         quantity: z.number().positive(),
         unit: z.string().default("шт"),
         price: z.number().nonnegative(),
+        repair_order_id: z.string().uuid().optional().nullable(),
+        repair_orders: z.string().optional(),
       }),
     )
     .optional(),
   notes: z.string().default(""),
 });
 export type CreateSupplierOrderPayload = z.infer<typeof createSupplierOrderSchema>;
+
+export const updateSupplierOrderSchema = z.object({
+  supplier_name: z.string().min(1).max(200).optional(),
+  supplier_company_id: z.string().uuid().optional().nullable(),
+  notes: z.string().optional(),
+  status: supplierOrderStatusSchema.optional(),
+  items: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        purchase_request_id: z.string().uuid().optional().nullable(),
+        purchase_request_ids: z.array(z.string().uuid()).optional(),
+        item_id: z.string().uuid().optional().nullable(),
+        item_name: z.string().min(1),
+        sku: z.string().default(""),
+        requested_quantity: z.number().nonnegative().default(0),
+        extra_quantity: z.number().nonnegative().default(0),
+        quantity: z.number().positive(),
+        unit: z.string().default("шт"),
+        price: z.number().nonnegative(),
+        repair_order_id: z.string().uuid().optional().nullable(),
+        repair_orders: z.string().optional(),
+      }),
+    )
+    .optional(),
+});
+export type UpdateSupplierOrderPayload = z.infer<typeof updateSupplierOrderSchema>;
+
+export const receiptSupplierOrderSchema = z.object({
+  cash_account_id: z.string().uuid().optional(),
+  mark_paid: z.boolean().default(false),
+  comment: z.string().optional(),
+});
+export type ReceiptSupplierOrderPayload = z.infer<typeof receiptSupplierOrderSchema>;
 
 export const paySupplierOrderSchema = z.object({
   cash_account_id: z.string().uuid().optional(),
@@ -105,8 +157,16 @@ export interface WarehouseItemRow {
   cost_price: string | number;
   total_stock?: string | number;
   reserved_stock?: string | number;
+  models_json?: WarehouseItemModelDTO[] | null;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+export interface WarehouseItemModelDTO {
+  id: string;
+  name: string;
+  brandId?: string;
+  brandName?: string;
 }
 
 export interface WarehouseItemDTO {
@@ -118,12 +178,48 @@ export interface WarehouseItemDTO {
   unit: string;
   minStock: number;
   retailPrice: number;
+  price?: number;
   costPrice: number;
   totalStock: number;
+  quantity?: number;
   reservedStock: number;
   availableStock: number;
+  models?: WarehouseItemModelDTO[];
+  modelIds?: string[];
+  modelNames?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+export const WAREHOUSE_LIMITS = [25, 50, 75, 100, 150, 200, 250] as const;
+export type WarehouseLimit = (typeof WAREHOUSE_LIMITS)[number];
+
+export const warehousePaginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce
+    .number()
+    .int()
+    .refine((val) => WAREHOUSE_LIMITS.includes(val as WarehouseLimit), {
+      message: `Limit must be one of: ${WAREHOUSE_LIMITS.join(", ")}`,
+    })
+    .default(25),
+  search: z.string().optional(),
+  category: z.string().optional(),
+  brand: z.string().optional(),
+  all: z.preprocess((v) => v === "true" || v === true, z.boolean().optional()),
+});
+export type WarehousePaginationQuery = z.infer<typeof warehousePaginationQuerySchema>;
+
+export interface WarehousePaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+export interface PaginatedWarehouseItemsDTO {
+  data: WarehouseItemDTO[];
+  meta: WarehousePaginationMeta;
 }
 
 export interface WarehouseBatchRow {
@@ -247,6 +343,10 @@ export interface SupplierOrderItemRow {
   item_id: string | null;
   item_name: string;
   sku: string;
+  requested_quantity?: string | number;
+  extra_quantity?: string | number;
+  repair_order_id?: string | null;
+  purchase_request_ids?: string[] | null;
   quantity: string | number;
   unit: string;
   price: string | number;
@@ -261,6 +361,11 @@ export interface SupplierOrderItemDTO {
   itemId: string | null;
   itemName: string;
   sku: string;
+  requestedQuantity: number;
+  extraQuantity: number;
+  repairOrderId?: string | null;
+  purchaseRequestIds?: string[];
+  repairOrders?: string;
   quantity: number;
   unit: string;
   price: number;
@@ -273,6 +378,7 @@ export interface SupplierOrderRow {
   tenant_id: string;
   order_number: string;
   supplier_name: string;
+  supplier_company_id?: string | null;
   status: string;
   total_amount: string | number;
   cash_account_id: string | null;
@@ -290,6 +396,7 @@ export interface SupplierOrderDTO {
   id: string;
   orderNumber: string;
   supplierName: string;
+  supplierCompanyId: string | null;
   status: SupplierOrderStatus;
   totalAmount: number;
   cashAccountId: string | null;

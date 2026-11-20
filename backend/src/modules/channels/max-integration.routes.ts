@@ -6,6 +6,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService } from "./max-bridge.service.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
+import { isBannedName } from "../crm/channel-identity.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
 import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
@@ -95,6 +96,8 @@ const internalInboundSchema = z.object({
   // Устаревшие поля для обратной совместимости
   tenantId: z.string().uuid().optional(),
   chatId: z.string().optional(),
+  threadId: z.string().optional(),
+  chat_thread_id: z.string().optional(),
   senderName: z.string().optional(),
   senderPhone: z.string().optional().nullable(),
   senderUserId: z.string().optional().nullable(),
@@ -247,7 +250,9 @@ export async function syncMaxDialogHistory(opts: {
 
       const source = msg.out ? "manager" : "client";
       const direction = msg.out ? "outbound" : "inbound";
-      const senderName = msg.out ? "Менеджер" : (target.firstName || opts.senderName || "Клиент MAX");
+      const rawTargetName = target.firstName || opts.senderName || "Клиент MAX";
+      const cleanTargetName = isBannedName(rawTargetName) ? "Клиент MAX" : rawTargetName;
+      const senderName = msg.out ? "Менеджер" : cleanTargetName;
       const externalMsgId = msg.id != null ? String(msg.id) : null;
 
       const existing = await queryOne<{ id: string }>(
@@ -449,11 +454,18 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   const selfPhone = body.selfPhone;
   const peerPhone = stripOwnerPhone(rawPhone, selfPhone);
 
-  const senderName =
+  const chatThreadId = (body.threadId || body.chat_thread_id || peerId).trim();
+  const peerUserId = (body.maxUserId || body.senderUserId || "").trim() || undefined;
+
+  const rawSenderName =
     body.firstName?.trim() ||
     (body.username ? `@${body.username.replace(/^@/, "")}` : null) ||
     body.senderName ||
     "Клиент MAX";
+  const senderName = isBannedName(rawSenderName) ? "Клиент MAX" : rawSenderName;
+
+  const rawFirstName = body.firstName?.trim();
+  const cleanFirstName = isBannedName(rawFirstName) ? undefined : rawFirstName;
 
   let attachmentUrl: string | undefined;
   let attachmentType: string | undefined;
@@ -482,7 +494,7 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     body.senderType === "bot";
 
   const maxProfile: ChannelProfile = {
-    firstName: body.firstName ?? undefined,
+    firstName: cleanFirstName,
     phone: peerPhone,
     username: body.username ?? body.senderUsername ?? undefined,
     isBot: isBotFlag,
@@ -512,6 +524,8 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
       channel: "max",
       channelAccountId,
       chatId: peerId,
+      peerUserId,
+      chatThreadId,
       text: body.text,
       senderName,
       senderPhone: peerPhone,

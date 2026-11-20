@@ -3,6 +3,7 @@ import type {
   ClientLookupDealDTO,
   ClientLookupResultDTO,
   ClientMessengerSourceDTO,
+  ExistingContactDTO,
   CreateBatchRepairPayload,
   CreateNotePayload,
   CreatePartPayload,
@@ -13,6 +14,7 @@ import type {
   DealActDTO,
   EquipmentHistoryItemDTO,
   EquipmentSearchSerialResultDTO,
+  RepairMasterDTO,
   RepairNoteRow,
   RepairOrderDTO,
   RepairOrderDetailDTO,
@@ -569,6 +571,18 @@ export class RepairsService {
       let dealId = payload.deal_id ? payload.deal_id.trim() : "";
       let companyId: string | null = payload.company_id ? payload.company_id.trim() : null;
 
+      const isCompanyRequested = Boolean(
+        payload.is_company ||
+        (payload.company_inn && payload.company_inn.trim()) ||
+        (payload.company_ogrn && payload.company_ogrn.trim()) ||
+        (payload.company_bik && payload.company_bik.trim()) ||
+        (payload.company_account_number && payload.company_account_number.trim()) ||
+        (payload.company_legal_address && payload.company_legal_address.trim())
+      );
+      if (isCompanyRequested && (!payload.company_name || !payload.company_name.trim())) {
+        throw new ValidationError("Укажите название компании", { company_name: ["Укажите название компании"] });
+      }
+
       // 0. Обработка реквизитов компании (дедупликация по ИНН или названию)
       if (!companyId && payload.company_inn && payload.company_inn.trim()) {
         const inn = payload.company_inn.trim();
@@ -628,23 +642,20 @@ export class RepairsService {
       if (!customerId) {
         // Проверяем дедупликацию по номеру телефона
         const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
-        if (canonicalPhone) {
-          const last10 = canonicalPhone.slice(-10);
+        const rawDigits = payload.customer_phone.replace(/\D/g, "");
+        const searchSuffix = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+
+        if (searchSuffix.length >= 6) {
           const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
             `SELECT id, company_id FROM contacts
              WHERE tenant_id = $1 AND deleted_at IS NULL
                AND (
-                 phone = $2
-                 OR phone LIKE '%' || $3
-                 OR whatsapp = $2
-                 OR whatsapp LIKE '%' || $3
-                 OR EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
-                   WHERE (p->>'number') LIKE '%' || $3
-                 )
+                 regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR additional_phones::text LIKE '%' || $2 || '%'
                )
              ORDER BY created_at ASC LIMIT 1`,
-            [tenantId, canonicalPhone, last10],
+            [tenantId, searchSuffix],
           );
           if (existingContact) {
             customerId = existingContact.id;
@@ -687,6 +698,16 @@ export class RepairsService {
             companyId = existingContact.company_id;
           }
         }
+      }
+
+      // Обновляем email контакта, если он был пустым, но передан в форме приёмки
+      if (customerId && payload.customer_email && payload.customer_email.trim()) {
+        await tx.query(
+          `UPDATE contacts
+           SET email = $1, updated_at = now()
+           WHERE tenant_id = $2 AND id = $3 AND (email IS NULL OR email = '')`,
+          [payload.customer_email.trim(), tenantId, customerId],
+        );
       }
 
       // 2.1. Если у контакта еще нет компании, или пользователь ввел новую/другую компанию, привязываем контакт к компании
@@ -881,6 +902,18 @@ export class RepairsService {
       let dealId = payload.deal_id ? payload.deal_id.trim() : "";
       let companyId: string | null = payload.company_id ? payload.company_id.trim() : null;
 
+      const isCompanyRequested = Boolean(
+        payload.is_company ||
+        (payload.company_inn && payload.company_inn.trim()) ||
+        (payload.company_ogrn && payload.company_ogrn.trim()) ||
+        (payload.company_bik && payload.company_bik.trim()) ||
+        (payload.company_account_number && payload.company_account_number.trim()) ||
+        (payload.company_legal_address && payload.company_legal_address.trim())
+      );
+      if (isCompanyRequested && (!payload.company_name || !payload.company_name.trim())) {
+        throw new ValidationError("Укажите название компании", { company_name: ["Укажите название компании"] });
+      }
+
       // 0. Обработка компании
       if (!companyId && payload.company_inn && payload.company_inn.trim()) {
         const inn = payload.company_inn.trim();
@@ -923,23 +956,20 @@ export class RepairsService {
       // 1. Клиент
       if (!customerId) {
         const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
-        if (canonicalPhone) {
-          const last10 = canonicalPhone.slice(-10);
+        const rawDigits = payload.customer_phone.replace(/\D/g, "");
+        const searchSuffix = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+
+        if (searchSuffix.length >= 6) {
           const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
             `SELECT id, company_id FROM contacts
              WHERE tenant_id = $1 AND deleted_at IS NULL
                AND (
-                 phone = $2
-                 OR phone LIKE '%' || $3
-                 OR whatsapp = $2
-                 OR whatsapp LIKE '%' || $3
-                 OR EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
-                   WHERE (p->>'number') LIKE '%' || $3
-                 )
+                 regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR additional_phones::text LIKE '%' || $2 || '%'
                )
              ORDER BY created_at ASC LIMIT 1`,
-            [tenantId, canonicalPhone, last10],
+            [tenantId, searchSuffix],
           );
           if (existingContact) {
             customerId = existingContact.id;
@@ -978,6 +1008,16 @@ export class RepairsService {
         if (existingContact?.company_id) {
           companyId = existingContact.company_id;
         }
+      }
+
+      // Обновляем email контакта, если он был пустым, но передан в форме пакетной приёмки
+      if (customerId && payload.customer_email && payload.customer_email.trim()) {
+        await tx.query(
+          `UPDATE contacts
+           SET email = $1, updated_at = now()
+           WHERE tenant_id = $2 AND id = $3 AND (email IS NULL OR email = '')`,
+          [payload.customer_email.trim(), tenantId, customerId],
+        );
       }
 
       // 1.1. Привязываем контакт к компании при наличии обоих идентификаторов
@@ -2115,9 +2155,13 @@ export class RepairsService {
         company: null,
         activeDeals: [],
         suggestedName: null,
+        suggestedSource: null,
         sources: [],
         channelsChecked: [],
         messengerLookupStatus: "idle",
+        repairsCount: 0,
+        existsInCrm: false,
+        existingContact: null,
       };
     }
 
@@ -2141,6 +2185,7 @@ export class RepairsService {
         company_id: string | null;
         company_name: string | null;
       } | null = null;
+      let matchedBy: "phone" | "name" | null = null;
 
       // 1. Try search by phone digits if phone is provided
       if (phoneDigits.length >= 6) {
@@ -2166,10 +2211,14 @@ export class RepairsService {
            LIMIT 1`,
           [tenantId, searchSuffix],
         );
+        if (contact) {
+          matchedBy = "phone";
+        }
       }
 
-      // 2. If not found by phone and query is provided (or search by name)
-      if (!contact && rawQuery.length >= 2) {
+      // 2. Search by name ONLY if phone is not provided (phoneDigits.length < 6).
+      // If a valid phone was entered, never fallback to loose name search (prevents false matches like "Рязанский Дмитрий").
+      if (!contact && phoneDigits.length < 6 && rawQuery.length >= 2) {
         contact = await tx.queryOne<{
           id: string;
           first_name: string;
@@ -2193,15 +2242,65 @@ export class RepairsService {
            LIMIT 1`,
           [tenantId, rawQuery],
         );
+        if (contact) {
+          matchedBy = "name";
+        }
       }
 
-      if (!contact) {
-        return { contact: null, company: null, activeDeals: [] };
+      // 3. If not found in contacts, check previous repair_orders by phone
+      if (!contact && phoneDigits.length >= 6) {
+        const searchSuffix = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+        const ro = await tx.queryOne<{
+          customer_id: string | null;
+          customer_name: string;
+          customer_phone: string;
+        }>(
+          `SELECT customer_id, customer_name, customer_phone
+           FROM repair_orders
+           WHERE tenant_id = $1
+             AND regexp_replace(customer_phone, '[^0-9]', '', 'g') LIKE '%' || $2
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [tenantId, searchSuffix],
+        );
+        if (ro) {
+          matchedBy = "phone";
+          if (ro.customer_id) {
+            contact = await tx.queryOne<{
+              id: string;
+              first_name: string;
+              last_name: string | null;
+              middle_name: string | null;
+              phone: string | null;
+              email: string | null;
+              company_id: string | null;
+              company_name: string | null;
+            }>(
+              `SELECT id, first_name, last_name, middle_name, phone, email, company_id, company_name
+               FROM contacts
+               WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+              [tenantId, ro.customer_id],
+            );
+          }
+          if (!contact && ro.customer_name) {
+            const parts = ro.customer_name.trim().split(/\s+/);
+            contact = {
+              id: ro.customer_id ?? "",
+              first_name: parts[0] || ro.customer_name,
+              last_name: parts.slice(1).join(" ") || null,
+              middle_name: null,
+              phone: ro.customer_phone,
+              email: null,
+              company_id: null,
+              company_name: null,
+            };
+          }
+        }
       }
 
-      // 3. Find company requisites if company_id is present
+      // 4. Find company requisites if company_id is present
       let company: ClientLookupResultDTO["company"] = null;
-      if (contact.company_id) {
+      if (contact && contact.company_id) {
         const compRow = await tx.queryOne<{
           id: string;
           name: string;
@@ -2229,78 +2328,110 @@ export class RepairsService {
         }
       }
 
-      // 4. Find active deals associated with this contact or company
-      const dealRows = await tx.query<{
-        id: string;
-        title: string;
-        description: string | null;
-        budget: string | number | null;
-        currency: string | null;
-        stage_id: string;
-        stage_name: string;
-        stage_color: string | null;
-        pipeline_id: string;
-        pipeline_name: string;
-        created_at: Date | string;
-        owner_name: string | null;
-      }>(
-        `SELECT
-           d.id,
-           d.title,
-           d.description,
-           d.budget,
-           d.currency,
-           d.stage_id,
-           s.name AS stage_name,
-           s.color AS stage_color,
-           d.pipeline_id,
-           p.name AS pipeline_name,
-           d.created_at,
-           u.name AS owner_name
-         FROM deals d
-         JOIN stages s ON s.id = d.stage_id
-         JOIN pipelines p ON p.id = d.pipeline_id
-         LEFT JOIN users u ON u.id = d.owner_id
-         WHERE d.tenant_id = $1
-           AND d.deleted_at IS NULL
-           AND s.is_won = false
-           AND s.is_lost = false
-           AND (
-             d.contact_id = $2
-             ${contact.company_id ? "OR d.company_id = $3" : ""}
-           )
-         ORDER BY d.created_at DESC
-         LIMIT 20`,
-        contact.company_id ? [tenantId, contact.id, contact.company_id] : [tenantId, contact.id],
-      );
+      // 5. Find active deals associated with this contact or company
+      let activeDeals: ClientLookupDealDTO[] = [];
+      if (contact && contact.id) {
+        const dealRows = await tx.query<{
+          id: string;
+          title: string;
+          description: string | null;
+          budget: string | number | null;
+          currency: string | null;
+          stage_id: string;
+          stage_name: string;
+          stage_color: string | null;
+          pipeline_id: string;
+          pipeline_name: string;
+          created_at: Date | string;
+          owner_name: string | null;
+        }>(
+          `SELECT
+             d.id,
+             d.title,
+             d.description,
+             d.budget,
+             d.currency,
+             d.stage_id,
+             s.name AS stage_name,
+             s.color AS stage_color,
+             d.pipeline_id,
+             p.name AS pipeline_name,
+             d.created_at,
+             u.name AS owner_name
+           FROM deals d
+           JOIN stages s ON s.id = d.stage_id
+           JOIN pipelines p ON p.id = d.pipeline_id
+           LEFT JOIN users u ON u.id = d.owner_id
+           WHERE d.tenant_id = $1
+             AND d.deleted_at IS NULL
+             AND s.is_won = false
+             AND s.is_lost = false
+             AND (
+               d.contact_id = $2
+               ${contact.company_id ? "OR d.company_id = $3" : ""}
+             )
+           ORDER BY d.created_at DESC
+           LIMIT 20`,
+          contact.company_id ? [tenantId, contact.id, contact.company_id] : [tenantId, contact.id],
+        );
 
-      const activeDeals: ClientLookupDealDTO[] = dealRows.map((d) => ({
-        id: d.id,
-        title: d.title,
-        description: d.description ?? "",
-        budget: typeof d.budget === "number" ? d.budget : (parseFloat(String(d.budget || 0)) || 0),
-        currency: d.currency || "RUB",
-        stageId: d.stage_id,
-        stageName: d.stage_name,
-        stageColor: d.stage_color || "#4a38f5",
-        pipelineId: d.pipeline_id,
-        pipelineName: d.pipeline_name,
-        createdAt: d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
-        ownerName: d.owner_name ?? null,
-      }));
+        activeDeals = dealRows.map((d) => ({
+          id: d.id,
+          title: d.title,
+          description: d.description ?? "",
+          budget: typeof d.budget === "number" ? d.budget : (parseFloat(String(d.budget || 0)) || 0),
+          currency: d.currency || "RUB",
+          stageId: d.stage_id,
+          stageName: d.stage_name,
+          stageColor: d.stage_color || "#4a38f5",
+          pipelineId: d.pipeline_id,
+          pipelineName: d.pipeline_name,
+          createdAt: d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
+          ownerName: d.owner_name ?? null,
+        }));
+      }
 
-      return { contact, company, activeDeals };
+      // 6. Calculate total number of repairs for this client/phone
+      let repairsCount = 0;
+      const searchSuffix = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+      if (contact || phoneDigits.length >= 6) {
+        const countRow = await tx.queryOne<{ count: string | number }>(
+          `SELECT count(*)::int AS count
+           FROM repair_orders
+           WHERE tenant_id = $1
+             AND (
+               ($2::uuid IS NOT NULL AND customer_id = $2::uuid)
+               OR (
+                 $3::text <> '' AND (
+                   regexp_replace(customer_phone, '[^0-9]', '', 'g') LIKE '%' || $3
+                   OR regexp_replace(customer_phone, '[^0-9]', '', 'g') = $4
+                 )
+               )
+             )`,
+          [tenantId, (contact && contact.id) ? contact.id : null, searchSuffix, phoneDigits],
+        );
+        repairsCount = typeof countRow?.count === "number" ? countRow.count : (parseInt(String(countRow?.count || 0), 10) || 0);
+      }
+
+      if (!contact && repairsCount === 0) {
+        return { contact: null, company: null, activeDeals: [], repairsCount: 0, matchedBy: null };
+      }
+
+      return { contact, company, activeDeals, repairsCount, matchedBy };
     });
 
     const messengerRes = await messengerPromise;
 
     let contact = dbResult.contact;
-    let company = dbResult.company;
-    let activeDeals = dbResult.activeDeals;
+    const company = dbResult.company;
+    const activeDeals = dbResult.activeDeals;
+    const repairsCount = dbResult.repairsCount;
+    let matchedBy = dbResult.matchedBy;
 
     // Если контакт не найден по прямому запросу, но найден через глубокий поиск мессенджеров
     if (!contact && messengerRes?.existingClient) {
       const ec = messengerRes.existingClient;
+      matchedBy = "phone";
       contact = {
         id: ec.id,
         first_name: ec.firstName,
@@ -2313,15 +2444,34 @@ export class RepairsService {
       };
     }
 
+    const fullName = contact
+      ? [contact.last_name, contact.first_name, contact.middle_name].filter(Boolean).join(" ").trim() || contact.first_name
+      : "";
+
+    const existingContact: ExistingContactDTO | null = (contact || repairsCount > 0)
+      ? {
+          contactId: (contact && contact.id) ? contact.id : null,
+          fullName: fullName || "Клиент",
+          phone: contact?.phone ?? (rawPhone || null),
+          email: contact?.email ?? null,
+          companyId: contact?.company_id ?? null,
+          companyName: contact?.company_name ?? (company?.name ?? null),
+          repairsCount,
+          activeDealsCount: activeDeals.length,
+          matchedBy,
+        }
+      : null;
+
     const sources: ClientMessengerSourceDTO[] = messengerRes?.sources ?? [];
     const suggestedName: string | null = messengerRes?.suggestedName ?? null;
+    const suggestedSource = messengerRes?.suggestedSource ?? (contact ? "crm" : null);
     const channelsChecked: string[] = messengerRes?.channelsChecked ?? (contact ? ["crm"] : []);
     const messengerLookupStatus = shouldResearchMessengers
       ? (sources.length > 0 ? "found" : "not_found")
       : "idle";
 
     return {
-      found: Boolean(contact || (messengerRes && messengerRes.found)),
+      found: Boolean(contact || (messengerRes && messengerRes.found) || repairsCount > 0),
       client: contact
         ? {
             id: contact.id,
@@ -2337,9 +2487,13 @@ export class RepairsService {
       company,
       activeDeals,
       suggestedName,
+      suggestedSource,
       sources,
       channelsChecked,
       messengerLookupStatus,
+      repairsCount,
+      existsInCrm: Boolean((contact && contact.id) || repairsCount > 0),
+      existingContact,
     };
   }
 
@@ -2363,6 +2517,9 @@ export class RepairsService {
       case "malfunction":
       case "malfunctions":
         return "equipment_malfunctions";
+      case "category":
+      case "categories":
+        return "warehouse_categories";
       default:
         throw new ValidationError(`Unknown dictionary category: ${category}`, {});
     }
@@ -2398,12 +2555,44 @@ export class RepairsService {
         [tenantId],
       );
 
+      // Загружаем категории из warehouse_categories
+      let categoryRows = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      if (categoryRows.length === 0) {
+        const defaultCategoryNames = [
+          "Запчасти",
+          "Расходники",
+          "Дисплеи",
+          "Аккумуляторы",
+          "Корпуса",
+          "Шлейфы",
+          "Инструменты",
+          "Оборудование",
+          "Аксессуары",
+          "Химия и пайка",
+        ];
+        for (const defName of defaultCategoryNames) {
+          await tx.query(
+            `INSERT INTO warehouse_categories (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
+            [tenantId, defName],
+          );
+        }
+        categoryRows = await tx.query<{ id: string; name: string }>(
+          `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 ORDER BY name ASC`,
+          [tenantId],
+        );
+      }
+
       return {
         types: types.map((r) => ({ id: r.id, name: r.name })),
         brands: brands.map((r) => ({ id: r.id, name: r.name })),
         models: models.map((r) => ({ id: r.id, name: r.name, brandId: r.brand_id, brandName: r.brand_name })),
         accessories: accessories.map((r) => ({ id: r.id, name: r.name })),
         malfunctions: malfunctions.map((r) => ({ id: r.id, name: r.name })),
+        categories: categoryRows.map((r) => ({ id: r.id, name: r.name })),
       };
     });
   }
@@ -2598,6 +2787,42 @@ export class RepairsService {
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
 
+      if (table === "warehouse_categories") {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const existing = await tx.queryOne<{ id: string; name: string }>(
+          isUuid
+            ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
+            : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+
+        let row: { id: string; name: string } | null = null;
+        const oldName = existing ? existing.name : id;
+
+        if (existing) {
+          row = await tx.queryOne<{ id: string; name: string }>(
+            `UPDATE warehouse_categories SET name = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+            [trimmed, tenantId, existing.id],
+          );
+        } else {
+          row = await tx.queryOne<{ id: string; name: string }>(
+            `INSERT INTO warehouse_categories (tenant_id, name) VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO UPDATE SET updated_at = now()
+             RETURNING id, name`,
+            [tenantId, trimmed],
+          );
+        }
+
+        // Синхронизируем переименование категории в товарах на складе
+        await tx.query(
+          `UPDATE warehouse_items SET category = $1, updated_at = now()
+           WHERE tenant_id = $2 AND category = $3 AND deleted_at IS NULL`,
+          [trimmed, tenantId, oldName],
+        );
+
+        return row ?? { id, name: trimmed };
+      }
+
       if (table === "equipment_brands") {
         const row = await tx.queryOne<{ id: string; name: string }>(
           `UPDATE equipment_brands SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
@@ -2635,6 +2860,36 @@ export class RepairsService {
   ): Promise<{ success: boolean; id: string }> {
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
+
+      if (table === "warehouse_categories") {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const existing = await tx.queryOne<{ id: string; name: string }>(
+          isUuid
+            ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
+            : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+
+        const targetId = existing ? existing.id : id;
+        const categoryName = existing ? existing.name : id;
+
+        await tx.query(
+          isUuid
+            ? `DELETE FROM warehouse_categories WHERE tenant_id = $1 AND (id = $2 OR lower(name) = lower($3))`
+            : `DELETE FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          isUuid ? [tenantId, targetId, categoryName] : [tenantId, categoryName],
+        );
+
+        // Безопасное отвязывание: у связанных товаров категория сбрасывается в пустую
+        await tx.query(
+          `UPDATE warehouse_items SET category = '', updated_at = now()
+           WHERE tenant_id = $1 AND category = $2 AND deleted_at IS NULL`,
+          [tenantId, categoryName],
+        );
+
+        return { success: true, id: targetId };
+      }
+
       const existing = await tx.queryOne<{ id: string; name: string }>(
         `SELECT id, name FROM ${table} WHERE tenant_id = $1 AND id = $2`,
         [tenantId, id],
@@ -2676,6 +2931,13 @@ export class RepairsService {
         const res = await tx.queryOne<{ count: string }>(
           `SELECT count(*)::text AS count FROM repair_orders
            WHERE tenant_id = $1 AND ($2 = ANY(malfunctions) OR defect_description ILIKE '%' || $2 || '%') AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      } else if (normCategory === "category" || normCategory === "categories") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM warehouse_items
+           WHERE tenant_id = $1 AND category = $2 AND deleted_at IS NULL`,
           [tenantId, itemName],
         );
         count = Number(res?.count ?? 0);
@@ -2983,6 +3245,47 @@ export class RepairsService {
         isCurrent: r.id === repairOrderId,
         createdAt: toIso(r.created_at),
       };
+    });
+  }
+
+  /**
+   * Retrieves active masters (employees) of the tenant for assignment in repair orders.
+   * Only includes active users (activated_at IS NOT NULL, deleted_at IS NULL)
+   * with eligible roles ('owner', 'admin', 'technician', 'manager').
+   */
+  async listMasters(tenantId: string): Promise<RepairMasterDTO[]> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{
+        id: string;
+        name: string;
+        email: string | null;
+        phone: string | null;
+        role: string;
+      }>(
+        `SELECT id, name, email, phone, role
+         FROM users
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND activated_at IS NOT NULL
+           AND role IN ('owner', 'admin', 'technician', 'manager')
+         ORDER BY
+           CASE role
+             WHEN 'technician' THEN 0
+             WHEN 'admin' THEN 1
+             WHEN 'owner' THEN 2
+             ELSE 3
+           END,
+           name ASC`,
+        [tenantId],
+      );
+
+      return rows.map((r) => ({
+        id: r.id,
+        fullName: r.name,
+        email: r.email,
+        phone: r.phone,
+        role: r.role,
+      }));
     });
   }
 }

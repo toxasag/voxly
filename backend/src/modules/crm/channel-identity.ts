@@ -73,7 +73,8 @@ export const UNKNOWN_CONTACT_NAME = "Клиент";
 const CONTACT_CHANNEL_BY_SLUG: Readonly<Record<string, ContactChannel>> = {
   telegram: "telegram",
   whatsapp: "whatsapp",
-  max: "rumax",
+  max: "max",
+  rumax: "rumax",
   webchat: "phone",
   phone: "phone",
   email: "email",
@@ -106,12 +107,21 @@ export function contactChannelFor(channel: string): ContactChannel {
  * `123456789`. Он остаётся запасным вариантом только если не похож на
  * идентификатор — тогда это осмысленное имя из другого канала.
  */
+export function isBannedName(name?: string | null): boolean {
+  if (!name) return false;
+  return /^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)(?:\s+.*)?$/i.test(name.trim());
+}
+
 export function contactNameFrom(identity: SenderIdentity): {
   first_name: string;
   last_name: string;
 } {
-  const first = identity.profile?.firstName?.trim() ?? "";
+  let first = identity.profile?.firstName?.trim() ?? "";
   const last = identity.profile?.lastName?.trim() ?? "";
+
+  if (/^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)$/i.test(first)) {
+    first = "";
+  }
 
   if (first !== "" || last !== "") {
     return { first_name: first === "" ? UNKNOWN_CONTACT_NAME : first, last_name: last };
@@ -127,6 +137,11 @@ function nameFromSender(senderName: string): { first_name: string; last_name: st
   // Только цифры (и «@» с цифрами) — это идентификатор канала: у Telegram
   // peerId, у MAX числовой профиль. Именем такое быть не может.
   if (trimmed === "" || /^@?\d+$/.test(trimmed)) return null;
+
+  // Системные имена сервисов и ботов не признаются именем контакта
+  if (/^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)(?:\s+.*)?$/i.test(trimmed)) {
+    return null;
+  }
 
   // Системные заглушки сайта вида «Посетитель сайта (...)» или «Клиент ...» не режем по пробелу
   if (/^Посетитель\s+сайта/i.test(trimmed) || /^Клиент(?:\s+.*)?$/i.test(trimmed)) {
@@ -560,6 +575,14 @@ export function isBotSender(input: {
   isBot?: boolean | null;
   sourceMetadata?: Record<string, unknown> | null;
 }): boolean {
+  // 0. Системный бот уведомлений и авторизации (TELEGRAM_AUTH_BOT_TOKEN / TELEGRAM_AUTH_BOT_USERNAME)
+  const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+  const systemBotUsername = (process.env.TELEGRAM_AUTH_BOT_USERNAME || "GetVoxlybot").trim().toLowerCase().replace(/^@/, "");
+
+  if (systemBotId) {
+    if (input.chatId === systemBotId || input.senderName === systemBotId) return true;
+  }
+
   // 1. Нативный или явно переданный признак бота
   if (input.isBot === true) return true;
   if (input.profile?.isBot === true) return true;
@@ -581,6 +604,7 @@ export function isBotSender(input: {
   for (const rawUsername of usernameCandidates) {
     if (!rawUsername || typeof rawUsername !== "string") continue;
     const clean = rawUsername.trim().replace(/^@/, "");
+    if (clean.toLowerCase() === systemBotUsername) return true;
     // По спецификации Telegram юзернеймы ботов обязаны заканчиваться на 'bot' (например, 'kupmsk_bot', 'myBot')
     if (clean.length >= 3 && /(?:_bot|bot)$/i.test(clean)) {
       return true;
@@ -590,6 +614,7 @@ export function isBotSender(input: {
   // 4. Анализ senderName: если в качестве имени передан юзернейм бота вида @kupmsk_bot или my_bot
   if (input.senderName && typeof input.senderName === "string") {
     const trimmedSender = input.senderName.trim().replace(/^@/, "");
+    if (trimmedSender.toLowerCase() === systemBotUsername) return true;
     if (/^[a-zA-Z0-9_]{3,}(?:_bot|bot)$/i.test(trimmedSender)) {
       return true;
     }

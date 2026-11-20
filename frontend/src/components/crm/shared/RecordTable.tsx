@@ -129,6 +129,9 @@ export interface RecordTableProps<T> {
   pagination?: ReactNode;
   rowHeight?: number;
   scrollPaddingBottom?: string;
+  sortColumn?: string | null;
+  sortAsc?: boolean;
+  onSortChange?: (columnId: string | null, asc: boolean) => void;
 }
 
 export function RecordTable<T>({
@@ -149,9 +152,33 @@ export function RecordTable<T>({
   pagination,
   rowHeight,
   scrollPaddingBottom = "pb-4",
+  sortColumn: externalSortColumn,
+  sortAsc: externalSortAsc,
+  onSortChange,
 }: RecordTableProps<T>) {
-  const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortAsc, setSortAsc] = useState(false);
+  const [internalSortColumn, setInternalSortColumn] = useState<string | null>(null);
+  const [internalSortAsc, setInternalSortAsc] = useState(false);
+
+  const isControlledSort = externalSortColumn !== undefined;
+  const sortColumn = isControlledSort ? externalSortColumn : internalSortColumn;
+  const sortAsc = externalSortAsc !== undefined ? externalSortAsc : internalSortAsc;
+
+  const handleSortClick = useCallback(
+    (columnId: string) => {
+      let nextColumn: string | null = columnId;
+      let nextAsc = false;
+      if (sortColumn === columnId) {
+        nextAsc = !sortAsc;
+      }
+      if (!isControlledSort) {
+        setInternalSortColumn(nextColumn);
+        setInternalSortAsc(nextAsc);
+      }
+      onSortChange?.(nextColumn, nextAsc);
+    },
+    [isControlledSort, sortColumn, sortAsc, onSortChange],
+  );
+
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnsMenuAnchor, setColumnsMenuAnchor] = useState<"toolbar" | "headerPlus">("toolbar");
   const [columnSearch, setColumnSearch] = useState("");
@@ -740,13 +767,7 @@ export function RecordTable<T>({
                   {column.sortValue !== undefined ? (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (sortColumn === column.id) setSortAsc((prev) => !prev);
-                        else {
-                          setSortColumn(column.id);
-                          setSortAsc(false);
-                        }
-                      }}
+                      onClick={() => handleSortClick(column.id)}
                       className={cn(
                         "flex min-w-0 items-center gap-1.5 truncate text-[12px] font-medium transition-colors hover:text-[#111111] cursor-pointer",
                         sortColumn === column.id ? "text-[#111111]" : "text-[#666666]",

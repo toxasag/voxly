@@ -24,18 +24,19 @@ import type {
 } from "./deals.types.js";
 import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
-import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
+import { NotFoundError, ValidationError, UnprocessableEntityError } from "../../../plugins/errorHandler.js";
 import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
 import { messageTranslationService } from "../translation/message-translation.service.js";
 import { chatEventBus } from "../chat/chat-events.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
   budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
-  closed_at, lead_notified_at, created_at, updated_at
+  closed_at, lead_notified_at, created_at, updated_at, chat_thread_id, status
 `;
 
 /**
@@ -49,6 +50,7 @@ const DEAL_COLUMNS_WITH_LABELS = `
   d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.source_widget_id, d.title,
   d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
+  d.chat_thread_id, d.status,
   co.name AS company_name,
   co.phone AS company_phone,
   co.email AS company_email,
@@ -60,6 +62,12 @@ const DEAL_COLUMNS_WITH_LABELS = `
   ct.email AS contact_email,
   ct.job_title AS contact_job_title,
   ct.is_personal AS contact_is_personal,
+  ct.socials AS contact_socials,
+  ct.channel AS contact_channel,
+  ct.telegram_username AS contact_telegram_username,
+  ct.whatsapp AS contact_whatsapp,
+  ca.channel AS source_channel,
+  ca.label AS source_channel_label,
   ow.name AS owner_name,
   ln.body AS latest_note_body,
   COALESCE(tk.total_tasks_count, 0) AS tasks_count,
@@ -83,6 +91,8 @@ const DEAL_LABEL_JOINS = `
     ON co.id = d.company_id AND co.tenant_id = d.tenant_id AND co.deleted_at IS NULL
   LEFT JOIN contacts ct
     ON ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
+  LEFT JOIN channel_accounts ca
+    ON ca.id = d.source_widget_id AND ca.tenant_id = d.tenant_id AND ca.deleted_at IS NULL
   LEFT JOIN users ow
     ON ow.id = d.owner_id AND ow.tenant_id = d.tenant_id AND ow.deleted_at IS NULL
   LEFT JOIN LATERAL (
@@ -411,11 +421,57 @@ export class DealsService {
         [tenantId, payload.stage_id],
       );
 
+      // Валидация контакта: проверка принадлежности и запрет создания сделок с поставщиками
+      const contactId = nullIfBlank(payload.contact_id);
+      let contactInfo: { channel: string; socials: Array<{ kind: string }> } | null = null;
+      if (contactId) {
+        const contact = await tx.queryOne<{ id: string; contact_type: string; channel: string; socials: Array<{ kind: string }> }>(
+          `SELECT id, contact_type, channel, socials FROM contacts
+           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+          [contactId, tenantId],
+        );
+        if (contact === null) {
+          throw new ValidationError("contact_id does not belong to this tenant", {
+            contact_id: ["Unknown contact"],
+          });
+        }
+        if (contact.contact_type === "vendor") {
+          throw new UnprocessableEntityError("Нельзя создать сделку с поставщиком", {
+            contact_id: ["Сделка не может быть создана с контактом в статусе 'Поставщик'"],
+          });
+        }
+        contactInfo = contact;
+      }
+
+      // Разрешение источника/канала коммуникации (source_widget_id)
+      let resolvedSourceWidgetId = nullIfBlank(payload.source_widget_id);
+      if (!resolvedSourceWidgetId && contactInfo) {
+        const preferredChannel = contactInfo.socials?.find((s) => s.kind === "max")
+          ? "max"
+          : contactInfo.channel !== "phone"
+            ? contactInfo.channel
+            : null;
+        if (preferredChannel) {
+          const acc = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL LIMIT 1`,
+            [tenantId, preferredChannel],
+          );
+          if (acc) resolvedSourceWidgetId = acc.id;
+        }
+      }
+      if (!resolvedSourceWidgetId) {
+        const defAcc = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel IN ('max', 'telegram', 'whatsapp') AND status = 'connected' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        if (defAcc) resolvedSourceWidgetId = defAcc.id;
+      }
+
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id, chat_thread_id, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -435,7 +491,9 @@ export class DealsService {
           nullIfBlank(payload.owner_id) ?? createdBy,
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
-          nullIfBlank(payload.source_widget_id),
+          resolvedSourceWidgetId,
+          payload.chat_thread_id ?? null,
+          payload.status ?? "active",
         ],
       );
 
@@ -482,6 +540,8 @@ export class DealsService {
     if (payload.owner_id !== undefined) push("owner_id", nullIfBlank(payload.owner_id));
     if (payload.close_date !== undefined) push("close_date", nullIfBlank(payload.close_date));
     if (payload.position !== undefined) push("position", payload.position);
+    if (payload.chat_thread_id !== undefined) push("chat_thread_id", nullIfBlank(payload.chat_thread_id));
+    if (payload.status !== undefined) push("status", payload.status);
 
     if (payload.custom_fields !== undefined) {
       params.push(JSON.stringify(payload.custom_fields));
@@ -491,6 +551,13 @@ export class DealsService {
     if (payload.closed_at !== undefined) {
       const closedAt = nullIfBlank(payload.closed_at);
       push("closed_at", closedAt === null ? null : new Date(closedAt).toISOString());
+    }
+
+    if (payload.created_at !== undefined) {
+      const createdAt = nullIfBlank(payload.created_at);
+      if (createdAt) {
+        push("created_at", new Date(createdAt).toISOString());
+      }
     }
 
     if (assignments.length === 0) {
@@ -529,8 +596,8 @@ export class DealsService {
   ): Promise<void> {
     const contactId = nullIfBlank(payload.contact_id);
     if (contactId !== null) {
-      const contact = await queryOne<{ id: string }>(
-        `SELECT id FROM contacts
+      const contact = await queryOne<{ id: string; contact_type: string }>(
+        `SELECT id, contact_type FROM contacts
          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [contactId, tenantId],
       );
@@ -538,6 +605,12 @@ export class DealsService {
       if (contact === null) {
         throw new ValidationError("contact_id does not belong to this tenant", {
           contact_id: ["Unknown contact"],
+        });
+      }
+
+      if (contact.contact_type === "vendor") {
+        throw new UnprocessableEntityError("Нельзя связать сделку с поставщиком", {
+          contact_id: ["Сделка не может быть создана или связана с контактом в статусе 'Поставщик'"],
         });
       }
     }
@@ -724,6 +797,112 @@ export class DealsService {
     );
 
     return row !== null;
+  }
+
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.stage_id === "string" && filters.stage_id.trim().length > 0) {
+      params.push(filters.stage_id.trim());
+      conditions.push(`d.stage_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
+  }
+
+  async bulkMove(
+    tenantId: string,
+    payload: BulkActionPayload & { stage_id: string },
+  ): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET stage_id = $3, updated_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids, payload.stage_id],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId, payload.stage_id];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET stage_id = $2, updated_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
   }
 
   // -------------------------------------------------------------------------

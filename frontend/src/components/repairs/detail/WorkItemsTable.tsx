@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, type KeyboardEvent } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, type KeyboardEvent } from "react";
 import { Wrench, Plus, Trash2, User, Search, BookOpen, Loader2, Check } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkItem } from "@/lib/repairs/repairs.types";
@@ -10,6 +10,8 @@ import {
   useAddRepairServiceToCatalog,
   useCreateWork,
   useDeleteWork,
+  useRepairMasters,
+  type RepairMasterDTO,
 } from "@/lib/api/use-repairs";
 import { ServiceCatalogDialog } from "./ServiceCatalogDialog";
 import { cn } from "@/lib/utils";
@@ -42,8 +44,20 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
   const comboboxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const { data: mastersData } = useRepairMasters();
   const { data: teamData } = useTeamMembers();
-  const masters = teamData?.members ?? [];
+  const masters: RepairMasterDTO[] = useMemo(() => {
+    if (mastersData && mastersData.length > 0) return mastersData;
+    return (teamData?.members ?? [])
+      .filter((m) => m.status === "active" && m.role !== "viewer")
+      .map((m) => ({
+        id: m.id,
+        fullName: m.fullName,
+        email: m.email,
+        phone: m.phone,
+        role: m.role,
+      }));
+  }, [mastersData, teamData]);
 
   const { data: servicesCatalog = [], isLoading: isCatalogLoading } = useRepairServicesCatalog();
   const addServiceMutation = useAddRepairServiceToCatalog();

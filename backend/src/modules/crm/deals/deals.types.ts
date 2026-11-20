@@ -26,6 +26,8 @@ export const createDealSchema = z.object({
   owner_id: optionalUuid,
   source_widget_id: optionalUuid,
   close_date: optionalDate,
+  chat_thread_id: z.string().optional(),
+  status: z.string().optional(),
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
 });
@@ -41,10 +43,13 @@ export const updateDealSchema = z.object({
   owner_id: optionalUuid,
   source_widget_id: optionalUuid,
   close_date: optionalDate,
+  chat_thread_id: z.string().optional(),
+  status: z.string().optional(),
   position: z.number().optional(),
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
   closed_at: z.string().datetime().optional().or(z.literal("")),
+  created_at: z.string().datetime({ offset: true }).or(z.string().datetime()).optional().or(z.literal("")),
 });
 
 export const moveDealStageSchema = z.object({
@@ -123,6 +128,8 @@ export interface DealRow {
   position: number;
   closed_at: Date | string | null;
   lead_notified_at?: Date | string | null;
+  chat_thread_id?: string | null;
+  status?: string;
   created_at: Date | string;
   updated_at: Date | string;
   /**
@@ -143,6 +150,12 @@ export interface DealRow {
   contact_email?: string | null;
   contact_job_title?: string | null;
   contact_is_personal?: boolean | null;
+  contact_socials?: Array<{ kind: string; value: string }> | null;
+  contact_channel?: string | null;
+  contact_telegram_username?: string | null;
+  contact_whatsapp?: string | null;
+  source_channel?: string | null;
+  source_channel_label?: string | null;
   owner_name?: string | null;
   latest_note_body?: string | null;
   tasks_count?: string | number | null;
@@ -170,6 +183,8 @@ export interface DealDTO {
   position: number;
   closedAt: string | null;
   leadNotifiedAt?: string | null;
+  chatThreadId?: string | null;
+  status?: string;
   createdAt: string;
   updatedAt: string;
   /** Денормализованные подписи связей для таблицы и канбана. */
@@ -183,6 +198,12 @@ export interface DealDTO {
   contactEmail?: string | null;
   contactJobTitle?: string | null;
   contactIsPersonal?: boolean;
+  contactSocials?: Array<{ kind: string; value: string }>;
+  contactChannel?: string | null;
+  contactTelegramUsername?: string | null;
+  contactWhatsapp?: string | null;
+  sourceChannel?: string | null;
+  sourceChannelLabel?: string | null;
   ownerName: string | null;
   latestNote: string | null;
   tasksCount?: number;
@@ -231,6 +252,8 @@ export function toDealDTO(row: DealRow): DealDTO {
     position: Number(row.position),
     closedAt: toIsoOrNull(row.closed_at),
     leadNotifiedAt: toIsoOrNull(row.lead_notified_at ?? null),
+    chatThreadId: row.chat_thread_id ?? null,
+    status: row.status ?? "active",
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     companyName: row.company_name ?? null,
@@ -243,6 +266,12 @@ export function toDealDTO(row: DealRow): DealDTO {
     contactEmail: row.contact_email || null,
     contactJobTitle: row.contact_job_title || null,
     contactIsPersonal: Boolean(row.contact_is_personal),
+    contactSocials: Array.isArray(row.contact_socials) ? row.contact_socials : [],
+    contactChannel: row.contact_channel || null,
+    contactTelegramUsername: row.contact_telegram_username || null,
+    contactWhatsapp: row.contact_whatsapp || null,
+    sourceChannel: row.source_channel || null,
+    sourceChannelLabel: row.source_channel_label || null,
     ownerName: row.owner_name ?? null,
     latestNote: row.latest_note_body ?? null,
     tasksCount: Number(row.tasks_count ?? 0),

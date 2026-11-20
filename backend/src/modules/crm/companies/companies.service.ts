@@ -7,6 +7,7 @@ import type {
 } from "./companies.types.js";
 import { toCompanyDTO } from "./companies.types.js";
 import { query, queryOne, queryOneOrThrow, type SqlParam } from "../../../db/client.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 
 /**
  * Колонки списка вместе с агрегатами связей.
@@ -16,7 +17,7 @@ import { query, queryOne, queryOneOrThrow, type SqlParam } from "../../../db/cli
  * индексам `contacts.company_id` и `deals.company_id`.
  */
 const COMPANY_COLUMNS_WITH_COUNTS = `
-  c.id, c.tenant_id, c.name, c.domain_name, c.phone, c.email, c.inn, c.ogrn, c.bik,
+  c.id, c.tenant_id, c.name, c.domain_name, c.phone, c.email, c.inn, c.kpp, c.ogrn, c.bik,
   c.account_number, c.legal_address, c.manager_name, c.manager_id, c.annual_revenue,
   c.linkedin_link, c.address_city, c.address_street, c.address_country, c.address_postcode,
   c.notes, c.custom_fields, c.created_by, c.created_at, c.updated_at,
@@ -129,11 +130,11 @@ export class CompaniesService {
   ): Promise<CompanyDTO> {
     const row = await queryOneOrThrow<CompanyRow>(
       `INSERT INTO companies
-         (tenant_id, name, domain_name, phone, email, inn, ogrn, bik, account_number, legal_address,
+         (tenant_id, name, domain_name, phone, email, inn, kpp, ogrn, bik, account_number, legal_address,
           manager_name, manager_id, annual_revenue, linkedin_link, address_city, address_street,
           address_country, address_postcode, notes, custom_fields, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-               $19, $20::jsonb, $21)
+               $19, $20, $21::jsonb, $22)
        RETURNING id`,
       [
         tenantId,
@@ -142,6 +143,7 @@ export class CompaniesService {
         payload.phone ?? "",
         payload.email ?? "",
         payload.inn ?? "",
+        payload.kpp ?? "",
         payload.ogrn ?? "",
         payload.bik ?? "",
         payload.account_number ?? "",
@@ -187,6 +189,7 @@ export class CompaniesService {
     if (payload.phone !== undefined) push("phone", payload.phone);
     if (payload.email !== undefined) push("email", payload.email);
     if (payload.inn !== undefined) push("inn", payload.inn);
+    if (payload.kpp !== undefined) push("kpp", payload.kpp);
     if (payload.ogrn !== undefined) push("ogrn", payload.ogrn);
     if (payload.bik !== undefined) push("bik", payload.bik);
     if (payload.account_number !== undefined) push("account_number", payload.account_number);
@@ -220,6 +223,13 @@ export class CompaniesService {
     );
 
     if (updated === null) return null;
+
+    if (payload.name !== undefined) {
+      await query(
+        `UPDATE contacts SET company_name = $1 WHERE company_id = $2 AND tenant_id = $3`,
+        [payload.name, id, tenantId],
+      );
+    }
 
     // Перечитываем: RETURNING не отдаёт агрегаты и имя создателя — они приходят
     // JOIN-ами, и без этого inline-правка обнуляла бы счётчики на карточке.
@@ -259,5 +269,57 @@ export class CompaniesService {
     );
 
     return row !== null;
+  }
+
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE companies
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["c.tenant_id = $1", "c.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(c.name ILIKE ${placeholder}
+          OR c.domain_name ILIKE ${placeholder}
+          OR c.inn ILIKE ${placeholder}
+          OR c.phone ILIKE ${placeholder}
+          OR c.manager_name ILIKE ${placeholder})`,
+      );
+    }
+
+    if (typeof filters.manager_id === "string" && filters.manager_id.trim().length > 0) {
+      params.push(filters.manager_id.trim());
+      conditions.push(`c.manager_id = $${params.length}`);
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (c.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE companies c
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING c.id`,
+      params,
+    );
+
+    return { count: rows.length };
   }
 }

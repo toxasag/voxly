@@ -5,7 +5,12 @@ import {
   resolveTelegramHistorySyncer,
   type OutboundSendResult,
 } from "../../channels/outbound-registry.js";
-import type { CreateDealMessagePayload, DealMessageDTO } from "./deals.types.js";
+import {
+  toDealMessageDTO,
+  type CreateDealMessagePayload,
+  type DealMessageDTO,
+  type DealMessageRow,
+} from "./deals.types.js";
 import type { ContactSocialJson } from "../contacts/contacts.types.js";
 import {
   GatewayChatProvider,
@@ -73,13 +78,15 @@ export class DealMessagingService {
       whatsapp: string | null;
       phone: string;
       socials?: ContactSocialJson[];
+      custom_fields?: Record<string, unknown> | null;
     }>(
       `SELECT d.contact_id,
               c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
               c.phone,
-              c.socials
+              c.socials,
+              c.custom_fields
        FROM deals d
        LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id AND c.deleted_at IS NULL
        WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
@@ -94,6 +101,7 @@ export class DealMessagingService {
       whatsapp: null,
       phone: "",
       socials: [],
+      custom_fields: null,
     };
 
     const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
@@ -107,6 +115,7 @@ export class DealMessagingService {
     const lastMsgAccountRow = await query<{ channel_account_id: string | null; channel: string }>(
       `SELECT channel_account_id, channel FROM deal_messages
        WHERE tenant_id = $1 AND deal_id = $2
+         AND channel != 'system'
        ORDER BY created_at DESC LIMIT 1`,
       [tenantId, dealId],
     );
@@ -124,7 +133,9 @@ export class DealMessagingService {
       if (!hasContact) {
         unavailableReason = "К сделке не привязан контакт";
       } else if (acc.channel === "telegram") {
-        if (contact.telegram_chat_id || contact.telegram_username || contact.phone) {
+        const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+        const hasValidTgChatId = contact.telegram_chat_id && contact.telegram_chat_id !== systemBotId;
+        if (hasValidTgChatId || contact.telegram_username || contact.phone) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан Telegram (@username) или номер телефона";
@@ -136,8 +147,12 @@ export class DealMessagingService {
           unavailableReason = "У контакта не указан номер телефона для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
+        const hasMaxChatId = Boolean(
+          typeof contact.custom_fields?.max_chat_id === "string" &&
+          contact.custom_fields.max_chat_id.trim().length > 0
+        );
         const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
-        if (contact.phone || hasMaxSocial) {
+        if (contact.phone || hasMaxSocial || hasMaxChatId) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан номер телефона для MAX";
@@ -322,7 +337,8 @@ export class DealMessagingService {
          c.telegram_username,
          c.whatsapp,
          c.phone,
-         c.socials
+         c.socials,
+         c.custom_fields
        FROM deals d
        LEFT JOIN contacts c
          ON c.id = d.contact_id
@@ -373,12 +389,16 @@ export class DealMessagingService {
       whatsapp: string | null;
       phone: string;
       socials?: ContactSocialJson[];
+      custom_fields?: Record<string, unknown> | null;
     },
   ): string | null {
     if (channel === "telegram") {
-      // Числовой id, а не username: транспорт обращается к peer по нему, и
-      // username мог измениться после первого сообщения.
-      return contact.telegram_chat_id ?? contact.telegram_username ?? (contact.phone && contact.phone.length > 0 ? contact.phone : null);
+      const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+      const validChatId =
+        contact.telegram_chat_id && contact.telegram_chat_id !== systemBotId
+          ? contact.telegram_chat_id
+          : null;
+      return validChatId ?? contact.telegram_username ?? (contact.phone && contact.phone.length > 0 ? contact.phone : null);
     }
 
     if (channel === "whatsapp") {
@@ -387,6 +407,8 @@ export class DealMessagingService {
     }
 
     if (channel === "max" || channel === "rumax") {
+      const maxChatId = typeof contact.custom_fields?.max_chat_id === "string" ? contact.custom_fields.max_chat_id.trim() : undefined;
+      if (maxChatId && maxChatId.length > 0) return maxChatId;
       const maxSocial = contact.socials?.find((s) => s.kind === "max")?.value;
       if (maxSocial && maxSocial.length > 0) return maxSocial;
       return contact.phone && contact.phone.length > 0 ? contact.phone : null;
@@ -595,38 +617,28 @@ export class DealMessagingService {
   }
 
   /**
-   * Возвращает хронологию сообщений для контакта по всем его сделкам.
+   * Возвращает хронологию сообщений для контакта по всем его сделкам
+   * (включая объединённые дубликаты контакта и архивные сделки).
    */
   async listContactMessages(tenantId: string, contactId: string): Promise<DealMessageDTO[]> {
-    const rows = await query<any>(
+    const rows = await query<DealMessageRow>(
       `SELECT m.id, m.tenant_id, m.deal_id, m.channel_account_id, m.source, m.direction, m.sender_name, m.content, m.channel,
               m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.metadata,
               m.delivered_at, m.read_at, m.created_at
        FROM deal_messages m
        JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
-       WHERE m.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+       WHERE m.tenant_id = $1
+         AND (
+           d.contact_id = $2
+           OR d.contact_id IN (
+             SELECT c2.id FROM contacts c2
+             WHERE c2.tenant_id = $1 AND c2.custom_fields->>'merged_into' = $2::text
+           )
+         )
        ORDER BY m.created_at ASC`,
       [tenantId, contactId],
     );
-    return rows.map((r: any) => ({
-      id: r.id,
-      tenantId: r.tenant_id,
-      dealId: r.deal_id,
-      channelAccountId: r.channel_account_id,
-      source: r.source,
-      direction: r.direction,
-      senderName: r.sender_name,
-      content: r.content,
-      channel: r.channel,
-      attachment: r.attachment,
-      attachmentType: r.attachment_type,
-      deliveryStatus: r.delivery_status,
-      deliveryError: r.delivery_error,
-      metadata: r.metadata ?? {},
-      deliveredAt: r.delivered_at ? new Date(r.delivered_at).toISOString() : null,
-      readAt: r.read_at ? new Date(r.read_at).toISOString() : null,
-      createdAt: r.created_at,
-    }));
+    return rows.map(toDealMessageDTO);
   }
 
   /**
@@ -670,7 +682,14 @@ export class DealMessagingService {
       `SELECT dm.channel_account_id, dm.channel
        FROM deal_messages dm
        JOIN deals d ON d.id = dm.deal_id AND d.tenant_id = dm.tenant_id
-       WHERE dm.tenant_id = $1 AND d.contact_id = $2
+       WHERE dm.tenant_id = $1
+         AND (
+           d.contact_id = $2
+           OR d.contact_id IN (
+             SELECT c2.id FROM contacts c2
+             WHERE c2.tenant_id = $1 AND c2.custom_fields->>'merged_into' = $2::text
+           )
+         )
        ORDER BY dm.created_at DESC LIMIT 1`,
       [tenantId, contactId],
     );
@@ -745,7 +764,15 @@ export class DealMessagingService {
 
     let activeDeal = await queryOne<{ id: string }>(
       `SELECT id FROM deals
-       WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND closed_at IS NULL
+       WHERE tenant_id = $1
+         AND (
+           contact_id = $2
+           OR contact_id IN (
+             SELECT c2.id FROM contacts c2
+             WHERE c2.tenant_id = $1 AND c2.custom_fields->>'merged_into' = $2::text
+           )
+         )
+         AND deleted_at IS NULL AND closed_at IS NULL
        ORDER BY updated_at DESC LIMIT 1`,
       [tenantId, contactId],
     );
@@ -753,7 +780,15 @@ export class DealMessagingService {
     if (!activeDeal) {
       activeDeal = await queryOne<{ id: string }>(
         `SELECT id FROM deals
-         WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+         WHERE tenant_id = $1
+           AND (
+             contact_id = $2
+             OR contact_id IN (
+               SELECT c2.id FROM contacts c2
+               WHERE c2.tenant_id = $1 AND c2.custom_fields->>'merged_into' = $2::text
+             )
+           )
+           AND deleted_at IS NULL
          ORDER BY updated_at DESC LIMIT 1`,
         [tenantId, contactId],
       );

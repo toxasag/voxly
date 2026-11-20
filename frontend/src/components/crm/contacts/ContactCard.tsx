@@ -5,7 +5,7 @@ import {
   Briefcase, Building2, CalendarClock, Check, ChevronUp, CircleSlash,
   Copy, GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
   Phone, Plus, ShieldAlert, Star, Tag, UserCircle2, UserRound, AlertTriangle, MapPin,
-  RefreshCw, Sparkles,
+  RefreshCw, Sparkles, Truck, UserCheck,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
 import { contactFullName, useUpdateContact, useFindDuplicateContacts, useEnrichContact } from "@/lib/api/use-contacts";
@@ -20,6 +20,7 @@ import {
   RecordFieldGroup,
   RecordFieldLink,
   RecordRelationSection,
+  type RecordFieldSelectOption,
 } from "@/components/crm/shared/RecordField";
 import { RecordDetailShell } from "@/components/crm/shared/RecordDetailShell";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
@@ -87,6 +88,11 @@ function fullDate(iso: string): string {
     day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
   }).format(parsed);
 }
+
+const CONTACT_TYPE_OPTIONS: readonly RecordFieldSelectOption[] = [
+  { value: "customer", label: "Клиент" },
+  { value: "vendor", label: "Поставщик" },
+];
 
 /** Приводит ввод к абсолютному URL: пользователь вводит домен без схемы. */
 function normalizeUrl(value: string): string {
@@ -449,7 +455,11 @@ export const ContactCard = memo(function ContactCard({
           contact.whatsapp || enrichmentData?.channels?.whatsapp?.exists,
         );
         const hasMax = Boolean(
-          contact.socials.some((s) => s.kind === "max") ||
+          contact.channel === "max" ||
+            contact.messengerName === "Макс" ||
+            contact.messengerId ||
+            contact.customFields?.max_chat_id ||
+            contact.socials.some((s) => s.kind === "max") ||
             enrichmentData?.channels?.max?.exists,
         );
 
@@ -521,10 +531,12 @@ export const ContactCard = memo(function ContactCard({
                     : "border-[#e5e5e5] bg-white text-[#888888]",
                 )}
               >
-                <span className="font-semibold">MAX:</span>
+                <span className="font-semibold">Макс:</span>
                 <span>
-                  {contact.socials.find((s) => s.kind === "max")?.value ||
-                    (hasMax ? "Найден" : "Не найден")}
+                  {contact.messengerName ||
+                    contact.socials.find((s) => s.kind === "max")?.value ||
+                    (contact.customFields?.max_chat_id ? `ID: ${contact.customFields.max_chat_id}` : null) ||
+                    (hasMax ? "Активен" : "Не найден")}
                 </span>
               </div>
             </div>
@@ -566,6 +578,55 @@ export const ContactCard = memo(function ContactCard({
 
       {/* 2. Общее */}
       <RecordFieldGroup title="Общее">
+        <RecordField
+          icon={contact.contactType === "vendor" ? Truck : UserCheck}
+          label="Тип контакта"
+          value={contact.contactType ?? "customer"}
+          kind="select"
+          options={CONTACT_TYPE_OPTIONS}
+          display={
+            contact.contactType === "vendor" ? (
+              <TagPill color="amber" className="gap-1">
+                <Truck className="h-3 w-3" />
+                Поставщик
+              </TagPill>
+            ) : (
+              <TagPill color="emerald" className="gap-1">
+                <UserCheck className="h-3 w-3" />
+                Клиент
+              </TagPill>
+            )
+          }
+          {...field("contactType")}
+          onCommit={(value) => commit({ contact_type: value as "customer" | "vendor" })}
+        />
+        <RecordField
+          icon={MessageCircle}
+          label="Мессенджер"
+          value={contact.messengerName || contact.channel || "Не указан"}
+          display={
+            contact.channel === "max" || contact.messengerName === "Макс" || contact.messengerId || contact.customFields?.max_chat_id ? (
+              <TagPill color="violet" className="gap-1">
+                <MessageCircle className="h-3 w-3" />
+                Макс
+              </TagPill>
+            ) : contact.channel === "telegram" ? (
+              <TagPill color="sky" className="gap-1">
+                <MessageCircle className="h-3 w-3" />
+                Telegram
+              </TagPill>
+            ) : contact.channel === "whatsapp" ? (
+              <TagPill color="emerald" className="gap-1">
+                <MessageCircle className="h-3 w-3" />
+                WhatsApp
+              </TagPill>
+            ) : (
+              <TagPill color="slate">
+                {contact.messengerName || "Не указан"}
+              </TagPill>
+            )
+          }
+        />
         <RecordField
           icon={Mail}
           label="Эл. почта"
@@ -807,9 +868,18 @@ export const ContactCard = memo(function ContactCard({
         <RecordField
           icon={CalendarClock}
           label="Создан"
-          value={contact.createdAt}
-          readOnly
-          display={<span title={fullDate(contact.createdAt)}>{formatDateTime(contact.createdAt)}</span>}
+          value={contact.createdAt ? contact.createdAt.slice(0, 10) : ""}
+          kind="date"
+          display={<span className="hover:underline cursor-pointer" title={fullDate(contact.createdAt)}>{formatDateTime(contact.createdAt)}</span>}
+          {...field("createdAt")}
+          onCommit={(value) => {
+            if (value) {
+              const d = new Date(value);
+              if (!Number.isNaN(d.getTime())) {
+                commit({ created_at: d.toISOString() });
+              }
+            }
+          }}
         />
         <RecordField
           icon={UserCircle2}
@@ -1031,6 +1101,12 @@ export const ContactCard = memo(function ContactCard({
       <RecordDealsSection
         contactId={contact.id}
         targetLabel={contactFullName(contact)}
+        canWrite={contact.contactType !== "vendor"}
+        disabledHint={
+          contact.contactType === "vendor"
+            ? "Поставщик: создание сделок недоступно"
+            : undefined
+        }
         onOpenDeal={onOpenDeal}
       />
     </div>
@@ -1068,6 +1144,19 @@ export const ContactCard = memo(function ContactCard({
       <RecordDetailShell
         name={contactFullName(contact)}
         subtitle={contact.jobTitle}
+        badge={
+          contact.contactType === "vendor" ? (
+            <TagPill color="amber" className="gap-1 shrink-0">
+              <Truck className="h-3 w-3" />
+              Поставщик
+            </TagPill>
+          ) : (
+            <TagPill color="emerald" className="gap-1 shrink-0">
+              <UserCheck className="h-3 w-3" />
+              Клиент
+            </TagPill>
+          )
+        }
         imageUrl={avatarUrl}
         createdAt={contact.createdAt}
         tabs={tabs}

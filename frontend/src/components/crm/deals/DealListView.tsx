@@ -24,7 +24,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { DealDTO, KanbanColumnDTO } from "@/lib/api/use-deals";
-import { useDeleteDeal, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
+import { useDeleteDeal, useMoveDealStage, useUpdateDeal, useBulkDeleteDeals, useBulkMoveDeals } from "@/lib/api/use-deals";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
 import { useCompanies } from "@/lib/api/use-companies";
 import { contactFullName, useContacts } from "@/lib/api/use-contacts";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -145,11 +146,15 @@ function formatBudgetTwenty(budget: number, currency: string = "RUB"): string {
  */
 export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal, bulkEnabled }: DealListViewProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [isAllSelected, setIsAllSelected] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [editing, setEditing] = useState<EditTarget>(null);
   const [pickerSearch, setPickerSearch] = useState("");
   const [calcMode, setCalcMode] = useState<CalcMode>("none");
   const [calcMenuOpen, setCalcMenuOpen] = useState(false);
+
+  const bulkDeleteMutation = useBulkDeleteDeals();
+  const bulkMoveMutation = useBulkMoveDeals();
 
   useEffect(() => {
     if (!calcMenuOpen) return;
@@ -473,10 +478,30 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
       id: "contact",
       header: "Контактное лицо",
       icon: User,
-      width: 190,
+      width: 220,
       sortValue: (deal) => deal.contactName ?? "",
       render: (deal) => {
         const isCurrentEditing = isEditing(deal.id, "contact");
+        const hasMax = Boolean(
+          deal.contactSocials?.some((s) => s.kind === "max") ||
+            deal.contactChannel === "max" ||
+            deal.sourceChannel === "max" ||
+            deal.sourceChannel === "max_bot",
+        );
+        const hasTg = Boolean(
+          deal.contactTelegramUsername ||
+            deal.contactSocials?.some((s) => s.kind === "telegram") ||
+            deal.contactChannel === "telegram" ||
+            deal.sourceChannel === "telegram" ||
+            deal.sourceChannel === "telegram_bot",
+        );
+        const hasWa = Boolean(
+          deal.contactWhatsapp ||
+            deal.contactSocials?.some((s) => s.kind === "whatsapp") ||
+            deal.contactChannel === "whatsapp" ||
+            deal.sourceChannel === "whatsapp",
+        );
+        const maxVal = deal.contactSocials?.find((s) => s.kind === "max")?.value || deal.contactPhone || "";
 
         return (
           <div className="relative flex h-full w-full items-center">
@@ -490,18 +515,50 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
               }}
             >
               {deal.contactName !== null ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f4f4f5] px-2 py-0.5 text-xs text-[#111111]">
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold",
-                      getContactAvatarColor(deal.contactName),
-                    )}
-                  >
-                    {getSingleInitial(deal.contactName)}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f4f4f5] px-2 py-0.5 text-xs text-[#111111] max-w-[140px]">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold",
+                        getContactAvatarColor(deal.contactName),
+                      )}
+                    >
+                      {getSingleInitial(deal.contactName)}
+                    </span>
+                    <span className="truncate font-medium">{deal.contactName}</span>
                   </span>
-                  <span className="max-w-[140px] truncate font-medium">{deal.contactName}</span>
-                </span>
+
+                  {/* Мессенджер MAX */}
+                  {hasMax && (
+                    <span
+                      title={maxVal ? `MAX: ${maxVal}` : "Мессенджер MAX"}
+                      className="inline-flex h-4 items-center justify-center rounded-[3px] border border-violet-200 bg-violet-50 px-1 text-[9px] font-bold text-violet-700 select-none shrink-0"
+                    >
+                      MAX
+                    </span>
+                  )}
+
+                  {/* Telegram */}
+                  {hasTg && (
+                    <span
+                      title={deal.contactTelegramUsername ? `@${deal.contactTelegramUsername}` : "Telegram"}
+                      className="inline-flex h-4 items-center justify-center rounded-[3px] border border-sky-200 bg-sky-50 px-1 text-[9px] font-bold text-sky-700 select-none shrink-0"
+                    >
+                      TG
+                    </span>
+                  )}
+
+                  {/* WhatsApp */}
+                  {hasWa && (
+                    <span
+                      title={deal.contactWhatsapp || "WhatsApp"}
+                      className="inline-flex h-4 items-center justify-center rounded-[3px] border border-emerald-200 bg-emerald-50 px-1 text-[9px] font-bold text-emerald-700 select-none shrink-0"
+                    >
+                      WA
+                    </span>
+                  )}
+                </div>
               ) : (
                 <span className="inline-flex h-4 w-5 items-center justify-center rounded-full bg-[#f4f4f5] text-xs font-medium text-[#888888]">
                   -
@@ -895,29 +952,53 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
   ], [isEditing, commit, stageById, stageOptions, move, pipelineId, usersById]);
 
   const bulkMoveTo = useCallback(async (stageId: string) => {
-    for (const id of selected) {
-      try {
-        await move.mutateAsync({ id, stageId, pipelineId });
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Не удалось переместить сделку");
-        break;
+    try {
+      if (isAllSelected) {
+        const res = await bulkMoveMutation.mutateAsync({
+          mode: "all",
+          stage_id: stageId,
+          filters: { pipeline_id: pipelineId },
+        });
+        toast.success(`Перемещено сделок: ${res.count}`);
+      } else {
+        const ids = Array.from(selected);
+        const res = await bulkMoveMutation.mutateAsync({
+          mode: "ids",
+          stage_id: stageId,
+          ids,
+        });
+        toast.success(`Перемещено сделок: ${res.count}`);
       }
+      setSelected(new Set());
+      setIsAllSelected(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось переместить сделки");
     }
-    setSelected(new Set());
-  }, [selected, move, pipelineId]);
+  }, [isAllSelected, selected, bulkMoveMutation, pipelineId]);
 
   const bulkDelete = useCallback(async () => {
     setDeleteConfirmOpen(false);
-    for (const id of selected) {
-      try {
-        await remove.mutateAsync(id);
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Не удалось удалить сделку");
-        break;
+    try {
+      if (isAllSelected) {
+        const res = await bulkDeleteMutation.mutateAsync({
+          mode: "all",
+          filters: { pipeline_id: pipelineId },
+        });
+        toast.success(`Удалено сделок: ${res.count}`);
+      } else {
+        const ids = Array.from(selected);
+        const res = await bulkDeleteMutation.mutateAsync({
+          mode: "ids",
+          ids,
+        });
+        toast.success(`Удалено сделок: ${res.count}`);
       }
+      setSelected(new Set());
+      setIsAllSelected(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось удалить сделки");
     }
-    setSelected(new Set());
-  }, [selected, remove]);
+  }, [isAllSelected, selected, bulkDeleteMutation, pipelineId]);
 
   const calcResult = useMemo(() => {
     if (deals.length === 0 || calcMode === "none") return undefined;
@@ -971,32 +1052,42 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
         onCellEdit={(deal, columnId) => setEditing({ rowId: deal.id, columnId })}
         selectable={true}
         selectedIds={selected}
-        onSelectionChange={setSelected}
+        onSelectionChange={(next) => {
+          setSelected(next);
+          if (next.size === 0) setIsAllSelected(false);
+        }}
         footerCells={calcResult}
         emptyState={<TableEmptyState icon={Handshake} title="Сделок нет" description="Под текущий фильтр не попала ни одна сделка" />}
         bulkBar={
-          <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2.5 shadow-2xs">
-            <span className="text-xs font-medium text-[#111111]">Выбрано: {selected.size}</span>
+          <TableBulkBar
+            selectedCount={isAllSelected ? deals.length : selected.size}
+            totalCount={deals.length}
+            isAllSelected={isAllSelected}
+            entityNamePlural="сделок"
+            pageItemCount={deals.length}
+            onSelectAll={() => setIsAllSelected(true)}
+            onClearSelection={() => {
+              setSelected(new Set());
+              setIsAllSelected(false);
+            }}
+            onDelete={() => setDeleteConfirmOpen(true)}
+            isDeleting={bulkDeleteMutation.isPending}
+          >
             <select
               defaultValue=""
-              disabled={move.isPending || remove.isPending}
-              onChange={(event) => { if (event.target.value !== "") void bulkMoveTo(event.target.value); event.target.value = ""; }}
-              className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+              disabled={bulkMoveMutation.isPending || bulkDeleteMutation.isPending}
+              onChange={(event) => {
+                if (event.target.value !== "") void bulkMoveTo(event.target.value);
+                event.target.value = "";
+              }}
+              className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
             >
               <option value="" disabled>Переместить в этап…</option>
               {orderedColumns.map((column) => (
                 <option key={column.stageId} value={column.stageId}>{column.stageName}</option>
               ))}
             </select>
-            <button
-              type="button"
-              onClick={() => setDeleteConfirmOpen(true)}
-              disabled={move.isPending || remove.isPending}
-              className="flex items-center gap-1.5 rounded-[8px] bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50"
-            >
-              <Trash2 className="h-3.5 w-3.5" />Удалить
-            </button>
-          </div>
+          </TableBulkBar>
         }
       />
 
@@ -1060,11 +1151,11 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
         open={deleteConfirmOpen}
         onClose={() => setDeleteConfirmOpen(false)}
         onConfirm={bulkDelete}
-        title={`Удалить сделки: ${selected.size}?`}
+        title={isAllSelected ? `Удалить все сделки (${deals.length})?` : `Удалить сделки: ${selected.size}?`}
         description="Сделки будут скрыты из воронки (мягкое удаление). Действие необратимо через интерфейс."
         confirmLabel="Удалить"
         variant="destructive"
-        isPending={remove.isPending}
+        isPending={bulkDeleteMutation.isPending}
       />
     </>
   );

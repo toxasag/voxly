@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Building2,
   Calendar,
   Check,
@@ -16,11 +17,14 @@ import {
   Home,
   Loader2,
   Mail,
+  MessageCircle,
   Monitor,
   Paperclip,
   Pencil,
+  Phone,
   Plus,
   RotateCcw,
+  Send,
   User,
   UserCircle2,
 } from "lucide-react";
@@ -35,6 +39,7 @@ import { stageTagColor } from "@/components/crm/deals/stage-colors";
 import { usePipelines, useKanban } from "@/lib/api/use-deals";
 import { useCompanies } from "@/lib/api/use-companies";
 import { useContacts, contactFullName } from "@/lib/api/use-contacts";
+import { useActiveChannels } from "@/lib/api/use-channels";
 import { useTenantUsers } from "@/lib/api/use-tenant-users";
 import { useAuth } from "@/lib/auth/use-auth";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
@@ -102,6 +107,7 @@ export function DrawerCreateDeal({
   const [contactName, setContactName] = useState<string | null>(null);
 
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [sourceWidgetId, setSourceWidgetId] = useState<string | null>(null);
 
   const [dealOpen, setDealOpen] = useState(true);
   const [relationsOpen, setRelationsOpen] = useState(false);
@@ -126,6 +132,7 @@ export function DrawerCreateDeal({
   const kanban = useKanban(effectivePipelineId);
   const companiesQuery = useCompanies({ limit: 100 });
   const contactsQuery = useContacts({ limit: 100 });
+  const activeChannelsQuery = useActiveChannels();
 
   // Current user resolution
   const currentUser = useMemo(() => {
@@ -149,6 +156,7 @@ export function DrawerCreateDeal({
       setCompanyName(null);
       setContactId(null);
       setContactName(null);
+      setSourceWidgetId(null);
       setCardView("deal");
       setActiveTab("home");
       setActivePicker(null);
@@ -222,6 +230,12 @@ export function DrawerCreateDeal({
     return items.filter((c) => contactFullName(c).toLowerCase().includes(q));
   }, [contactsQuery.data?.items, pickerSearch]);
 
+  const selectedContact = useMemo(() => {
+    if (!contactId) return null;
+    return (contactsQuery.data?.items ?? []).find((c) => c.id === contactId) ?? null;
+  }, [contactsQuery.data?.items, contactId]);
+  const isVendorSelected = selectedContact?.contactType === "vendor";
+
   const filteredUsers = useMemo(() => {
     const items = tenantUsers.data ?? [];
     const q = pickerSearch.trim().toLowerCase();
@@ -254,6 +268,11 @@ export function DrawerCreateDeal({
       return;
     }
 
+    if (isVendorSelected) {
+      toast.error("Нельзя создать сделку с поставщиком");
+      return;
+    }
+
     const numericBudget = budgetString.trim() ? Number(budgetString.replace(/\s+/g, "").replace(",", ".")) : 0;
 
     const payload: CreateDealPayload = {
@@ -265,6 +284,7 @@ export function DrawerCreateDeal({
       company_id: companyId ?? undefined,
       contact_id: contactId ?? undefined,
       owner_id: ownerId ?? undefined,
+      source_widget_id: sourceWidgetId ?? undefined,
       close_date: closeDate || undefined,
     };
 
@@ -273,10 +293,10 @@ export function DrawerCreateDeal({
       await onSubmit(payload);
       onClose();
     } catch (error) {
-      if (error instanceof ApiClientError && error.isValidationError) {
+      if (error instanceof ApiClientError && (error.status === 422 || error.code === "UNPROCESSABLE_ENTITY" || error.isValidationError)) {
         const fields = error.fieldErrors();
         const firstError = Object.values(fields)[0] ?? error.message;
-        toast.error(firstError);
+        toast.error(firstError || "Нельзя создать сделку с поставщиком");
       } else {
         toast.error(error instanceof Error ? error.message : "Не удалось создать сделку");
       }
@@ -293,7 +313,9 @@ export function DrawerCreateDeal({
     stagesList,
     companyId,
     contactId,
+    isVendorSelected,
     ownerId,
+    sourceWidgetId,
     closeDate,
     onSubmit,
     onClose,
@@ -460,18 +482,28 @@ export function DrawerCreateDeal({
           </button>
           {filteredContacts.map((contact) => {
             const isSelected = contact.id === contactId;
+            const isVendor = contact.contactType === "vendor";
             const name = contactFullName(contact);
             return (
               <button
                 key={contact.id}
                 type="button"
+                disabled={isVendor}
+                title={isVendor ? "Поставщик: создание сделок недоступно" : undefined}
                 onClick={() => {
+                  if (isVendor) {
+                    toast.error("Нельзя создать сделку с поставщиком");
+                    return;
+                  }
                   setContactId(contact.id);
                   setContactName(name);
                   setActivePicker(null);
                 }}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] transition-colors",
+                  isVendor
+                    ? "cursor-not-allowed opacity-60 bg-amber-50/40 text-[#888888]"
+                    : "hover:bg-[#f5f5f5] cursor-pointer",
                   isSelected && "bg-[#f5f5f5] font-medium",
                 )}
               >
@@ -486,7 +518,14 @@ export function DrawerCreateDeal({
                   </span>
                   <span className="truncate">{name}</span>
                 </div>
-                {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isVendor && (
+                    <span className="rounded-[4px] bg-[#fef9c3] px-1.5 py-0.5 text-[10px] font-medium text-[#a16207]">
+                      Поставщик
+                    </span>
+                  )}
+                  {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+                </div>
               </button>
             );
           })}
@@ -841,6 +880,33 @@ export function DrawerCreateDeal({
                           </button>
                         )}
                       </FieldRow>
+
+                      {/* Канал связи / Мессенджер */}
+                      <FieldRow icon={MessageCircle} label="Канал связи">
+                        <select
+                          value={sourceWidgetId ?? ""}
+                          onChange={(e) => setSourceWidgetId(e.target.value || null)}
+                          title="Канал связи сделки (MAX, Telegram, WhatsApp)"
+                          className="h-7 w-full max-w-[200px] rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] outline-none focus:border-[#4a38f5] transition-colors cursor-pointer"
+                        >
+                          <option value="">Авто (активный канал)</option>
+                          {(activeChannelsQuery.data ?? []).map((ch) => {
+                            const label =
+                              ch.channel === "max" || ch.channel === "max_bot"
+                                ? `MAX (${ch.label})`
+                                : ch.channel === "telegram"
+                                  ? `Telegram (${ch.label})`
+                                  : ch.channel === "whatsapp"
+                                    ? `WhatsApp (${ch.label})`
+                                    : `${ch.channel} (${ch.label})`;
+                            return (
+                              <option key={ch.id} value={ch.id}>
+                                {label}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </FieldRow>
                     </div>
                   )}
                 </div>
@@ -894,7 +960,7 @@ export function DrawerCreateDeal({
                       <FieldRow icon={User} label="Контактное л...">
                         <div className="relative inline-block">
                           {contactName ? (
-                            <div className="inline-flex items-center gap-1">
+                            <div className="inline-flex items-center gap-1.5 flex-wrap">
                               <button
                                 type="button"
                                 onClick={() => openPicker("contact", "row")}
@@ -902,6 +968,11 @@ export function DrawerCreateDeal({
                               >
                                 <EntityChip name={contactName} label={contactName} size="sm" />
                               </button>
+                              {isVendorSelected && (
+                                <span className="rounded-[4px] bg-[#fef9c3] px-1.5 py-0.5 text-[10px] font-medium text-[#a16207]">
+                                  Поставщик (сделки недоступны)
+                                </span>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => openPicker("contact", "row")}
@@ -1019,6 +1090,11 @@ export function DrawerCreateDeal({
                       {contactName ? (
                         <div className="flex items-center gap-2">
                           <EntityChip name={contactName} label={contactName} size="sm" />
+                          {isVendorSelected && (
+                            <span className="rounded-[4px] bg-[#fef9c3] px-1.5 py-0.5 text-[10px] font-medium text-[#a16207]">
+                              Поставщик
+                            </span>
+                          )}
                           <button
                             type="button"
                             title="Сменить привязанный контакт"
@@ -1154,6 +1230,12 @@ export function DrawerCreateDeal({
           </SheetContent>
 
           {/* Sticky Bottom Actions Bar */}
+          {isVendorSelected && (
+            <div className="flex items-center gap-2 border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-[#854d0e] shrink-0">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+              <span>Выбран контакт со статусом «Поставщик». Сделка не может быть создана с поставщиком.</span>
+            </div>
+          )}
           <div className="sticky bottom-0 z-20 flex items-center justify-between border-t border-[#e5e5e5] bg-white px-4 py-2.5 shrink-0">
             <button
               type="button"
@@ -1165,7 +1247,7 @@ export function DrawerCreateDeal({
             <button
               type="button"
               onClick={handleSave}
-              disabled={isSubmitting || !title.trim()}
+              disabled={isSubmitting || !title.trim() || isVendorSelected}
               className="flex h-8 items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50"
             >
               {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Briefcase,
   Building2,
   Calendar,
   Clock,
+  ChevronDown,
+  Download,
   Handshake,
   Linkedin,
   Mail,
@@ -17,15 +20,19 @@ import {
   Search,
   Tag,
   Trash2,
+  Truck,
+  Upload,
   User,
   UserCheck,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
+import { ContactImportDialog } from "@/components/crm/contacts/ContactImportDialog";
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { Sheet } from "@/components/ui/sheet";
 import { ContactCard } from "@/components/crm/contacts/ContactCard";
+import { DropdownMenu, MenuItem } from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
@@ -42,6 +49,7 @@ import {
 } from "@/components/crm/shared/twenty-table-helpers";
 import { TagPill } from "@/components/ui/tag";
 import { CompanyCard } from "@/components/crm/companies/CompanyCard";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
 import { useCompany, useCompanyStats } from "@/lib/api/use-companies";
 import { formatPhone } from "@/lib/utils/phone";
 import { formatDateTime, timeAgo } from "@/lib/utils";
@@ -53,23 +61,32 @@ import {
   useContacts,
   useCreateContact,
   useDeleteContact,
+  useBulkDeleteContacts,
   useUpdateContact,
+  useExportContacts,
   type ContactDTO,
 } from "@/lib/api/use-contacts";
 import type { ContactChannel, CreateContactPayload } from "@/schemas/contact.schema";
 import { cn } from "@/lib/utils";
 
 const CHANNEL_TAG_COLORS: Record<ContactChannel, "sky" | "emerald" | "violet" | "amber" | "cyan"> = {
-  telegram: "sky", whatsapp: "emerald", rumax: "violet", phone: "amber", email: "cyan",
+  telegram: "sky", whatsapp: "emerald", max: "violet", rumax: "violet", phone: "amber", email: "cyan",
 };
 
 const CHANNEL_FILTERS = [
   { value: "all", label: "Все" },
+  { value: "max", label: "MAX" },
   { value: "telegram", label: "Telegram" },
   { value: "whatsapp", label: "WhatsApp" },
   { value: "rumax", label: "RuMAX" },
   { value: "phone", label: "Телефон" },
   { value: "email", label: "E-mail" },
+] as const;
+
+const CONTACT_TYPE_FILTERS = [
+  { value: "all", label: "Все" },
+  { value: "customer", label: "Клиенты" },
+  { value: "vendor", label: "Поставщики" },
 ] as const;
 
 const PAGE_SIZE = DEFAULT_PAGE_SIZE;
@@ -93,12 +110,58 @@ function contactsPlural(count: number): string {
 }
 
 function ContactsPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const sortParam = searchParams.get("sort");
+  const orderParam = searchParams.get("order");
+  const sortColumn = sortParam || null;
+  const sortAsc = orderParam === "asc";
+
+  const handleSortChange = useCallback(
+    (columnId: string | null, asc: boolean) => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (columnId) {
+        next.set("sort", columnId);
+        next.set("order", asc ? "asc" : "desc");
+      } else {
+        next.delete("sort");
+        next.delete("order");
+      }
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<ContactChannel | "all">("all");
+  const [contactTypeFilter, setContactTypeFilter] = useState<"all" | "customer" | "vendor">("all");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ContactDTO | null>(null);
+
+  const exportMutation = useExportContacts();
+
+  const handleExport = useCallback(
+    async (format: "csv" | "xlsx") => {
+      try {
+        toast.info(`Экспорт контактов в ${format.toUpperCase()} запущен...`);
+        await exportMutation.mutateAsync({
+          format,
+          search: search || undefined,
+          channel: channelFilter !== "all" ? channelFilter : undefined,
+          contact_type: contactTypeFilter !== "all" ? contactTypeFilter : undefined,
+        });
+        toast.success(`Файл контактов (${format.toUpperCase()}) успешно скачан`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось экспортировать контакты");
+      }
+    },
+    [exportMutation, search, channelFilter, contactTypeFilter],
+  );
   /**
    * Открытая карточка хранится идентификатором, а не объектом.
    *
@@ -128,6 +191,7 @@ function ContactsPageContent() {
     closeRecord: closeCompanyDetail,
   } = useRecordParam("company");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [isAllSelected, setIsAllSelected] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ContactDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
@@ -140,6 +204,7 @@ function ContactsPageContent() {
       setSearch(searchInput.trim());
       setPage(1);
       setSelected(new Set());
+      setIsAllSelected(false);
     }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
@@ -148,13 +213,17 @@ function ContactsPageContent() {
   const query = useContacts({
     search: search.length > 0 ? search : undefined,
     channel: channelFilter === "all" ? undefined : channelFilter,
+    contactType: contactTypeFilter === "all" ? undefined : contactTypeFilter,
     limit: PAGE_SIZE,
     offset: (page - 1) * PAGE_SIZE,
+    sort: sortColumn ?? undefined,
+    order: sortColumn ? (sortAsc ? "asc" : "desc") : undefined,
   });
 
   const createContact = useCreateContact();
   const updateContact = useUpdateContact();
   const deleteContact = useDeleteContact();
+  const bulkDeleteContacts = useBulkDeleteContacts();
   const companyDetail = useCompany(companyDetailId);
   const companyStats = useCompanyStats(companyDetailId);
 
@@ -165,7 +234,7 @@ function ContactsPageContent() {
     : contacts.find((contact) => contact.id === detailId) ?? null;
   const total = query.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = search.length > 0 || channelFilter !== "all";
+  const hasFilters = search.length > 0 || channelFilter !== "all" || contactTypeFilter !== "all";
 
   // Deleting the last row of the last page would otherwise leave the user on an
   // empty page with no way back.
@@ -217,27 +286,47 @@ function ContactsPageContent() {
   const bulkDelete = useCallback(async () => {
     setBulkDeleteConfirmOpen(false);
     setIsBulkDeleting(true);
-    const ids = Array.from(selected);
-    let successCount = 0;
-    for (const id of ids) {
-      try {
-        await deleteContact.mutateAsync(id);
-        successCount++;
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Не удалось удалить контакт");
-        break;
+    try {
+      if (isAllSelected) {
+        const res = await bulkDeleteContacts.mutateAsync({
+          mode: "all",
+          filters: {
+            search: search.length > 0 ? search : undefined,
+            channel: channelFilter !== "all" ? channelFilter : undefined,
+            contact_type: contactTypeFilter !== "all" ? contactTypeFilter : undefined,
+          },
+        });
+        toast.success(`Удалено контактов: ${res.count}`);
+      } else {
+        const ids = Array.from(selected);
+        const res = await bulkDeleteContacts.mutateAsync({
+          mode: "ids",
+          ids,
+        });
+        toast.success(`Удалено контактов: ${res.count}`);
       }
-    }
-    setIsBulkDeleting(false);
-    setSelected(new Set());
-    if (detailId !== null && selected.has(detailId)) {
-      closeDetail();
-    }
-    if (successCount > 0) {
-      toast.success(`Удалено контактов: ${successCount}`);
+      setSelected(new Set());
+      setIsAllSelected(false);
+      if (detailId !== null && selected.has(detailId)) {
+        closeDetail();
+      }
       void query.refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось удалить контакты");
+    } finally {
+      setIsBulkDeleting(false);
     }
-  }, [selected, deleteContact, detailId, closeDetail, query]);
+  }, [
+    isAllSelected,
+    selected,
+    bulkDeleteContacts,
+    search,
+    channelFilter,
+    contactTypeFilter,
+    detailId,
+    closeDetail,
+    query,
+  ]);
 
   const editInitialValues = useMemo(
     () => (editTarget === null ? undefined : toContactFormValues(editTarget)),
@@ -308,6 +397,28 @@ function ContactsPageContent() {
             <ContactAvatarCell name={contactFullName(contact)} />
           </RecordCellShell>
         ),
+    },
+    {
+      id: "contact_type",
+      header: "Тип",
+      icon: Users,
+      width: 120,
+      sortValue: (contact) => (contact.contactType === "vendor" ? "Поставщик" : "Клиент"),
+      render: (contact) => (
+        <RecordCellShell align="left">
+          {contact.contactType === "vendor" ? (
+            <TagPill color="amber" className="gap-1">
+              <Truck className="h-3 w-3" />
+              Поставщик
+            </TagPill>
+          ) : (
+            <TagPill color="emerald" className="gap-1">
+              <UserCheck className="h-3 w-3" />
+              Клиент
+            </TagPill>
+          )}
+        </RecordCellShell>
+      ),
     },
     {
       id: "email",
@@ -545,6 +656,47 @@ function ContactsPageContent() {
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />Обновляем
             </span>
           )}
+
+          {/* Экспорт контактов */}
+          <DropdownMenu
+            trigger={
+              <button
+                type="button"
+                disabled={exportMutation.isPending}
+                className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] disabled:opacity-50 cursor-pointer"
+                title="Экспорт контактов в Excel или CSV"
+              >
+                <Download className="h-3.5 w-3.5 text-[#666666]" />
+                <span className="hidden sm:inline">Экспорт</span>
+                <ChevronDown className="h-3 w-3 text-[#888888]" />
+              </button>
+            }
+          >
+            <MenuItem
+              label="Экспорт в Excel (.xlsx)"
+              hint="XLSX"
+              onSelect={() => handleExport("xlsx")}
+            />
+            <MenuItem
+              label="Экспорт в CSV (.csv)"
+              hint="CSV (UTF-8)"
+              onSelect={() => handleExport("csv")}
+            />
+          </DropdownMenu>
+
+          {/* Импорт контактов */}
+          <Guard requiredPermission="contacts:write">
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#f7f7f7] cursor-pointer"
+              title="Импорт контактов из Excel или CSV"
+            >
+              <Upload className="h-3.5 w-3.5 text-[#666666]" />
+              <span className="hidden sm:inline">Импорт</span>
+            </button>
+          </Guard>
+
           <Guard requiredPermission="contacts:write">
             <button type="button" onClick={() => setCreateOpen(true)}
               className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0]">
@@ -561,6 +713,31 @@ function ContactsPageContent() {
             placeholder="Поиск по имени, телефону, e-mail, компании..." aria-label="Поиск контактов"
             className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20" />
         </div>
+
+        {/* Фильтры типа: Все / Клиенты / Поставщики */}
+        <div className="flex items-center gap-1 border-r border-[#e5e5e5] pr-2">
+          {CONTACT_TYPE_FILTERS.map((filter) => (
+            <button
+              key={filter.value}
+              type="button"
+              onClick={() => {
+                setContactTypeFilter(filter.value);
+                setPage(1);
+                setSelected(new Set());
+              }}
+              aria-pressed={contactTypeFilter === filter.value}
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                contactTypeFilter === filter.value
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-semibold"
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+              )}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+
         {/*
           Фильтры каналов на 360px не помещались в ряд и выносили страницу за
           край. Как на задачах: горизонтальная прокрутка до `md:`, с `md:` —
@@ -625,33 +802,32 @@ function ContactsPageContent() {
             tableId="contacts"
             selectable={true}
             selectedIds={selected}
-            onSelectionChange={setSelected}
+            sortColumn={sortColumn}
+            sortAsc={sortAsc}
+            onSortChange={handleSortChange}
+            onSelectionChange={(next) => {
+              setSelected(next);
+              if (next.size === 0) setIsAllSelected(false);
+            }}
             onRowClick={editing === null ? (contact) => setDetailId(contact.id) : undefined}
             // Enter на ячейке в фокусе открывает тот же редактор, что и клик:
             // состояние правки уже описано парой {rowId, columnId}.
             onCellEdit={(contact, columnId) => setEditing({ rowId: contact.id, columnId })}
             bulkBar={
-              <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2.5 shadow-2xs">
-                <span className="text-xs font-medium text-[#111111]">
-                  Выбрано: {selected.size}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelected(new Set())}
-                  className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-                >
-                  Снять выделение
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBulkDeleteConfirmOpen(true)}
-                  disabled={isBulkDeleting}
-                  className="flex items-center gap-1.5 rounded-[8px] bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50 cursor-pointer"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Удалить
-                </button>
-              </div>
+              <TableBulkBar
+                selectedCount={isAllSelected ? total : selected.size}
+                totalCount={total}
+                isAllSelected={isAllSelected}
+                entityNamePlural="контактов"
+                pageItemCount={contacts.length}
+                onSelectAll={() => setIsAllSelected(true)}
+                onClearSelection={() => {
+                  setSelected(new Set());
+                  setIsAllSelected(false);
+                }}
+                onDelete={() => setBulkDeleteConfirmOpen(true)}
+                isDeleting={isBulkDeleting}
+              />
             }
             pagination={
               totalPages > 1 ? (
@@ -691,6 +867,12 @@ function ContactsPageContent() {
         <ContactModal open onClose={() => setEditTarget(null)} onSubmit={handleUpdate} initial={editInitialValues} />
       )}
 
+      <ContactImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onSuccess={() => void query.refetch()}
+      />
+
       {detailTarget !== null && (
         <ContactCard contact={detailTarget}
           onClose={() => closeDetail()}
@@ -726,8 +908,12 @@ function ContactsPageContent() {
         open={bulkDeleteConfirmOpen}
         onClose={() => setBulkDeleteConfirmOpen(false)}
         onConfirm={bulkDelete}
-        title={`Удалить контакты: ${selected.size}?`}
-        description="Контакты будут перемещены в корзину (мягкое удаление). В связанных сделках останется ссылка на удалённый контакт."
+        title={isAllSelected ? `Удалить все контакты (${total})?` : `Удалить контакты: ${selected.size}?`}
+        description={
+          isAllSelected
+            ? `Все контакты (${total}), соответствующие текущим фильтрам, будут перемещены в корзину.`
+            : "Контакты будут перемещены в корзину (мягкое удаление). В связанных сделках останется ссылка на удалённый контакт."
+        }
         confirmLabel="Удалить"
         variant="destructive"
         isPending={isBulkDeleting}
@@ -746,7 +932,9 @@ export default function ContactsPage() {
           description="У вашей роли нет права contacts:read. Запросите доступ у администратора рабочего пространства." />
       }
     >
-      <ContactsPageContent />
+      <Suspense fallback={<SkeletonTable rows={10} />}>
+        <ContactsPageContent />
+      </Suspense>
     </Guard>
   );
 }

@@ -19,10 +19,12 @@ import {
   Loader2,
   Mail,
   Maximize2,
+  MessageCircle,
   MoreHorizontal,
   Pencil,
   Phone,
   Plus,
+  Send,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -76,6 +78,9 @@ export function ContactDrawerCard({
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [maxAccount, setMaxAccount] = useState("");
+  const [telegram, setTelegram] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [companyName, setCompanyName] = useState(deal.companyName ?? "");
   const [jobTitle, setJobTitle] = useState("");
   const [linkedin, setLinkedin] = useState("");
@@ -86,6 +91,19 @@ export function ContactDrawerCard({
     const firstName = parts[0] || "Без названия";
     const lastName = parts.slice(1).join(" ") || "";
 
+    const socialsList: Array<{ kind: "max" | "telegram" | "whatsapp"; value: string }> = [];
+    const cleanMax = maxAccount.trim() || phone.trim();
+    if (cleanMax) {
+      socialsList.push({ kind: "max", value: cleanMax });
+    }
+    if (telegram.trim()) {
+      socialsList.push({ kind: "telegram", value: telegram.trim() });
+    }
+    const cleanWa = whatsapp.trim() || phone.trim();
+    if (cleanWa) {
+      socialsList.push({ kind: "whatsapp", value: cleanWa });
+    }
+
     try {
       const created = await createContact.mutateAsync({
         first_name: firstName,
@@ -94,11 +112,12 @@ export function ContactDrawerCard({
         phones: phone.trim()
           ? [{ number: phone.trim(), country_code: "RU", calling_code: "+7" }]
           : undefined,
+        socials: socialsList.length > 0 ? socialsList : undefined,
         company_name: companyName.trim() || undefined,
         company_id: deal.companyId || undefined,
         job_title: jobTitle.trim() || undefined,
         linkedin_link: linkedin.trim() || undefined,
-        channel: "phone",
+        channel: cleanMax ? "max" : "phone",
       });
 
       const resultName = contactFullName(created) || trimmedName;
@@ -307,6 +326,51 @@ export function ContactDrawerCard({
 
               {socialOpen && (
                 <div className="space-y-0.5 py-0.5">
+                  <div className="flex items-center gap-2 px-4 py-1 min-h-[30px]">
+                    <span className="flex w-[140px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                      <MessageCircle className="h-3.5 w-3.5 shrink-0 text-[#8b5cf6]" />
+                      <span className="font-medium text-[#111111]">MAX</span>
+                    </span>
+                    <input
+                      type="text"
+                      value={maxAccount}
+                      onChange={(e) => setMaxAccount(e.target.value)}
+                      placeholder={phone.trim() ? phone.trim() : "@username или номер"}
+                      title="Аккаунт или телефон MAX"
+                      className="min-w-0 flex-1 rounded px-1.5 py-0.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none bg-transparent hover:bg-black/[0.03] focus:bg-white focus:border focus:border-[#8b5cf6]"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 px-4 py-1 min-h-[30px]">
+                    <span className="flex w-[140px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                      <Send className="h-3.5 w-3.5 shrink-0 text-[#0284c7]" />
+                      <span>Telegram</span>
+                    </span>
+                    <input
+                      type="text"
+                      value={telegram}
+                      onChange={(e) => setTelegram(e.target.value)}
+                      placeholder="@username или ID"
+                      title="Профиль Telegram"
+                      className="min-w-0 flex-1 rounded px-1.5 py-0.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none bg-transparent hover:bg-black/[0.03] focus:bg-white focus:border focus:border-[#3b82f6]"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 px-4 py-1 min-h-[30px]">
+                    <span className="flex w-[140px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                      <Phone className="h-3.5 w-3.5 shrink-0 text-[#16a34a]" />
+                      <span>WhatsApp</span>
+                    </span>
+                    <input
+                      type="text"
+                      value={whatsapp}
+                      onChange={(e) => setWhatsapp(e.target.value)}
+                      placeholder={phone.trim() ? phone.trim() : "+7 999 123 45 67"}
+                      title="Номер WhatsApp"
+                      className="min-w-0 flex-1 rounded px-1.5 py-0.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none bg-transparent hover:bg-black/[0.03] focus:bg-white focus:border focus:border-[#16a34a]"
+                    />
+                  </div>
+
                   <div className="flex items-center gap-2 px-4 py-1 min-h-[30px]">
                     <span className="flex w-[140px] shrink-0 items-center gap-2 text-xs text-[#666666]">
                       <Linkedin className="h-3.5 w-3.5 shrink-0 text-[#888888]" />

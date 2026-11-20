@@ -38,6 +38,7 @@ export interface WhatsAppProfileResolved {
   exists: boolean;
   jid?: string;
   phone?: string;
+  name?: string;
   error?: string;
 }
 
@@ -60,6 +61,7 @@ export interface ClientPhoneLookupResult {
   phone: string;
   found: boolean;
   suggestedName: string | null;
+  suggestedSource?: "crm" | "telegram" | "whatsapp" | "max" | null;
   sources: MessengerSourceInfo[];
   channelsChecked: string[];
   existingClient: {
@@ -681,32 +683,47 @@ export class CrmEnrichmentService {
       }
     }
 
+    let waSuggestedName: string | null = null;
     if (waRes?.exists) {
+      if (waRes.name) {
+        const cleaned = cleanContactDisplayName(waRes.name);
+        if (cleaned && !isPlaceholderName(cleaned.firstName, cleaned.lastName)) {
+          waSuggestedName = [cleaned.lastName, cleaned.firstName].filter(Boolean).join(" ").trim() || waRes.name;
+        }
+      }
       const existingWaSource = sources.find((s) => s.channel === "whatsapp");
       if (!existingWaSource) {
         sources.push({
           channel: "whatsapp",
-          name: `+${phoneDigits}`,
+          name: waSuggestedName || `+${phoneDigits}`,
           phone: `+${phoneDigits}`,
           isVerified: true,
         });
       }
     }
 
-    // 4. Ранжирование достоверности имени (CRM -> MAX -> Telegram Display Name -> Telegram Username)
+    // 4. Ранжирование достоверности имени (CRM -> MAX -> Telegram Display Name -> WhatsApp)
     let finalSuggestedName: string | null = null;
+    let suggestedSource: "crm" | "telegram" | "whatsapp" | "max" | null = null;
     if (crmNameValid) {
       finalSuggestedName = crmNameValid;
+      suggestedSource = "crm";
     } else if (maxSuggestedName) {
       finalSuggestedName = maxSuggestedName;
+      suggestedSource = "max";
     } else if (tgSuggestedName) {
       finalSuggestedName = tgSuggestedName;
+      suggestedSource = "telegram";
+    } else if (waSuggestedName) {
+      finalSuggestedName = waSuggestedName;
+      suggestedSource = "whatsapp";
     }
 
     return {
       phone: `+${phoneDigits}`,
       found: sources.length > 0 || existingClient !== null,
       suggestedName: finalSuggestedName,
+      suggestedSource,
       sources,
       channelsChecked,
       existingClient,
@@ -819,6 +836,7 @@ export class CrmEnrichmentService {
         firstName: data.firstName,
         lastName: data.lastName,
         link: data.link,
+        error: (data as { error?: string }).error ?? undefined,
       };
     } catch (err) {
       return { exists: false, error: String(err) };
@@ -846,10 +864,20 @@ export class CrmEnrichmentService {
       const res = await evo.checkNumberStatus(instanceName, [cleanDigits]);
       const matched = res.find((r) => r.exists);
       if (matched) {
+        let profileName: string | undefined;
+        try {
+          const profile = await evo.fetchProfile(instanceName, cleanDigits);
+          if (profile?.name) {
+            profileName = profile.name;
+          }
+        } catch {
+          // ignore
+        }
         return {
           exists: true,
           jid: matched.jid,
           phone: `+${cleanDigits}`,
+          name: profileName,
         };
       }
       return { exists: false, phone: `+${cleanDigits}` };

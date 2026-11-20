@@ -119,6 +119,18 @@ export interface ClientMessengerSourceDTO {
   isVerified?: boolean;
 }
 
+export interface ExistingContactDTO {
+  contactId: string | null;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
+  repairsCount: number;
+  activeDealsCount: number;
+  matchedBy?: "phone" | "name" | null;
+}
+
 export interface ClientLookupResultDTO {
   found: boolean;
   client: {
@@ -142,9 +154,13 @@ export interface ClientLookupResultDTO {
   } | null;
   activeDeals: ClientLookupDealDTO[];
   suggestedName?: string | null;
+  suggestedSource?: "telegram" | "whatsapp" | "max" | "crm" | null;
   sources?: ClientMessengerSourceDTO[];
   channelsChecked?: string[];
   messengerLookupStatus?: "idle" | "searching" | "found" | "not_found";
+  repairsCount?: number;
+  existsInCrm?: boolean;
+  existingContact?: ExistingContactDTO | null;
 }
 
 export interface AdditionalContact {
@@ -166,6 +182,7 @@ export interface ServiceDictionariesDTO {
   models: DictionaryItemDTO[];
   accessories: DictionaryItemDTO[];
   malfunctions: DictionaryItemDTO[];
+  categories?: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {
@@ -604,6 +621,25 @@ export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, 
   });
 }
 
+export interface RepairMasterDTO {
+  id: string;
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+}
+
+export function useRepairMasters(): UseQueryResult<RepairMasterDTO[], ApiClientError> {
+  return useQuery<RepairMasterDTO[], ApiClientError>({
+    queryKey: [...repairKeys.all, "masters"],
+    queryFn: async () => {
+      const res = await apiClient.get<RepairMasterDTO[]>(`${BASE_PATH}/masters`);
+      return res.data;
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useBrands(): UseQueryResult<DictionaryItemDTO[], ApiClientError> {
   return useQuery<DictionaryItemDTO[], ApiClientError>({
     queryKey: dictionaryKeys.brands(),
@@ -798,6 +834,8 @@ export function useAddRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
@@ -819,6 +857,8 @@ export function useRenameRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
@@ -838,6 +878,8 @@ export function useDeleteRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }

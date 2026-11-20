@@ -303,6 +303,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   job_title TEXT NOT NULL DEFAULT '',
   company_name TEXT NOT NULL DEFAULT '',
   company_id UUID,
+  company_inn TEXT,
+  birth_date DATE,
   channel TEXT NOT NULL DEFAULT 'phone',
   -- Twenty: person.linkedinLink, группа social на record page.
   linkedin_link TEXT NOT NULL DEFAULT '',
@@ -312,6 +314,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes TEXT NOT NULL DEFAULT '',
   last_seen_at TIMESTAMPTZ,
   is_online BOOLEAN NOT NULL DEFAULT false,
+  contact_type VARCHAR(32) NOT NULL DEFAULT 'customer',
   -- Twenty: person.createdBy (ActorMetadata), группа system. NULL = система/импорт.
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -336,7 +339,8 @@ CREATE TABLE IF NOT EXISTS contacts (
       socials,
       '$[*] ? (@.type() != "object" || !(exists(@.kind ? (@.type() == "string"))) || !(exists(@.value ? (@.type() == "string"))))'
     )
-  )
+  ),
+  CONSTRAINT contacts_contact_type_check CHECK (contact_type IN ('customer', 'vendor'))
 );
 
 CREATE TABLE IF NOT EXISTS companies (
@@ -347,6 +351,7 @@ CREATE TABLE IF NOT EXISTS companies (
   phone TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   inn TEXT NOT NULL DEFAULT '',
+  kpp TEXT NOT NULL DEFAULT '',
   ogrn TEXT NOT NULL DEFAULT '',
   bik TEXT NOT NULL DEFAULT '',
   account_number TEXT NOT NULL DEFAULT '',
@@ -1771,6 +1776,7 @@ CREATE TABLE IF NOT EXISTS supplier_orders (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   order_number TEXT NOT NULL,
   supplier_name TEXT NOT NULL,
+  supplier_company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'draft',
   total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
   cash_account_id UUID REFERENCES cash_accounts(id) ON DELETE SET NULL,
@@ -1791,6 +1797,10 @@ CREATE TABLE IF NOT EXISTS supplier_order_items (
   item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
   item_name TEXT NOT NULL,
   sku TEXT NOT NULL DEFAULT '',
+  requested_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  extra_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  purchase_request_ids UUID[] DEFAULT '{}',
   quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
   unit TEXT NOT NULL DEFAULT 'шт',
   price NUMERIC(12, 2) NOT NULL DEFAULT 0,

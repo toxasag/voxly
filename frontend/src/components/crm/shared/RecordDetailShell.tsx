@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { Loader2, Trash2, X } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Loader2, Pencil, Trash2, X } from "lucide-react";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
 import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { useHorizontalResize } from "@/lib/utils/use-horizontal-resize";
@@ -34,7 +34,9 @@ export interface RecordDetailTab {
 interface RecordDetailShellProps {
   /** Имя записи — заголовок и источник цвета аватара. */
   name: string;
+  onNameCommit?: (name: string) => void;
   subtitle?: string;
+  badge?: ReactNode;
   imageUrl?: string;
   /** Домен для авто-фавиконки компании в духе Twenty */
   domain?: string;
@@ -51,7 +53,9 @@ interface RecordDetailShellProps {
 
 export function RecordDetailShell({
   name,
+  onNameCommit,
   subtitle,
+  badge,
   imageUrl,
   domain,
   createdAt,
@@ -65,6 +69,12 @@ export function RecordDetailShell({
 }: RecordDetailShellProps) {
   const [activeTab, setActiveTab] = useState(tabs[0]?.id ?? "");
   const active = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(name);
+
+  useEffect(() => {
+    setNameDraft(name);
+  }, [name]);
   const stored = useSidePanelWidth();
   const { width, startResize } = useHorizontalResize({
     value: stored.width,
@@ -104,7 +114,53 @@ export function RecordDetailShell({
           <div className="flex min-w-0 items-center gap-3">
             <EntityChip name={name} domain={domain} imageUrl={imageUrl} size="md" />
             <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
+              <div className="flex items-center gap-2">
+                {isEditingName ? (
+                  <input
+                    type="text"
+                    value={nameDraft}
+                    autoFocus
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (nameDraft.trim().length > 0 && onNameCommit) {
+                          onNameCommit(nameDraft.trim());
+                        }
+                        setIsEditingName(false);
+                      }
+                      if (e.key === "Escape") {
+                        setNameDraft(name);
+                        setIsEditingName(false);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (nameDraft.trim().length > 0 && onNameCommit && nameDraft.trim() !== name) {
+                        onNameCommit(nameDraft.trim());
+                      }
+                      setIsEditingName(false);
+                    }}
+                    className="h-7 w-full max-w-[240px] rounded-[6px] border border-[#4a38f5] bg-white px-2 text-sm font-semibold text-[#111111] shadow-2xs outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                ) : (
+                  <div
+                    onClick={() => {
+                      if (onNameCommit) setIsEditingName(true);
+                    }}
+                    className={cn(
+                      "group/title flex items-center gap-1.5",
+                      onNameCommit && "cursor-pointer rounded-[4px] px-1 -mx-1 hover:bg-[#f5f5f5]",
+                    )}
+                    title={onNameCommit ? "Нажмите для редактирования названия" : undefined}
+                  >
+                    <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
+                    {onNameCommit && (
+                      <Pencil className="h-3.5 w-3.5 text-[#888888] opacity-0 group-hover/title:opacity-100 transition-opacity" />
+                    )}
+                  </div>
+                )}
+                {badge}
+              </div>
               <p className="truncate text-xs text-[#888888]">
                 {subtitle !== undefined && subtitle !== "" ? `${subtitle} · ` : ""}
                 <span title={`Создано: ${formatDateTime(createdAt)}`}>
