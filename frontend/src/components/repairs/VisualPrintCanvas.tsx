@@ -647,60 +647,80 @@ export function VisualPrintCanvas({
         )}
 
         {/* ================================================================= */}
-        {/* TEAR-OFF CLIENT TICKET                                            */}
+        {/* TEAR-OFF MASTER TICKET (LOWER PART REMAINS WITH MASTER)           */}
         {/* ================================================================= */}
         {tearOffTicket.visible && (
           <div
-            {...getSectionInteractiveProps("tear_off_ticket", "Отрывной талон клиента")}
+            {...getSectionInteractiveProps("tear_off_ticket", "Талон мастера")}
             className={cn(
               "mt-8 pt-4",
               getSectionInteractiveProps("tear_off_ticket", "Талон").className,
             )}
           >
-            {renderSectionBadge("tear_off_ticket", "Отрывной талон клиента")}
+            {renderSectionBadge("tear_off_ticket", "Талон мастера")}
 
             {/* Perforation Line */}
             <div className="relative flex items-center justify-center mb-3">
               <div className="absolute inset-x-0 border-t-2 border-dashed border-[#999999]" />
               <div className="relative bg-white px-3 flex items-center gap-1.5 text-[10px] text-[#666666] font-mono uppercase">
                 <Scissors className="h-3.5 w-3.5 rotate-90 text-[#4a38f5]" />
-                <span>Линия отреза талона</span>
+                <span>Линия отреза талона (экземпляр мастера)</span>
               </div>
             </div>
 
             {/* Ticket Content */}
             <div className="rounded border border-[#cccccc] bg-[#fbfbfb] p-3">
               <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
+                <div className="space-y-1.5 flex-1">
                   <div className="font-bold text-[12px] uppercase tracking-wide text-[#111111]">
-                    {tearOffTicket.title || "ОТРЫВНОЙ ТАЛОН КЛИЕНТА"}
+                    {tearOffTicket.title || "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"}
                   </div>
-                  <div className="text-[10.5px]">
-                    Заказ-наряд:{" "}
+                  <div className="text-[10.5px] text-[#333333]">
+                    Акт приёма:{" "}
                     <span className="font-mono font-bold text-[#4a38f5]">{sampleData.orderNumber}</span> от{" "}
                     <span className="font-mono">{sampleData.orderDate}</span>
                   </div>
-                  <div className="text-[10px] text-[#555555]">
-                    Аппарат:{" "}
+                  <div className="text-[10px] text-[#333333]">
+                    <span className="font-semibold text-[#111111]">Заказчик: </span>
+                    <span className="font-medium text-[#111111]">{sampleData.clientInfo || sampleData.customerName}</span>
+                    {!sampleData.clientInfo && sampleData.customerPhone && (
+                      <span className="text-[#666666]"> (тел: {sampleData.customerPhone})</span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-[#333333]">
+                    <span className="font-semibold text-[#111111]">Инструмент: </span>
                     <span className="font-medium text-[#111111]">
-                      {sampleData.equipmentType} {sampleData.equipmentBrand} {sampleData.equipmentModel}
-                    </span>{" "}
-                    (S/N: {sampleData.equipmentSerial})
+                      {sampleData.toolInfo || `${sampleData.equipmentType} ${sampleData.equipmentBrand} ${sampleData.equipmentModel}`.trim()}
+                    </span>
+                    {!sampleData.toolInfo && sampleData.equipmentSerial && (
+                      <span className="text-[#666666]"> (S/N: {sampleData.equipmentSerial})</span>
+                    )}
                   </div>
-                  <div className="text-[10px] text-[#555555]">
-                    Заказчик: <span className="font-medium text-[#111111]">{sampleData.customerName}</span>
-                  </div>
-                  {header.companyPhone && (
-                    <div className="text-[9.5px] text-[#777777]">
-                      Справки по телефону сервиса:{" "}
-                      <span className="font-mono font-semibold text-[#111111]">{header.companyPhone}</span>
+                  {(sampleData.defectDescription || sampleData.appearance || sampleData.packageContents) && (
+                    <div className="text-[9.5px] text-[#555555] grid grid-cols-2 gap-x-2 pt-0.5">
+                      {sampleData.defectDescription && (
+                        <div>Неисправность: <span className="text-[#111111]">{sampleData.defectDescription}</span></div>
+                      )}
+                      {sampleData.packageContents && (
+                        <div>Комплектация: <span className="text-[#111111]">{sampleData.packageContents}</span></div>
+                      )}
+                      {sampleData.appearance && (
+                        <div className="col-span-2">Внешний вид: <span className="text-[#111111]">{sampleData.appearance}</span></div>
+                      )}
                     </div>
                   )}
-                  {tearOffTicket.customNote && (
-                    <div className="text-[8.5px] text-[#888888] pt-1 leading-tight">
-                      {tearOffTicket.customNote}
+                  {(sampleData.comments || tearOffTicket.customNote) && (
+                    <div className="text-[9px] text-[#555555] pt-1 border-t border-[#e5e5e5] italic">
+                      <span className="font-semibold text-[#111111] not-italic">Комментарии: </span>
+                      {sampleData.comments || tearOffTicket.customNote}
                     </div>
                   )}
+                  <div className="text-[9.5px] text-[#666666] pt-0.5">
+                    Мастер: <span className="font-medium text-[#111111]">{sampleData.masterName}</span>
+                    {header.companyPhone && (
+                      <span> • Сервис: <span className="font-mono text-[#111111]">{header.companyPhone}</span></span>
+                    )}
+                  </div>
                 </div>
 
                 {tearOffTicket.showBarcodeOrQr && (

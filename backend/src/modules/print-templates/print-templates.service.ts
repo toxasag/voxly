@@ -238,6 +238,9 @@ function toTemplateDto(row: PrintTemplateRow): PrintTemplateDTO {
     isCustom: Boolean(row.is_custom),
     parentTemplateId: row.parent_template_id ?? null,
     isHidden: Boolean(row.is_hidden),
+    toolInfo: row.tool_info || "",
+    clientInfo: row.client_info || "",
+    comments: row.comments || "",
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
@@ -444,6 +447,9 @@ export class PrintTemplatesService {
       const isCustom = payload.is_custom !== undefined ? Boolean(payload.is_custom) : true;
       const isHidden = Boolean(payload.is_hidden);
       const parentId = payload.parent_template_id || payload.clone_from_id || null;
+      const toolInfo = payload.toolInfo ?? payload.tool_info ?? "";
+      const clientInfo = payload.clientInfo ?? payload.client_info ?? "";
+      const comments = payload.comments ?? "";
 
       if (isDefault) {
         await tx.query(
@@ -455,8 +461,9 @@ export class PrintTemplatesService {
       const rows = await tx.query<PrintTemplateRow>(
         `INSERT INTO print_templates (
           tenant_id, slug, name, description, document_type, page_size, orientation,
-          body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+          tool_info, client_info, comments
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING *`,
         [
           tenantId,
@@ -472,6 +479,9 @@ export class PrintTemplatesService {
           isCustom,
           parentId,
           isHidden,
+          toolInfo,
+          clientInfo,
+          comments,
         ],
       );
 
@@ -519,6 +529,9 @@ export class PrintTemplatesService {
         const layoutConfig = payload.layout_config ?? current.layout_config;
         const isDefault = payload.is_default !== undefined ? payload.is_default : true;
         const isHidden = payload.is_hidden !== undefined ? payload.is_hidden : false;
+        const toolInfo = payload.toolInfo ?? payload.tool_info ?? (current as any).tool_info ?? "";
+        const clientInfo = payload.clientInfo ?? payload.client_info ?? (current as any).client_info ?? "";
+        const comments = payload.comments ?? (current as any).comments ?? "";
 
         if (isDefault) {
           await tx.query(
@@ -530,8 +543,9 @@ export class PrintTemplatesService {
         const rows = await tx.query<PrintTemplateRow>(
           `INSERT INTO print_templates (
             tenant_id, slug, name, description, document_type, page_size, orientation,
-            body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, $12)
+            body_template, layout_config, is_default, is_custom, parent_template_id, is_hidden,
+            tool_info, client_info, comments
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, $12, $13, $14, $15)
           RETURNING *`,
           [
             tenantId,
@@ -546,6 +560,9 @@ export class PrintTemplatesService {
             isDefault,
             current.id,
             isHidden,
+            toolInfo,
+            clientInfo,
+            comments,
           ],
         );
         const createdRow = rows[0];
@@ -571,11 +588,15 @@ export class PrintTemplatesService {
         payload.is_default !== undefined ? payload.is_default : current.is_default;
       const isHidden =
         payload.is_hidden !== undefined ? payload.is_hidden : (current.is_hidden ?? false);
+      const toolInfo = payload.toolInfo ?? payload.tool_info ?? (current as any).tool_info ?? "";
+      const clientInfo = payload.clientInfo ?? payload.client_info ?? (current as any).client_info ?? "";
+      const comments = payload.comments ?? (current as any).comments ?? "";
 
       const rows = await tx.query<PrintTemplateRow>(
         `UPDATE print_templates
          SET name = $1, description = $2, document_type = $3, page_size = $4, orientation = $5,
-             body_template = $6, layout_config = $7, is_default = $8, is_hidden = $9, updated_at = now()
+             body_template = $6, layout_config = $7, is_default = $8, is_hidden = $9,
+             tool_info = $12, client_info = $13, comments = $14, updated_at = now()
          WHERE tenant_id = $10 AND id = $11
          RETURNING *`,
         [
@@ -590,6 +611,9 @@ export class PrintTemplatesService {
           isHidden,
           tenantId,
           id,
+          toolInfo,
+          clientInfo,
+          comments,
         ],
       );
 
@@ -884,11 +908,12 @@ export class PrintTemplatesService {
         final_cost: string | null;
         received_at: Date;
         completed_at: Date | null;
+        notes?: string;
       }>(
         `SELECT ticket_number, customer_name, customer_phone,
                 equipment_type, equipment_brand, equipment_model, equipment_serial,
                 defect_description, appearance, package_contents, malfunctions,
-                master_name, estimated_cost, final_cost, received_at, completed_at
+                master_name, estimated_cost, final_cost, received_at, completed_at, notes
          FROM repair_orders
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         [tenantId, orderId],
@@ -990,6 +1015,7 @@ export class PrintTemplatesService {
       estimated_cost: string;
       received_at: Date;
       completed_at: Date | null;
+      notes?: string;
     };
     cleanNumber: string;
     worksItems: Array<{ num: number; name: string; qty: number; unit: string; price: number; total: number }>;
@@ -1206,17 +1232,20 @@ export class PrintTemplatesService {
         sectionsHtml.push(`
           <div class="tear-off-block section-block page-break-avoid">
             <div class="tear-line">
-              <span>✂ - - - - - - - - - - - - - - - - - - - - - - - ЛИНИЯ ОТРЫВА - - - - - - - - - - - - - - - - - - - - - - - ✂</span>
+              <span>✂ - - - - - - - - - - - - - - - - - - - - - - - ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА) - - - - - - - - - - - - - - - - - - - - - - - ✂</span>
             </div>
             <div class="tear-content">
               <div class="tear-header">
-                <strong>${cfg.tearOffTicket.title || "ОТРЫВНОЙ ТАЛОН КЛИЕНТА"}</strong> — Наряд ${cleanNumber} от ${dateFormatted}
+                <strong>${cfg.tearOffTicket.title || "ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"}</strong> — Акт № ${cleanNumber} от ${dateFormatted}
               </div>
               <div class="tear-body">
-                <div>Клиент: <strong>${order.customer_name || "—"}</strong> (тел: ${order.customer_phone || "—"})</div>
-                <div>Принято: <strong>${order.equipment_type || ""} ${order.equipment_brand || ""} ${order.equipment_model || ""}</strong> (S/N: ${order.equipment_serial || "—"})</div>
-                <div>Сервис: ${companyName} | Тел: ${companyPhone}</div>
-                <div class="tear-note">${cfg.tearOffTicket.customNote || "Сохраняйте данный талон до момента выдачи оборудования."}</div>
+                <div>Заказчик: <strong>${order.customer_name || "—"}</strong>${order.customer_phone ? ` (тел: ${order.customer_phone})` : ""}</div>
+                <div>Инструмент: <strong>${order.equipment_type || ""} ${order.equipment_brand || ""} ${order.equipment_model || ""}</strong>${order.equipment_serial ? ` (S/N: ${order.equipment_serial})` : ""}</div>
+                ${order.defect_description ? `<div>Неисправность: ${order.defect_description}</div>` : ""}
+                ${order.appearance ? `<div>Внешний вид: ${order.appearance}</div>` : ""}
+                ${order.package_contents ? `<div>Комплектация: ${order.package_contents}</div>` : ""}
+                ${order.notes || cfg.tearOffTicket.customNote ? `<div class="tear-note">Комментарии: ${order.notes || cfg.tearOffTicket.customNote}</div>` : ""}
+                <div>Принял мастер: <strong>${order.master_name || "—"}</strong> | Сервис: ${companyName} (${companyPhone})</div>
               </div>
             </div>
           </div>
