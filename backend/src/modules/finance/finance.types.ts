@@ -82,8 +82,18 @@ export const createInvoiceSchema = z.object({
 
 export const updateInvoiceSchema = z.object({
   status: invoiceStatusSchema.optional(),
+  issuer_organization_id: optionalUuid,
+  company_id: optionalUuid,
+  company_name: z.string().trim().min(1).max(200).optional(),
+  company_inn: z.string().max(20).optional().or(z.literal("")),
+  company_address: z.string().max(300).optional().or(z.literal("")),
+  contact_name: z.string().max(200).optional().or(z.literal("")),
+  contact_phone: z.string().max(30).optional().or(z.literal("")),
   due_date: isoDate.optional(),
+  vat_mode: vatModeSchema.optional(),
+  vat_rate: z.number().min(0).max(100).optional(),
   notes: z.string().max(2000).optional().or(z.literal("")),
+  line_items: z.array(invoiceItemSchema).min(1).max(100).optional(),
 });
 
 export const markInvoicePaidSchema = z.object({

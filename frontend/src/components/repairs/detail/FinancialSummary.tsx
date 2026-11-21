@@ -17,18 +17,23 @@ import {
   Loader2,
   FileText,
   CloudUpload,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import type { WorkItem, PartItem } from "@/lib/repairs/repairs.types";
 import {
   useRepairInvoices,
   useSendInvoice,
   useSyncInvoiceToElba,
+  useDeleteInvoice,
   useFinanceOrganizations,
   openInvoiceRfPrintWindow,
   type InvoiceDTO,
 } from "@/lib/api/use-invoices";
 import { BatchPaymentModal } from "./BatchPaymentModal";
 import { GenerateInvoiceModal } from "./GenerateInvoiceModal";
+import { InvoiceEditModal } from "@/components/finance/InvoiceEditModal";
+import { Guard } from "@/components/shared/Guard";
 import { TagPill } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api/apiClient";
@@ -88,9 +93,11 @@ export const FinancialSummary = memo(function FinancialSummary({
 }: FinancialSummaryProps) {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<InvoiceDTO | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [syncingElbaId, setSyncingElbaId] = useState<string | null>(null);
+  const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
   const [activeMessengerMenuId, setActiveMessengerMenuId] = useState<string | null>(null);
   const messengerMenuRef = useRef<HTMLDivElement>(null);
   useClickOutside(messengerMenuRef, () => setActiveMessengerMenuId(null), activeMessengerMenuId !== null);
@@ -99,6 +106,7 @@ export const FinancialSummary = memo(function FinancialSummary({
   const { data: organizations = [] } = useFinanceOrganizations();
   const sendInvoice = useSendInvoice();
   const syncElba = useSyncInvoiceToElba();
+  const deleteInvoice = useDeleteInvoice();
   const hasElbaConfigured = useMemo(
     () => organizations.some((o) => o.elbaEnabled && o.elbaHasApiKey && o.elbaOrganizationId),
     [organizations],
@@ -166,6 +174,28 @@ export const FinancialSummary = memo(function FinancialSummary({
       }
     },
     [syncElba, refetchInvoices],
+  );
+
+  const handleDeleteInvoice = useCallback(
+    async (inv: InvoiceDTO) => {
+      if (inv.status === "paid") {
+        toast.error("Оплаченный счёт нельзя удалить");
+        return;
+      }
+      if (!window.confirm(`Удалить счёт № ${inv.invoiceNumber}?`)) return;
+      try {
+        setDeletingInvoiceId(inv.id);
+        await deleteInvoice.mutateAsync(inv.id);
+        toast.success(`Счёт № ${inv.invoiceNumber} удалён`);
+        void refetchInvoices();
+        if (onRefresh) onRefresh();
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "Не удалось удалить счёт");
+      } finally {
+        setDeletingInvoiceId(null);
+      }
+    },
+    [deleteInvoice, refetchInvoices, onRefresh],
   );
 
   const handleSendToMessenger = useCallback(
@@ -511,6 +541,33 @@ export const FinancialSummary = memo(function FinancialSummary({
                             </div>
                           )}
                         </div>
+
+                        {/* 4. Редактировать и удалить (только для неоплаченных и с правом finance:write) */}
+                        {!isPaid && (
+                          <Guard requiredPermission="finance:write">
+                            <button
+                              type="button"
+                              onClick={() => setEditingInvoice(inv)}
+                              title="Редактировать счёт"
+                              className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteInvoice(inv)}
+                              disabled={deletingInvoiceId === inv.id}
+                              title="Удалить счёт"
+                              className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {deletingInvoiceId === inv.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </Guard>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -542,6 +599,17 @@ export const FinancialSummary = memo(function FinancialSummary({
         defaultCustomerPhone={customerPhone}
         dealId={dealId}
         onSuccess={handleSuccessInvoice}
+      />
+
+      {/* Modal 3: Редактировать счёт */}
+      <InvoiceEditModal
+        open={editingInvoice !== null}
+        invoice={editingInvoice}
+        onClose={() => setEditingInvoice(null)}
+        onSaved={() => {
+          void refetchInvoices();
+          if (onRefresh) onRefresh();
+        }}
       />
     </div>
   );

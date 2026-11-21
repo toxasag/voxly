@@ -107,7 +107,7 @@ function FinancePageContent() {
   const [txModalOpen, setTxModalOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
-  const [invoiceViewTarget, setInvoiceViewTarget] = useState<Invoice | null>(null);
+  const [invoiceViewId, setInvoiceViewId] = useState<string | null>(null);
   const [categoriesModalOpen, setCategoriesModalOpen] = useState(false);
   const searchParams = useSearchParams();
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") ?? "");
@@ -129,6 +129,10 @@ function FinancePageContent() {
 
   const transactions = useMemo(() => (transactionsData?.items ?? []).map(toTransaction), [transactionsData]);
   const invoices = useMemo(() => (invoicesData?.items ?? []).map(toInvoice), [invoicesData]);
+  const invoiceViewTarget = useMemo(
+    () => (invoiceViewId ? invoices.find((inv) => inv.id === invoiceViewId) ?? null : null),
+    [invoiceViewId, invoices],
+  );
 
   const monthlyIncome = useMemo(() => transactions.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0), [transactions]);
   const monthlyExpense = useMemo(() => transactions.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0), [transactions]);
@@ -301,7 +305,7 @@ function FinancePageContent() {
             columns={invoiceColumns}
             getRowId={(inv) => inv.id}
             tableId="finance_invoices"
-            onRowClick={(inv) => setInvoiceViewTarget(inv)}
+            onRowClick={(inv) => setInvoiceViewId(inv.id)}
             emptyState={
               <div className="flex flex-col items-center gap-2 py-16 text-center">
                 <Receipt className="h-8 w-8 text-[#888888]" />
@@ -323,7 +327,7 @@ function FinancePageContent() {
         />
         <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSubmit={handleTransfer} accounts={accounts} />
         <InvoiceCreateModal open={invoiceCreateOpen} onClose={() => setInvoiceCreateOpen(false)} onSubmit={handleCreateInvoice} />
-        <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewTarget(null)} />
+        <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewId(null)} />
         <CategoriesSettingsModal open={categoriesModalOpen} onClose={() => setCategoriesModalOpen(false)} />
       </div>
     </Guard>

@@ -502,6 +502,14 @@ export class FinanceService {
         );
       };
 
+      const orderCalcs: {
+        order: (typeof orders)[number];
+        worksTotal: number;
+        partsTotal: number;
+        fallbackAmount: number;
+      }[] = [];
+      const zeroOrders: string[] = [];
+
       for (const order of orders) {
         const worksTotalRow = await tx.queryOne<{ total: string }>(
           `SELECT COALESCE(SUM(cost), 0)::text AS total FROM repair_works WHERE tenant_id = $1 AND repair_order_id = $2`,
@@ -514,7 +522,25 @@ export class FinanceService {
 
         const worksTotal = Math.round(Number(worksTotalRow?.total ?? 0) * 100) / 100;
         const partsTotal = Math.round(Number(partsTotalRow?.total ?? 0) * 100) / 100;
+        const fallbackAmount =
+          worksTotal + partsTotal > 0
+            ? 0
+            : Math.round(Number(order.final_cost ?? order.estimated_cost ?? 0) * 100) / 100;
 
+        if (worksTotal + partsTotal + fallbackAmount <= 0) {
+          zeroOrders.push(order.ticket_number);
+        } else {
+          orderCalcs.push({ order, worksTotal, partsTotal, fallbackAmount });
+        }
+      }
+
+      if (zeroOrders.length > 0) {
+        throw new ValidationError(
+          `Нельзя принять оплату по актам без указанной стоимости (0 ₽): ${zeroOrders.join(", ")}`,
+        );
+      }
+
+      for (const { order, worksTotal, partsTotal, fallbackAmount } of orderCalcs) {
         if (splitMode && worksTotal > 0 && partsTotal > 0) {
           const worksDesc = userNote
             ? `${userNote} — работы (${order.ticket_number})`
@@ -533,12 +559,9 @@ export class FinanceService {
             : defaultCat;
           const desc = userNote || `Оплата по акту ${order.ticket_number}`;
           await insertIncomeTx(amount, cat, desc, order);
-        } else {
-          const fallbackAmount = Number(order.final_cost ?? order.estimated_cost ?? 0);
-          if (fallbackAmount > 0) {
-            const desc = userNote || `Оплата по акту ${order.ticket_number}`;
-            await insertIncomeTx(fallbackAmount, worksCat, desc, order);
-          }
+        } else if (fallbackAmount > 0) {
+          const desc = userNote || `Оплата по акту ${order.ticket_number}`;
+          await insertIncomeTx(fallbackAmount, worksCat, desc, order);
         }
 
         await tx.query(

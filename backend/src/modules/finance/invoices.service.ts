@@ -512,11 +512,15 @@ export class InvoicesService {
       final_cost: string | number | null;
       deal_id: string | null;
     }>(
-      `SELECT id, ticket_number, company_id, customer_name, customer_phone, equipment_type, equipment_brand,
-              equipment_model, estimated_cost, final_cost, deal_id
-       FROM repair_orders
-       WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
-       ORDER BY created_at ASC`,
+      `SELECT ro.id, ro.ticket_number,
+              COALESCE(d.company_id, ct.company_id) AS company_id,
+              ro.customer_name, ro.customer_phone, ro.equipment_type, ro.equipment_brand,
+              ro.equipment_model, ro.estimated_cost, ro.final_cost, ro.deal_id
+       FROM repair_orders ro
+       LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id AND d.deleted_at IS NULL
+       LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
+       WHERE ro.tenant_id = $1 AND ro.id = ANY($2) AND ro.deleted_at IS NULL
+       ORDER BY ro.created_at ASC`,
       [tenant, p.repair_order_ids],
     );
 
@@ -526,7 +530,7 @@ export class InvoicesService {
 
     const firstRepair = repairs[0]!;
     const realItems: MergeableLineItem[] = [];
-    const fallbackItems: MergeableLineItem[] = [];
+    const zeroPriceActs: string[] = [];
 
     for (const repair of repairs) {
       const works = await query<{
@@ -548,21 +552,29 @@ export class InvoicesService {
         [tenant, repair.id],
       );
 
+      let actSum = 0;
+
       for (const w of works) {
+        const qty = Number(w.quantity || 1);
+        const unitPrice = Number(w.unit_price != null ? w.unit_price : w.cost);
+        actSum += qty * unitPrice;
         realItems.push({
           description: w.description,
-          quantity: Number(w.quantity || 1),
-          unit_price: Number(w.unit_price != null ? w.unit_price : w.cost),
+          quantity: qty,
+          unit_price: unitPrice,
           source: "repair_work",
           source_label: repair.ticket_number,
         });
       }
 
       for (const pt of parts) {
+        const qty = Number(pt.quantity || 1);
+        const unitPrice = Number(pt.retail_price);
+        actSum += qty * unitPrice;
         realItems.push({
           description: pt.name,
-          quantity: Number(pt.quantity || 1),
-          unit_price: Number(pt.retail_price),
+          quantity: qty,
+          unit_price: unitPrice,
           source: "repair_part",
           source_label: repair.ticket_number,
         });
@@ -571,6 +583,7 @@ export class InvoicesService {
       if (works.length === 0 && parts.length === 0) {
         const cost = Number(repair.final_cost ?? repair.estimated_cost ?? 0);
         if (cost > 0) {
+          actSum += cost;
           realItems.push({
             description: `Ремонт ${repair.equipment_type} ${repair.equipment_brand} ${repair.equipment_model}`.trim(),
             quantity: 1,
@@ -578,20 +591,24 @@ export class InvoicesService {
             source: "repair_work",
             source_label: repair.ticket_number,
           });
-        } else {
-          fallbackItems.push({
-            description: `Ремонт ${repair.equipment_type} ${repair.equipment_brand} ${repair.equipment_model}`.trim(),
-            quantity: 1,
-            unit_price: 0,
-            source: "repair_work",
-            source_label: repair.ticket_number,
-          });
         }
+      }
+
+      if (actSum <= 0) {
+        zeroPriceActs.push(repair.ticket_number);
       }
     }
 
-    // Если среди выбранных актов есть реальные работы/запчасти — не захламляем счёт пустыми строками на 0 ₽
-    const line_items = mergeInvoiceLineItems(realItems.length > 0 ? realItems : fallbackItems);
+    if (zeroPriceActs.length > 0) {
+      throw new ValidationError(
+        `Нельзя выставить счёт по актам без указанной стоимости (0 ₽): ${zeroPriceActs.join(", ")}`,
+      );
+    }
+
+    const line_items = mergeInvoiceLineItems(realItems);
+    if (line_items.length === 0) {
+      throw new ValidationError("В выбранных актах нет позиций для выставления счёта");
+    }
 
     let autoSyncOrgId: string | null = null;
     const created = await withTenant(tenant, async (tx) => {
@@ -949,34 +966,170 @@ export class InvoicesService {
   }
 
   async update(tenant: string, id: string, p: UpdateInvoicePayload): Promise<InvoiceDTO> {
-    const sets: string[] = [];
-    const params: (string | Date)[] = [tenant, id];
-    if (p.status) {
-      params.push(p.status);
-      sets.push(`status=$${params.length}`);
-    }
-    if (p.due_date) {
-      params.push(p.due_date);
-      sets.push(`due_date=$${params.length}`);
-    }
-    if (p.notes !== undefined) {
-      params.push(p.notes);
-      sets.push(`notes=$${params.length}`);
-    }
-    if (!sets.length) {
-      const r = await queryOne<InvoiceRow>(
-        `SELECT ${INVOICE_COLS} FROM invoices WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL`,
+    return withTenant(tenant, async (tx) => {
+      const current = await tx.queryOne<InvoiceRow>(
+        `SELECT ${INVOICE_COLS} FROM invoices WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`,
+        [tenant, id],
+      );
+      if (!current) throw new NotFoundError("Invoice not found");
+
+      if (current.status === "paid") {
+        throw new AppError(
+          409,
+          "INVOICE_PAID_READONLY",
+          "Оплаченный счёт нельзя редактировать",
+        );
+      }
+
+      const sets: string[] = [];
+      const params: (string | number | Date | null)[] = [tenant, id];
+      const push = (col: string, val: string | number | Date | null, cast = ""): void => {
+        params.push(val);
+        sets.push(`${col}=$${params.length}${cast}`);
+      };
+
+      if (p.status !== undefined) push("status", p.status);
+      if (p.due_date !== undefined) push("due_date", p.due_date);
+      if (p.company_id !== undefined) push("company_id", p.company_id || null);
+      if (p.company_name !== undefined) push("company_name", p.company_name.trim());
+      if (p.company_inn !== undefined) push("company_inn", p.company_inn.trim());
+      if (p.company_address !== undefined) push("company_address", p.company_address.trim());
+      if (p.contact_name !== undefined) push("contact_name", p.contact_name.trim());
+      if (p.contact_phone !== undefined) push("contact_phone", p.contact_phone.trim());
+      if (p.notes !== undefined) push("notes", p.notes);
+
+      if (p.issuer_organization_id !== undefined && p.issuer_organization_id !== "") {
+        const org = await financeOrganizationsService.getDefaultOrByIdInTx(
+          tx,
+          tenant,
+          p.issuer_organization_id,
+        );
+        if (org) {
+          push("issuer_organization_id", org.id);
+          push("issuer_snapshot", JSON.stringify(buildIssuerSnapshot(org)), "::jsonb");
+        }
+      }
+
+      let itemsSum: number | null = null;
+      if (p.line_items !== undefined) {
+        const mergedItems = mergeInvoiceLineItems(
+          p.line_items.map((li) => ({
+            description: li.description,
+            quantity: li.quantity,
+            unit_price: li.unit_price,
+            source: li.source,
+            source_label: li.source_label || undefined,
+          })),
+        );
+        if (mergedItems.length === 0) {
+          throw new ValidationError("Добавьте хотя бы одну позицию в счёт");
+        }
+        await tx.query(`DELETE FROM invoice_items WHERE invoice_id=$1`, [id]);
+        for (const li of mergedItems) {
+          await tx.query(
+            `INSERT INTO invoice_items(invoice_id,description,quantity,unit_price,total,source,source_label)
+             VALUES($1,$2,$3,$4,$5,$6,$7)`,
+            [
+              id,
+              li.description,
+              li.quantity,
+              li.unit_price,
+              Math.round(li.quantity * li.unit_price * 100) / 100,
+              li.source,
+              li.source_label || null,
+            ],
+          );
+        }
+        itemsSum = mergedItems.reduce((s, li) => s + li.quantity * li.unit_price, 0);
+      }
+
+      if (itemsSum !== null || p.vat_mode !== undefined || p.vat_rate !== undefined) {
+        const baseSum = itemsSum !== null ? itemsSum : Number(current.subtotal);
+        const currentVatMode: VatMode =
+          current.vat_mode || vatRateToMode(Number(current.vat_rate));
+        const resolvedVatMode: VatMode =
+          p.vat_mode ??
+          (p.vat_rate !== undefined ? vatRateToMode(p.vat_rate) : currentVatMode);
+        const totals = calculateInvoiceTotals(baseSum, resolvedVatMode, p.vat_rate);
+        push("subtotal", totals.subtotal);
+        push("vat_mode", totals.vatMode);
+        push("vat_rate", totals.vatRate);
+        push("vat_amount", totals.vatAmount);
+        push("total", totals.total);
+      }
+
+      if (sets.length === 0) {
+        return this.dtoTx(tenant, tx, current);
+      }
+
+      sets.push("updated_at = now()");
+      const updated = await tx.queryOneOrThrow<InvoiceRow>(
+        `UPDATE invoices SET ${sets.join(", ")} WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL RETURNING ${INVOICE_COLS}`,
         params,
       );
-      if (!r) throw new NotFoundError("Invoice not found");
-      return this.dto(tenant, r);
-    }
-    const r = await queryOne<InvoiceRow>(
-      `UPDATE invoices SET ${sets.join(",")} WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL RETURNING ${INVOICE_COLS}`,
-      params,
-    );
-    if (!r) throw new NotFoundError("Invoice not found");
-    return this.dto(tenant, r);
+      return this.dtoTx(tenant, tx, updated);
+    });
+  }
+
+  async remove(tenant: string, id: string): Promise<{ success: boolean; id: string }> {
+    return withTenant(tenant, async (tx) => {
+      const current = await tx.queryOne<InvoiceRow>(
+        `SELECT ${INVOICE_COLS} FROM invoices WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`,
+        [tenant, id],
+      );
+      if (!current) throw new NotFoundError("Invoice not found");
+
+      if (current.status === "paid") {
+        throw new AppError(
+          409,
+          "INVOICE_PAID_DELETE_FORBIDDEN",
+          "Оплаченный счёт нельзя удалить",
+        );
+      }
+
+      const linkedRows = await tx.query<{ repair_order_id: string }>(
+        `SELECT repair_order_id FROM invoice_repair_orders WHERE tenant_id=$1 AND invoice_id=$2`,
+        [tenant, id],
+      );
+      const linkedOrderIds = new Set<string>(linkedRows.map((r) => r.repair_order_id));
+      if (current.repair_order_id) {
+        linkedOrderIds.add(current.repair_order_id);
+      }
+
+      await tx.query(
+        `UPDATE invoices SET deleted_at = now(), updated_at = now() WHERE tenant_id=$1 AND id=$2`,
+        [tenant, id],
+      );
+
+      await tx.query(
+        `DELETE FROM invoice_repair_orders WHERE tenant_id=$1 AND invoice_id=$2`,
+        [tenant, id],
+      );
+
+      // Возвращаем payment_status нарядов в 'unpaid', если у них не осталось других активных счетов
+      for (const orderId of linkedOrderIds) {
+        const remaining = await tx.queryOne<{ cnt: string }>(
+          `SELECT COUNT(*)::text AS cnt
+           FROM invoices i
+           LEFT JOIN invoice_repair_orders iro ON iro.invoice_id = i.id AND iro.tenant_id = i.tenant_id
+           WHERE i.tenant_id = $1
+             AND i.deleted_at IS NULL
+             AND i.status <> 'cancelled'
+             AND (i.repair_order_id = $2 OR iro.repair_order_id = $2)`,
+          [tenant, orderId],
+        );
+        if (Number(remaining?.cnt ?? 0) === 0) {
+          await tx.query(
+            `UPDATE repair_orders
+             SET payment_status = 'unpaid', updated_at = now()
+             WHERE tenant_id = $1 AND id = $2 AND payment_status = 'invoiced'`,
+            [tenant, orderId],
+          );
+        }
+      }
+
+      return { success: true, id };
+    });
   }
 
   async markPaid(
