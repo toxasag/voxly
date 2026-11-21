@@ -850,6 +850,7 @@ export class PrintTemplatesService {
         defect_description: string;
         appearance: string;
         package_contents: string;
+        package_contents_items?: string[] | null;
         malfunctions: string[];
         master_name: string;
         estimated_cost: string;
@@ -860,7 +861,7 @@ export class PrintTemplatesService {
       }>(
         `SELECT ro.ticket_number, ro.customer_name, ro.customer_phone,
                 ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
-                ro.defect_description, ro.appearance, ro.package_contents, ro.malfunctions,
+                ro.defect_description, ro.appearance, ro.package_contents, ro.package_contents_items, ro.malfunctions,
                 ro.master_name, ro.estimated_cost, ro.final_cost, ro.received_at, ro.completed_at, ro.notes,
                 COALESCE(comp.name, dcomp.name) AS company_name,
                 COALESCE(comp.inn, dcomp.inn) AS company_inn
@@ -967,6 +968,7 @@ export class PrintTemplatesService {
       defect_description: string;
       appearance: string;
       package_contents: string;
+      package_contents_items?: string[] | null;
       malfunctions?: string[];
       master_name: string;
       estimated_cost: string;
@@ -995,6 +997,27 @@ export class PrintTemplatesService {
     const marginMm = cfg.theme.margins === "compact" ? "8mm" : cfg.theme.margins === "spacious" ? "20mm" : "14mm";
     const baseFontSize = cfg.theme.fontSize === "small" ? "11px" : cfg.theme.fontSize === "large" ? "13px" : "12px";
 
+    const mainDefect =
+      Array.isArray(order.malfunctions) && order.malfunctions.length > 0
+        ? order.malfunctions.join(", ")
+        : order.defect_description || "—";
+
+    const extraDefect =
+      order.defect_description &&
+      order.defect_description.trim() !== mainDefect.trim()
+        ? order.defect_description.trim()
+        : "";
+
+    const fullDefectText = extraDefect
+      ? (mainDefect && mainDefect !== "—" ? `${mainDefect}. ${extraDefect}` : extraDefect)
+      : mainDefect;
+
+    const resolvedPackageContents =
+      (order.package_contents && order.package_contents.trim()) ||
+      (Array.isArray(order.package_contents_items) && order.package_contents_items.length > 0
+        ? order.package_contents_items.join(", ")
+        : "");
+
     const isIntakeAct =
       data.tpl.documentType === "work_order" ||
       data.tpl.slug === "work_order" ||
@@ -1005,17 +1028,6 @@ export class PrintTemplatesService {
         (order.equipment_serial ? ` S/N: ${order.equipment_serial}` : "");
       const termsBody = cfg.terms.termsText || settings.intakeTerms || INTAKE_ACT_PRESET.layoutConfig.terms.termsText;
       const cleanNumShort = cleanNumber.replace(/\D/g, "") || cleanNumber;
-
-      const mainDefect =
-        Array.isArray(order.malfunctions) && order.malfunctions.length > 0
-          ? order.malfunctions.join(", ")
-          : order.defect_description || "—";
-
-      const extraDefect =
-        order.defect_description &&
-        order.defect_description.trim() !== mainDefect.trim()
-          ? order.defect_description.trim()
-          : "";
 
       const orderNotes = (order.notes || cfg.tearOffTicket.customNote || "").trim();
 
@@ -1381,7 +1393,7 @@ export class PrintTemplatesService {
           </thead>
           <tbody>
             <tr>
-              <td>${order.package_contents || "Без комплекта"}</td>
+              <td>${resolvedPackageContents || "Без комплекта"}</td>
               <td>${order.appearance || "Б/У, следы нормальной эксплуатации"}</td>
             </tr>
           </tbody>
@@ -1442,7 +1454,7 @@ export class PrintTemplatesService {
             </thead>
             <tbody>
               <tr>
-                <td>${order.package_contents || "—"}</td>
+                <td>${resolvedPackageContents || "—"}</td>
                 <td>${order.appearance || "Б/У"}</td>
                 <td class="stub-num">${cleanNumShort}</td>
               </tr>
@@ -1535,9 +1547,9 @@ export class PrintTemplatesService {
                 <div><strong>Техника:</strong> ${order.equipment_type || ""} ${order.equipment_brand || ""} ${order.equipment_model || ""}</div>
                 ${cfg.equipment.showSerial ? `<div><strong>Серийный номер / IMEI:</strong> ${order.equipment_serial || "—"}</div>` : ""}
               </div>
-              ${cfg.equipment.showDefect ? `<div class="mt-1"><strong>Неисправность со слов клиента:</strong> ${order.defect_description || "—"}</div>` : ""}
+              ${cfg.equipment.showDefect ? `<div class="mt-1"><strong>Неисправность со слов клиента:</strong> ${fullDefectText || "—"}</div>` : ""}
               ${cfg.equipment.showAppearance ? `<div class="mt-1"><strong>Внешний вид / состояние:</strong> ${order.appearance || "Б/У, следы эксплуатации"}</div>` : ""}
-              ${cfg.equipment.showPackage ? `<div class="mt-1"><strong>Комплектация:</strong> ${order.package_contents || "Без комплекта"}</div>` : ""}
+              ${cfg.equipment.showPackage ? `<div class="mt-1"><strong>Комплектация:</strong> ${resolvedPackageContents || "Без комплекта"}</div>` : ""}
               <div class="grid-2 mt-1">
                 ${cfg.equipment.showMaster ? `<div><strong>Ответственный мастер:</strong> ${order.master_name || "Назначен дежурный специалист"}</div>` : ""}
                 ${cfg.equipment.showEstimatedCost && order.estimated_cost ? `<div><strong>Ориентировочная стоимость:</strong> ${order.estimated_cost}</div>` : ""}
@@ -1675,9 +1687,9 @@ export class PrintTemplatesService {
               <div class="tear-body">
                 <div>Заказчик: <strong>${order.company_name ? `${order.company_name} / ` : ""}${order.customer_name || "—"}</strong>${order.customer_phone ? ` (тел: ${order.customer_phone})` : ""}</div>
                 <div>Инструмент: <strong>${order.equipment_type || ""} ${order.equipment_brand || ""} ${order.equipment_model || ""}</strong>${order.equipment_serial ? ` (S/N: ${order.equipment_serial})` : ""}</div>
-                ${order.defect_description ? `<div>Неисправность: ${order.defect_description}</div>` : ""}
+                ${fullDefectText && fullDefectText !== "—" ? `<div>Неисправность: ${fullDefectText}</div>` : ""}
                 ${order.appearance ? `<div>Внешний вид: ${order.appearance}</div>` : ""}
-                ${order.package_contents ? `<div>Комплектация: ${order.package_contents}</div>` : ""}
+                ${resolvedPackageContents ? `<div>Комплектация: ${resolvedPackageContents}</div>` : ""}
                 ${order.notes || cfg.tearOffTicket.customNote ? `<div class="tear-note">Комментарии: ${order.notes || cfg.tearOffTicket.customNote}</div>` : ""}
                 <div>Принял мастер: <strong>${order.master_name || "—"}</strong> | Сервис: ${companyName} (${companyPhone})</div>
               </div>

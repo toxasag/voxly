@@ -39,6 +39,7 @@ export interface EquipmentInfo {
   model: string;
   serial_number: string;
   package_contents: string;
+  package_contents_items?: string[];
   appearance: string;
 }
 
@@ -147,23 +148,6 @@ export interface RepairTotals {
 }
 
 export type RepairFilterStatus = RepairStatus | "all";
-
-export const EQUIPMENT_TYPES = [
-  "Смартфон",
-  "Планшет",
-  "Ноутбук",
-  "Компьютер (ПК)",
-  "Монитор",
-  "Принтер / МФУ",
-  "Серверное оборудование",
-  "Фото/видеокамера",
-  "Смарт-часы",
-  "Беспроводные наушники",
-  "Игровая приставка",
-  "Другое",
-] as const;
-
-export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
 
 const STATUS_LABELS: Record<RepairStatus, string> = {
   intake: "Принят",

@@ -214,66 +214,83 @@ export const RepairReceiptModal = memo(function RepairReceiptModal({
           </div>
 
           {/* Информация о заказе */}
-          <div style={{ fontSize: "11px", lineHeight: "1.6", marginBottom: "12px" }}>
-            <div>
-              <strong>Заказчик:</strong> {ticket.customer_name} {ticket.customer_phone}
-              {ticket.company_name ? ` (${ticket.company_name})` : ""}
-            </div>
-            <div>
-              <strong>Устройство:</strong> {ticket.equipment.type ? `${ticket.equipment.type} ` : ""}
-              {ticket.equipment.brand} {ticket.equipment.model}
-              {showSerial && ticket.equipment.serial_number ? ` S/N: ${ticket.equipment.serial_number}` : ""}
-            </div>
-            {showAppearance && ticket.equipment.appearance && (
-              <div>
-                <strong>Внешний вид / состояние:</strong> {ticket.equipment.appearance}
-              </div>
-            )}
-            {showEstCost && ticket.estimated_cost && Number(ticket.estimated_cost) > 0 && (
-              <div>
-                <strong>Ориентировочная стоимость:</strong> {ticket.estimated_cost} ₽
-              </div>
-            )}
-            {showDefect && (
-              <div>
-                <strong>Заявленная неисправность:</strong> {ticket.defect_description || "Не указана"}
-              </div>
-            )}
-          </div>
+          {(() => {
+            const malfList = ticket.malfunctions?.filter(Boolean) ?? [];
+            const mainDefect = malfList.length > 0 ? malfList.join(", ") : ticket.defect_description?.trim() || "";
+            const extraDefect =
+              ticket.defect_description?.trim() && ticket.defect_description.trim() !== mainDefect.trim()
+                ? ticket.defect_description.trim()
+                : "";
+            const fullDefect = extraDefect ? `${mainDefect}. ${extraDefect}` : mainDefect;
+            const packageText =
+              ticket.equipment.package_contents?.trim() ||
+              (ticket.equipment.package_contents_items?.length ? ticket.equipment.package_contents_items.join(", ") : "");
 
-          {/* Таблица: Комплектация | Неисправность */}
-          {(showPackage || showDefect) && (
-            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "14px", fontSize: "11px" }}>
-              <thead>
-                <tr style={{ background: "#fbfbfb" }}>
-                  {showPackage && (
-                    <th style={{ border: "1px solid #111111", padding: "5px 8px", textAlign: "left", width: showDefect ? "50%" : "100%", fontWeight: 700 }}>
-                      Комплектация
-                    </th>
+            return (
+              <>
+                <div style={{ fontSize: "11px", lineHeight: "1.6", marginBottom: "12px" }}>
+                  <div>
+                    <strong>Заказчик:</strong> {ticket.customer_name} {ticket.customer_phone}
+                    {ticket.company_name ? ` (${ticket.company_name})` : ""}
+                  </div>
+                  <div>
+                    <strong>Устройство:</strong> {ticket.equipment.type ? `${ticket.equipment.type} ` : ""}
+                    {ticket.equipment.brand} {ticket.equipment.model}
+                    {showSerial && ticket.equipment.serial_number ? ` S/N: ${ticket.equipment.serial_number}` : ""}
+                  </div>
+                  {showAppearance && ticket.equipment.appearance && (
+                    <div>
+                      <strong>Внешний вид / состояние:</strong> {ticket.equipment.appearance}
+                    </div>
+                  )}
+                  {showEstCost && ticket.estimated_cost && Number(ticket.estimated_cost) > 0 && (
+                    <div>
+                      <strong>Ориентировочная стоимость:</strong> {ticket.estimated_cost} ₽
+                    </div>
                   )}
                   {showDefect && (
-                    <th style={{ border: "1px solid #111111", padding: "5px 8px", textAlign: "left", width: showPackage ? "50%" : "100%", fontWeight: 700 }}>
-                      Неисправность
-                    </th>
+                    <div>
+                      <strong>Заявленная неисправность:</strong> {fullDefect || "Не указана"}
+                    </div>
                   )}
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  {showPackage && (
-                    <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
-                      {ticket.equipment.package_contents || "Стандартная"}
-                    </td>
-                  )}
-                  {showDefect && (
-                    <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
-                      {ticket.defect_description || "Диагностика"}
-                    </td>
-                  )}
-                </tr>
-              </tbody>
-            </table>
-          )}
+                </div>
+
+                {/* Таблица: Комплектация | Неисправность */}
+                {(showPackage || showDefect) && (
+                  <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "14px", fontSize: "11px" }}>
+                    <thead>
+                      <tr style={{ background: "#fbfbfb" }}>
+                        {showPackage && (
+                          <th style={{ border: "1px solid #111111", padding: "5px 8px", textAlign: "left", width: showDefect ? "50%" : "100%", fontWeight: 700 }}>
+                            Комплектация
+                          </th>
+                        )}
+                        {showDefect && (
+                          <th style={{ border: "1px solid #111111", padding: "5px 8px", textAlign: "left", width: showPackage ? "50%" : "100%", fontWeight: 700 }}>
+                            Неисправность
+                          </th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {showPackage && (
+                          <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
+                            {packageText || "Стандартная"}
+                          </td>
+                        )}
+                        {showDefect && (
+                          <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
+                            {fullDefect || "Диагностика"}
+                          </td>
+                        )}
+                      </tr>
+                    </tbody>
+                  </table>
+                )}
+              </>
+            );
+          })()}
 
           {/* Пункты договора */}
           <div style={{ fontSize: "9.5px", lineHeight: "1.32", color: "#222222", textAlign: "justify", marginBottom: "14px" }}>
@@ -353,10 +370,21 @@ export const RepairReceiptModal = memo(function RepairReceiptModal({
                   <tbody>
                     <tr>
                       <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
-                        {ticket.equipment.package_contents || "Стандартная"}
+                        {ticket.equipment.package_contents?.trim() ||
+                          (ticket.equipment.package_contents_items?.length
+                            ? ticket.equipment.package_contents_items.join(", ")
+                            : "Стандартная")}
                       </td>
                       <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
-                        {ticket.defect_description || "Диагностика"}
+                        {(() => {
+                          const malfs = ticket.malfunctions?.filter(Boolean) ?? [];
+                          const main = malfs.length > 0 ? malfs.join(", ") : ticket.defect_description?.trim() || "";
+                          const extra =
+                            ticket.defect_description?.trim() && ticket.defect_description.trim() !== main.trim()
+                              ? ticket.defect_description.trim()
+                              : "";
+                          return (extra ? `${main}. ${extra}` : main) || "Диагностика";
+                        })()}
                       </td>
                       <td
                         style={{

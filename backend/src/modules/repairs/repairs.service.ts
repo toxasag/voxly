@@ -1202,6 +1202,25 @@ export class RepairsService {
     id: string,
     payload: UpdateRepairPayload,
   ): Promise<RepairOrderDTO | null> {
+    const existing = await queryOne<{
+      equipment_type: string;
+      equipment_brand: string;
+      equipment_model: string;
+      package_contents: string;
+      package_contents_items: string[] | null;
+      defect_description: string;
+      malfunctions: string[] | null;
+    }>(
+      `SELECT equipment_type, equipment_brand, equipment_model,
+              package_contents, package_contents_items,
+              defect_description, malfunctions
+       FROM repair_orders
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, id],
+    );
+
+    if (!existing) return null;
+
     const assignments: string[] = [];
     const params: SqlParam[] = [tenantId, id];
 
@@ -1234,23 +1253,77 @@ export class RepairsService {
         }
       }
     }
-    if (payload.equipment_type !== undefined) push("equipment_type", payload.equipment_type);
-    if (payload.equipment_brand !== undefined) push("equipment_brand", payload.equipment_brand);
-    if (payload.equipment_model !== undefined) push("equipment_model", payload.equipment_model);
-    if (payload.equipment_serial !== undefined) push("equipment_serial", payload.equipment_serial);
-    if (payload.package_contents !== undefined) push("package_contents", payload.package_contents);
+
+    let syncedPackageItems: string[] | undefined;
+    let syncedMalfunctions: string[] | undefined;
+
+    if (payload.equipment_type !== undefined) push("equipment_type", payload.equipment_type.trim());
+    if (payload.equipment_brand !== undefined) push("equipment_brand", payload.equipment_brand.trim());
+    if (payload.equipment_model !== undefined) push("equipment_model", payload.equipment_model.trim());
+    if (payload.equipment_serial !== undefined) push("equipment_serial", payload.equipment_serial.trim());
+
+    // Двусторонняя синхронизация комплектации (package_contents TEXT <-> package_contents_items TEXT[])
     if (payload.package_contents_items !== undefined) {
-      params.push(payload.package_contents_items);
+      const normalizedItems = Array.from(
+        new Set(payload.package_contents_items.map((item) => item.trim()).filter(Boolean)),
+      );
+      syncedPackageItems = normalizedItems;
+      params.push(normalizedItems);
+      assignments.push(`package_contents_items = $${params.length}`);
+      const derivedString =
+        payload.package_contents !== undefined && payload.package_contents.trim().length > 0
+          ? payload.package_contents.trim()
+          : normalizedItems.join(", ");
+      push("package_contents", derivedString);
+    } else if (payload.package_contents !== undefined) {
+      const trimmedPkg = payload.package_contents.trim();
+      const derivedItems = trimmedPkg
+        ? Array.from(new Set(trimmedPkg.split(/,\s*/).map((item) => item.trim()).filter(Boolean)))
+        : [];
+      syncedPackageItems = derivedItems;
+      push("package_contents", trimmedPkg);
+      params.push(derivedItems);
       assignments.push(`package_contents_items = $${params.length}`);
     }
-    if (payload.appearance !== undefined) push("appearance", payload.appearance);
-    if (payload.defect_description !== undefined) {
-      push("defect_description", payload.defect_description);
-    }
+
+    if (payload.appearance !== undefined) push("appearance", payload.appearance.trim());
+
+    // Согласованная синхронизация неисправностей (malfunctions TEXT[] <-> defect_description TEXT)
+    const existingMalfunctions = Array.isArray(existing.malfunctions) ? existing.malfunctions : [];
     if (payload.malfunctions !== undefined) {
-      params.push(payload.malfunctions);
+      const normalizedMalfunctions = Array.from(
+        new Set(payload.malfunctions.map((item) => item.trim()).filter(Boolean)),
+      );
+      syncedMalfunctions = normalizedMalfunctions;
+      params.push(normalizedMalfunctions);
       assignments.push(`malfunctions = $${params.length}`);
+
+      if (payload.defect_description !== undefined) {
+        const trimmedDesc = payload.defect_description.trim();
+        const finalDesc =
+          trimmedDesc.length > 0
+            ? trimmedDesc
+            : normalizedMalfunctions.length > 0
+              ? normalizedMalfunctions.join(", ")
+              : "";
+        push("defect_description", finalDesc);
+      } else {
+        const existingDesc = (existing.defect_description ?? "").trim();
+        const existingJoined = existingMalfunctions.join(", ").trim();
+        if (!existingDesc || existingDesc === existingJoined) {
+          push("defect_description", normalizedMalfunctions.join(", "));
+        }
+      }
+    } else if (payload.defect_description !== undefined) {
+      const trimmedDesc = payload.defect_description.trim();
+      push("defect_description", trimmedDesc);
+      if (existingMalfunctions.length > 0 && trimmedDesc !== (existing.defect_description ?? "").trim()) {
+        syncedMalfunctions = [];
+        params.push([]);
+        assignments.push(`malfunctions = $${params.length}`);
+      }
     }
+
     if (payload.priority !== undefined) push("priority", payload.priority);
     if (payload.master_id !== undefined) {
       const masterId = nullIfBlank(payload.master_id);
@@ -1280,6 +1353,25 @@ export class RepairsService {
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         params,
       );
+    }
+
+    const equipmentChanged =
+      payload.equipment_type !== undefined ||
+      payload.equipment_brand !== undefined ||
+      payload.equipment_model !== undefined ||
+      syncedPackageItems !== undefined ||
+      syncedMalfunctions !== undefined;
+
+    if (equipmentChanged) {
+      await withTenant(tenantId, async (tx) => {
+        await this.syncEquipmentDictionaries(tx, tenantId, {
+          equipment_type: payload.equipment_type !== undefined ? payload.equipment_type.trim() : existing.equipment_type,
+          equipment_brand: payload.equipment_brand !== undefined ? payload.equipment_brand.trim() : existing.equipment_brand,
+          equipment_model: payload.equipment_model !== undefined ? payload.equipment_model.trim() : existing.equipment_model,
+          malfunctions: syncedMalfunctions,
+          accessories: syncedPackageItems,
+        });
+      });
     }
 
     const current = await this.get(tenantId, id);
