@@ -8,7 +8,7 @@ export interface PrintTemplateSettingsDrawerProps {
   onClose: () => void;
   initialDocumentType?: string;
   orderId?: string;
-  order?: any;
+  order?: RepairPreviewSource | null;
 }
 
 export function PrintTemplateSettingsDrawer({

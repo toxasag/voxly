@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getEnv } from "../../../config/env.js";
 import { authenticatePlugin } from "../../../plugins/authenticate.js";
 import { BillingService } from "./billing.service.js";
@@ -23,7 +23,7 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
    * ResultURL: серверный вебхук Robokassa об успешной оплате счёта.
    * Robokassa ожидает ответ строго в формате text/plain: "OK{invId}".
    */
-  const handleResult = async (request: FastifyRequest, reply: any) => {
+  const handleResult = async (request: FastifyRequest, reply: FastifyReply) => {
     const params = extractWebhookParams(request);
     app.log.info({ invId: params.InvId ?? params.invId }, "Robokassa ResultURL received");
 
@@ -37,7 +37,7 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
   /**
    * SuccessURL: страница, на которую возвращается покупатель после успешной оплаты.
    */
-  const handleSuccess = async (request: FastifyRequest, reply: any) => {
+  const handleSuccess = async (request: FastifyRequest, reply: FastifyReply) => {
     const params = extractWebhookParams(request);
     const { valid, invId } = await billingService.verifySuccessRedirect(params);
 
@@ -55,7 +55,7 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
   /**
    * FailURL: страница, на которую покупатель попадает при отмене платежа.
    */
-  const handleFail = async (_request: FastifyRequest, reply: any) => {
+  const handleFail = async (_request: FastifyRequest, reply: FastifyReply) => {
     const redirectBase = env.PUBLIC_APP_URL || "https://app.getvoxly.ru";
     return reply.redirect(`${redirectBase}/finance?payment=cancelled`);
   };

@@ -83,8 +83,14 @@ export function normaliseText(raw: string): string {
 // Извлечение
 // ---------------------------------------------------------------------------
 
+/** Лимиты распаковки: защита от zip-бомбы (малый архив → гигабайты в памяти). */
+const MAX_ZIP_ENTRY_BYTES = 25 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES = 60 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 2000;
+
 function readZipFiles(buffer: Buffer): Map<string, string> {
   const files = new Map<string, string>();
+  let totalBytes = 0;
   let eocdOffset = -1;
   for (let i = buffer.length - 22; i >= 0; i--) {
     if (buffer.readUInt32LE(i) === 0x06054b50) {
@@ -95,7 +101,7 @@ function readZipFiles(buffer: Buffer): Map<string, string> {
 
   if (eocdOffset !== -1) {
     const cdOffset = buffer.readUInt32LE(eocdOffset + 16);
-    const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+    const totalEntries = Math.min(buffer.readUInt16LE(eocdOffset + 10), MAX_ZIP_ENTRIES);
     let cur = cdOffset;
     for (let i = 0; i < totalEntries && cur + 46 <= buffer.length; i++) {
       if (buffer.readUInt32LE(cur) !== 0x02014b50) break;
@@ -114,8 +120,12 @@ function readZipFiles(buffer: Buffer): Map<string, string> {
         const compressedData = buffer.subarray(dataStart, dataStart + compressedSize);
         try {
           if (compression === 8) {
-            files.set(fileName, zlib.inflateRawSync(compressedData).toString("utf8"));
+            const inflated = zlib.inflateRawSync(compressedData, { maxOutputLength: MAX_ZIP_ENTRY_BYTES });
+            totalBytes += inflated.length;
+            if (totalBytes > MAX_ZIP_TOTAL_BYTES) break;
+            files.set(fileName, inflated.toString("utf8"));
           } else if (compression === 0) {
+            if (compressedData.length > MAX_ZIP_ENTRY_BYTES) continue;
             files.set(fileName, compressedData.toString("utf8"));
           }
         } catch {

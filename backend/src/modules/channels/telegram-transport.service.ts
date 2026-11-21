@@ -1039,7 +1039,7 @@ export class TelegramTransportService {
       return { ok: false, reason: "Аккаунт Telegram не подключён к транспорту" };
     }
 
-    const sendToTarget = async (target: any) => {
+    const sendToTarget = async (target: Parameters<TelegramClient["sendMessage"]>[0]) => {
       if (message.attachment) {
         const media = await resolveOutboundMedia(
           message.attachment,
@@ -1235,9 +1235,12 @@ export class TelegramTransportService {
       let toUpload: CustomFile;
 
       if (payload.mediaUrl.startsWith("http://") || payload.mediaUrl.startsWith("https://")) {
-        const res = await fetch(payload.mediaUrl);
+        const res = await fetch(payload.mediaUrl, { signal: AbortSignal.timeout(30_000) });
         if (!res.ok) {
           return { ok: false, reason: `Не удалось скачать медиафайл по URL: HTTP ${res.status}` };
+        }
+        if (Number(res.headers.get("content-length") ?? 0) > 50 * 1024 * 1024) {
+          return { ok: false, reason: "Медиафайл по URL слишком большой (лимит 50 МБ)" };
         }
         const arrayBuf = await res.arrayBuffer();
         const buf = Buffer.from(arrayBuf);

@@ -366,6 +366,11 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/** Повтор безопасен только для запросов, не меняющих данные: иначе POST/PATCH/DELETE дублировались бы. */
+function isIdempotentMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD";
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -391,7 +396,11 @@ async function request<T>(
       ...(options.signal !== undefined && { signal: options.signal }),
     });
   } catch (networkErr) {
-    if (options.retrying !== true && (!options.signal || !options.signal.aborted)) {
+    if (
+      options.retrying !== true &&
+      isIdempotentMethod(method) &&
+      (!options.signal || !options.signal.aborted)
+    ) {
       // Кратковременный сетевой сбой или перезапуск контейнера бэкенда: одна повторная попытка
       await new Promise((r) => setTimeout(r, 700));
       return request<T>(method, path, body, { ...options, retrying: true });
@@ -407,7 +416,11 @@ async function request<T>(
   }
 
   // При получении 502/503/504 (перезапуск бэкенда за прокси) — пробуем повторить запрос один раз
-  if ((res.status === 502 || res.status === 503 || res.status === 504) && options.retrying !== true) {
+  if (
+    (res.status === 502 || res.status === 503 || res.status === 504) &&
+    options.retrying !== true &&
+    isIdempotentMethod(method)
+  ) {
     await new Promise((r) => setTimeout(r, 800));
     return request<T>(method, path, body, { ...options, retrying: true });
   }

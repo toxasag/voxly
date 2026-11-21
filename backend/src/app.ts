@@ -362,7 +362,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
     // Fallback: проксирование из frontend контейнера по внутренней сети
     try {
-      const upstream = await fetch(`http://frontend:3000/mascots/${encodeURIComponent(safeFilename)}`);
+      const upstream = await fetch(`http://frontend:3000/mascots/${encodeURIComponent(safeFilename)}`, {
+        signal: AbortSignal.timeout(5_000),
+      });
       if (upstream.ok) {
         const buffer = Buffer.from(await upstream.arrayBuffer());
         const cType = upstream.headers.get("content-type") || "image/webp";
@@ -394,7 +396,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       }
     }
     try {
-      const upstream = await fetch("http://frontend:3000/miroslava.png");
+      const upstream = await fetch("http://frontend:3000/miroslava.png", { signal: AbortSignal.timeout(5_000) });
       if (upstream.ok) {
         const buffer = Buffer.from(await upstream.arrayBuffer());
         return reply

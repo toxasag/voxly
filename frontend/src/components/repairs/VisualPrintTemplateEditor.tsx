@@ -54,7 +54,7 @@ export interface VisualPrintTemplateEditorProps {
   onClose: () => void;
   initialDocumentType?: string;
   orderId?: string;
-  order?: any;
+  order?: RepairPreviewSource | null;
   sampleData?: PreviewSampleData;
   isDrawer?: boolean;
 }

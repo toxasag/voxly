@@ -556,8 +556,11 @@ export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
  * Преобразует реальные поля заказ-наряда (RepairOrderDTO / RepairTicket)
  * в структуру PreviewSampleData для конструктора и превью бланков.
  */
+/** Наряд приходит из API в camelCase и snake_case, поэтому поля читаются без жёсткой схемы. */
+export type RepairPreviewSource = Record<string, unknown>;
+
 export function mapRepairToPreviewSampleData(
-  order: any,
+  order: RepairPreviewSource | null | undefined,
 ): PreviewSampleData {
   if (!order) return DEFAULT_PREVIEW_SAMPLE_DATA;
 
@@ -678,7 +681,7 @@ export function mapRepairToPreviewSampleData(
   const rawWorks = order.works || order.work_items || [];
   const works =
     Array.isArray(rawWorks) && rawWorks.length > 0
-      ? rawWorks.map((w: any, idx: number) => {
+      ? rawWorks.map((w: Record<string, unknown>, idx: number) => {
           const qty = Number(w.quantity ?? 1) || 1;
           const price = Number(w.unitPrice ?? w.unit_price ?? w.cost ?? 0);
           const total = Number(w.cost ?? qty * price);
@@ -696,7 +699,7 @@ export function mapRepairToPreviewSampleData(
   const rawParts = order.parts || order.parts_used || [];
   const parts =
     Array.isArray(rawParts) && rawParts.length > 0
-      ? rawParts.map((p: any, idx: number) => {
+      ? rawParts.map((p: Record<string, unknown>, idx: number) => {
           const qty = Number(p.quantity ?? 1) || 1;
           const price = Number(p.retailPrice ?? p.retail_price ?? p.price ?? 0);
           const total = Number(p.total ?? qty * price);
