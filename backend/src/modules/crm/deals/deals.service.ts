@@ -316,7 +316,12 @@ export class DealsService {
    * Kanban projection: every stage of the pipeline with its deals, count and
    * budget total. Empty stages are returned so the board renders all columns.
    */
-  async kanban(tenantId: string, pipelineId: string): Promise<KanbanColumn[]> {
+  async kanban(
+    tenantId: string,
+    pipelineId: string,
+    options?: { maxDeals?: number },
+  ): Promise<KanbanColumn[]> {
+    const maxDeals = Math.min(Math.max(options?.maxDeals ?? 2000, 1), 5000);
     const stages = await query<StageRow>(
       `SELECT s.id, s.pipeline_id, s.name, s.sort_order, s.is_won, s.is_lost, s.is_system, s.color
        FROM stages s
@@ -332,13 +337,15 @@ export class DealsService {
 
     // Порядок внутри колонки: сначала position (ручное перетаскивание), затем
     // дата — у сделок, созданных до появления поля, position одинаковый.
+    // Защитный LIMIT исключает OOM на сверхкрупных воронках.
     const rows = await query<DealRow>(
       `SELECT ${DEAL_COLUMNS_WITH_LABELS}
        FROM deals d
        ${DEAL_LABEL_JOINS}
        WHERE d.tenant_id = $1 AND d.pipeline_id = $2 AND d.deleted_at IS NULL
-       ORDER BY d.position ASC, d.created_at DESC`,
-      [tenantId, pipelineId],
+       ORDER BY d.position ASC, d.created_at DESC
+       LIMIT $3`,
+      [tenantId, pipelineId, maxDeals],
     );
 
     const grouped = new Map<string, DealDTO[]>();
@@ -905,13 +912,25 @@ export class DealsService {
   // Timeline
   // -------------------------------------------------------------------------
 
-  async listMessages(tenantId: string, dealId: string): Promise<DealMessageDTO[]> {
+  async listMessages(
+    tenantId: string,
+    dealId: string,
+    options?: { limit?: number },
+  ): Promise<DealMessageDTO[]> {
+    const limit = Math.min(Math.max(options?.limit ?? 500, 1), 2000);
+    // Берём последние `limit` сообщений по времени и возвращаем в хронологическом порядке (ASC),
+    // чтобы длинные чаты на тысячи сообщений не создавали OOM и не тормозили карточку сделки.
     const rows = await query<DealMessageRow>(
-      `SELECT ${MESSAGE_COLUMNS}
-       FROM deal_messages
-       WHERE tenant_id = $1 AND deal_id = $2
+      `SELECT *
+       FROM (
+         SELECT ${MESSAGE_COLUMNS}
+         FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+         ORDER BY created_at DESC
+         LIMIT $3
+       ) AS recent_messages
        ORDER BY created_at ASC`,
-      [tenantId, dealId],
+      [tenantId, dealId, limit],
     );
 
     return rows.map(toDealMessageDTO);

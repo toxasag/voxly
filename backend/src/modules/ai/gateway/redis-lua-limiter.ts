@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getRedisClient, isRedisAvailable } from "../../../infrastructure/redis.js";
+import { deleteKeysByPattern, getRedisClient, isRedisAvailable } from "../../../infrastructure/redis.js";
 import type { ModelLimits, SlotReservationCheck } from "./gateway.types.js";
 
 /**
@@ -442,10 +442,7 @@ export class RedisLuaLimiter {
     const redis = isRedisAvailable() ? getRedisClient() : null;
     if (redis) {
       try {
-        const keys = await redis.keys("llm:*");
-        if (keys.length > 0) {
-          await redis.del(...keys);
-        }
+        await deleteKeysByPattern(redis, "llm:*");
       } catch {}
     }
   }

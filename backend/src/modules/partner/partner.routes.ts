@@ -13,7 +13,7 @@ import {
   parseCookies,
   REFRESH_COOKIE_NAME,
 } from "../auth/auth-cookie.js";
-import { getRedisClient, isRedisAvailable } from "../../infrastructure/redis.js";
+import { deleteKeysByPattern, getRedisClient, isRedisAvailable } from "../../infrastructure/redis.js";
 import { PartnerService } from "./partner.service.js";
 import {
   createPartnerTenantSchema,
@@ -244,15 +244,7 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
     const redis = isRedisAvailable() ? getRedisClient() : null;
     if (redis && impersonatorId) {
       try {
-        const pattern = `partner:switch:${impersonatorId}:*`;
-        let cursor = "0";
-        do {
-          const [nextCursor, batch] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
-          cursor = nextCursor;
-          if (batch.length > 0) {
-            await redis.del(...batch);
-          }
-        } while (cursor !== "0");
+        await deleteKeysByPattern(redis, `partner:switch:${impersonatorId}:*`);
       } catch {
         // неблокирующий
       }

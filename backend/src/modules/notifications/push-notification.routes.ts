@@ -5,6 +5,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { registerSseStream } from "../../infrastructure/sse-registry.js";
 import {
   pushNotificationService,
   notificationEventBus,
@@ -175,16 +176,20 @@ export async function pushNotificationRoutes(app: FastifyInstance): Promise<void
           onNotification(n);
         });
 
+        const unregisterStream = registerSseStream(reply.raw);
+
         const pingInterval = setInterval(() => {
           if (!reply.raw.destroyed) {
             reply.raw.write(`: ping\n\n`);
           }
         }, 15_000);
+        pingInterval.unref?.();
 
         request.raw.on("close", () => {
           clearInterval(pingInterval);
           unsubUser();
           unsubTenant();
+          unregisterStream();
         });
 
         return reply;

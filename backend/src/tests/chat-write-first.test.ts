@@ -26,6 +26,7 @@ describe("Write-First Chat and Send-From Options", () => {
       // 1. mock contact row
       mockQuery.mockResolvedValueOnce([
         {
+          contact_id: "contact-1",
           telegram_chat_id: "987654321",
           telegram_username: "client_tg",
           whatsapp: null,
@@ -53,11 +54,11 @@ describe("Write-First Chat and Send-From Options", () => {
 
       const waOption = options.find((o) => o.channelAccountId === "acc-wa-1");
       expect(waOption?.available).toBe(false);
-      expect(waOption?.unavailableReason).toContain("не указан телефон для WhatsApp");
+      expect(waOption?.unavailableReason).toContain("не указан номер телефона для WhatsApp");
 
       const maxOption = options.find((o) => o.channelAccountId === "acc-max-1");
       expect(maxOption?.available).toBe(false);
-      expect(maxOption?.unavailableReason).toContain("не указан телефон для MAX");
+      expect(maxOption?.unavailableReason).toContain("не указан номер телефона для MAX");
     });
   });
 

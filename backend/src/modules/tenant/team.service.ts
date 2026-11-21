@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { hashToken } from "../../lib/crypto.utils.js";
 import { toDate, toIso, toIsoOrNull } from "../../lib/date.utils.js";
 import { query, queryOne, transaction } from "../../db/client.js";
+import { invalidateAuthUserCache } from "../../plugins/auth-cache.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
 import { ASSIGNABLE_ROLES, ALL_PERMISSIONS, ROLE_LABELS, ROLE_PERMISSIONS, toPermissions } from "../../config/permissions.js";
@@ -554,6 +555,7 @@ export class TeamService {
     );
 
     if (updated === null) throw new NotFoundError("Сотрудник не найден");
+    await invalidateAuthUserCache(input.tenantId, input.userId);
     return toMemberDTO(updated, owner, input.actorId);
   }
 
@@ -592,6 +594,8 @@ export class TeamService {
       );
     });
 
+    await invalidateAuthUserCache(input.tenantId, input.userId);
+
     return { seats: await this.seatUsage(input.tenantId) };
   }
 
@@ -609,6 +613,8 @@ export class TeamService {
     );
 
     if (revoked === null) throw new NotFoundError("Приглашение не найдено или уже принято");
+
+    await invalidateAuthUserCache(input.tenantId, input.userId);
 
     return { seats: await this.seatUsage(input.tenantId) };
   }

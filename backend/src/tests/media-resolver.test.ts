@@ -70,7 +70,7 @@ describe("media-resolver", () => {
     const uploadsDir = path.resolve(process.cwd(), "uploads");
     await fs.mkdir(uploadsDir, { recursive: true });
 
-    const testFilename = `test_tenant_uuid_${Date.now()}_sample.pdf`;
+    const testFilename = `00000000-0000-0000-0000-000000000001_11111111-1111-1111-1111-111111111111_sample.pdf`;
     const testPath = path.join(uploadsDir, testFilename);
     const testBuffer = Buffer.from("%PDF-1.4 test document content");
     await fs.writeFile(testPath, testBuffer);
