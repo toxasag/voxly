@@ -13,10 +13,43 @@ const verifyKeySchema = z.object({
   save: z.boolean().optional(),
 });
 
+function validateProviderBaseUrl(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "Некорректный формат baseUrl";
+  }
+
+  if (parsed.protocol !== "https:") {
+    return "baseUrl провайдера обязан использовать протокол HTTPS";
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    !host.includes(".") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    host.startsWith("127.") ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    host.startsWith("169.254.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    return "Внутренние и локальные адреса в baseUrl запрещены";
+  }
+
+  return null;
+}
+
 export default async function geminiIntegrationRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
+  const platformOwner = app.requirePlatformOwner();
 
-  app.post("/verify", async (request, reply) => {
+  app.post("/verify", { onRequest: platformOwner }, async (request, reply) => {
     const parseResult = verifyKeySchema.safeParse(request.body ?? {});
     if (!parseResult.success) {
       return reply.status(400).send({
@@ -31,6 +64,17 @@ export default async function geminiIntegrationRoutes(app: FastifyInstance): Pro
 
     const { apiKey, baseUrl, save } = parseResult.data;
     const effectiveBaseUrl = (baseUrl || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, "");
+
+    const baseUrlError = validateProviderBaseUrl(effectiveBaseUrl);
+    if (baseUrlError) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: "SSRF_FORBIDDEN",
+          message: baseUrlError,
+        },
+      });
+    }
 
     let lastErrorDetails = "";
     let statusCode = 400;
@@ -172,7 +216,7 @@ export default async function geminiIntegrationRoutes(app: FastifyInstance): Pro
   /**
    * Получение статистики утилизации квот пула ключей Google Gemini (RPM/TPM/RPD, кулдауны).
    */
-  app.get("/pool-stats", async (_request, reply) => {
+  app.get("/pool-stats", { onRequest: platformOwner }, async (_request, reply) => {
     const stats = await geminiKeyPoolService.getPoolStats();
     return reply.status(200).send({
       success: true,

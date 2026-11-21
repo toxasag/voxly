@@ -496,23 +496,51 @@ export async function buildApp(): Promise<FastifyInstance> {
       .send();
   });
 
+  async function resolveSafeUploadPath(
+    rawFilename: string,
+  ): Promise<{ safeFilename: string; filePath: string } | null> {
+    const uploadsDir = path.resolve(process.cwd(), "uploads");
+    const candidates: string[] = [path.basename(rawFilename)];
+    try {
+      const decoded = decodeURIComponent(rawFilename);
+      const decodedBase = path.basename(decoded);
+      if (decodedBase && !candidates.includes(decodedBase)) {
+        candidates.push(decodedBase);
+      }
+    } catch {
+      // ignore malformed URI encoding
+    }
+
+    for (const candidate of candidates) {
+      if (!candidate || candidate === "." || candidate === ".." || candidate.includes("\0")) {
+        continue;
+      }
+      const resolved = path.resolve(uploadsDir, candidate);
+      if (!resolved.startsWith(`${uploadsDir}${path.sep}`)) {
+        continue;
+      }
+      try {
+        await fs.access(resolved);
+        return { safeFilename: candidate, filePath: resolved };
+      } catch {
+        // try next candidate
+      }
+    }
+
+    return null;
+  }
+
   // Эндпоинт отдачи загруженных файлов (/uploads/:filename).
   // Публичные ассеты (аватары, логотипы, маркер _public_, изображения) отдаются
   // без авторизации с открытыми CORS/CORP заголовками для виджетов на клиентских сайтах.
   // Конфиденциальные документы (PDF, XLSX, DOCX) требуют валидный JWT и проверку арендатора.
   app.get("/uploads/:filename", async (request, reply) => {
     const { filename } = request.params as { filename: string };
-    let safeFilename = path.basename(filename);
-    let filePath = path.join(process.cwd(), "uploads", safeFilename);
-    if (!existsSync(filePath)) {
-      try {
-        const decoded = decodeURIComponent(safeFilename);
-        if (decoded !== safeFilename && existsSync(path.join(process.cwd(), "uploads", decoded))) {
-          safeFilename = decoded;
-          filePath = path.join(process.cwd(), "uploads", decoded);
-        }
-      } catch {}
+    const resolvedUpload = await resolveSafeUploadPath(filename);
+    if (!resolvedUpload) {
+      return reply.status(404).send({ error: "File not found" });
     }
+    const { safeFilename, filePath } = resolvedUpload;
     const ext = path.extname(safeFilename).toLowerCase();
     const contentType = mimeMap[ext] ?? "application/octet-stream";
 

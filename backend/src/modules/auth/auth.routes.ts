@@ -923,12 +923,16 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
           : cookies[AUTH_COOKIE_NAME];
       if (rawAccessToken) {
         try {
-          const decoded = app.jwt.decode<{ impersonator_id?: string }>(rawAccessToken);
-          if (decoded && typeof decoded.impersonator_id === "string") {
-            impersonatorId = decoded.impersonator_id;
+          // Verify cryptographic signature (allowing expired access token during refresh),
+          // never trust unsigned jwt.decode payloads.
+          const verified = app.jwt.verify<{ impersonator_id?: string }>(rawAccessToken, {
+            ignoreExpiration: true,
+          });
+          if (verified && typeof verified.impersonator_id === "string") {
+            impersonatorId = verified.impersonator_id;
           }
         } catch {
-          // ignore decode errors
+          // Invalid signature — ignore impersonator claim
         }
       }
 
@@ -972,12 +976,15 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     let impersonatorIdFromToken: string | undefined;
     if (rawAccessToken) {
       try {
-        const decoded = app.jwt.decode<{ impersonator_id?: string }>(rawAccessToken);
-        if (decoded && typeof decoded.impersonator_id === "string") {
-          impersonatorIdFromToken = decoded.impersonator_id;
+        // Verify cryptographic signature before extracting impersonator_id
+        const verified = app.jwt.verify<{ impersonator_id?: string }>(rawAccessToken, {
+          ignoreExpiration: true,
+        });
+        if (verified && typeof verified.impersonator_id === "string") {
+          impersonatorIdFromToken = verified.impersonator_id;
         }
       } catch {
-        // ignore
+        // Invalid signature — do not trust token
       }
     }
 
