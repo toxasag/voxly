@@ -1,8 +1,7 @@
 import { Queue, Worker } from "bullmq";
 import { registerBullQueue } from "../../infrastructure/queue-metrics.js";
 import { createHash } from "node:crypto";
-import { getEnv } from "../../config/env.js";
-import { requireDurableQueue } from "../../infrastructure/redis.js";
+import { getRedisConnectionOptions, requireDurableQueue } from "../../infrastructure/redis.js";
 import { withTenant } from "../../db/client.js";
 import { decryptSecret } from "../../services/credentials-cipher.js";
 import {
@@ -87,30 +86,28 @@ export class ConversionDispatcherService {
   }
 
   private initQueue(): void {
-    const redisUrl = getEnv().REDIS_URL;
+    let connOptions: ReturnType<typeof getRedisConnectionOptions> = null;
+    try {
+      connOptions = getRedisConnectionOptions();
+    } catch {
+      return;
+    }
 
-    if (!redisUrl) {
+    if (!connOptions) {
       requireDurableQueue(QUEUE_NAME);
       return;
     }
     try {
-      const parsed = new URL(redisUrl);
-      const connection = {
-        host: parsed.hostname || "127.0.0.1",
-        port: parsed.port ? parseInt(parsed.port, 10) : 6379,
-        password: parsed.password || undefined,
-        username: parsed.username || undefined,
-      };
-
       this.bullQueue = new Queue<ConversionEventPayload>(QUEUE_NAME, {
-        connection,
+        connection: connOptions,
         defaultJobOptions: {
           attempts: 5,
           backoff: {
             type: "exponential",
             delay: 3000,
           },
-          removeOnComplete: true,
+          removeOnComplete: { count: 1000, age: 86400 },
+          removeOnFail: { count: 500, age: 86400 },
         },
       });
       registerBullQueue(QUEUE_NAME, this.bullQueue as Queue<unknown>);
@@ -120,7 +117,7 @@ export class ConversionDispatcherService {
         async (job: { data: ConversionEventPayload }) => {
           await this.processEvent(job.data);
         },
-        { connection, concurrency: 5 },
+        { connection: connOptions, concurrency: 5 },
       );
 
       this.bullWorker.on("failed", (job: { id?: string } | undefined, err: Error) => {
@@ -174,7 +171,8 @@ export class ConversionDispatcherService {
       const job = await this.bullQueue.add("test-conversion", testPayload, {
         jobId,
         attempts: 1,
-        removeOnComplete: false,
+        removeOnComplete: { count: 200, age: 3600 },
+        removeOnFail: { count: 200, age: 3600 },
       });
       return {
         jobId: job.id || jobId,

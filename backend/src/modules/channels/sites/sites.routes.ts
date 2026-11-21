@@ -81,6 +81,12 @@ export const siteWebhookRoutes: FastifyPluginAsync = async (app: FastifyInstance
   app.route({
     method: ["POST", "OPTIONS"],
     url: "/:token",
+    config: {
+      rateLimit: {
+        max: 120,
+        timeWindow: "1 minute",
+      },
+    },
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       reply.header("Access-Control-Allow-Origin", "*");
       reply.header("Access-Control-Allow-Methods", "POST, OPTIONS");

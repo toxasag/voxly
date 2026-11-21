@@ -161,6 +161,14 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
   // Загрузка вложения (фото, видео, документ) от посетителя сайта
   app.post<{ Params: { channelAccountId: string } }>(
     "/upload/:channelAccountId",
+    {
+      config: {
+        rateLimit: {
+          max: 20,
+          timeWindow: "1 minute",
+        },
+      },
+    },
     async (request, reply) => {
       const { channelAccountId } = request.params;
       const account = await service.resolveAccount(channelAccountId);
@@ -200,6 +208,14 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
   // Отправка сообщения посетителем сайта
   app.post<{ Params: { channelAccountId: string } }>(
     "/message/:channelAccountId",
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 minute",
+        },
+      },
+    },
     async (request, reply) => {
       const { channelAccountId } = request.params;
       const body = messageBodySchema.parse(request.body);

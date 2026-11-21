@@ -534,6 +534,18 @@ async function fetchBlob(
   return { blob: await res.blob(), filename };
 }
 
+/** Инициирует скачивание Blob-файла в браузере и освобождает object URL. */
+export function triggerBrowserDownload(blob: Blob, filename: string): void {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
 export const apiClient = {
   downloadBlob(
     path: string,

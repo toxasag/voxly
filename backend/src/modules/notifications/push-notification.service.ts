@@ -105,6 +105,11 @@ export interface CreateInAppNotificationParams {
 }
 
 class NotificationEventBus extends EventEmitter {
+  constructor() {
+    super();
+    this.setMaxListeners(0);
+  }
+
   emitNotification(tenantId: string, userId: string | null, notification: InAppNotificationDTO): void {
     this.emit(`tenant:${tenantId}`, notification);
     if (userId) {

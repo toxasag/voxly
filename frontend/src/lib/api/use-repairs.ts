@@ -2,22 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
 import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import type { RepairStatus, RepairPriority, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
 
 // ---------------------------------------------------------------------------
 // DTOs — mirror backend/src/modules/repairs/repairs.types.ts.
 // ---------------------------------------------------------------------------
 
-export type RepairStatus =
-  | "intake"
-  | "waiting_parts"
-  | "ready"
-  | "issued"
-  | "diagnostics"
-  | "approval"
-  | "in_progress"
-  | "rejected";
-export type RepairPriority = "low" | "normal" | "high" | "urgent";
-export type RepairPaymentStatus = "unpaid" | "invoiced" | "paid";
+export type { RepairStatus, RepairPriority, RepairPaymentStatus };
 
 export interface EquipmentDTO {
   type: string;
