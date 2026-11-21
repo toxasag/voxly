@@ -319,8 +319,24 @@ export interface CreateInvoicePayload {
 
 export interface UpdateInvoicePayload {
   status?: InvoiceStatus;
+  issuer_organization_id?: string;
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  company_address?: string;
+  contact_name?: string;
+  contact_phone?: string;
   due_date?: string;
+  vat_mode?: VatMode;
+  vat_rate?: number;
   notes?: string;
+  line_items?: {
+    description: string;
+    quantity?: number;
+    unit_price: number;
+    source?: string;
+    source_label?: string;
+  }[];
 }
 
 export interface MarkInvoicePaidPayload {
@@ -552,6 +568,24 @@ export function useUpdateInvoice(): UseMutationResult<InvoiceDTO, ApiClientError
     },
     onSuccess: (invoice) => {
       queryClient.setQueryData(financeKeys.invoiceDetail(invoice.id), invoice);
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useDeleteInvoice(): UseMutationResult<{ success: boolean; id: string }, ApiClientError, string> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean; id: string }, ApiClientError, string>({
+    mutationFn: async (id) => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(`/api/v1/invoices/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
@@ -985,14 +1019,16 @@ export function useSyncInvoiceToElba(): UseMutationResult<
   });
 }
 
+export async function fetchInvoiceRfHtml(invoiceId: string, autoPrint = false): Promise<string> {
+  const path = autoPrint
+    ? `/api/v1/invoices/${invoiceId}/html?print=1`
+    : `/api/v1/invoices/${invoiceId}/html`;
+  const { blob } = await apiClient.downloadBlob(path);
+  return blob.text();
+}
+
 export async function openInvoiceRfPrintWindow(invoiceId: string): Promise<void> {
-  const res = await fetch(`/api/v1/invoices/${invoiceId}/html?print=1`, {
-    credentials: "include",
-  });
-  if (!res.ok) {
-    throw new Error("Не удалось загрузить печатную форму счёта");
-  }
-  const html = await res.text();
+  const html = await fetchInvoiceRfHtml(invoiceId, true);
   const w = window.open("", "_blank", "width=880,height=1040");
   if (!w) {
     throw new Error("Всплывающее окно заблокировано браузером");

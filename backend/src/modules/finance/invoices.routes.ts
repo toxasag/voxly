@@ -80,6 +80,11 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
     return rep.send({ data: await s.update(r.tenant_id, invoiceId, updateInvoiceSchema.parse(r.body)) });
   });
 
+  app.delete("/:id", { onRequest: write }, async (r, rep) => {
+    const { id: invoiceId } = id.parse(r.params);
+    return rep.send({ data: await s.remove(r.tenant_id, invoiceId) });
+  });
+
   app.post("/:id/pay", { onRequest: write }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
     return rep.send({ data: await s.markPaid(r.tenant_id, r.authUser.id, invoiceId, markInvoicePaidSchema.parse(r.body)) });

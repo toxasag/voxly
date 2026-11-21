@@ -24,6 +24,7 @@ import {
   updateOrganizationSchema,
 } from "./finance-organizations.types.js";
 import { renderInvoiceRfHtml } from "./invoice-html.service.js";
+import { innLookupService } from "../integrations/inn-lookup.service.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 
 const page = z.object({
@@ -129,6 +130,27 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
   // ---------------------------------------------------------------------------
   // Организации-поставщики, конструктор счёта РФ и Контур.Эльба
   // ---------------------------------------------------------------------------
+
+  app.get("/lookup-inn", { onRequest: read }, async (req, reply) => {
+    const { inn } = z
+      .object({
+        inn: z
+          .string()
+          .trim()
+          .regex(/^\d{10}(\d{2})?$/, "ИНН должен состоять из 10 или 12 цифр"),
+      })
+      .parse(req.query);
+    const result = await innLookupService.lookup(inn);
+    if (!result) {
+      return reply.status(404).send({
+        error: {
+          code: "INN_NOT_FOUND",
+          message: "Организация по данному ИНН не найдена в реестре ЕГРЮЛ/ФНС",
+        },
+      });
+    }
+    return reply.send({ data: result });
+  });
 
   app.get("/organizations", { onRequest: read }, async (req, reply) => {
     const items = await financeOrganizationsService.list(req.tenant_id);

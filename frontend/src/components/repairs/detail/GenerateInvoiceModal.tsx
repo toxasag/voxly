@@ -99,12 +99,29 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
     }
   }, [open, organizations, issuerOrgId]);
 
-  // Автоподстановка актов и реквизитов плательщика (приоритет — привязанная компания + ИНН!)
+  const selectableActs = useMemo(
+    () => acts.filter((a) => a.totalAmount > 0),
+    [acts],
+  );
+
+  // Автоподстановка актов (только с ценой > 0) и реквизитов плательщика
   useEffect(() => {
     if (open) {
       if (acts.length > 0) {
-        const unpaidIds = acts.filter((a) => a.paymentStatus !== "paid").map((a) => a.id);
-        setSelectedIds(unpaidIds.length > 0 ? unpaidIds : [repairOrderId]);
+        const pricedActs = acts.filter((a) => a.totalAmount > 0);
+        const unpaidPricedIds = pricedActs
+          .filter((a) => a.paymentStatus !== "paid")
+          .map((a) => a.id);
+        const currentIsPriced = pricedActs.some((a) => a.id === repairOrderId);
+        setSelectedIds(
+          unpaidPricedIds.length > 0
+            ? unpaidPricedIds
+            : currentIsPriced
+              ? [repairOrderId]
+              : pricedActs.map((a) => a.id),
+        );
+      } else {
+        setSelectedIds([]);
       }
       setCompanyName((defaultCompanyName || defaultCustomerName || "").trim());
       setCompanyInn((defaultCompanyInn || "").trim());
@@ -132,8 +149,10 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
     }
   };
 
-  const isAllSelected = acts.length > 0 && selectedIds.length === acts.length;
-  const isIndeterminate = selectedIds.length > 0 && selectedIds.length < acts.length;
+  const isAllSelected =
+    selectableActs.length > 0 && selectedIds.length === selectableActs.length;
+  const isIndeterminate =
+    selectedIds.length > 0 && selectedIds.length < selectableActs.length;
 
   useEffect(() => {
     if (masterCheckboxRef.current) {
@@ -145,11 +164,12 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
     if (isAllSelected) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(acts.map((a) => a.id));
+      setSelectedIds(selectableActs.map((a) => a.id));
     }
   };
 
-  const handleToggleRow = (id: string) => {
+  const handleToggleRow = (id: string, isSelectable: boolean) => {
+    if (!isSelectable) return;
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
@@ -290,7 +310,7 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
                 Акты наряд-заказов ({acts.length})
               </span>
               <span className="text-xs text-[#888888]">
-                Включено в счёт: {selectedIds.length} из {acts.length}
+                Включено в счёт: {selectedIds.length} из {selectableActs.length} доступных
               </span>
             </div>
 
@@ -301,29 +321,33 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
             ) : (
               <div className="rounded-[8px] border border-[#e5e5e5] bg-white overflow-hidden">
                 <div className="flex items-center justify-between border-b border-[#e5e5e5] bg-[#fafafa] px-3 py-2 text-xs font-medium text-[#666666]">
-                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <label className={cn("flex items-center gap-2.5 select-none", selectableActs.length > 0 ? "cursor-pointer" : "opacity-50 cursor-not-allowed")}>
                     <input
                       ref={masterCheckboxRef}
                       type="checkbox"
                       checked={isAllSelected}
+                      disabled={selectableActs.length === 0}
                       onChange={handleToggleSelectAll}
-                      className="h-4 w-4 rounded border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
+                      className="h-4 w-4 rounded border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5] disabled:opacity-40"
                     />
-                    <span>Выбрать все</span>
+                    <span>Выбрать все с ценой ({selectableActs.length})</span>
                   </label>
                   <span>Сумма по акту</span>
                 </div>
 
                 <div className="divide-y divide-[#f0f0f0] max-h-[190px] overflow-y-auto">
                   {acts.map((act) => {
-                    const checked = selectedIds.includes(act.id);
+                    const hasPrice = act.totalAmount > 0;
+                    const checked = hasPrice && selectedIds.includes(act.id);
                     const isPaid = act.paymentStatus === "paid";
 
                     return (
                       <label
                         key={act.id}
+                        title={hasPrice ? undefined : "Акт без указанной стоимости (0 ₽) нельзя включить в счёт"}
                         className={cn(
-                          "flex items-center justify-between px-3 py-2 cursor-pointer transition-colors hover:bg-[#f8f9fa]",
+                          "flex items-center justify-between px-3 py-2 transition-colors",
+                          hasPrice ? "cursor-pointer hover:bg-[#f8f9fa]" : "opacity-55 bg-[#fafafa] cursor-not-allowed",
                           checked && "bg-[#4a38f5]/[0.03]",
                         )}
                       >
@@ -331,8 +355,9 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => handleToggleRow(act.id)}
-                            className="mt-0.5 h-4 w-4 rounded border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
+                            disabled={!hasPrice}
+                            onChange={() => handleToggleRow(act.id, hasPrice)}
+                            className="mt-0.5 h-4 w-4 rounded border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5] disabled:opacity-40 disabled:cursor-not-allowed"
                           />
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -345,8 +370,12 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
                                   .join(" ")}
                               </span>
                             </div>
-                            <div className="mt-0.5">
-                              {isPaid ? (
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {!hasPrice ? (
+                                <span className="inline-flex items-center rounded-full border border-[#e5e5e5] bg-white px-2 py-0.5 text-[10px] font-medium text-[#888888]">
+                                  Без цены — недоступно
+                                </span>
+                              ) : isPaid ? (
                                 <TagPill color="emerald">Оплачен</TagPill>
                               ) : act.paymentStatus === "invoiced" ? (
                                 <TagPill color="sky">Выставлен счёт</TagPill>
@@ -357,7 +386,7 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
                           </div>
                         </div>
 
-                        <span className="text-xs font-semibold font-mono text-[#111111] shrink-0">
+                        <span className={cn("text-xs font-semibold font-mono shrink-0", hasPrice ? "text-[#111111]" : "text-[#888888]")}>
                           {formatCost(act.totalAmount)}
                         </span>
                       </label>
