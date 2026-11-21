@@ -754,6 +754,7 @@ export class CrmEnrichmentService {
 
     try {
       const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
+        signal: AbortSignal.timeout(10_000),
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -812,6 +813,7 @@ export class CrmEnrichmentService {
       if (!account) return { exists: false, error: "No active MAX account" };
 
       const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
+        signal: AbortSignal.timeout(10_000),
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,

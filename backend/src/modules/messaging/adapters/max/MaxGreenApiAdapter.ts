@@ -103,6 +103,7 @@ export class MaxGreenApiAdapter implements IMessagingAdapter {
       }
 
       const res = await fetch(url, {
+        signal: AbortSignal.timeout(20_000),
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -144,6 +145,7 @@ export class MaxGreenApiAdapter implements IMessagingAdapter {
 
       const url = `${apiUrl}/waInstance${idInstance}/getChatHistory/${apiTokenInstance}`;
       const res = await fetch(url, {
+        signal: AbortSignal.timeout(20_000),
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -223,7 +225,7 @@ export class MaxGreenApiAdapter implements IMessagingAdapter {
       );
 
       const url = `${apiUrl}/waInstance${idInstance}/getStateInstance/${apiTokenInstance}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
       const json = (await res.json().catch(() => ({}))) as { stateInstance?: string };
 
       const isAuthorized = json.stateInstance === "authorized";

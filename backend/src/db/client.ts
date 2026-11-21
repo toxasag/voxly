@@ -25,7 +25,10 @@ import { Pool, type PoolClient, type PoolConfig, type QueryResult, type QueryRes
 /** Values accepted as SQL bind parameters. */
 export type SqlParam = string | number | boolean | Date | null | string[] | number[];
 
-const DEFAULT_MAX_CLIENTS = 10;
+const DEFAULT_MAX_CLIENTS = 20;
+/** Потолок одного запроса и простоя внутри транзакции: зависший SQL не держит коннект вечно. */
+const DEFAULT_STATEMENT_TIMEOUT_MS = 120_000;
+const DEFAULT_IDLE_IN_TX_TIMEOUT_MS = 60_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
 
@@ -48,6 +51,10 @@ function readPoolConfig(): PoolConfig {
     // NUMERIC columns arrive as strings from pg; DTO mappers convert them
     // explicitly with Number() so precision handling stays visible.
     application_name: process.env.PGAPPNAME ?? "getvoxly-api",
+    statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS ?? DEFAULT_STATEMENT_TIMEOUT_MS),
+    idle_in_transaction_session_timeout: Number(
+      process.env.PG_IDLE_IN_TX_TIMEOUT_MS ?? DEFAULT_IDLE_IN_TX_TIMEOUT_MS,
+    ),
   };
 }
 

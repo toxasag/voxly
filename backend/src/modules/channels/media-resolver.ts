@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+/** Верхняя граница вложения, скачиваемого по внешнему URL: защита от исчерпания памяти. */
+const MAX_REMOTE_MEDIA_BYTES = 50 * 1024 * 1024;
+
 export interface ResolvedOutboundMedia {
   buffer: Buffer;
   filename: string;
@@ -173,8 +176,9 @@ export async function resolveOutboundMedia(
     // 2. Если файл не найден локально, но передан URL (http/https)
     if (!buffer && (attachment.startsWith("http://") || attachment.startsWith("https://"))) {
       try {
-        const res = await fetch(attachment);
-        if (res.ok) {
+        const res = await fetch(attachment, { signal: AbortSignal.timeout(20_000) });
+        const declaredSize = Number(res.headers.get("content-length") ?? 0);
+        if (res.ok && declaredSize <= MAX_REMOTE_MEDIA_BYTES) {
           const ab = await res.arrayBuffer();
           buffer = Buffer.from(ab);
         }

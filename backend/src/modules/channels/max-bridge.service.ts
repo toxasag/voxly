@@ -83,6 +83,7 @@ export class MaxBridgeService {
       const res = await fetch(`${this.baseUrl}${path}`, {
         ...options,
         headers,
+        signal: options.signal ?? AbortSignal.timeout(30_000),
       });
       const json = (await res.json().catch(() => ({}))) as T;
       return { ok: res.ok, status: res.status, json };
@@ -234,7 +235,7 @@ export class MaxBridgeService {
       headers.set("Authorization", `Bearer ${this.serviceToken}`);
     }
     try {
-      const res = await fetch(url, { headers });
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
       if (!res.ok) return null;
       return Buffer.from(await res.arrayBuffer());
     } catch {
