@@ -360,6 +360,9 @@ export class SmartModelRouter {
           );
           if (cooldown < minRetryAfter) minRetryAfter = cooldown;
           excludedKeyModelPairs.add(`${selectedSlot.keyId}:${selectedSlot.model}`);
+          if (selectedSlot.provider === "gemini" || selectedSlot.provider === "anthropic") {
+            globallyExcludedKeyIds.add(selectedSlot.keyId);
+          }
           lastError = new LlmGatewayExhaustedError(`Ключ ${selectedSlot.maskedKey} достиг лимита для ${selectedSlot.model}`, cooldown);
           continue;
         }
