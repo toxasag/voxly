@@ -475,7 +475,60 @@ async function request<T>(
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Скачивание бинарного ответа (PDF, XLSX) с тем же адресом API, Bearer-токеном
+ * и однократным обновлением токена при 401, что и у JSON-запросов.
+ */
+async function fetchBlob(
+  path: string,
+  options: RequestOptions & { method?: "GET" | "POST"; body?: unknown } = {},
+): Promise<{ blob: Blob; filename: string | null }> {
+  const token = readAccessToken();
+  const headers: Record<string, string> = {};
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (token !== null) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(buildUrl(path, options.query), {
+    method: options.method ?? "GET",
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    credentials: "include",
+    ...(options.signal !== undefined && { signal: options.signal }),
+  });
+
+  if (res.status === 401 && options.retrying !== true && !isCredentialPath(path)) {
+    const refreshed = await refreshAccessToken(token).catch(() => null);
+    if (refreshed !== null) {
+      return fetchBlob(path, { ...options, retrying: true });
+    }
+  }
+
+  if (!res.ok) {
+    const parsed: unknown = await res.json().catch(() => null);
+    throw new ApiClientError(res.status, extractApiErrorBody(parsed, res.statusText));
+  }
+
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const plain = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  let filename: string | null = null;
+  try {
+    filename = encoded !== undefined ? decodeURIComponent(encoded) : (plain ?? null);
+  } catch {
+    filename = plain ?? null;
+  }
+
+  return { blob: await res.blob(), filename };
+}
+
 export const apiClient = {
+  downloadBlob(
+    path: string,
+    options?: RequestOptions & { method?: "GET" | "POST"; body?: unknown },
+  ): Promise<{ blob: Blob; filename: string | null }> {
+    return fetchBlob(path, options);
+  },
+
   get<T>(path: string, options?: RequestOptions): Promise<ApiResponse<T>> {
     return request<T>("GET", path, undefined, options);
   },
