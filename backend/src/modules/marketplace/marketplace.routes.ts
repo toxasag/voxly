@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { invalidateTenantModulesCache } from "../../plugins/auth-cache.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
 import {
   moduleSlugSchema,
@@ -379,6 +380,8 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
       };
     });
 
+    await invalidateTenantModulesCache(request.tenant_id);
+
     return reply.send({ data: result });
   });
 
@@ -440,6 +443,8 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
 
       return { slug, quantity: updated.quantity };
     });
+
+    await invalidateTenantModulesCache(request.tenant_id);
 
     return reply.send({ data: result });
   });

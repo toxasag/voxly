@@ -1,4 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../db/client.js", () => ({
+  query: vi.fn().mockResolvedValue([]),
+  queryOne: vi.fn().mockResolvedValue(null),
+  withTenant: vi.fn(async (_tenantId: string, fn: (tx: unknown) => Promise<unknown>) =>
+    fn({ query: vi.fn().mockResolvedValue([]), queryOne: vi.fn().mockResolvedValue(null) }),
+  ),
+}));
+
 import {
   BITRIX24_SOURCE_ID,
   normalizeBitrixWebhookUrl,
@@ -115,6 +124,8 @@ describe("Bitrix24 Lead Connector", () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn().mockResolvedValueOnce({
         ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ result: 999123 }),
         json: async () => ({ result: 999123 }),
       } as unknown as Response);
 
@@ -150,6 +161,8 @@ describe("Bitrix24 Lead Connector", () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn().mockResolvedValueOnce({
         ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ result: 777123 }),
         json: async () => ({ result: 777123 }),
       } as unknown as Response);
 
@@ -213,6 +226,8 @@ describe("Bitrix24 Lead Connector", () => {
         capturedPayload = JSON.parse(init.body as string);
         return {
           ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ result: 888123 }),
           json: async () => ({ result: 888123 }),
         } as unknown as Response;
       });
@@ -296,16 +311,16 @@ describe("Bitrix24 Lead Connector", () => {
     it("rejects internal and localhost urls (SSRF guard)", () => {
       expect(() =>
         normalizeBitrixWebhookUrl("https://localhost/rest/1/abc/"),
-      ).toThrow("SSRF_FORBIDDEN");
+      ).toThrow(expect.objectContaining({ code: "SSRF_FORBIDDEN" }));
       expect(() =>
         normalizeBitrixWebhookUrl("https://127.0.0.1/rest/1/abc/"),
-      ).toThrow("SSRF_FORBIDDEN");
+      ).toThrow(expect.objectContaining({ code: "SSRF_FORBIDDEN" }));
       expect(() =>
         normalizeBitrixWebhookUrl("https://192.168.1.50/rest/1/abc/"),
-      ).toThrow("SSRF_FORBIDDEN");
+      ).toThrow(expect.objectContaining({ code: "SSRF_FORBIDDEN" }));
       expect(() =>
         normalizeBitrixWebhookUrl("https://10.0.0.1/rest/1/abc/"),
-      ).toThrow("SSRF_FORBIDDEN");
+      ).toThrow(expect.objectContaining({ code: "SSRF_FORBIDDEN" }));
     });
 
     it("rejects empty string", () => {
@@ -315,13 +330,13 @@ describe("Bitrix24 Lead Connector", () => {
     it("rejects urls without /rest/ path", () => {
       expect(() =>
         normalizeBitrixWebhookUrl("https://bankirromsk.ru/webhook/261/token/"),
-      ).toThrow("INVALID_REST_PATH");
+      ).toThrow(expect.objectContaining({ code: "INVALID_REST_PATH" }));
     });
 
     it("rejects incomplete rest path missing user id or token (e.g. /rest/token)", () => {
       expect(() =>
         normalizeBitrixWebhookUrl("https://bankirromsk.ru/rest/x8ci14yw7f8xzi3"),
-      ).toThrow("INVALID_REST_PATH");
+      ).toThrow(expect.objectContaining({ code: "INVALID_REST_PATH" }));
     });
 
     it("supports custom method such as crm.lead.fields.json", () => {

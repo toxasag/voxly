@@ -335,62 +335,77 @@ export function validatePhoneCandidate(candidate: string): PhoneValidationResult
     return { isValid: false, normalized: null, issue: "too_short", digits };
   }
 
-  if (isFakeOrDummyPhone(digits)) {
-    return { isValid: false, normalized: null, issue: "fake_number", digits };
-  }
-
   // 1. Международный формат с явным знаком плюса (+)
   if (startsWithPlus) {
     // Для РФ и Казахстана (+7) длина номера строго 11 цифр (+7XXXXXXXXXX)
     if (digits.startsWith("7")) {
-      if (digits.length === 11) {
-        return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
-      }
       if (digits.length < 11) {
         return { isValid: false, normalized: null, issue: "too_short", digits };
       }
-      return { isValid: false, normalized: null, issue: "too_long", digits };
+      if (digits.length > 11) {
+        return { isValid: false, normalized: null, issue: "too_long", digits };
+      }
+      if (isFakeOrDummyPhone(digits)) {
+        return { isValid: false, normalized: null, issue: "fake_number", digits };
+      }
+      return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
     }
 
     // Для остальных стран (E.164: от 10 до 15 цифр)
-    if (digits.length >= 10 && digits.length <= 15) {
-      return { isValid: true, normalized: `+${digits}`, digits };
-    }
     if (digits.length < 10) {
       return { isValid: false, normalized: null, issue: "too_short", digits };
     }
-    return { isValid: false, normalized: null, issue: "too_long", digits };
+    if (digits.length > 15) {
+      return { isValid: false, normalized: null, issue: "too_long", digits };
+    }
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
+    return { isValid: true, normalized: `+${digits}`, digits };
   }
 
   // 2. Российские номера без знака плюса, начинающиеся с 7 или 8
   if (digits.startsWith("7") || digits.startsWith("8")) {
-    if (digits.length === 11) {
-      return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
-    }
     if (digits.length < 11) {
       return { isValid: false, normalized: null, issue: "too_short", digits };
     }
-    return { isValid: false, normalized: null, issue: "too_long", digits };
+    if (digits.length > 11) {
+      return { isValid: false, normalized: null, issue: "too_long", digits };
+    }
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
+    return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
   }
 
   // 3. Российские мобильные без префикса (10 цифр, начинаются строго с 9)
   if (digits.startsWith("9")) {
-    if (digits.length === 10) {
-      return { isValid: true, normalized: `+7${digits}`, digits };
-    }
     if (digits.length < 10) {
       return { isValid: false, normalized: null, issue: "too_short", digits };
     }
-    return { isValid: false, normalized: null, issue: "too_long", digits };
+    if (digits.length > 10) {
+      return { isValid: false, normalized: null, issue: "too_long", digits };
+    }
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
+    return { isValid: true, normalized: `+7${digits}`, digits };
   }
 
   // 4. Российские городские без префикса (10 цифр, начинаются с 3, 4, 8)
   if (digits.length === 10 && /^[348]/.test(digits)) {
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
     return { isValid: true, normalized: `+7${digits}`, digits };
   }
 
   if (digits.length < 10) {
     return { isValid: false, normalized: null, issue: "too_short", digits };
+  }
+
+  if (isFakeOrDummyPhone(digits)) {
+    return { isValid: false, normalized: null, issue: "fake_number", digits };
   }
 
   return { isValid: false, normalized: null, issue: "too_long", digits };
@@ -442,8 +457,10 @@ export function analyzePhoneInText(text?: string | null): PhoneAnalysis {
 
   const onlyDigits = cleaned.replace(/\D/g, "");
 
-  // 1. Если весь текст состоит преимущественно из цифр (до 20 символов) — проверяем целиком
+  // 1. Если весь текст состоит только из цифр и разделителей телефона — проверяем целиком
   if (
+    cleaned.length <= 24 &&
+    /^[\d+\s().-]+$/.test(cleaned) &&
     onlyDigits.length >= 7 &&
     onlyDigits.length <= 16 &&
     (cleaned.startsWith("+") || /^[789]/.test(onlyDigits)) &&

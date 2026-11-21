@@ -12,6 +12,7 @@ import multipart from "@fastify/multipart";
 import { errorHandler } from "./plugins/errorHandler.js";
 import { authenticatePlugin } from "./plugins/authenticate.js";
 import { authorizePlugin } from "./plugins/authorize.js";
+import { getRedisClient } from "./infrastructure/redis.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import crmRoutes from "./modules/crm/crm.routes.js";
 import repairsRoutes from "./modules/repairs/repairs.routes.js";
@@ -80,7 +81,6 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const app = fastify({
     trustProxy: true,
-    maxParamLength: 5000,
     routerOptions: {
       maxParamLength: 5000,
     },
@@ -143,10 +143,19 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(sensible);
 
+  const rateLimitRedis = env.NODE_ENV !== "test" ? getRedisClient() : null;
+
   await app.register(rateLimit, {
     max: 600,
     timeWindow: "1 minute",
     keyGenerator: (request) => request.ip,
+    ...(rateLimitRedis
+      ? {
+          redis: rateLimitRedis,
+          skipOnError: true,
+          nameSpace: "getvoxly:rl:",
+        }
+      : {}),
     /**
      * Bot webhooks are exempt from the shared per-IP limit: both platforms retry
      * a throttled delivery, and a burst of updates would otherwise be dropped,

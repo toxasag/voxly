@@ -141,6 +141,26 @@ export function isRedisAvailable(): boolean {
 }
 
 /**
+ * Неблокирующее удаление ключей по маске через SCAN (замена опасного O(N) `redis.keys()`).
+ */
+export async function deleteKeysByPattern(
+  redis: Redis,
+  pattern: string,
+  batchSize = 100,
+): Promise<number> {
+  let cursor = "0";
+  let deleted = 0;
+  do {
+    const [nextCursor, batch] = await redis.scan(cursor, "MATCH", pattern, "COUNT", batchSize);
+    cursor = nextCursor;
+    if (batch.length > 0) {
+      deleted += await redis.del(...batch);
+    }
+  } while (cursor !== "0");
+  return deleted;
+}
+
+/**
  * Закрытие соединения (для юнит-тестов и graceful shutdown).
  */
 export async function closeRedis(): Promise<void> {
