@@ -1,8 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
-import { apiClient, API_BASE_URL, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
-import { readAccessToken } from "@/lib/auth/session";
+import { apiClient, triggerBrowserDownload, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
 
 export type DealMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot" | "system";
 export type DealMessageDirection = "inbound" | "outbound" | "neutral";
@@ -250,6 +249,47 @@ export function useDeleteDeal(): UseMutationResult<null, ApiClientError, string>
   });
 }
 
+export interface BulkActionPayload {
+  mode: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+}
+
+export function useBulkDeleteDeals(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
+export function useBulkMoveDeals(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload & { stage_id: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-move`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
 export function useMarkDealPersonal(): UseMutationResult<
   { dealId: string; contactId: string | null; stageId: string },
   ApiClientError,
@@ -416,45 +456,16 @@ export interface ExportDealsPayload {
 }
 
 export async function downloadDealsExport(payload: ExportDealsPayload = {}): Promise<void> {
-  const token = readAccessToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${API_BASE_URL}/api/v1/deals/export`, {
+  const { blob, filename } = await apiClient.downloadBlob("/api/v1/deals/export", {
     method: "POST",
-    headers,
-    body: JSON.stringify({
+    body: {
       format: payload.format || "csv",
       pipeline_id: payload.pipelineId,
       search: payload.search,
-    }),
-    credentials: "include",
+    },
   });
-
-  if (!res.ok) {
-    throw new Error("Не удалось экспортировать сделки");
-  }
-
-  const blob = await res.blob();
-  const contentDisp = res.headers.get("content-disposition");
-  let filename = payload.format === "xlsx" ? "deals.xlsx" : "deals.csv";
-  if (contentDisp) {
-    const match = contentDisp.match(/filename="?([^";]+)"?/);
-    if (match && match[1]) {
-      filename = decodeURIComponent(match[1]);
-    }
-  }
-
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
+  const fallback = payload.format === "xlsx" ? "deals.xlsx" : "deals.csv";
+  triggerBrowserDownload(blob, filename ?? fallback);
 }
 
 export function useExportDeals() {

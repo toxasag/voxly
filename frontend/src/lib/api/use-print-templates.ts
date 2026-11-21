@@ -142,6 +142,9 @@ export interface PrintTemplateDTO {
   isCustom: boolean;
   parentTemplateId?: string | null;
   isHidden: boolean;
+  toolInfo?: string;
+  clientInfo?: string;
+  comments?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,6 +162,11 @@ export interface CreatePrintTemplatePayload {
   parent_template_id?: string | null;
   is_hidden?: boolean;
   clone_from_id?: string;
+  toolInfo?: string;
+  tool_info?: string;
+  clientInfo?: string;
+  client_info?: string;
+  comments?: string;
 }
 
 export interface UpdatePrintTemplatePayload {
@@ -172,7 +180,14 @@ export interface UpdatePrintTemplatePayload {
   is_default?: boolean;
   is_custom?: boolean;
   is_hidden?: boolean;
+  toolInfo?: string;
+  tool_info?: string;
+  clientInfo?: string;
+  client_info?: string;
+  comments?: string;
 }
+
+export type UpdateTemplateDto = UpdatePrintTemplatePayload;
 
 // ---------------------------------------------------------------------------
 // Legacy Print Template Settings DTO (Реквизиты, брендинг, правила нумерации)

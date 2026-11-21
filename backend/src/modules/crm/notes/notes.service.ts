@@ -166,12 +166,20 @@ export class NotesService {
   }
 
   async softDelete(tenantId: string, id: string): Promise<boolean> {
-    const row = await queryOne<{ id: string }>(
+    const row = await queryOne<{ id: string; repair_order_id: string | null; body: string }>(
       `UPDATE notes SET deleted_at = now()
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-       RETURNING id`,
+       RETURNING id, repair_order_id, body`,
       [tenantId, id],
     );
+
+    if (row?.repair_order_id) {
+      await query(
+        `DELETE FROM repair_notes
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND content = $3`,
+        [tenantId, row.repair_order_id, row.body],
+      ).catch(() => {});
+    }
 
     return row !== null;
   }

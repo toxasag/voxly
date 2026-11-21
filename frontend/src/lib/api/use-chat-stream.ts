@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { apiClient } from "@/lib/api/apiClient";
 
 export interface ChatMessageEventData {
   id: string;
@@ -39,27 +40,23 @@ export function useChatStream({
 
   const pollDelta = useCallback(async () => {
     try {
-      const qs = new URLSearchParams();
-      if (dealId) qs.set("dealId", dealId);
-      if (lastTimeRef.current) qs.set("since", lastTimeRef.current);
-
-      const res = await fetch(`${apiBaseUrl}/api/v1/crm/chat/delta?${qs.toString()}`, {
-        credentials: "include",
-      });
-      if (res.ok) {
-        const json = (await res.json()) as { data: ChatMessageEventData[]; serverTime: string };
-        if (json.data && json.data.length > 0) {
-          json.data.forEach((msg) => onMessage?.(msg));
-        }
-        if (json.serverTime) {
-          lastTimeRef.current = json.serverTime;
-          setLastEventTime(json.serverTime);
-        }
+      const json = (await apiClient.get<ChatMessageEventData[]>("/api/v1/crm/chat/delta", {
+        query: {
+          dealId: dealId || undefined,
+          since: lastTimeRef.current || undefined,
+        },
+      })) as { data: ChatMessageEventData[]; serverTime?: string };
+      if (json.data && json.data.length > 0) {
+        json.data.forEach((msg) => onMessage?.(msg));
+      }
+      if (json.serverTime) {
+        lastTimeRef.current = json.serverTime;
+        setLastEventTime(json.serverTime);
       }
     } catch {
       // ignore delta poll failure
     }
-  }, [dealId, apiBaseUrl, onMessage]);
+  }, [dealId, onMessage]);
 
   useEffect(() => {
     if (!enabled) return;

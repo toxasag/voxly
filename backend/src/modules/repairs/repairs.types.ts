@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { toIso, toIsoOrNull } from "../../lib/date.utils.js";
+
+export { toIso };
 
 // ---------------------------------------------------------------------------
 // Status workflow
@@ -43,10 +46,10 @@ const ALLOWED_TRANSITIONS: Record<RepairStatus, readonly RepairStatus[]> = {
   parts_order: ["ready", "issued", "intake", "rejected"],
   ready: ["issued", "waiting_parts", "parts_order", "intake"],
   issued: ["ready", "intake"],
-  // Legacy
-  diagnostics: ["waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
-  approval: ["waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
-  in_progress: ["waiting_parts", "parts_order", "ready", "issued", "rejected"],
+  // Active workflow & rollback transitions
+  diagnostics: ["intake", "waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
+  approval: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
+  in_progress: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "rejected"],
   rejected: ["intake"],
 };
 
@@ -558,14 +561,6 @@ export interface RepairOrderDetailDTO extends RepairOrderDTO {
 // Mappers
 // ---------------------------------------------------------------------------
 
-export function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
-}
-
 export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
   return {
     id: row.id,
@@ -714,8 +709,12 @@ export interface ExistingContactDTO {
   contactId: string | null;
   fullName: string;
   phone?: string | null;
+  email?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
   repairsCount: number;
   activeDealsCount: number;
+  matchedBy?: "phone" | "name" | null;
 }
 
 export interface ClientLookupResultDTO {
@@ -763,6 +762,7 @@ export interface ServiceDictionariesDTO {
   models: DictionaryItemDTO[];
   accessories: DictionaryItemDTO[];
   malfunctions: DictionaryItemDTO[];
+  categories?: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {

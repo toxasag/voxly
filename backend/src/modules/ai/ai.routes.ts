@@ -455,7 +455,17 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   // Генеративный синтез системного промпта из контекста и URL целевой страницы
   // -------------------------------------------------------------------------
 
-  app.post("/generate-prompt", async (request, reply) => {
+  app.post(
+    "/generate-prompt",
+    {
+      config: {
+        rateLimit: {
+          max: 15,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
     let tenantId: string | undefined = request.tenant_id;
     if (!tenantId) {
       let token: string | undefined;

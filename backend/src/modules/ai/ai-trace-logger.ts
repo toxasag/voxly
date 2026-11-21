@@ -3,11 +3,19 @@ import fs from "node:fs";
 export const TRACE_JSONL_PATH = "/tmp/getvoxly-ai-trace.jsonl";
 export const TRACE_LOG_PATH = "/tmp/getvoxly-ai-trace.log";
 
+/**
+ * Трассировка включается явно (ENABLE_AI_TRACE_LOG=true). Раньше писалась всегда,
+ * в два файла без ротации и лимита, и при нагрузке заполняла диск хоста.
+ */
+function isTraceEnabled(): boolean {
+  return process.env.ENABLE_AI_TRACE_LOG === "true";
+}
+
 export class AiTraceLogger {
   private static instance: AiTraceLogger;
 
   private constructor() {
-    this.initFiles();
+    if (isTraceEnabled()) this.initFiles();
   }
 
   public static getInstance(): AiTraceLogger {
@@ -52,6 +60,7 @@ export class AiTraceLogger {
   }
 
   public traceEvent(event: string, payload: Record<string, unknown>): void {
+    if (!isTraceEnabled()) return;
     const timestamp = new Date().toISOString();
     const entry = {
       timestamp,

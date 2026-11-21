@@ -3,9 +3,11 @@
 import { useCallback, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Building2, Loader2, Banknote, AlertCircle, FileText } from "lucide-react";
+import { Building2, Loader2, Banknote, AlertCircle, FileText, Sparkles } from "lucide-react";
 import { createCompanySchema, type CreateCompanyPayload } from "@/schemas/company.schema";
-import { ApiClientError } from "@/lib/api/apiClient";
+import { ApiClientError, apiClient } from "@/lib/api/apiClient";
+import type { CompanyInnLookupResult } from "@/lib/api/use-companies";
+import { toast } from "sonner";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
@@ -21,6 +23,7 @@ const EMPTY: CreateCompanyPayload = {
   phone: "",
   email: "",
   inn: "",
+  kpp: "",
   ogrn: "",
   bik: "",
   account_number: "",
@@ -36,6 +39,7 @@ const FIELDS = new Set<keyof CreateCompanyPayload>([
   "phone",
   "email",
   "inn",
+  "kpp",
   "ogrn",
   "bik",
   "account_number",
@@ -148,12 +152,46 @@ export function CompanyModal({ open, onClose, onSubmit, initial }: Props) {
             </div>
 
             <fieldset className="space-y-3 rounded-[8px] border border-[#e5e5e5] p-3.5">
-              <legend className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
-                <Banknote className="h-3 w-3 text-[#888888]" />
-                Реквизиты для счетов
-              </legend>
+              <div className="flex items-center justify-between">
+                <legend className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                  <Banknote className="h-3 w-3 text-[#888888]" />
+                  Реквизиты для счетов
+                </legend>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const inn = (form.getValues("inn") || "").replace(/\D/g, "");
+                    if (inn.length !== 10 && inn.length !== 12) {
+                      toast.error("Укажите ИНН (10 или 12 цифр) для поиска");
+                      return;
+                    }
+                    try {
+                      toast.info(`Поиск по ИНН ${inn}...`);
+                      const res = await apiClient.get<CompanyInnLookupResult>("/api/v1/crm/companies/lookup-inn", { query: { inn } });
+                      if (res.data) {
+                        const curName = form.getValues("name")?.trim();
+                        if (!curName || curName.startsWith("Компания")) {
+                          form.setValue("name", res.data.name, { shouldValidate: true });
+                        }
+                        if (res.data.kpp) form.setValue("kpp", res.data.kpp);
+                        if (res.data.ogrn) form.setValue("ogrn", res.data.ogrn);
+                        if (res.data.legalAddress) form.setValue("legal_address", res.data.legalAddress);
+                        toast.success(`Найдено: ${res.data.name}`);
+                      }
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Организация по ИНН не найдена");
+                    }
+                  }}
+                  className="flex items-center gap-1 rounded-[6px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2 py-0.5 text-[11px] font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors cursor-pointer"
+                  title="Заполнить название и реквизиты по ИНН в ФНС/ЕГРЮЛ"
+                >
+                  <Sparkles className="h-3 w-3 text-[#4a38f5]" />
+                  <span>Заполнить по ИНН</span>
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 {input("inn", "ИНН", "10 или 12 цифр")}
+                {input("kpp", "КПП", "9 цифр")}
                 {input("ogrn", "ОГРН", "13 или 15 цифр")}
                 {input("bik", "БИК", "9 цифр")}
                 {input("account_number", "Расчётный счёт", "20 цифр")}

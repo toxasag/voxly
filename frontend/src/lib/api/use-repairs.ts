@@ -2,22 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
 import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import type { RepairStatus, RepairPriority, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
 
 // ---------------------------------------------------------------------------
 // DTOs — mirror backend/src/modules/repairs/repairs.types.ts.
 // ---------------------------------------------------------------------------
 
-export type RepairStatus =
-  | "intake"
-  | "waiting_parts"
-  | "ready"
-  | "issued"
-  | "diagnostics"
-  | "approval"
-  | "in_progress"
-  | "rejected";
-export type RepairPriority = "low" | "normal" | "high" | "urgent";
-export type RepairPaymentStatus = "unpaid" | "invoiced" | "paid";
+export type { RepairStatus, RepairPriority, RepairPaymentStatus };
 
 export interface EquipmentDTO {
   type: string;
@@ -123,8 +114,12 @@ export interface ExistingContactDTO {
   contactId: string | null;
   fullName: string;
   phone?: string | null;
+  email?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
   repairsCount: number;
   activeDealsCount: number;
+  matchedBy?: "phone" | "name" | null;
 }
 
 export interface ClientLookupResultDTO {
@@ -178,6 +173,7 @@ export interface ServiceDictionariesDTO {
   models: DictionaryItemDTO[];
   accessories: DictionaryItemDTO[];
   malfunctions: DictionaryItemDTO[];
+  categories?: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {
@@ -829,6 +825,8 @@ export function useAddRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
@@ -850,6 +848,8 @@ export function useRenameRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
@@ -869,6 +869,8 @@ export function useDeleteRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }

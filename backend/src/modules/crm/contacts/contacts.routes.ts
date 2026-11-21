@@ -20,6 +20,7 @@ import { CrmEnrichmentService } from "../enrichment.service.js";
 import { ContactActivityService } from "./contact-activity.service.js";
 import { activityChannelSchema, activityKindSchema } from "./contact-activity.types.js";
 import { notificationEventBus } from "../../notifications/push-notification.service.js";
+import { bulkActionSchema } from "../shared/bulk-action.types.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
@@ -28,6 +29,10 @@ const listQuerySchema = z.object({
   contact_type: z.enum(["customer", "vendor"]).optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
+  sort: z.string().optional(),
+  order: z.enum(["asc", "desc"]).optional(),
+  sort_by: z.string().optional(),
+  sort_order: z.enum(["asc", "desc"]).optional(),
 });
 
 const callerIdQuerySchema = z.object({
@@ -57,7 +62,8 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
   const canDelete = app.requirePermission("contacts:delete");
 
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { search, company_id, channel, contact_type, limit, offset } = listQuerySchema.parse(request.query);
+    const { search, company_id, channel, contact_type, limit, offset, sort, order, sort_by, sort_order } =
+      listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       search,
@@ -66,6 +72,8 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
       contactType: contact_type,
       limit,
       offset,
+      sortBy: sort ?? sort_by,
+      sortOrder: order ?? sort_order,
     });
 
     return reply.send({ data: items, meta: { limit, offset, total } });
@@ -273,6 +281,12 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     if (contact === null) throw new NotFoundError("Contact not found");
 
     return reply.send({ data: contact });
+  });
+
+  app.post("/bulk-delete", { onRequest: canDelete }, async (request, reply) => {
+    const payload = bulkActionSchema.parse(request.body);
+    const result = await service.bulkDelete(request.tenant_id, payload);
+    return reply.send({ data: result });
   });
 
   app.delete("/:id", { onRequest: canDelete }, async (request, reply) => {

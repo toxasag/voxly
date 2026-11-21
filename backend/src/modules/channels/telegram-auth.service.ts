@@ -3,6 +3,7 @@ import { Api, TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import QRCode from "qrcode";
 
+import { pluralRu } from "../../lib/string.utils.js";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { decryptSecret, encryptSecret } from "../../services/credentials-cipher.js";
@@ -843,9 +844,5 @@ function maskPhone(phone: string): string {
 }
 
 function pluralConnections(count: number): string {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return "подключение";
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "подключения";
-  return "подключений";
+  return pluralRu(count, ["подключение", "подключения", "подключений"]);
 }

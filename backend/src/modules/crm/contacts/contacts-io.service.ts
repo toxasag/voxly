@@ -4,7 +4,7 @@ import {
   parseCsvText,
   parseXlsxBuffer,
   type ExportColumnDef,
-} from "../../warehouse/warehouse-io.service.js";
+} from "../../../lib/spreadsheet-io.js";
 import { ContactsService } from "./contacts.service.js";
 import { DealsService } from "../deals/deals.service.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";
@@ -116,6 +116,13 @@ export interface ContactImportCommitResultDTO {
 /**
  * Интеллектуальное сопоставление названия столбца из файла с системным полем контакта.
  */
+export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isValidEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return EMAIL_REGEX.test(email.trim());
+}
+
 export function suggestContactFieldMapping(header: string): string | null {
   const h = header.toLowerCase().trim().replace(/[\s_-]+/g, "");
   if (/^(имя|firstname|first_name|first|fname|name|клиент)$/.test(h)) return "first_name";
@@ -388,8 +395,9 @@ export class ContactsIOService {
       }
 
       // Проверка по email
-      if (mapped.email && !isDup) {
-        const cleanEmail = mapped.email.toLowerCase().trim();
+      const validEmail = mapped.email && isValidEmail(mapped.email) ? mapped.email.trim() : undefined;
+      if (validEmail && !isDup) {
+        const cleanEmail = validEmail.toLowerCase();
         const found = existingByEmail.get(cleanEmail);
         if (found) {
           duplicates.push({
@@ -397,8 +405,8 @@ export class ContactsIOService {
             existingContactId: found.id,
             existingName: found.name,
             field: "email",
-            value: mapped.email,
-            rowPreview: `${mapped.first_name || mapped.full_name || ""} (${mapped.email})`.trim(),
+            value: validEmail,
+            rowPreview: `${mapped.first_name || mapped.full_name || ""} (${validEmail})`.trim(),
           });
           isDup = true;
         }
@@ -413,7 +421,7 @@ export class ContactsIOService {
           first_name: mapped.first_name || mapped.full_name || "Контакт",
           last_name: mapped.last_name,
           phone: mapped.phone,
-          email: mapped.email,
+          email: validEmail,
           company_name: mapped.company_name,
           company_inn: rawInn ? cleanDigits(rawInn) : undefined,
           birth_date: rawBirth ? parseDateField(rawBirth) ?? undefined : undefined,
@@ -578,12 +586,14 @@ export class ContactsIOService {
           }
         }
 
+        const validEmail = mapped.email && isValidEmail(mapped.email) ? mapped.email.trim() : undefined;
+
         const contactPayload: CreateContactPayload = {
           first_name: firstName,
           last_name: lastName || undefined,
           middle_name: middleName || undefined,
           phones: phones.length > 0 ? phones : undefined,
-          email: mapped.email || undefined,
+          email: validEmail,
           company_name: companyName || undefined,
           company_inn: companyInn || undefined,
           birth_date: birthDate || undefined,
@@ -909,6 +919,15 @@ export class ContactsIOService {
       if (!Number.isNaN(colIdx) && row[colIdx] !== undefined && row[colIdx] !== null) {
         result[fieldKey] = String(row[colIdx]).trim();
       }
+    }
+
+    // Проверка email: если в поле email попал невалидный адрес (например, название компании без @)
+    const rawEmail = result.email;
+    if (rawEmail && !isValidEmail(rawEmail)) {
+      if (!result.company_name && (!rawEmail.includes("@") || /^(?:ООО|ИП|ЗАО|ОАО|ПАО|АО)\s+/i.test(rawEmail))) {
+        result.company_name = rawEmail;
+      }
+      delete result.email;
     }
 
     // Умный фоллбек: если в строке не распознано имя/телефон, но есть ячейка с названием компании (ООО/ИП/ЗАО...)

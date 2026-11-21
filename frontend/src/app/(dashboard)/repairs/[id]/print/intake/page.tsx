@@ -84,6 +84,17 @@ export default function RepairIntakePrintPage() {
   const showSignatures = settings?.showIntakeSignatures ?? true;
   const showTearOff = settings?.showClientTearOffTicket ?? true;
 
+  const mainDefect =
+    ticket.malfunctions && ticket.malfunctions.length > 0
+      ? ticket.malfunctions.join(", ")
+      : ticket.defectDescription || "Не указана";
+
+  const extraDefect =
+    ticket.defectDescription &&
+    ticket.defectDescription.trim() !== mainDefect.trim()
+      ? ticket.defectDescription.trim()
+      : "";
+
   const intakeTermsText =
     settings?.intakeTerms ||
     `1. Сервисный центр производит диагностику и устранение заявленных дефектов. При обнаружении скрытых повреждений стоимость и сроки согласуются дополнительно.
@@ -151,9 +162,10 @@ export default function RepairIntakePrintPage() {
 
       {/* A4 Printable Sheet */}
       <div
-        className="mx-auto max-w-3xl rounded-[16px] border border-[#e5e5e5] bg-white p-8 md:p-10 shadow-xl print:shadow-none print:border-none print:p-0"
+        className="mx-auto max-w-3xl rounded-[16px] border border-[#e5e5e5] bg-white p-8 md:p-10 shadow-xl print:shadow-none print:border-none print:p-0 flex flex-col justify-between min-h-[285mm]"
         style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif' }}
       >
+        <div className="space-y-3 flex-1 flex flex-col justify-start">
         {/* Шапка: Логотип слева + Реквизиты компании справа */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
           <div style={{ display: "flex", alignItems: "center" }}>
@@ -221,7 +233,8 @@ export default function RepairIntakePrintPage() {
           )}
           {showDefect && (
             <div>
-              <strong>Заявленная неисправность:</strong> {ticket.defectDescription || "Не указана"}
+              <strong>Заявленная неисправность:</strong> {mainDefect}
+              {extraDefect ? <span style={{ color: "#555555", fontStyle: "italic" }}> ({extraDefect})</span> : null}
             </div>
           )}
         </div>
@@ -252,7 +265,8 @@ export default function RepairIntakePrintPage() {
                 )}
                 {showDefect && (
                   <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
-                    {ticket.defectDescription || "Диагностика"}
+                    <div><strong>{mainDefect}</strong></div>
+                    {extraDefect && <div style={{ fontSize: "9.5px", color: "#555555", fontStyle: "italic", marginTop: "2px" }}>{extraDefect}</div>}
                   </td>
                 )}
               </tr>
@@ -292,24 +306,26 @@ export default function RepairIntakePrintPage() {
             </div>
           </div>
         )}
+        </div>
 
         {/* Линия отрыва и Нижний отрывной талон */}
         {showTearOff && (
-          <>
-            <div style={{ borderTop: "1.5px dashed #444444", margin: "14px 0", position: "relative" }}>
-              <span style={{ position: "absolute", top: "-8px", left: "16px", background: "#ffffff", padding: "0 6px", fontSize: "9px", color: "#888888" }}>
-                линия отрыва
-              </span>
+          <div style={{ marginTop: "auto" }}>
+            <div className="relative flex items-center justify-center my-3">
+              <div className="absolute inset-x-0 border-t-2 border-dashed border-[#888888]" />
+              <div className="relative bg-white px-3 flex items-center gap-1.5 text-[10px] text-[#555555] font-mono uppercase tracking-wider font-semibold">
+                <span>✂ ЛИНИЯ ОТРЫВА (ЭКЗЕМПЛЯР МАСТЕРА) ✂</span>
+              </div>
             </div>
 
-            <div style={{ marginTop: "10px" }}>
-              <div style={{ textAlign: "center", marginBottom: "10px" }}>
+            <div style={{ marginTop: "8px" }}>
+              <div style={{ textAlign: "center", marginBottom: "8px" }}>
                 <div style={{ fontWeight: 800, fontSize: "13px", textTransform: "uppercase" }}>
-                  Заказ-наряд на выполнение работ {displayTicketNumber} от {dateStr}
+                  ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА) {displayTicketNumber} от {dateStr}
                 </div>
               </div>
 
-              <div style={{ fontSize: "11px", lineHeight: "1.5", marginBottom: "10px" }}>
+              <div style={{ fontSize: "11px", lineHeight: "1.5", marginBottom: "8px" }}>
                 <div>
                   <strong>Заказчик:</strong> {ticket.customerName} {ticket.customerPhone}
                   {ticket.companyName ? ` (${ticket.companyName})` : ""}
@@ -321,7 +337,7 @@ export default function RepairIntakePrintPage() {
                 </div>
               </div>
 
-              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "12px", fontSize: "11px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "10px", fontSize: "11px" }}>
                 <thead>
                   <tr style={{ background: "#fbfbfb" }}>
                     <th style={{ border: "1px solid #111111", padding: "4px 8px", textAlign: "left", width: "40%", fontWeight: 700 }}>
@@ -341,7 +357,8 @@ export default function RepairIntakePrintPage() {
                       {ticket.equipment.packageContents || "Стандартная"}
                     </td>
                     <td style={{ border: "1px solid #111111", padding: "6px 8px", verticalAlign: "top" }}>
-                      {ticket.defectDescription || "Диагностика"}
+                      <div><strong>{mainDefect}</strong></div>
+                      {extraDefect && <div style={{ fontSize: "9.5px", color: "#444444", fontStyle: "italic", marginTop: "2px" }}>Доп. описание: {extraDefect}</div>}
                     </td>
                     <td
                       style={{
@@ -360,8 +377,14 @@ export default function RepairIntakePrintPage() {
                 </tbody>
               </table>
 
+              {ticket.notes && (
+                <div style={{ fontSize: "10px", margin: "6px 0", padding: "5px 8px", background: "#fafafa", border: "1px solid #e5e5e5", borderRadius: "4px", color: "#333333" }}>
+                  <strong>Примечание к наряду:</strong> {ticket.notes}
+                </div>
+              )}
+
               {showSignatures && (
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginTop: "10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginTop: "8px" }}>
                   <div style={{ width: "45%" }}>
                     <div><strong>Заказчик</strong> ____________________</div>
                     <div style={{ fontSize: "10px", color: "#555555", marginTop: "2px" }}>
@@ -377,7 +400,7 @@ export default function RepairIntakePrintPage() {
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
 

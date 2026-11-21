@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus, Banknote, TrendingUp, TrendingDown, DollarSign, ArrowRightLeft, Receipt, FileText, BarChart3, FolderTree } from "lucide-react";
+import { Plus, Banknote, TrendingUp, TrendingDown, DollarSign, ArrowRightLeft, Receipt, FileText, BarChart3, FolderTree, Building2 } from "lucide-react";
 import { BalanceCards } from "@/components/finance/BalanceCards";
 import { TransactionsTable } from "@/components/finance/TransactionsTable";
 import { CreateTransactionModal } from "@/components/finance/CreateTransactionModal";
@@ -11,6 +11,7 @@ import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { InvoiceViewModal } from "@/components/finance/InvoiceViewModal";
 import { ProfitLossView } from "@/components/finance/ProfitLossView";
 import { CategoriesSettingsModal } from "@/components/finance/CategoriesSettingsModal";
+import { OrganizationSettingsTab } from "@/components/finance/OrganizationSettingsTab";
 import { Guard } from "@/components/shared/Guard";
 import type { AccountBalance, Transaction } from "@/lib/finance/finance.types";
 import type { Invoice } from "@/lib/finance/invoices.types";
@@ -23,12 +24,13 @@ import { RecordCellShell } from "@/components/crm/shared/RecordCell";
 import { TagPill, type TagColor } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 
-type FinanceTab = "transactions" | "invoices" | "pnl";
+type FinanceTab = "transactions" | "invoices" | "pnl" | "organization";
 
 const TABS: { key: FinanceTab; label: string; icon: typeof Banknote }[] = [
   { key: "transactions", label: "Операции", icon: FileText },
   { key: "invoices", label: "Счета", icon: Receipt },
   { key: "pnl", label: "Отчёт о прибылях и убытках", icon: BarChart3 },
+  { key: "organization", label: "Организация", icon: Building2 },
 ];
 
 const INVOICE_STATUS_TEXT: Record<Invoice["status"], string> = {
@@ -79,12 +81,18 @@ function toInvoice(dto: InvoiceDTO): Invoice {
       source_label: li.sourceLabel,
     })),
     subtotal: dto.subtotal,
+    vat_mode: dto.vatMode,
     vat_rate: dto.vatRate,
     vat_amount: dto.vatAmount,
     total: dto.total,
     currency: dto.currency,
     notes: dto.notes,
     created_by: "",
+    issuer_organization_id: dto.issuerOrganizationId ?? null,
+    issuer_snapshot: dto.issuerSnapshot ?? null,
+    elba_bill_id: dto.elbaBillId ?? "",
+    elba_synced_at: dto.elbaSyncedAt ?? null,
+    elba_sync_error: dto.elbaSyncError ?? "",
   };
 }
 
@@ -99,7 +107,7 @@ function FinancePageContent() {
   const [txModalOpen, setTxModalOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
-  const [invoiceViewTarget, setInvoiceViewTarget] = useState<Invoice | null>(null);
+  const [invoiceViewId, setInvoiceViewId] = useState<string | null>(null);
   const [categoriesModalOpen, setCategoriesModalOpen] = useState(false);
   const searchParams = useSearchParams();
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") ?? "");
@@ -121,6 +129,10 @@ function FinancePageContent() {
 
   const transactions = useMemo(() => (transactionsData?.items ?? []).map(toTransaction), [transactionsData]);
   const invoices = useMemo(() => (invoicesData?.items ?? []).map(toInvoice), [invoicesData]);
+  const invoiceViewTarget = useMemo(
+    () => (invoiceViewId ? invoices.find((inv) => inv.id === invoiceViewId) ?? null : null),
+    [invoiceViewId, invoices],
+  );
 
   const monthlyIncome = useMemo(() => transactions.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0), [transactions]);
   const monthlyExpense = useMemo(() => transactions.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0), [transactions]);
@@ -129,6 +141,15 @@ function FinancePageContent() {
   useEffect(() => {
     if (searchParams.get("create") === "1") {
       setInvoiceCreateOpen(true);
+    }
+    const requestedTab = searchParams.get("tab");
+    if (
+      requestedTab === "transactions" ||
+      requestedTab === "invoices" ||
+      requestedTab === "pnl" ||
+      requestedTab === "organization"
+    ) {
+      setTab(requestedTab);
     }
   }, [searchParams]);
 
@@ -142,8 +163,14 @@ function FinancePageContent() {
 
   const handleCreateInvoice = useCallback(async (p: PrefilledInvoicePayload) => {
     const payload: Parameters<typeof createInvoiceMutation.mutateAsync>[0] = {
-      company_name: p.company_name || "Acme Corp",
-      due_date: p.due_date,
+      issuer_organization_id: p.issuer_organization_id || undefined,
+      company_id: p.company_id || undefined,
+      company_name: p.company_name || "Покупатель",
+      company_inn: p.company_inn || "",
+      company_address: p.company_address || "",
+      contact_name: p.contact_name || "",
+      contact_phone: p.contact_phone || "",
+      due_date: p.due_date.includes("T") ? new Date(p.due_date).toISOString() : new Date(`${p.due_date}T12:00:00Z`).toISOString(),
       line_items: p.line_items.map(li => ({
         description: li.description,
         quantity: li.quantity,
@@ -151,6 +178,7 @@ function FinancePageContent() {
         source: li.source,
         source_label: li.source_label ?? "",
       })),
+      vat_mode: p.vat_mode,
       vat_rate: p.vat_rate,
       notes: p.notes ?? "",
     };
@@ -277,7 +305,7 @@ function FinancePageContent() {
             columns={invoiceColumns}
             getRowId={(inv) => inv.id}
             tableId="finance_invoices"
-            onRowClick={(inv) => setInvoiceViewTarget(inv)}
+            onRowClick={(inv) => setInvoiceViewId(inv.id)}
             emptyState={
               <div className="flex flex-col items-center gap-2 py-16 text-center">
                 <Receipt className="h-8 w-8 text-[#888888]" />
@@ -287,6 +315,7 @@ function FinancePageContent() {
           />
         )}
         {tab === "pnl" && <ProfitLossView transactions={transactions} />}
+        {tab === "organization" && <OrganizationSettingsTab />}
 
         {/* Modals */}
         <CreateTransactionModal
@@ -298,7 +327,7 @@ function FinancePageContent() {
         />
         <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSubmit={handleTransfer} accounts={accounts} />
         <InvoiceCreateModal open={invoiceCreateOpen} onClose={() => setInvoiceCreateOpen(false)} onSubmit={handleCreateInvoice} />
-        <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewTarget(null)} />
+        <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewId(null)} />
         <CategoriesSettingsModal open={categoriesModalOpen} onClose={() => setCategoriesModalOpen(false)} />
       </div>
     </Guard>

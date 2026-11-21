@@ -14,6 +14,7 @@ import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { queueManager } from "../../../infrastructure/queue.js";
 import type { TaskAssignmentNotificationJob } from "./task-notification.service.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
+import { bulkActionSchema } from "../shared/bulk-action.types.js";
 
 const listQuerySchema = z
   .object({
@@ -148,6 +149,12 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.send({ data: task });
+  });
+
+  app.post("/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
+    const payload = bulkActionSchema.parse(request.body);
+    const result = await service.bulkDelete(request.tenant_id, payload);
+    return reply.send({ data: result });
   });
 
   app.delete("/:id", { onRequest: canWrite }, async (request, reply) => {

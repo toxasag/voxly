@@ -1,9 +1,10 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { NotesService } from "./notes.service.js";
 import { createNoteSchema, noteTargetTypeSchema, updateNoteSchema } from "./notes.types.js";
 import type { NoteTargetType } from "./notes.types.js";
-import { PermissionDeniedError, NotFoundError } from "../../../plugins/errorHandler.js";
+import { assertPermission } from "../../../plugins/authorize.js";
+import { NotFoundError } from "../../../plugins/errorHandler.js";
 import type { Permission } from "../../../types/index.js";
 
 const listQuerySchema = z.object({
@@ -34,12 +35,6 @@ const WRITE_PERMISSION: Record<NoteTargetType, Permission> = {
   company: "companies:write",
   deal: "deals:write",
 };
-
-function assertPermission(request: FastifyRequest, permission: Permission): void {
-  if (!request.permissions.has(permission)) {
-    throw new PermissionDeniedError(`Missing permission: ${permission}`);
-  }
-}
 
 export async function notesRoutes(app: FastifyInstance): Promise<void> {
   const service = new NotesService();

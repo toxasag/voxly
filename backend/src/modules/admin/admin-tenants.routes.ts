@@ -555,6 +555,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           evoHeaders.apikey = getEnv().EVOLUTION_API_KEY!;
         }
         const evoRes = await fetch(`${getEnv().EVOLUTION_API_URL.replace(/\/$/, "")}/instance/fetchInstances`, {
+          signal: AbortSignal.timeout(10_000),
           headers: evoHeaders,
         });
         if (evoRes.ok) {

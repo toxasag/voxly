@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../../lib/string.utils.js";
 import type {
   CreateDealItemPayload,
   CreateDealMessagePayload,
@@ -31,11 +32,12 @@ import { conversionDispatcher } from "../../analytics/conversion-dispatcher.serv
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
 import { messageTranslationService } from "../translation/message-translation.service.js";
 import { chatEventBus } from "../chat/chat-events.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
   budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
-  closed_at, lead_notified_at, created_at, updated_at
+  closed_at, lead_notified_at, created_at, updated_at, chat_thread_id, status
 `;
 
 /**
@@ -49,6 +51,7 @@ const DEAL_COLUMNS_WITH_LABELS = `
   d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.source_widget_id, d.title,
   d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
+  d.chat_thread_id, d.status,
   co.name AS company_name,
   co.phone AS company_phone,
   co.email AS company_email,
@@ -177,11 +180,6 @@ export function notifyDealWon(payload: { tenantId: string; dealId: string }): vo
 }
 
 /** Treats "" from form payloads as "no value". */
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
-  return value;
-}
-
 export interface ListDealsOptions {
   pipelineId?: string;
   stageId?: string;
@@ -468,8 +466,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id, chat_thread_id, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -490,6 +488,8 @@ export class DealsService {
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
           resolvedSourceWidgetId,
+          payload.chat_thread_id ?? null,
+          payload.status ?? "active",
         ],
       );
 
@@ -536,6 +536,8 @@ export class DealsService {
     if (payload.owner_id !== undefined) push("owner_id", nullIfBlank(payload.owner_id));
     if (payload.close_date !== undefined) push("close_date", nullIfBlank(payload.close_date));
     if (payload.position !== undefined) push("position", payload.position);
+    if (payload.chat_thread_id !== undefined) push("chat_thread_id", nullIfBlank(payload.chat_thread_id));
+    if (payload.status !== undefined) push("status", payload.status);
 
     if (payload.custom_fields !== undefined) {
       params.push(JSON.stringify(payload.custom_fields));
@@ -791,6 +793,112 @@ export class DealsService {
     );
 
     return row !== null;
+  }
+
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.stage_id === "string" && filters.stage_id.trim().length > 0) {
+      params.push(filters.stage_id.trim());
+      conditions.push(`d.stage_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
+  }
+
+  async bulkMove(
+    tenantId: string,
+    payload: BulkActionPayload & { stage_id: string },
+  ): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET stage_id = $3, updated_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids, payload.stage_id],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId, payload.stage_id];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET stage_id = $2, updated_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
   }
 
   // -------------------------------------------------------------------------

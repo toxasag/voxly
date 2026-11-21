@@ -9,14 +9,7 @@ const MILLIONS: [string, string, string] = ["миллион ", "миллиона
 const RUBLES: [string, string, string] = ["рубль", "рубля", "рублей"];
 const KOPECKS: [string, string, string] = ["копейка", "копейки", "копеек"];
 
-function pluralForm(n: number, forms: [string, string, string]): string {
-  const m = Math.abs(n) % 100;
-  if (m > 10 && m < 20) return forms[2];
-  const d = m % 10;
-  if (d === 1) return forms[0];
-  if (d >= 2 && d <= 4) return forms[1];
-  return forms[2];
-}
+import { pluralRu as pluralForm } from "../../lib/string.utils.js";
 
 function numberToWords(n: number, feminine: boolean): string {
   if (n === 0) return "";
@@ -44,7 +37,7 @@ export function amountToWords(rubles: number, kopecks: number): string {
   const kopDigit = kop.toString().padStart(2, "0");
   const kopWord = pluralForm(kop, KOPECKS);
 
-  const trimmed = rubStr.trim();
+  const trimmed = rubStr.replace(/\s+/g, " ").trim();
   const rubCapitalized = trimmed ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1) + " " : "";
   return `${rubCapitalized}${rubWord} ${kopDigit} ${kopWord}`;
 }

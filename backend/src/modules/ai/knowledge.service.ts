@@ -1,3 +1,4 @@
+import { toIso } from "../../lib/date.utils.js";
 import { query, queryOne, transaction, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import {
@@ -111,10 +112,6 @@ interface DocumentRow {
   category?: string;
   source_url?: string | null;
   created_at: Date | string;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 function toDTO(row: DocumentRow): KnowledgeDocumentDTO {

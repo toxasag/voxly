@@ -424,18 +424,33 @@ export class FinanceService {
     tenantId: string,
     _user: string,
     payload: BatchPaymentPayload,
-  ): Promise<{ success: boolean; totalPaid: number; count: number }> {
+  ): Promise<{ success: boolean; totalPaid: number; count: number; transactionsCount: number }> {
     return withTenant(tenantId, async (tx) => {
       const account = await this.account(tx, tenantId, payload.cash_account_id);
 
-      let categoryName = "Оплата по наряд-заказу";
-      if (payload.category_id) {
-        const cat = await tx.queryOne<{ name: string }>(
-          `SELECT name FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
-          [tenantId, payload.category_id],
-        );
-        if (cat) categoryName = cat.name;
-      }
+      const resolveCategory = async (
+        catId: string | undefined,
+        fallbackName: string,
+      ): Promise<{ id: string | null; name: string }> => {
+        if (catId && catId.trim().length > 0) {
+          const cat = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT id, name FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, catId],
+          );
+          if (cat) return { id: cat.id, name: cat.name };
+        }
+        return { id: null, name: fallbackName };
+      };
+
+      const defaultCat = await resolveCategory(payload.category_id, "Оплата по наряд-заказу");
+      const worksCat = payload.works_category_id
+        ? await resolveCategory(payload.works_category_id, "Оплата выполненных работ")
+        : defaultCat;
+      const partsCat = payload.parts_category_id
+        ? await resolveCategory(payload.parts_category_id, "Продажа запчастей")
+        : defaultCat;
+
+      const splitMode = payload.split_works_and_parts !== false;
 
       const orders = await tx.query<{
         id: string;
@@ -457,6 +472,43 @@ export class FinanceService {
       }
 
       let totalPaid = 0;
+      let transactionsCount = 0;
+      const userNote = payload.description?.trim() ?? "";
+
+      const insertIncomeTx = async (
+        amount: number,
+        cat: { id: string | null; name: string },
+        desc: string,
+        order: { id: string; deal_id: string | null; customer_name: string },
+      ): Promise<void> => {
+        if (amount <= 0) return;
+        totalPaid += amount;
+        transactionsCount += 1;
+        await tx.query(
+          `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, counterparty_name, deal_id, repair_order_id)
+           VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10)`,
+          [
+            tenantId,
+            account.id,
+            cat.id,
+            cat.name,
+            amount,
+            account.currency,
+            desc,
+            order.customer_name || "",
+            order.deal_id,
+            order.id,
+          ],
+        );
+      };
+
+      const orderCalcs: {
+        order: (typeof orders)[number];
+        worksTotal: number;
+        partsTotal: number;
+        fallbackAmount: number;
+      }[] = [];
+      const zeroOrders: string[] = [];
 
       for (const order of orders) {
         const worksTotalRow = await tx.queryOne<{ total: string }>(
@@ -468,30 +520,48 @@ export class FinanceService {
           [tenantId, order.id],
         );
 
-        let amount = Number(worksTotalRow?.total ?? 0) + Number(partsTotalRow?.total ?? 0);
-        if (amount <= 0) {
-          amount = Number(order.final_cost ?? order.estimated_cost ?? 0);
-        }
+        const worksTotal = Math.round(Number(worksTotalRow?.total ?? 0) * 100) / 100;
+        const partsTotal = Math.round(Number(partsTotalRow?.total ?? 0) * 100) / 100;
+        const fallbackAmount =
+          worksTotal + partsTotal > 0
+            ? 0
+            : Math.round(Number(order.final_cost ?? order.estimated_cost ?? 0) * 100) / 100;
 
-        if (amount > 0) {
-          totalPaid += amount;
-          const desc = payload.description || `Оплата по акту ${order.ticket_number}`;
-          await tx.query(
-            `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, counterparty_name, deal_id, repair_order_id)
-             VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10)`,
-            [
-              tenantId,
-              account.id,
-              payload.category_id || null,
-              categoryName,
-              amount,
-              account.currency,
-              desc,
-              order.customer_name || "",
-              order.deal_id,
-              order.id,
-            ],
-          );
+        if (worksTotal + partsTotal + fallbackAmount <= 0) {
+          zeroOrders.push(order.ticket_number);
+        } else {
+          orderCalcs.push({ order, worksTotal, partsTotal, fallbackAmount });
+        }
+      }
+
+      if (zeroOrders.length > 0) {
+        throw new ValidationError(
+          `Нельзя принять оплату по актам без указанной стоимости (0 ₽): ${zeroOrders.join(", ")}`,
+        );
+      }
+
+      for (const { order, worksTotal, partsTotal, fallbackAmount } of orderCalcs) {
+        if (splitMode && worksTotal > 0 && partsTotal > 0) {
+          const worksDesc = userNote
+            ? `${userNote} — работы (${order.ticket_number})`
+            : `Оплата работ по акту ${order.ticket_number}`;
+          const partsDesc = userNote
+            ? `${userNote} — запчасти (${order.ticket_number})`
+            : `Оплата запчастей по акту ${order.ticket_number}`;
+          await insertIncomeTx(worksTotal, worksCat, worksDesc, order);
+          await insertIncomeTx(partsTotal, partsCat, partsDesc, order);
+        } else if (worksTotal > 0 || partsTotal > 0) {
+          const amount = Math.round((worksTotal + partsTotal) * 100) / 100;
+          const cat = splitMode
+            ? worksTotal > 0
+              ? worksCat
+              : partsCat
+            : defaultCat;
+          const desc = userNote || `Оплата по акту ${order.ticket_number}`;
+          await insertIncomeTx(amount, cat, desc, order);
+        } else if (fallbackAmount > 0) {
+          const desc = userNote || `Оплата по акту ${order.ticket_number}`;
+          await insertIncomeTx(fallbackAmount, worksCat, desc, order);
         }
 
         await tx.query(
@@ -507,7 +577,7 @@ export class FinanceService {
         );
       }
 
-      return { success: true, totalPaid, count: orders.length };
+      return { success: true, totalPaid, count: orders.length, transactionsCount };
     });
   }
 

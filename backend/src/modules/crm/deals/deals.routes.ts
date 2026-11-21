@@ -20,6 +20,7 @@ import { ensureTenantDefaults } from "../../tenant/tenant-defaults.js";
 import { queryOne } from "../../../db/client.js";
 import { AiService } from "../../ai/ai.service.js";
 import { createDialogueFeedbackSchema } from "../../ai/ai.types.js";
+import { bulkActionSchema } from "../shared/bulk-action.types.js";
 
 const listQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
@@ -217,6 +218,18 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     if (deal === null) throw new NotFoundError("Deal not found");
 
     return reply.send({ data: deal });
+  });
+
+  app.post("/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
+    const payload = bulkActionSchema.parse(request.body);
+    const result = await service.bulkDelete(request.tenant_id, payload);
+    return reply.send({ data: result });
+  });
+
+  app.post("/bulk-move", { onRequest: canWrite }, async (request, reply) => {
+    const payload = bulkActionSchema.extend({ stage_id: z.string().uuid() }).parse(request.body);
+    const result = await service.bulkMove(request.tenant_id, payload);
+    return reply.send({ data: result });
   });
 
   app.delete("/:id", { onRequest: canWrite }, async (request, reply) => {

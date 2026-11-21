@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../lib/string.utils.js";
 import type {
   ChangeStatusPayload,
   ClientLookupDealDTO,
@@ -82,11 +83,6 @@ export class InvalidStatusTransitionError extends AppError {
       { status: [`Allowed from "${from}": ${allowedTransitionsFrom(from).join(", ") || "none"}`] },
     );
   }
-}
-
-function nullIfBlank(value: string | null | undefined): string | null {
-  if (value === undefined || value === null || value === "") return null;
-  return value;
 }
 
 export interface ListRepairsOptions {
@@ -321,7 +317,7 @@ export class RepairsService {
            ) THEN 'invoiced'
            ELSE 'unpaid'
          END AS deal_payment_status,
-         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
+         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
          c.inn AS company_inn,
@@ -450,7 +446,7 @@ export class RepairsService {
            ) THEN 'invoiced'
            ELSE 'unpaid'
          END AS deal_payment_status,
-         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
+         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS deal_notes,
          c.id AS company_id,
          c.name AS company_name,
          c.inn AS company_inn,
@@ -642,23 +638,20 @@ export class RepairsService {
       if (!customerId) {
         // Проверяем дедупликацию по номеру телефона
         const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
-        if (canonicalPhone) {
-          const last10 = canonicalPhone.slice(-10);
+        const rawDigits = payload.customer_phone.replace(/\D/g, "");
+        const searchSuffix = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+
+        if (searchSuffix.length >= 6) {
           const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
             `SELECT id, company_id FROM contacts
              WHERE tenant_id = $1 AND deleted_at IS NULL
                AND (
-                 phone = $2
-                 OR phone LIKE '%' || $3
-                 OR whatsapp = $2
-                 OR whatsapp LIKE '%' || $3
-                 OR EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
-                   WHERE (p->>'number') LIKE '%' || $3
-                 )
+                 regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR additional_phones::text LIKE '%' || $2 || '%'
                )
              ORDER BY created_at ASC LIMIT 1`,
-            [tenantId, canonicalPhone, last10],
+            [tenantId, searchSuffix],
           );
           if (existingContact) {
             customerId = existingContact.id;
@@ -701,6 +694,16 @@ export class RepairsService {
             companyId = existingContact.company_id;
           }
         }
+      }
+
+      // Обновляем email контакта, если он был пустым, но передан в форме приёмки
+      if (customerId && payload.customer_email && payload.customer_email.trim()) {
+        await tx.query(
+          `UPDATE contacts
+           SET email = $1, updated_at = now()
+           WHERE tenant_id = $2 AND id = $3 AND (email IS NULL OR email = '')`,
+          [payload.customer_email.trim(), tenantId, customerId],
+        );
       }
 
       // 2.1. Если у контакта еще нет компании, или пользователь ввел новую/другую компанию, привязываем контакт к компании
@@ -949,23 +952,20 @@ export class RepairsService {
       // 1. Клиент
       if (!customerId) {
         const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
-        if (canonicalPhone) {
-          const last10 = canonicalPhone.slice(-10);
+        const rawDigits = payload.customer_phone.replace(/\D/g, "");
+        const searchSuffix = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+
+        if (searchSuffix.length >= 6) {
           const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
             `SELECT id, company_id FROM contacts
              WHERE tenant_id = $1 AND deleted_at IS NULL
                AND (
-                 phone = $2
-                 OR phone LIKE '%' || $3
-                 OR whatsapp = $2
-                 OR whatsapp LIKE '%' || $3
-                 OR EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
-                   WHERE (p->>'number') LIKE '%' || $3
-                 )
+                 regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g') LIKE '%' || $2
+                 OR additional_phones::text LIKE '%' || $2 || '%'
                )
              ORDER BY created_at ASC LIMIT 1`,
-            [tenantId, canonicalPhone, last10],
+            [tenantId, searchSuffix],
           );
           if (existingContact) {
             customerId = existingContact.id;
@@ -1004,6 +1004,16 @@ export class RepairsService {
         if (existingContact?.company_id) {
           companyId = existingContact.company_id;
         }
+      }
+
+      // Обновляем email контакта, если он был пустым, но передан в форме пакетной приёмки
+      if (customerId && payload.customer_email && payload.customer_email.trim()) {
+        await tx.query(
+          `UPDATE contacts
+           SET email = $1, updated_at = now()
+           WHERE tenant_id = $2 AND id = $3 AND (email IS NULL OR email = '')`,
+          [payload.customer_email.trim(), tenantId, customerId],
+        );
       }
 
       // 1.1. Привязываем контакт к компании при наличии обоих идентификаторов
@@ -1103,14 +1113,6 @@ export class RepairsService {
           ],
         );
         dealId = newDeal.id;
-
-        if (payload.notes && payload.notes.trim()) {
-          await tx.query(
-            `INSERT INTO notes (tenant_id, deal_id, title, body, created_by)
-             VALUES ($1, $2, 'Заметка к приёмке', $3, $4)`,
-            [tenantId, dealId, payload.notes.trim(), author.id],
-          );
-        }
       }
 
       // 3. Создаем наряд-заказ на каждую единицу оборудования
@@ -1200,6 +1202,25 @@ export class RepairsService {
     id: string,
     payload: UpdateRepairPayload,
   ): Promise<RepairOrderDTO | null> {
+    const existing = await queryOne<{
+      equipment_type: string;
+      equipment_brand: string;
+      equipment_model: string;
+      package_contents: string;
+      package_contents_items: string[] | null;
+      defect_description: string;
+      malfunctions: string[] | null;
+    }>(
+      `SELECT equipment_type, equipment_brand, equipment_model,
+              package_contents, package_contents_items,
+              defect_description, malfunctions
+       FROM repair_orders
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, id],
+    );
+
+    if (!existing) return null;
+
     const assignments: string[] = [];
     const params: SqlParam[] = [tenantId, id];
 
@@ -1232,23 +1253,77 @@ export class RepairsService {
         }
       }
     }
-    if (payload.equipment_type !== undefined) push("equipment_type", payload.equipment_type);
-    if (payload.equipment_brand !== undefined) push("equipment_brand", payload.equipment_brand);
-    if (payload.equipment_model !== undefined) push("equipment_model", payload.equipment_model);
-    if (payload.equipment_serial !== undefined) push("equipment_serial", payload.equipment_serial);
-    if (payload.package_contents !== undefined) push("package_contents", payload.package_contents);
+
+    let syncedPackageItems: string[] | undefined;
+    let syncedMalfunctions: string[] | undefined;
+
+    if (payload.equipment_type !== undefined) push("equipment_type", payload.equipment_type.trim());
+    if (payload.equipment_brand !== undefined) push("equipment_brand", payload.equipment_brand.trim());
+    if (payload.equipment_model !== undefined) push("equipment_model", payload.equipment_model.trim());
+    if (payload.equipment_serial !== undefined) push("equipment_serial", payload.equipment_serial.trim());
+
+    // Двусторонняя синхронизация комплектации (package_contents TEXT <-> package_contents_items TEXT[])
     if (payload.package_contents_items !== undefined) {
-      params.push(payload.package_contents_items);
+      const normalizedItems = Array.from(
+        new Set(payload.package_contents_items.map((item) => item.trim()).filter(Boolean)),
+      );
+      syncedPackageItems = normalizedItems;
+      params.push(normalizedItems);
+      assignments.push(`package_contents_items = $${params.length}`);
+      const derivedString =
+        payload.package_contents !== undefined && payload.package_contents.trim().length > 0
+          ? payload.package_contents.trim()
+          : normalizedItems.join(", ");
+      push("package_contents", derivedString);
+    } else if (payload.package_contents !== undefined) {
+      const trimmedPkg = payload.package_contents.trim();
+      const derivedItems = trimmedPkg
+        ? Array.from(new Set(trimmedPkg.split(/,\s*/).map((item) => item.trim()).filter(Boolean)))
+        : [];
+      syncedPackageItems = derivedItems;
+      push("package_contents", trimmedPkg);
+      params.push(derivedItems);
       assignments.push(`package_contents_items = $${params.length}`);
     }
-    if (payload.appearance !== undefined) push("appearance", payload.appearance);
-    if (payload.defect_description !== undefined) {
-      push("defect_description", payload.defect_description);
-    }
+
+    if (payload.appearance !== undefined) push("appearance", payload.appearance.trim());
+
+    // Согласованная синхронизация неисправностей (malfunctions TEXT[] <-> defect_description TEXT)
+    const existingMalfunctions = Array.isArray(existing.malfunctions) ? existing.malfunctions : [];
     if (payload.malfunctions !== undefined) {
-      params.push(payload.malfunctions);
+      const normalizedMalfunctions = Array.from(
+        new Set(payload.malfunctions.map((item) => item.trim()).filter(Boolean)),
+      );
+      syncedMalfunctions = normalizedMalfunctions;
+      params.push(normalizedMalfunctions);
       assignments.push(`malfunctions = $${params.length}`);
+
+      if (payload.defect_description !== undefined) {
+        const trimmedDesc = payload.defect_description.trim();
+        const finalDesc =
+          trimmedDesc.length > 0
+            ? trimmedDesc
+            : normalizedMalfunctions.length > 0
+              ? normalizedMalfunctions.join(", ")
+              : "";
+        push("defect_description", finalDesc);
+      } else {
+        const existingDesc = (existing.defect_description ?? "").trim();
+        const existingJoined = existingMalfunctions.join(", ").trim();
+        if (!existingDesc || existingDesc === existingJoined) {
+          push("defect_description", normalizedMalfunctions.join(", "));
+        }
+      }
+    } else if (payload.defect_description !== undefined) {
+      const trimmedDesc = payload.defect_description.trim();
+      push("defect_description", trimmedDesc);
+      if (existingMalfunctions.length > 0 && trimmedDesc !== (existing.defect_description ?? "").trim()) {
+        syncedMalfunctions = [];
+        params.push([]);
+        assignments.push(`malfunctions = $${params.length}`);
+      }
     }
+
     if (payload.priority !== undefined) push("priority", payload.priority);
     if (payload.master_id !== undefined) {
       const masterId = nullIfBlank(payload.master_id);
@@ -1278,6 +1353,25 @@ export class RepairsService {
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         params,
       );
+    }
+
+    const equipmentChanged =
+      payload.equipment_type !== undefined ||
+      payload.equipment_brand !== undefined ||
+      payload.equipment_model !== undefined ||
+      syncedPackageItems !== undefined ||
+      syncedMalfunctions !== undefined;
+
+    if (equipmentChanged) {
+      await withTenant(tenantId, async (tx) => {
+        await this.syncEquipmentDictionaries(tx, tenantId, {
+          equipment_type: payload.equipment_type !== undefined ? payload.equipment_type.trim() : existing.equipment_type,
+          equipment_brand: payload.equipment_brand !== undefined ? payload.equipment_brand.trim() : existing.equipment_brand,
+          equipment_model: payload.equipment_model !== undefined ? payload.equipment_model.trim() : existing.equipment_model,
+          malfunctions: syncedMalfunctions,
+          accessories: syncedPackageItems,
+        });
+      });
     }
 
     const current = await this.get(tenantId, id);
@@ -1386,12 +1480,21 @@ export class RepairsService {
       ).catch(() => {});
     }
 
-    if (current.dealId && payload.deal_note && payload.deal_note.trim()) {
-      await query(
-        `INSERT INTO notes (tenant_id, deal_id, title, body)
-         VALUES ($1, $2, 'Заметка к заказу', $3)`,
-        [tenantId, current.dealId, payload.deal_note.trim()],
-      ).catch(() => {});
+    if (current.dealId && payload.deal_note !== undefined) {
+      const trimmedNote = (payload.deal_note ?? "").trim();
+      if (trimmedNote) {
+        await query(
+          `INSERT INTO notes (tenant_id, deal_id, title, body)
+           VALUES ($1, $2, 'Заметка к заказу', $3)`,
+          [tenantId, current.dealId, trimmedNote],
+        ).catch(() => {});
+      } else {
+        await query(
+          `UPDATE notes SET deleted_at = now()
+           WHERE tenant_id = $1 AND deal_id = $2 AND deleted_at IS NULL`,
+          [tenantId, current.dealId],
+        ).catch(() => {});
+      }
     }
 
     const updated = await this.get(tenantId, id);
@@ -1554,24 +1657,56 @@ export class RepairsService {
     const unitPrice =
       payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
     const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
+    const normalizedDescription = payload.description.trim();
 
     return withTenant(tenantId, async (tx) => {
-      const row = await tx.queryOneOrThrow<RepairWorkRow>(
-        `INSERT INTO repair_works
-           (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING ${WORK_COLUMNS}`,
-        [
-          tenantId,
-          orderId,
-          payload.description,
-          payload.master_id,
-          payload.master_name,
-          quantity,
-          unitPrice,
-          cost,
-        ],
+      // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
+      // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
+      const existing = await tx.queryOne<RepairWorkRow>(
+        `SELECT ${WORK_COLUMNS}
+         FROM repair_works
+         WHERE tenant_id = $1
+           AND repair_order_id = $2
+           AND lower(btrim(description)) = lower(btrim($3))
+           AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
+         ORDER BY created_at ASC
+         LIMIT 1
+         FOR UPDATE`,
+        [tenantId, orderId, normalizedDescription, unitPrice],
       );
+
+      let row: RepairWorkRow;
+      if (existing) {
+        const prevQty = Number(existing.quantity ?? 1);
+        const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
+        const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
+        const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+
+        row = await tx.queryOneOrThrow<RepairWorkRow>(
+          `UPDATE repair_works
+           SET quantity = $3, unit_price = $4, cost = $5
+           WHERE tenant_id = $1 AND id = $2
+           RETURNING ${WORK_COLUMNS}`,
+          [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
+        );
+      } else {
+        row = await tx.queryOneOrThrow<RepairWorkRow>(
+          `INSERT INTO repair_works
+             (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING ${WORK_COLUMNS}`,
+          [
+            tenantId,
+            orderId,
+            normalizedDescription,
+            payload.master_id,
+            payload.master_name,
+            quantity,
+            unitPrice,
+            cost,
+          ],
+        );
+      }
 
       const result = toRepairWorkDTO(row);
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
@@ -1911,8 +2046,10 @@ export class RepairsService {
 
       // Clean up synced note in CRM notes table if exists
       await tx.query(
-        `DELETE FROM notes
-         WHERE tenant_id = $1 AND repair_order_id = $2 AND body = $3`,
+        `UPDATE notes SET deleted_at = now()
+         WHERE tenant_id = $1
+           AND (repair_order_id = $2 OR (body = $3 AND deal_id = (SELECT deal_id FROM repair_orders WHERE id = $2)))
+           AND deleted_at IS NULL`,
         [tenantId, orderId, existing.content],
       );
 
@@ -2171,6 +2308,7 @@ export class RepairsService {
         company_id: string | null;
         company_name: string | null;
       } | null = null;
+      let matchedBy: "phone" | "name" | null = null;
 
       // 1. Try search by phone digits if phone is provided
       if (phoneDigits.length >= 6) {
@@ -2196,10 +2334,14 @@ export class RepairsService {
            LIMIT 1`,
           [tenantId, searchSuffix],
         );
+        if (contact) {
+          matchedBy = "phone";
+        }
       }
 
-      // 2. If not found by phone and query is provided (or search by name)
-      if (!contact && rawQuery.length >= 2) {
+      // 2. Search by name ONLY if phone is not provided (phoneDigits.length < 6).
+      // If a valid phone was entered, never fallback to loose name search (prevents false matches like "Рязанский Дмитрий").
+      if (!contact && phoneDigits.length < 6 && rawQuery.length >= 2) {
         contact = await tx.queryOne<{
           id: string;
           first_name: string;
@@ -2223,6 +2365,9 @@ export class RepairsService {
            LIMIT 1`,
           [tenantId, rawQuery],
         );
+        if (contact) {
+          matchedBy = "name";
+        }
       }
 
       // 3. If not found in contacts, check previous repair_orders by phone
@@ -2242,6 +2387,7 @@ export class RepairsService {
           [tenantId, searchSuffix],
         );
         if (ro) {
+          matchedBy = "phone";
           if (ro.customer_id) {
             contact = await tx.queryOne<{
               id: string;
@@ -2391,10 +2537,10 @@ export class RepairsService {
       }
 
       if (!contact && repairsCount === 0) {
-        return { contact: null, company: null, activeDeals: [], repairsCount: 0 };
+        return { contact: null, company: null, activeDeals: [], repairsCount: 0, matchedBy: null };
       }
 
-      return { contact, company, activeDeals, repairsCount };
+      return { contact, company, activeDeals, repairsCount, matchedBy };
     });
 
     const messengerRes = await messengerPromise;
@@ -2403,10 +2549,12 @@ export class RepairsService {
     const company = dbResult.company;
     const activeDeals = dbResult.activeDeals;
     const repairsCount = dbResult.repairsCount;
+    let matchedBy = dbResult.matchedBy;
 
     // Если контакт не найден по прямому запросу, но найден через глубокий поиск мессенджеров
     if (!contact && messengerRes?.existingClient) {
       const ec = messengerRes.existingClient;
+      matchedBy = "phone";
       contact = {
         id: ec.id,
         first_name: ec.firstName,
@@ -2428,8 +2576,12 @@ export class RepairsService {
           contactId: (contact && contact.id) ? contact.id : null,
           fullName: fullName || "Клиент",
           phone: contact?.phone ?? (rawPhone || null),
+          email: contact?.email ?? null,
+          companyId: contact?.company_id ?? null,
+          companyName: contact?.company_name ?? (company?.name ?? null),
           repairsCount,
           activeDealsCount: activeDeals.length,
+          matchedBy,
         }
       : null;
 
@@ -2488,6 +2640,9 @@ export class RepairsService {
       case "malfunction":
       case "malfunctions":
         return "equipment_malfunctions";
+      case "category":
+      case "categories":
+        return "warehouse_categories";
       default:
         throw new ValidationError(`Unknown dictionary category: ${category}`, {});
     }
@@ -2523,12 +2678,44 @@ export class RepairsService {
         [tenantId],
       );
 
+      // Загружаем категории из warehouse_categories
+      let categoryRows = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      if (categoryRows.length === 0) {
+        const defaultCategoryNames = [
+          "Запчасти",
+          "Расходники",
+          "Дисплеи",
+          "Аккумуляторы",
+          "Корпуса",
+          "Шлейфы",
+          "Инструменты",
+          "Оборудование",
+          "Аксессуары",
+          "Химия и пайка",
+        ];
+        for (const defName of defaultCategoryNames) {
+          await tx.query(
+            `INSERT INTO warehouse_categories (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
+            [tenantId, defName],
+          );
+        }
+        categoryRows = await tx.query<{ id: string; name: string }>(
+          `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 ORDER BY name ASC`,
+          [tenantId],
+        );
+      }
+
       return {
         types: types.map((r) => ({ id: r.id, name: r.name })),
         brands: brands.map((r) => ({ id: r.id, name: r.name })),
         models: models.map((r) => ({ id: r.id, name: r.name, brandId: r.brand_id, brandName: r.brand_name })),
         accessories: accessories.map((r) => ({ id: r.id, name: r.name })),
         malfunctions: malfunctions.map((r) => ({ id: r.id, name: r.name })),
+        categories: categoryRows.map((r) => ({ id: r.id, name: r.name })),
       };
     });
   }
@@ -2723,6 +2910,42 @@ export class RepairsService {
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
 
+      if (table === "warehouse_categories") {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const existing = await tx.queryOne<{ id: string; name: string }>(
+          isUuid
+            ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
+            : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+
+        let row: { id: string; name: string } | null = null;
+        const oldName = existing ? existing.name : id;
+
+        if (existing) {
+          row = await tx.queryOne<{ id: string; name: string }>(
+            `UPDATE warehouse_categories SET name = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+            [trimmed, tenantId, existing.id],
+          );
+        } else {
+          row = await tx.queryOne<{ id: string; name: string }>(
+            `INSERT INTO warehouse_categories (tenant_id, name) VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO UPDATE SET updated_at = now()
+             RETURNING id, name`,
+            [tenantId, trimmed],
+          );
+        }
+
+        // Синхронизируем переименование категории в товарах на складе
+        await tx.query(
+          `UPDATE warehouse_items SET category = $1, updated_at = now()
+           WHERE tenant_id = $2 AND category = $3 AND deleted_at IS NULL`,
+          [trimmed, tenantId, oldName],
+        );
+
+        return row ?? { id, name: trimmed };
+      }
+
       if (table === "equipment_brands") {
         const row = await tx.queryOne<{ id: string; name: string }>(
           `UPDATE equipment_brands SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
@@ -2760,6 +2983,36 @@ export class RepairsService {
   ): Promise<{ success: boolean; id: string }> {
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
+
+      if (table === "warehouse_categories") {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const existing = await tx.queryOne<{ id: string; name: string }>(
+          isUuid
+            ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
+            : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+
+        const targetId = existing ? existing.id : id;
+        const categoryName = existing ? existing.name : id;
+
+        await tx.query(
+          isUuid
+            ? `DELETE FROM warehouse_categories WHERE tenant_id = $1 AND (id = $2 OR lower(name) = lower($3))`
+            : `DELETE FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          isUuid ? [tenantId, targetId, categoryName] : [tenantId, categoryName],
+        );
+
+        // Безопасное отвязывание: у связанных товаров категория сбрасывается в пустую
+        await tx.query(
+          `UPDATE warehouse_items SET category = '', updated_at = now()
+           WHERE tenant_id = $1 AND category = $2 AND deleted_at IS NULL`,
+          [tenantId, categoryName],
+        );
+
+        return { success: true, id: targetId };
+      }
+
       const existing = await tx.queryOne<{ id: string; name: string }>(
         `SELECT id, name FROM ${table} WHERE tenant_id = $1 AND id = $2`,
         [tenantId, id],
@@ -2801,6 +3054,13 @@ export class RepairsService {
         const res = await tx.queryOne<{ count: string }>(
           `SELECT count(*)::text AS count FROM repair_orders
            WHERE tenant_id = $1 AND ($2 = ANY(malfunctions) OR defect_description ILIKE '%' || $2 || '%') AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      } else if (normCategory === "category" || normCategory === "categories") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM warehouse_items
+           WHERE tenant_id = $1 AND category = $2 AND deleted_at IS NULL`,
           [tenantId, itemName],
         );
         count = Number(res?.count ?? 0);

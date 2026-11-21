@@ -1,13 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { X, Loader2, SquarePen } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { X, Loader2, SquarePen, Tag, Layers, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import {
   useWarehouseItem,
   useUpdateWarehouseItem,
+  useWarehouseCategories,
+  useWarehouseBrands,
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
+import {
+  useRepairDictionaries,
+  type DictionaryItemDTO,
+} from "@/lib/api/use-repairs";
+import { DictionarySelectField } from "@/components/repairs/DictionarySelectField";
 
 interface EditItemModalProps {
   open: boolean;
@@ -28,6 +35,7 @@ export function EditItemModal({
   const [sku, setSku] = useState("");
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
+  const [modelNames, setModelNames] = useState<string[]>([]);
   const [unit, setUnit] = useState("шт.");
   const [minStock, setMinStock] = useState("0");
   const [retailPrice, setRetailPrice] = useState("");
@@ -35,6 +43,58 @@ export function EditItemModal({
 
   const itemQuery = useWarehouseItem(open && itemId ? itemId : null);
   const updateItemMutation = useUpdateWarehouseItem();
+  const dictionariesQuery = useRepairDictionaries();
+  const warehouseBrandsQuery = useWarehouseBrands();
+  const warehouseCategoriesQuery = useWarehouseCategories();
+
+  const dictionaries = dictionariesQuery.data ?? {
+    types: [],
+    brands: [],
+    models: [],
+    accessories: [],
+    malfunctions: [],
+    categories: [],
+  };
+
+  const brandItems: (string | DictionaryItemDTO)[] = useMemo(() => {
+    const list: (string | DictionaryItemDTO)[] = [...dictionaries.brands];
+    const seen = new Set(dictionaries.brands.map((b) => b.name.trim().toLowerCase()));
+    if (warehouseBrandsQuery.data) {
+      for (const name of warehouseBrandsQuery.data) {
+        const trimmed = name.trim();
+        if (trimmed && !seen.has(trimmed.toLowerCase())) {
+          list.push(trimmed);
+          seen.add(trimmed.toLowerCase());
+        }
+      }
+    }
+    return list;
+  }, [dictionaries.brands, warehouseBrandsQuery.data]);
+
+  const categoryItems: (string | DictionaryItemDTO)[] = useMemo(() => {
+    const list: (string | DictionaryItemDTO)[] = dictionaries.categories ? [...dictionaries.categories] : [];
+    const seen = new Set(
+      list.map((c) => (typeof c === "string" ? c.trim().toLowerCase() : c.name.trim().toLowerCase())),
+    );
+    // Также включаем типы оборудования из ремонта
+    for (const t of dictionaries.types) {
+      const trimmed = t.name.trim();
+      if (trimmed && !seen.has(trimmed.toLowerCase())) {
+        list.push(t);
+        seen.add(trimmed.toLowerCase());
+      }
+    }
+    if (warehouseCategoriesQuery.data) {
+      for (const name of warehouseCategoriesQuery.data) {
+        const trimmed = name.trim();
+        if (trimmed && !seen.has(trimmed.toLowerCase())) {
+          list.push(trimmed);
+          seen.add(trimmed.toLowerCase());
+        }
+      }
+    }
+    return list;
+  }, [dictionaries.categories, dictionaries.types, warehouseCategoriesQuery.data]);
 
   useEffect(() => {
     const src = itemQuery.data ?? initialItem;
@@ -43,6 +103,9 @@ export function EditItemModal({
       setSku(src.sku ?? "");
       setBrand(src.brand ?? "");
       setCategory(src.category ?? "");
+      const initialModelNames =
+        src.modelNames ?? (src.models ? src.models.map((m) => m.name) : []);
+      setModelNames(initialModelNames);
       setUnit(src.unit ?? "шт.");
       setMinStock(src.minStock !== undefined ? String(src.minStock) : "0");
       setRetailPrice(
@@ -89,6 +152,7 @@ export function EditItemModal({
           sku: sku.trim(),
           brand: brand.trim(),
           category: category.trim(),
+          models: modelNames,
           unit: unit.trim() || "шт.",
           min_stock: parseFloat(minStock) || 0,
           retail_price: retailPrice !== "" ? parseFloat(retailPrice) : 0,
@@ -156,9 +220,9 @@ export function EditItemModal({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 items-end">
               <div>
-                <label className="block text-xs font-medium text-[#111111] mb-1">
+                <label className="block text-xs font-medium text-[#111111] mb-1.5">
                   Артикул / SKU
                 </label>
                 <input
@@ -166,33 +230,47 @@ export function EditItemModal({
                   value={sku}
                   onChange={(e) => setSku(e.target.value)}
                   placeholder="DISP-IP13-BLK"
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px] font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  className="h-9 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[#111111] mb-1">
-                  Бренд
-                </label>
-                <input
-                  type="text"
+                <DictionarySelectField
+                  label="Бренд"
+                  icon={Tag}
+                  category="brand"
+                  mode="single"
+                  placeholder="Apple, Samsung, Toua..."
+                  items={brandItems}
                   value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  placeholder="Apple, Samsung"
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  onChange={(val) => setBrand((val as string) || "")}
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-[#111111] mb-1">
-                Категория
-              </label>
-              <input
-                type="text"
+              <DictionarySelectField
+                label="Категория"
+                icon={Layers}
+                category="category"
+                mode="single"
+                placeholder="Запчасти, Инструмент..."
+                items={categoryItems}
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Например: Запчасти, Инструмент"
-                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                onChange={(val) => setCategory((val as string) || "")}
+              />
+            </div>
+
+            <div>
+              <DictionarySelectField
+                label="Подходит к моделям"
+                icon={Cpu}
+                category="model"
+                mode="multi"
+                brandName={brand}
+                placeholder="Выберите одну или несколько моделей..."
+                items={dictionaries.models}
+                value={modelNames}
+                onChange={(val) => setModelNames(Array.isArray(val) ? val : val ? [val] : [])}
               />
             </div>
 

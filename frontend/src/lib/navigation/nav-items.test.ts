@@ -73,7 +73,8 @@ describe("Состав навигации", () => {
     expect(MODULE_NAV.length).toBeGreaterThan(0);
     expect(CHANNEL_NAV.length).toBeGreaterThan(0);
     expect(MODULE_NAV.every((item) => item.moduleSlug !== undefined)).toBe(true);
-    expect(CHANNEL_NAV.every((item) => item.moduleSlug !== undefined)).toBe(true);
+    // Пункты каналов — либо базовые always (например /channels/sites), либо привязаны к moduleSlug
+    expect(CHANNEL_NAV.every((item) => item.always || item.moduleSlug !== undefined)).toBe(true);
   });
 
   it("платформенные разделы и меню компании непусты", () => {

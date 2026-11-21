@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso } from "../../../lib/date.utils.js";
 
 export const pageLayoutObjectTypeSchema = z.enum(["contact", "company", "deal"]);
 
@@ -47,10 +48,6 @@ export interface PageLayoutTabDTO {
   moduleSlug: string | null;
   requiredPermission: string | null;
   updatedAt: string;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 export function toPageLayoutTabDTO(row: PageLayoutTabRow): PageLayoutTabDTO {

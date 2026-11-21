@@ -148,6 +148,8 @@ const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/api/v1/admin/tenants/exit-impersonation",
   // Self-service signup: the caller has no tenant yet, by definition.
   "/auth/register",
+  "/auth/register/complete",
+  "/auth/register/draft",
   "/auth/slug-available",
   // Code delivery and the bot webhooks run before any session exists.
   "/auth/code/request",

@@ -14,7 +14,7 @@ export const INTAKE_ACT_CLIENT_PRESET: PresetClientDefinition = {
   slug: "work_order",
   documentType: "work_order",
   name: "Акт приема-передачи оборудования",
-  description: "Официальный бланк приема техники на диагностику с перечнем дефектов и отрывным талоном",
+  description: "Договор приема техники в ремонт с отрывным талоном мастера (экземпляр ИП Сагайдак А.Г.)",
   pageSize: "A4",
   orientation: "portrait",
   layoutConfig: {
@@ -30,47 +30,47 @@ export const INTAKE_ACT_CLIENT_PRESET: PresetClientDefinition = {
       fontFamily: "Inter",
       fontSize: "medium",
       primaryColor: "#111111",
-      margins: "normal",
+      margins: "compact",
       accentHeaders: true,
       showBorders: true,
     },
     header: {
       showLogo: true,
-      logoUrl: "",
-      logoWidth: 130,
+      logoUrl: "/service-logo.png",
+      logoWidth: 120,
       showCompanyDetails: true,
-      companyName: "",
-      companyAddress: "",
-      companyPhone: "",
+      companyName: "Ремонт инструмента (Toua, Hybest, VAPP) ИП Сагайдак А.Г.",
+      companyAddress: "Москва 3й проезд Марьиной рощи 40с1, 2 этаж, каб. 214",
+      companyPhone: "+7 977 628 20 49",
       companyEmail: "",
-      companyWebsite: "",
+      companyWebsite: "РЕМОНТ-ИНСТРУМЕНТ.РФ",
       companyInn: "",
       companyOgrn: "",
-      workingHours: "",
-      documentTitle: "АКТ ПРИЕМА-ПЕРЕДАЧИ ОБОРУДОВАНИЯ",
-      documentSubtitle: "Заказ-наряд на проведение диагностики и ремонтных работ",
+      workingHours: "Пн-Пт 10:00-19:00",
+      documentTitle: "Договор",
+      documentSubtitle: "на оказание услуг по ремонту инструмента",
       showDate: true,
       showDocNumber: true,
     },
     customer: {
       visible: true,
-      title: "Заказчик / Клиент",
+      title: "Заказчик",
       showName: true,
       showPhone: true,
       showEmail: false,
-      showAddress: false,
+      showAddress: true,
       showPassport: false,
     },
     equipment: {
       visible: true,
-      title: "Оборудование и неисправность",
+      title: "Устройство",
       showTypeBrandModel: true,
       showSerial: true,
       showDefect: true,
       showAppearance: true,
       showPackage: true,
       showMaster: true,
-      showEstimatedCost: true,
+      showEstimatedCost: false,
     },
     table: {
       visible: false,
@@ -84,40 +84,38 @@ export const INTAKE_ACT_CLIENT_PRESET: PresetClientDefinition = {
         { id: "price", label: "Цена", visible: true, widthPercent: 10 },
         { id: "total", label: "Сумма", visible: true, widthPercent: 10 },
       ],
-      showWorks: true,
+      showWorks: false,
       showParts: false,
       showVat: false,
       vatRate: 20,
       showDiscount: false,
-      showTotals: true,
-      showGrandTotalWords: true,
+      showTotals: false,
+      showGrandTotalWords: false,
     },
     terms: {
       visible: true,
-      title: "Условия приема и диагностики",
+      title: "ПРЕДМЕТ ДОГОВОРА",
       termsText:
-        "1. Сервисный центр производит диагностику и устранение заявленных дефектов. При обнаружении скрытых повреждений стоимость и сроки согласуются дополнительно.\n2. Сервисный центр не несет ответственности за возможную потерю данных на внутренних накопителях.\n3. Срок бесплатного хранения готового оборудования — 14 дней с момента уведомления клиента.",
-      showPdnConsent: true,
-      pdnText:
-        "Заказчик подтверждает согласие на обработку персональных данных в соответствии с ФЗ №152-ФЗ для исполнения договора оказания услуг.",
+        "1. По настоящему договору Исполнитель обязуется принять, провести диагностику и при наличии технической возможности выполнить ремонт принятого устройства в указанный срок и за указанную стоимость. По факту выполнения ремонтных работ, Заказчик обязуется забрать устройство и оплатить результат выполненной работы.\n2. После проведения диагностики срок и стоимость ремонта могут быть изменены при обязательном устном согласовании с Заказчиком.\n3. Устройство с согласия Заказчика принято без разборки и без проверки внутренних повреждений. Заказчик согласен, что все неисправности и внутренние повреждения, которые могут быть обнаружены в устройстве при техническом обслуживании, возникли до приема устройства по данному договору.\n4. Исполнитель предупреждает Заказчика о возможном изменении проявления неисправности при проведении диагностики, если неисправность устройства вызвана попаданием жидкости или механическим повреждением.\n5. На выполненную работу и установленные запчасти Исполнитель предоставляет гарантию. Условия и срок гарантии зависят от устраненной неисправности и указаны в Акте выполненных работ.\n6. При утере договора получить аппарат Заказчик может при предъявлении паспорта.\n7. В случае неявки Заказчика за получением результата выполненной работы Исполнитель вправе, письменно предупредив Заказчика, по истечении двух месяцев со дня такого предупреждения продать результат работы за разумную цену, а вырученную сумму, за вычетом всех причитающихся Исполнителю платежей, внести в депозит в порядке, предусмотренном статьей 327 Гражданского кодекса Российской Федерации.\n8. Подписывая настоящий Договор, Заказчик соглашается на предоставление Исполнителю согласия на обработку его персональных данных. Персональные данные требуются исключительно для исполнения договора с Заказчиком.",
+      showPdnConsent: false,
+      pdnText: "",
       showWarrantyText: false,
-      warrantyDays: 30,
+      warrantyDays: 0,
     },
     signatures: {
       visible: true,
       showExecutor: true,
-      executorTitle: "Приемщик СЦ",
+      executorTitle: "Исполнитель",
       showClient: true,
-      clientTitle: "Заказчик (с условиями ознакомлен)",
-      showStamp: true,
-      stampText: "М.П.",
+      clientTitle: "Заказчик",
+      showStamp: false,
+      stampText: "",
     },
     tearOffTicket: {
       visible: true,
-      title: "ОТРЫВНОЙ ТАЛОН КЛИЕНТА",
-      showBarcodeOrQr: true,
-      customNote:
-        "Предъявите данный талон при получении оборудования из сервисного центра. Без талона выдача производится только по паспорту Заказчика.",
+      title: "Заказ-наряд на выполнение работ",
+      showBarcodeOrQr: false,
+      customNote: "",
     },
   },
 };
@@ -458,7 +456,6 @@ export const RECEIPT_CLIENT_PRESET: PresetClientDefinition = {
 
 export const ALL_CLIENT_PRESETS: PresetClientDefinition[] = [
   INTAKE_ACT_CLIENT_PRESET,
-  REPAIR_ORDER_CLIENT_PRESET,
   COMPLETION_ACT_CLIENT_PRESET,
   RECEIPT_CLIENT_PRESET,
 ];
@@ -482,15 +479,23 @@ export interface PreviewSampleData {
   customerEmail: string;
   customerAddress: string;
   customerPassport: string;
+  companyName?: string;
+  companyInn?: string;
   equipmentType: string;
   equipmentBrand: string;
   equipmentModel: string;
   equipmentSerial: string;
+  malfunctions?: string[];
   defectDescription: string;
+  additionalDefectDescription?: string;
   appearance: string;
   packageContents: string;
   masterName: string;
   estimatedCost: number;
+  toolInfo?: string;
+  clientInfo?: string;
+  notes?: string;
+  comments?: string;
   works: Array<{
     id: string;
     name: string;
@@ -510,67 +515,349 @@ export interface PreviewSampleData {
 }
 
 export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
-  orderNumber: "№1042",
-  orderDate: new Date().toLocaleDateString("ru-RU"),
-  customerName: "Константинопольский Александр Сергеевич",
-  customerPhone: "+7 (999) 123-45-67",
-  customerEmail: "client@example.com",
-  customerAddress: "г. Москва, ул. Тверская, д. 12, кв. 45",
-  customerPassport: "45 10 № 123456, выдан ОВД Тверского района г. Москвы 15.04.2015",
-  equipmentType: "Перфоратор",
-  equipmentBrand: "Bosch",
-  equipmentModel: "GBH 2-26 DRE Professional",
-  equipmentSerial: "SN-948271038",
-  defectDescription: "Не включается при нажатии курка пуска, искрит в районе коллектора двигателя",
-  appearance: "Б/у, потертости пластикового корпуса, незначительные следы строительной пыли",
-  packageContents: "Фирменный пластиковый кейс, дополнительная рукоятка, ограничитель глубины",
-  masterName: "Иванов Алексей (Мастер 1 категории)",
-  estimatedCost: 4500,
+  orderNumber: "№ 269",
+  orderDate: "27.10.2026",
+  customerName: "Тагир (ref: Leha)",
+  customerPhone: "+7 928 949-45-43",
+  customerEmail: "",
+  customerAddress: "ООО \"Мега-Строй\"",
+  customerPassport: "",
+  companyName: "ООО \"Мега-Строй\"",
+  companyInn: "2367016930",
+  equipmentType: "Монтажный пистолет",
+  equipmentBrand: "Toua",
+  equipmentModel: "GSN50",
+  equipmentSerial: "7w1231266557",
+  malfunctions: ["Профилактика"],
+  defectDescription: "Профилактика",
+  additionalDefectDescription: "Периодически клинит боёк при интенсивной стрельбе",
+  appearance: "",
+  packageContents: "Обойма",
+  masterName: "ИП Сагайдак Антон Геннадьевич",
+  estimatedCost: 0,
+  toolInfo: "Монтажный пистолет Toua GSN50 S/N: 7w1231266557",
+  clientInfo: "ООО \"Мега-Строй\" (ИНН: 2367016930), Представитель: Тагир (ref: Leha), тел. +7 928 949-45-43",
+  notes: "Срочный заказ, проверить поршневую группу и резиновые уплотнители",
+  comments: "Срочный заказ, проверить поршневую группу и резиновые уплотнители",
   works: [
     {
       id: "w1",
-      name: "Комплексная диагностика электродвигателя и узлов редуктора",
+      name: "Комплексная диагностика и профилактика инструмента",
       qty: 1,
       unit: "усл.",
-      price: 800,
-      total: 800,
-    },
-    {
-      id: "w2",
-      name: "Замена щеточного узла и перепайка выводов статора",
-      qty: 1,
-      unit: "усл.",
-      price: 1200,
-      total: 1200,
-    },
-    {
-      id: "w3",
-      name: "Чистка и смазка редуктора высокотемпературной смазкой",
-      qty: 1,
-      unit: "усл.",
-      price: 1000,
-      total: 1000,
+      price: 1500,
+      total: 1500,
     },
   ],
-  parts: [
-    {
-      id: "p1",
-      name: "Комплект графитовых щеток Bosch 1617014138",
-      qty: 1,
-      unit: "компл.",
-      price: 650,
-      total: 650,
-    },
-    {
-      id: "p2",
-      name: "Подшипник ротора 608-2RS SKF",
-      qty: 1,
-      unit: "шт.",
-      price: 450,
-      total: 450,
-    },
-  ],
+  parts: [],
 };
+
+/**
+ * Преобразует реальные поля заказ-наряда (RepairOrderDTO / RepairTicket)
+ * в структуру PreviewSampleData для конструктора и превью бланков.
+ */
+export interface RepairPreviewWorkSource {
+  id?: string | null;
+  description?: string | null;
+  name?: string | null;
+  quantity?: number | string | null;
+  unit?: string | null;
+  unitPrice?: number | string | null;
+  unit_price?: number | string | null;
+  cost?: number | string | null;
+}
+
+export interface RepairPreviewPartSource {
+  id?: string | null;
+  name?: string | null;
+  article?: string | null;
+  quantity?: number | string | null;
+  unit?: string | null;
+  retailPrice?: number | string | null;
+  retail_price?: number | string | null;
+  price?: number | string | null;
+  total?: number | string | null;
+}
+
+/** Наряд приходит из API в camelCase и snake_case; описаны все поля, читаемые превью. */
+export interface RepairPreviewSource {
+  ticketNumber?: string | null;
+  ticket_number?: string | null;
+  receivedAt?: string | number | Date | null;
+  received_at?: string | number | Date | null;
+  createdAt?: string | number | Date | null;
+  created_at?: string | number | Date | null;
+  companyName?: string | null;
+  company_name?: string | null;
+  companyInn?: string | null;
+  company_inn?: string | null;
+  companyLegalAddress?: string | null;
+  legalAddress?: string | null;
+  company?: { name?: string | null; inn?: string | null; legalAddress?: string | null } | null;
+  deal?: { companyName?: string | null } | null;
+  customerName?: string | null;
+  customer_name?: string | null;
+  customerPhone?: string | null;
+  customer_phone?: string | null;
+  customerEmail?: string | null;
+  customer_email?: string | null;
+  customerAddress?: string | null;
+  customer_address?: string | null;
+  customerPassport?: string | null;
+  customer_passport?: string | null;
+  customer?: { name?: string | null; phone?: string | null; email?: string | null } | null;
+  equipment?: {
+    type?: string | null;
+    brand?: string | null;
+    model?: string | null;
+    serialNumber?: string | null;
+    serial_number?: string | null;
+    serial?: string | null;
+    appearance?: string | null;
+    packageContents?: string | null;
+    package_contents?: string | null;
+    packageContentsItems?: string[] | null;
+  } | null;
+  malfunctions?: string[] | string | null;
+  defectDescription?: string | null;
+  defect_description?: string | null;
+  masterName?: string | null;
+  master_name?: string | null;
+  estimatedCost?: number | string | null;
+  estimated_cost?: number | string | null;
+  finalCost?: number | string | null;
+  final_cost?: number | string | null;
+  works?: RepairPreviewWorkSource[] | null;
+  work_items?: RepairPreviewWorkSource[] | null;
+  parts?: RepairPreviewPartSource[] | null;
+  parts_used?: RepairPreviewPartSource[] | null;
+  toolInfo?: string | null;
+  tool_info?: string | null;
+  clientInfo?: string | null;
+  client_info?: string | null;
+  notes?: string | null;
+  note?: string | null;
+  comments?: string | null;
+  comment?: string | null;
+  intakeComments?: string | null;
+  intake_comments?: string | null;
+}
+
+export function mapRepairToPreviewSampleData(
+  order: RepairPreviewSource | null | undefined,
+): PreviewSampleData {
+  if (!order) return DEFAULT_PREVIEW_SAMPLE_DATA;
+
+  const rawNumber = String(order.ticketNumber || order.ticket_number || "");
+  const orderNumber = rawNumber
+    ? rawNumber.startsWith("№")
+      ? rawNumber
+      : `№${rawNumber}`
+    : DEFAULT_PREVIEW_SAMPLE_DATA.orderNumber;
+
+  const rawDate =
+    order.receivedAt || order.received_at || order.createdAt || order.created_at;
+  let orderDate = DEFAULT_PREVIEW_SAMPLE_DATA.orderDate;
+  if (rawDate) {
+    try {
+      const d = new Date(rawDate);
+      if (!isNaN(d.getTime())) {
+        orderDate = d.toLocaleDateString("ru-RU");
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const companyName =
+    order.companyName ||
+    order.company_name ||
+    order.company?.name ||
+    order.deal?.companyName ||
+    "";
+
+  const companyInn =
+    order.companyInn ||
+    order.company_inn ||
+    order.company?.inn ||
+    "";
+
+  const customerName =
+    order.customerName ||
+    order.customer_name ||
+    order.customer?.name ||
+    DEFAULT_PREVIEW_SAMPLE_DATA.customerName;
+
+  const customerPhone =
+    order.customerPhone ||
+    order.customer_phone ||
+    order.customer?.phone ||
+    "";
+
+  const customerEmail =
+    order.customerEmail ||
+    order.customer_email ||
+    order.customer?.email ||
+    "";
+
+  const customerAddress =
+    order.customerAddress ||
+    order.customer_address ||
+    order.companyLegalAddress ||
+    order.legalAddress ||
+    order.company?.legalAddress ||
+    "";
+
+  const customerPassport =
+    order.customerPassport ||
+    order.customer_passport ||
+    "";
+
+  const eq = order.equipment || {};
+  const equipmentType = eq.type || "";
+  const equipmentBrand = eq.brand || "";
+  const equipmentModel = eq.model || "";
+  const equipmentSerial = eq.serialNumber || eq.serial_number || eq.serial || "";
+
+  const rawMalfunctions: string[] = Array.isArray(order.malfunctions)
+    ? order.malfunctions
+    : typeof order.malfunctions === "string" && order.malfunctions.trim()
+      ? [order.malfunctions.trim()]
+      : [];
+  const malfunctionsStr = rawMalfunctions.join(", ");
+
+  const rawDefectDesc = String(
+    order.defectDescription || order.defect_description || "",
+  ).trim();
+
+  // Primary defect / service (e.g. "Профилактика")
+  const defectDescription =
+    malfunctionsStr ||
+    rawDefectDesc ||
+    DEFAULT_PREVIEW_SAMPLE_DATA.defectDescription;
+
+  // Additional defect description (details со слов клиента if distinct from main tag)
+  const additionalDefectDescription =
+    rawDefectDesc && rawDefectDesc !== malfunctionsStr
+      ? rawDefectDesc
+      : undefined;
+
+  const appearance = eq.appearance || "";
+  const packageContents =
+    eq.packageContents ||
+    eq.package_contents ||
+    (Array.isArray(eq.packageContentsItems) ? eq.packageContentsItems.join(", ") : "") ||
+    "";
+
+  const masterName =
+    order.masterName ||
+    order.master_name ||
+    DEFAULT_PREVIEW_SAMPLE_DATA.masterName;
+
+  const estimatedCost = Number(
+    order.estimatedCost ??
+      order.estimated_cost ??
+      order.finalCost ??
+      order.final_cost ??
+      0,
+  );
+
+  const rawWorks = order.works || order.work_items || [];
+  const works =
+    Array.isArray(rawWorks) && rawWorks.length > 0
+      ? rawWorks.map((w: RepairPreviewWorkSource, idx: number) => {
+          const qty = Number(w.quantity ?? 1) || 1;
+          const price = Number(w.unitPrice ?? w.unit_price ?? w.cost ?? 0);
+          const total = Number(w.cost ?? qty * price);
+          return {
+            id: String(w.id || `w-${idx}`),
+            name: String(w.description || w.name || `Работа ${idx + 1}`),
+            qty,
+            unit: String(w.unit || "усл."),
+            price,
+            total,
+          };
+        })
+      : DEFAULT_PREVIEW_SAMPLE_DATA.works;
+
+  const rawParts = order.parts || order.parts_used || [];
+  const parts =
+    Array.isArray(rawParts) && rawParts.length > 0
+      ? rawParts.map((p: RepairPreviewPartSource, idx: number) => {
+          const qty = Number(p.quantity ?? 1) || 1;
+          const price = Number(p.retailPrice ?? p.retail_price ?? p.price ?? 0);
+          const total = Number(p.total ?? qty * price);
+          return {
+            id: String(p.id || `p-${idx}`),
+            name: String(p.name || p.article || `Запчасть ${idx + 1}`),
+            qty,
+            unit: String(p.unit || "шт."),
+            price,
+            total,
+          };
+        })
+      : DEFAULT_PREVIEW_SAMPLE_DATA.parts;
+
+  const toolInfo =
+    order.toolInfo ||
+    order.tool_info ||
+    [equipmentType, equipmentBrand, equipmentModel].filter(Boolean).join(" ") +
+      (equipmentSerial ? ` (S/N: ${equipmentSerial})` : "");
+
+  const clientCompanyPart = companyName
+    ? `${companyName}${companyInn ? ` (ИНН: ${companyInn})` : ""}`
+    : "";
+
+  const clientInfo =
+    order.clientInfo ||
+    order.client_info ||
+    [
+      clientCompanyPart,
+      customerName ? (companyName ? `Представитель: ${customerName}` : customerName) : "",
+      customerPhone ? `тел. ${customerPhone}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ") ||
+    customerName;
+
+  const notes = String(order.notes || order.note || "").trim();
+  const comments =
+    order.comments ||
+    order.comment ||
+    order.intakeComments ||
+    order.intake_comments ||
+    notes ||
+    "";
+
+  return {
+    orderNumber,
+    orderDate,
+    customerName,
+    customerPhone,
+    customerEmail,
+    customerAddress,
+    customerPassport,
+    companyName: companyName || undefined,
+    companyInn: companyInn || undefined,
+    equipmentType,
+    equipmentBrand,
+    equipmentModel,
+    equipmentSerial,
+    malfunctions: rawMalfunctions.length > 0 ? rawMalfunctions : undefined,
+    defectDescription,
+    additionalDefectDescription,
+    appearance,
+    packageContents,
+    masterName,
+    estimatedCost,
+    toolInfo,
+    clientInfo,
+    notes: notes || undefined,
+    comments,
+    works,
+    parts,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Client Russian Number to Words Formatter

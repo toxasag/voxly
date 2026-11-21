@@ -173,8 +173,6 @@ export function useUploadKnowledgeFile(
     mutationFn: async (input) => {
       const file = input instanceof File ? input : input.file;
       const category = input instanceof File ? undefined : input.category;
-      const { API_BASE_URL } = await import("@/lib/api/apiClient");
-      const { readAccessToken } = await import("@/lib/auth/session");
 
       const form = new FormData();
       form.append("file", file);
@@ -182,39 +180,11 @@ export function useUploadKnowledgeFile(
         form.append("category", category);
       }
 
-      const token = readAccessToken();
-
-      const response = await fetch(`${API_BASE_URL}${BASE_PATH}/agents/${agentId}/knowledge`, {
-        method: "POST",
-        body: form,
-        credentials: "include",
-        ...(token !== null && { headers: { Authorization: `Bearer ${token}` } }),
-      });
-
-      if (!response.ok) {
-        const body: unknown = await response.json().catch(() => null);
-
-        const message =
-          typeof body === "object" &&
-          body !== null &&
-          typeof (body as { error?: { message?: unknown } }).error?.message === "string"
-            ? (body as { error: { message: string } }).error.message
-            : `Не удалось загрузить файл (HTTP ${response.status})`;
-
-        throw new Error(message);
-      }
-
-      const parsed: unknown = await response.json();
-
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        !("data" in parsed)
-      ) {
-        throw new Error("Неожиданный ответ сервера при загрузке файла");
-      }
-
-      return (parsed as { data: KnowledgeDocument }).data;
+      const res = await apiClient.postFormData<KnowledgeDocument>(
+        `${BASE_PATH}/agents/${agentId}/knowledge`,
+        form,
+      );
+      return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });

@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { getBullQueueMetrics } from "../../infrastructure/queue-metrics.js";
+import { getRedisHealth } from "../../infrastructure/redis.js";
 
 interface CountsRow {
   tenants_total: string;
@@ -60,6 +62,11 @@ export default async function adminMetricsRoutes(app: FastifyInstance): Promise<
       return reply.status(500).send({ error: { code: "INTERNAL", message: "Metrics unavailable" } });
     }
 
+    const redisHealth = getRedisHealth();
+    const bullQueues = redisHealth.configured ? await getBullQueueMetrics() : [];
+    const pendingTotal = bullQueues.reduce((sum, q) => sum + q.waiting + q.active + q.delayed, 0);
+    const failedTotal = bullQueues.reduce((sum, q) => sum + q.failed, 0);
+
     return reply.send({
       data: {
         counts: {
@@ -78,12 +85,11 @@ export default async function adminMetricsRoutes(app: FastifyInstance): Promise<
           connections: toInt(dbStats.connections),
           uptime_seconds: toInt(dbStats.uptime_seconds),
         },
-        // Физической очереди (BullMQ/Redis) в стеке нет — M6.x. Поле держит
-        // форму конверта, чтобы фронт не менялся при её появлении.
         queue: {
-          implemented: false,
-          pending: 0,
-          failed: 0,
+          implemented: redisHealth.configured && bullQueues.length > 0,
+          pending: pendingTotal,
+          failed: failedTotal,
+          queues: bullQueues,
         },
         generated_at: new Date().toISOString(),
       },

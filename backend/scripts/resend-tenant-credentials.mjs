@@ -11,6 +11,7 @@
 //   --password <password>  (по умолчанию: генерируется новый безопасный пароль)
 // ---------------------------------------------------------------------------
 
+import { randomInt } from "node:crypto";
 import argon2 from "argon2";
 import pg from "pg";
 
@@ -38,7 +39,7 @@ function generateStrongPassword(length = 12) {
   const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$%";
   let result = "";
   for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+    result += chars.charAt(randomInt(0, chars.length));
   }
   return result;
 }

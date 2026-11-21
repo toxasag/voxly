@@ -1,5 +1,7 @@
 "use client";
 
+import { Sheet } from "@/components/ui/sheet";
+import type { RepairPreviewSource } from "@/lib/repairs/print-presets-client";
 import { VisualPrintTemplateEditor, type VisualPrintTemplateEditorProps } from "./VisualPrintTemplateEditor";
 
 export interface PrintTemplateSettingsDrawerProps {
@@ -7,6 +9,7 @@ export interface PrintTemplateSettingsDrawerProps {
   onClose: () => void;
   initialDocumentType?: string;
   orderId?: string;
+  order?: RepairPreviewSource | null;
 }
 
 export function PrintTemplateSettingsDrawer({
@@ -14,14 +17,25 @@ export function PrintTemplateSettingsDrawer({
   onClose,
   initialDocumentType = "work_order",
   orderId,
+  order,
 }: PrintTemplateSettingsDrawerProps) {
   return (
-    <VisualPrintTemplateEditor
+    <Sheet
       open={open}
       onClose={onClose}
-      initialDocumentType={initialDocumentType}
-      orderId={orderId}
-    />
+      side="right"
+      width="w-full md:w-[1450px]"
+      resizable
+    >
+      <VisualPrintTemplateEditor
+        open={open}
+        onClose={onClose}
+        initialDocumentType={initialDocumentType}
+        orderId={orderId}
+        order={order}
+        isDrawer
+      />
+    </Sheet>
   );
 }
 

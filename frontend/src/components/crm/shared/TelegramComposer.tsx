@@ -204,6 +204,17 @@ export function htmlToMarkdown(html: string): string {
 /**
  * Конвертация Markdown в визуальный HTML для contenteditable
  */
+/** Разрешаем в ссылках только безопасные схемы; иначе `javascript:` исполнился бы по клику. */
+function sanitizeLinkUrl(raw: string): string | null {
+  const url = raw.trim();
+  if (!/^(https?:\/\/|mailto:|tg:\/\/)/i.test(url)) return null;
+  return url.replace(/"/g, "%22").replace(/'/g, "%27");
+}
+
+function escapeComposerHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function markdownToHtml(md: string): string {
   if (!md) return "";
 
@@ -249,10 +260,11 @@ export function markdownToHtml(md: string): string {
     );
 
     // Link: [text](url)
-    l = l.replace(
-      /\[([^\]]+?)\]\(([^)]+?)\)/g,
-      `<a href="$2" class="text-[#2aabee] underline" target="_blank" rel="noreferrer">$1</a>`
-    );
+    l = l.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, (_match, label: string, rawUrl: string) => {
+      const safeUrl = sanitizeLinkUrl(rawUrl);
+      if (safeUrl === null) return label;
+      return `<a href="${safeUrl}" class="text-[#2aabee] underline" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    });
 
     if (isQuote) {
       return `<blockquote class="border-l-2 border-[#2aabee] pl-2 text-[#666666] italic my-1">${l}</blockquote>`;
@@ -630,7 +642,7 @@ export function TelegramComposer({
         savedRangeRef.current = newRange.cloneRange();
       } else {
         const text = activeEl.innerText || activeEl.textContent || "";
-        activeEl.innerHTML = text.replace(/\n/g, "<br>");
+        activeEl.innerHTML = escapeComposerHtml(text).replace(/\n/g, "<br>");
       }
     }
     syncFromDOM();

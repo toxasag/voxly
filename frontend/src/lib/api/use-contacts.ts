@@ -7,8 +7,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { apiClient, API_BASE_URL, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
-import { readAccessToken } from "@/lib/auth/session";
+import { apiClient, triggerBrowserDownload, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
 import type {
   ContactChannel,
   ContactType,
@@ -58,6 +57,9 @@ export interface ContactDTO {
   companyInn?: string | null;
   birthDate?: string | null;
   channel: ContactChannel;
+  name?: string | null;
+  messengerId?: string | null;
+  messengerName?: string | null;
   contactType: ContactType;
   /** Twenty: person.linkedinLink, группа social на карточке. */
   linkedinLink: string;
@@ -94,6 +96,10 @@ export interface ContactsQueryParams {
   contact_type?: ContactType;
   limit?: number;
   offset?: number;
+  sort?: string;
+  order?: "asc" | "desc";
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }
 
 /** Metadata returned by DELETE when the contact still had linked deals. */
@@ -158,6 +164,8 @@ export function useContacts(
           contact_type: params.contactType ?? params.contact_type,
           limit,
           offset,
+          sort: params.sort ?? params.sortBy,
+          order: params.order ?? params.sortOrder,
         },
       });
 
@@ -267,6 +275,30 @@ export function useDeleteContact(): UseMutationResult<
     },
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: contactKeys.detail(result.id) });
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
+export interface BulkActionPayload {
+  mode: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+}
+
+export function useBulkDeleteContacts(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE_PATH}/bulk-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: contactKeys.all });
     },
   });
@@ -581,46 +613,17 @@ export interface ExportContactsPayload {
 }
 
 export async function downloadContactsExport(payload: ExportContactsPayload = {}): Promise<void> {
-  const token = readAccessToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${API_BASE_URL}/api/v1/crm/contacts/export`, {
+  const { blob, filename } = await apiClient.downloadBlob("/api/v1/crm/contacts/export", {
     method: "POST",
-    headers,
-    body: JSON.stringify({
+    body: {
       format: payload.format || "csv",
       search: payload.search,
       channel: payload.channel,
       contact_type: payload.contactType ?? payload.contact_type,
-    }),
-    credentials: "include",
+    },
   });
-
-  if (!res.ok) {
-    throw new Error("Не удалось экспортировать контакты");
-  }
-
-  const blob = await res.blob();
-  const contentDisp = res.headers.get("content-disposition");
-  let filename = payload.format === "xlsx" ? "contacts.xlsx" : "contacts.csv";
-  if (contentDisp) {
-    const match = contentDisp.match(/filename="?([^";]+)"?/);
-    if (match && match[1]) {
-      filename = decodeURIComponent(match[1]);
-    }
-  }
-
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
+  const fallback = payload.format === "xlsx" ? "contacts.xlsx" : "contacts.csv";
+  triggerBrowserDownload(blob, filename ?? fallback);
 }
 
 export function useExportContacts() {

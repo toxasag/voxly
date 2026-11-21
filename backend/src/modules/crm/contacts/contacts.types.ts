@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso } from "../../../lib/date.utils.js";
 
 // ---------------------------------------------------------------------------
 // Контакт.
@@ -88,7 +89,7 @@ export const createContactSchema = z.object({
    * остальные уходят в additional_phones. Пустой список допустим.
    */
   phones: z.array(contactPhoneSchema).max(10, "Too many phone numbers").optional(),
-  email: z.string().email("Invalid email").optional().or(z.literal("")),
+  email: z.string().trim().email("Invalid email").or(z.literal("")).nullable().optional(),
   /** Мессенджеры и соцсети списком. */
   socials: z.array(contactSocialSchema).max(20, "Too many social profiles").optional(),
   telegram_chat_id: z.string().max(30).optional().or(z.literal("")),
@@ -99,6 +100,8 @@ export const createContactSchema = z.object({
   company_inn: z.string().max(30).optional().nullable().or(z.literal("")),
   birth_date: z.string().optional().nullable().or(z.literal("")),
   channel: contactChannelSchema.default("phone"),
+  messenger_id: z.string().max(100).optional().nullable().or(z.literal("")),
+  messenger_name: z.string().max(100).optional().nullable().or(z.literal("")),
   contact_type: contactTypeSchema.default("customer").optional(),
   /**
    * Twenty: person.linkedinLink, группа social.
@@ -168,6 +171,9 @@ export interface ContactRow {
   notes: string;
   is_personal?: boolean;
   suppress_deal_creation?: boolean;
+  name?: string | null;
+  messenger_id?: string | null;
+  messenger_name?: string | null;
   contact_type?: ContactType | string;
   created_by: string | null;
   created_at: Date | string;
@@ -213,6 +219,9 @@ export interface ContactDTO {
   companyInn?: string | null;
   birthDate?: string | null;
   channel: ContactChannel;
+  name?: string | null;
+  messengerId?: string | null;
+  messengerName?: string | null;
   linkedinLink: string;
   city: string;
   address: string;
@@ -229,10 +238,6 @@ export interface ContactDTO {
   updatedAt: string;
   dealsCount: number;
   tasksCount: number;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 /**
@@ -307,6 +312,9 @@ export function toContactDTO(row: ContactRow): ContactDTO {
         : String(row.birth_date).slice(0, 10)
       : null,
     channel: row.channel,
+    name: row.name ?? (row.first_name ? `${row.first_name} ${row.last_name || ""}`.trim() : null),
+    messengerId: row.messenger_id ?? (row.custom_fields?.max_chat_id ? String(row.custom_fields.max_chat_id) : null),
+    messengerName: row.messenger_name ?? (row.channel === "max" ? "Макс" : null),
     linkedinLink: row.linkedin_link,
     city: row.city ?? "",
     address: row.address ?? "",

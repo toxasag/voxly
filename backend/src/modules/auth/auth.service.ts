@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { createHash, randomInt, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomInt, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
-import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
+import { hashToken } from "../../lib/crypto.utils.js";
+import { toDate } from "../../lib/date.utils.js";
+import { query, queryOne, transaction, setRequestTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
 import { OWNER_PERMISSIONS, toPermissions } from "../../config/permissions.js";
@@ -171,6 +173,22 @@ function normalisePhone(phone: string): string {
   return phone.replace(/\D/g, "");
 }
 
+/** Маскирование телефона для безопасного логирования */
+export function maskPhone(phone: string): string {
+  const clean = phone.replace(/\s+/g, "");
+  return clean.length <= 5 ? "***" : `${clean.slice(0, 3)}***${clean.slice(-2)}`;
+}
+
+/** Маскирование email для безопасного логирования */
+export function maskEmail(email: string): string {
+  const parts = email.split("@");
+  if (parts.length !== 2) return "***";
+  const [local, domain] = parts;
+  if (!local || !domain) return "***";
+  const maskedLocal = local.length <= 2 ? `${local[0]}***` : `${local[0]}***${local[local.length - 1]}`;
+  return `${maskedLocal}@${domain}`;
+}
+
 /**
  * Subdomain label rules, kept identical to the `tenants_slug_format` CHECK in
  * the schema: lowercase alphanumerics and inner hyphens, 3–63 characters.
@@ -187,14 +205,6 @@ const SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
  * пробный период аккаунта.
  */
 const TRIAL_DAYS = 14;
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
-}
 
 /** Tenants that are suspended or past due must not receive fresh tokens. */
 function assertTenantActive(status: string): void {
@@ -865,7 +875,7 @@ export class AuthService {
     if (candidateRefresh && typeof candidateRefresh === "string" && candidateRefresh.trim().length > 0) {
       try {
         const refreshed = await this.refreshToken(candidateRefresh.trim(), meta);
-        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; role: string }>(
+        const payload = this.app.jwt.verify<{ sub: string; tenant_id: string; role: string }>(
           refreshed.access_token,
         );
         if (payload?.sub) {
@@ -893,19 +903,20 @@ export class AuthService {
           }
         }
       } catch {
-        // Fallback к проверке access token
+        // Fallback к проверке подписанного access token
       }
     }
 
-    // 2. Попытка восстановить через access token
+    // 2. Попытка восстановить через криптографически подписанный access token
     if (
       tokens.adminAccessToken &&
       typeof tokens.adminAccessToken === "string" &&
       tokens.adminAccessToken.trim().length > 0
     ) {
       try {
-        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; impersonator_id?: string }>(
+        const payload = this.app.jwt.verify<{ sub: string; tenant_id: string; impersonator_id?: string }>(
           tokens.adminAccessToken.trim(),
+          { ignoreExpiration: true },
         );
         const targetUserId = payload?.impersonator_id || payload?.sub;
         if (targetUserId) {
@@ -928,11 +939,11 @@ export class AuthService {
           }
         }
       } catch {
-        // Ошибка декодирования
+        // Подпись невалидна
       }
     }
 
-    // 3. Прямое восстановление по переданному impersonatorId
+    // 3. Восстановление по impersonatorId, извлечённому из уже верифицированной сессии
     if (tokens.impersonatorId) {
       const adminUser = await queryOne<AuthUserRow>(
         `SELECT ${USER_COLUMNS}
@@ -991,6 +1002,11 @@ export class AuthService {
     };
   }
 
+  async isEmailAvailable(email: string): Promise<boolean> {
+    const existing = await this.findByEmail(email.trim().toLowerCase());
+    return existing === null;
+  }
+
   /**
    * Creates a tenant with its own subdomain plus the owner account, and signs
    * the owner in immediately.
@@ -1006,7 +1022,8 @@ export class AuthService {
     slug: string;
     email: string;
     phone: string;
-    password: string;
+    password?: string;
+    passwordHash?: string;
     /** chat_id подтверждённой сессии; привязывается к владельцу. */
     telegram_chat_id?: number | null;
     /** MAX user_id подтверждённой сессии; привязывается к владельцу. */
@@ -1054,10 +1071,23 @@ export class AuthService {
       });
     }
 
-    const passwordHash = await argon2.hash(input.password);
+    let passwordHash = input.passwordHash;
+    if (passwordHash === undefined) {
+      if (input.password === undefined || input.password.length === 0) {
+        throw new AppError(400, "VALIDATION_ERROR", "Password is required", {
+          password: ["Укажите пароль"],
+        });
+      }
+      passwordHash = await argon2.hash(input.password);
+    }
+
+    this.app.log.info(
+      { slug, email: maskEmail(email), phone: maskPhone(input.phone) },
+      "AuthService.register: starting registration transaction",
+    );
 
     try {
-      return await transaction(async (tx) => {
+      const tokens = await transaction(async (tx) => {
         // Гашение первым шагом внутри транзакции: `FOR UPDATE` на строке сессии
         // сериализует две одновременные регистрации по одному коду, поэтому
         // второй достанется «Код уже использован», а не второй арендатор.
@@ -1072,6 +1102,11 @@ export class AuthService {
           [companyName, slug, TRIAL_DAYS],
         );
         if (tenant === null) throw new Error("Failed to create tenant");
+
+        // Переключаем контекст транзакции на только что созданный тенант,
+        // чтобы RLS-политики (ai_balance_topups, tenant_notification_channels) разрешали вставку.
+        await tx.query("SELECT set_config('app.tenant_id', $1, true)", [tenant.id]);
+        setRequestTenant(tenant.id);
 
         // Стартовый баланс для AI-ботов (500 руб = 50 000 коп)
         await tx.query(
@@ -1102,13 +1137,29 @@ export class AuthService {
         );
         if (user === null) throw new Error("Failed to create owner");
 
+        // Аудит-лог регистрации нового арендатора
+        await tx.query(
+          `INSERT INTO tenant_audit_log (tenant_id, actor_user_id, action, entity_type, entity_id, details)
+           VALUES ($1, $2, 'tenant.register', 'tenant', $3, $4::jsonb)`,
+          [
+            tenant.id,
+            user.id,
+            tenant.id,
+            JSON.stringify({
+              slug,
+              email: maskEmail(email),
+              has_telegram: input.telegram_chat_id !== undefined && input.telegram_chat_id !== null,
+            }),
+          ],
+        );
+
         if (input.telegram_chat_id) {
           await tx.query(
             `INSERT INTO tenant_notification_channels (
                tenant_id, channel_type, destination, extra_meta, is_active, is_verified
              )
              VALUES ($1, 'telegram', $2, $3, true, true)
-             ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+             ON CONFLICT (tenant_id, channel_type, destination) WHERE channel_type IN ('email', 'telegram', 'whatsapp') DO UPDATE
              SET is_active = true, is_verified = true, updated_at = now()`,
             [
               tenant.id,
@@ -1132,7 +1183,18 @@ export class AuthService {
 
         return this.issueTokens(created, tx);
       });
+
+      this.app.log.info(
+        { tenantId: tokens.tenant.id, slug: tokens.tenant.slug, userId: tokens.user.id },
+        "AuthService.register: successfully completed",
+      );
+
+      return tokens;
     } catch (error) {
+      this.app.log.error(
+        { slug, email: maskEmail(email), err: error },
+        "AuthService.register: failed during transaction",
+      );
       // 23505 = unique_violation. Несколько разных ограничений дают этот код, и
       // сообщения должны отличаться, иначе занятый Telegram выглядел бы как
       // занятый поддомен.

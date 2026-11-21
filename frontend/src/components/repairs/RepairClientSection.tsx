@@ -165,11 +165,12 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     }
   }, [innLookupQuery.data, form]);
 
-  // Реактивный поиск по телефону или имени
+  // Реактивный поиск по номеру телефона или имени (при отсутствии полного номера)
+  const phoneDigitsCount = debouncedPhone.replace(/\D/g, "").length;
   const lookupQuery = useRepairClientLookup({
     phone: debouncedPhone,
-    query: debouncedName,
-    enabled: !isManuallyDetached && (debouncedPhone.replace(/\D/g, "").length >= 6 || debouncedName.trim().length >= 2),
+    query: phoneDigitsCount < 6 ? debouncedName : "",
+    enabled: !isManuallyDetached && (phoneDigitsCount >= 6 || debouncedName.trim().length >= 2),
   });
 
   const lookupData: ClientLookupResultDTO | undefined = lookupQuery.data;
@@ -221,9 +222,37 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
         form.setValue("company_name", client.companyName, { shouldValidate: true, shouldDirty: true });
       }
     } else if (lookupData.existingContact?.contactId) {
-      form.setValue("customer_id", lookupData.existingContact.contactId, { shouldDirty: true });
+      const ec = lookupData.existingContact;
+      form.setValue("customer_id", ec.contactId || "", { shouldDirty: true });
       if (!customerName || customerName.trim() === "") {
-        form.setValue("customer_name", lookupData.existingContact.fullName, { shouldValidate: true, shouldDirty: true });
+        form.setValue("customer_name", ec.fullName, { shouldValidate: true, shouldDirty: true });
+      }
+      if ((!customerPhone || customerPhone.trim() === "") && ec.phone) {
+        setPhoneInput(ec.phone);
+        form.setValue("customer_phone", ec.phone, { shouldValidate: true, shouldDirty: true });
+      }
+      if ((!customerEmail || customerEmail.trim() === "") && ec.email) {
+        form.setValue("customer_email", ec.email, { shouldDirty: true });
+      }
+      if (lookupData.company) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
+        form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
+        if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
+        if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
+        if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
+        if (lookupData.company.accountNumber) {
+          form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
+        }
+        if (lookupData.company.legalAddress) {
+          form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
+        }
+      } else if (ec.companyName && !companyName) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        if (ec.companyId) form.setValue("company_id", ec.companyId, { shouldDirty: true });
+        form.setValue("company_name", ec.companyName, { shouldValidate: true, shouldDirty: true });
       }
     }
   }, [lookupData, isManuallyDetached]);
@@ -257,6 +286,50 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     setIsCompanyChecked(false);
     setIsRequisitesOpen(false);
     form.clearErrors("company_name");
+  };
+
+  const handleApplyExistingContact = () => {
+    if (!lookupData?.existingContact) return;
+    const ec = lookupData.existingContact;
+    const client = lookupData.client;
+
+    if (ec.contactId) {
+      form.setValue("customer_id", ec.contactId, { shouldDirty: true });
+    }
+    if (ec.fullName) {
+      form.setValue("customer_name", ec.fullName, { shouldValidate: true, shouldDirty: true });
+    }
+    if (ec.phone) {
+      setPhoneInput(ec.phone);
+      form.setValue("customer_phone", ec.phone, { shouldValidate: true, shouldDirty: true });
+    }
+    const emailToSet = ec.email || client?.email;
+    if (emailToSet) {
+      form.setValue("customer_email", emailToSet, { shouldValidate: true, shouldDirty: true });
+    }
+
+    if (lookupData.company) {
+      setIsCompanyChecked(true);
+      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+      form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
+      form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
+      if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
+      if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
+      if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
+      if (lookupData.company.accountNumber) {
+        form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
+      }
+      if (lookupData.company.legalAddress) {
+        form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
+      }
+    } else if (ec.companyName || client?.companyName) {
+      const cName = ec.companyName || client?.companyName || "";
+      const cId = ec.companyId || client?.companyId || null;
+      setIsCompanyChecked(true);
+      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+      if (cId) form.setValue("company_id", cId, { shouldDirty: true });
+      form.setValue("company_name", cName, { shouldValidate: true, shouldDirty: true });
+    }
   };
 
   const handleSelectDeal = (selectedId: string) => {
@@ -418,19 +491,19 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
           {lookupData?.suggestedName && (
             <div className="pt-1">
               {customerName !== lookupData.suggestedName ? (
-                <div className="flex items-center justify-between gap-1.5 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2.5 py-1 text-xs text-[#854d0e]">
-                  <span className="flex items-center gap-1.5 truncate">
-                    <span>💡</span>
-                    <span className="truncate">
-                      Имя в {lookupData.suggestedSource === "telegram" ? "Telegram" : lookupData.suggestedSource === "whatsapp" ? "WhatsApp" : lookupData.suggestedSource === "max" ? "MAX" : "мессенджере"}:
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2.5 py-1.5 text-xs text-[#854d0e]">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="shrink-0">💡</span>
+                    <span className="text-xs break-words">
+                      {lookupData.suggestedSource === "telegram" ? "Telegram" : lookupData.suggestedSource === "whatsapp" ? "WhatsApp" : "Мессенджер"}:
                       {" "}
                       <strong className="font-semibold text-[#111111]">{lookupData.suggestedName}</strong>
                     </span>
-                  </span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => handleApplySuggestedName(lookupData.suggestedName!)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-[#4a38f5] px-2 py-0.5 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-[#4a38f5] px-2.5 py-1 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
                   >
                     <Check className="h-3 w-3" />
                     Использовать
@@ -524,8 +597,19 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
                   </span>
                 </div>
                 <p className="text-xs text-[#666666] mt-0.5">
-                  По номеру <span className="font-mono tabular-nums text-[#111111] font-medium">{lookupData.existingContact.phone || phoneInput}</span> найден клиент{" "}
-                  <strong className="text-[#111111]">{lookupData.existingContact.fullName}</strong>.
+                  {lookupData.existingContact.matchedBy === "name" ? (
+                    <>
+                      По запросу найден клиент <strong className="text-[#111111]">{lookupData.existingContact.fullName}</strong>
+                      {lookupData.existingContact.phone ? (
+                        <> (тел. <span className="font-mono tabular-nums text-[#111111] font-medium">{lookupData.existingContact.phone}</span>)</>
+                      ) : null}.
+                    </>
+                  ) : (
+                    <>
+                      По номеру <span className="font-mono tabular-nums text-[#111111] font-medium">{lookupData.existingContact.phone || phoneInput}</span> найден клиент{" "}
+                      <strong className="text-[#111111]">{lookupData.existingContact.fullName}</strong>.
+                    </>
+                  )}
                 </p>
                 <div className="flex items-center gap-3 mt-2 text-[11px] text-[#666666]">
                   <span className="inline-flex items-center gap-1">
@@ -552,14 +636,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
               ) : (
                 <button
                   type="button"
-                  onClick={() => {
-                    if (lookupData.existingContact?.contactId) {
-                      form.setValue("customer_id", lookupData.existingContact.contactId, { shouldDirty: true });
-                    }
-                    if (lookupData.existingContact?.fullName) {
-                      form.setValue("customer_name", lookupData.existingContact.fullName, { shouldValidate: true, shouldDirty: true });
-                    }
-                  }}
+                  onClick={handleApplyExistingContact}
                   className="inline-flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors"
                 >
                   <Check className="h-3.5 w-3.5" />

@@ -1,4 +1,5 @@
 import { getEnv } from "../config/env.js";
+import { escapeTelegramHtml as escapeHtml } from "../lib/html.utils.js";
 import { AppError } from "../plugins/errorHandler.js";
 import { CODE_PURPOSE_LABEL, codeTtlSentence, type CodePurpose } from "./bot-messages.js";
 
@@ -49,13 +50,6 @@ export class MaxUnavailableError extends AppError {
 }
 
 /** Экранирование под `format: "html"`: в сообщение подставляется код. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 export class MaxService {
   private readonly token: string | undefined;
   private readonly botUsername: string;
