@@ -430,7 +430,7 @@ export function RepairIntakeModal({
   useEffect(() => {
     if (selectedMasterId) {
       const master = teamMembers.find((m) => m.id === selectedMasterId);
-      if (master) {
+      if (master && form.getValues("master_name") !== master.fullName) {
         form.setValue("master_name", master.fullName, { shouldValidate: true });
       }
     }

@@ -1272,7 +1272,7 @@ export default function RepairDetailPage() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                       <div className="rounded-[6px] bg-[#fafafa] p-2.5 border border-[#f0f0f0]">
                         <span className="text-[#888888] block text-[11px] mb-1">Принят в сервис</span>
                         <span className="font-medium text-[#111111]">{formatDate(ticket.received_at)}</span>
@@ -1674,7 +1674,7 @@ export default function RepairDetailPage() {
                             )}
 
                             {/* Мастер и стоимость */}
-                            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#f0f0f0] text-xs">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2 border-t border-[#f0f0f0] text-xs">
                               <div className="flex items-center gap-1.5 text-[#666666]">
                                 <User className="h-3.5 w-3.5 text-[#888888]" />
                                 <span>Мастер: <strong className="text-[#111111] font-medium">{item.masterName || "—"}</strong></span>

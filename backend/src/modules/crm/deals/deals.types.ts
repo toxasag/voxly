@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso, toIsoOrNull } from "../../../lib/date.utils.js";
 
 // ---------------------------------------------------------------------------
 // Validation schemas
@@ -210,14 +211,6 @@ export interface DealDTO {
   pendingTasksCount?: number;
   nextTaskTitle?: string | null;
   nextTaskDueDate?: string | null;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
 }
 
 /** `DATE` из pg приходит объектом Date; наружу отдаём только календарную часть. */

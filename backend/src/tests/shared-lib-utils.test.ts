@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
+import JSZip from "jszip";
 import { hashToken } from "../lib/crypto.utils.js";
 import { escapeHtml, escapeTelegramHtml, escapeXml } from "../lib/html.utils.js";
-import { nullIfBlank } from "../lib/string.utils.js";
+import { nullIfBlank, pluralRu } from "../lib/string.utils.js";
 import { extensionToMime, guessMimeType } from "../lib/mime.utils.js";
 import { toDate, toIso, toIsoOrNull } from "../lib/date.utils.js";
+import { buildCsvBuffer, buildXlsxBuffer, parseCsvText, parseXlsxBuffer } from "../lib/spreadsheet-io.js";
 import { cleanHtmlToMarkdown } from "../modules/ai/html-cleaner.js";
 import { htmlToText } from "../modules/ai/site-crawler.js";
 import { cleanHtmlForKnowledge } from "../modules/ai/web-extractor.service.js";
@@ -84,5 +86,46 @@ describe("Shared backend/src/lib utilities", () => {
     const fallbackTitle = cleanHtmlForKnowledge("<body><p>Текст без заголовка</p></body>");
     expect(fallbackTitle.title).toBe("Материалы сайта");
     expect(cleanHtmlToMarkdown("<body><h1>Заголовок H1</h1></body>").title).toBe("Заголовок H1");
+  });
+
+  it("pluralRu handles Russian grammatical plural rules including teens", () => {
+    const forms = ["подключение", "подключения", "подключений"] as const;
+    expect(pluralRu(1, forms)).toBe("подключение");
+    expect(pluralRu(2, forms)).toBe("подключения");
+    expect(pluralRu(4, forms)).toBe("подключения");
+    expect(pluralRu(5, forms)).toBe("подключений");
+    expect(pluralRu(11, forms)).toBe("подключений");
+    expect(pluralRu(14, forms)).toBe("подключений");
+    expect(pluralRu(21, forms)).toBe("подключение");
+    expect(pluralRu(23, forms)).toBe("подключения");
+  });
+
+  it("spreadsheet-io roundtrips CSV and XLSX and rejects oversized XML zip bombs", async () => {
+    const cols = [
+      { header: "SKU", key: "sku" as const },
+      { header: "Name", key: "name" as const },
+      { header: "Price", key: "price" as const },
+    ];
+    const items = [
+      { sku: "A-1", name: 'Экран "iPhone" & Co', price: 5000 },
+      { sku: "B-2", name: "Батарея", price: 1500 },
+    ];
+
+    const csvBuf = buildCsvBuffer(cols, items);
+    const parsedCsv = parseCsvText(csvBuf.toString("utf8"));
+    expect(parsedCsv.rows.length).toBe(3);
+    expect(parsedCsv.rows[1]?.[1]).toBe('Экран "iPhone" & Co');
+
+    const xlsxBuf = await buildXlsxBuffer(cols, items, "Тест");
+    const parsedXlsx = await parseXlsxBuffer(xlsxBuf);
+    expect(parsedXlsx.length).toBe(3);
+    expect(parsedXlsx[0]).toEqual(["SKU", "Name", "Price"]);
+    expect(parsedXlsx[1]?.[1]).toBe('Экран "iPhone" & Co');
+
+    // Oversized XML inside XLSX must be rejected before regex parsing
+    const bombZip = new JSZip();
+    bombZip.file("xl/worksheets/sheet1.xml", "A".repeat(31 * 1024 * 1024));
+    const bombBuf = await bombZip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    await expect(parseXlsxBuffer(bombBuf)).rejects.toThrow(/exceeds max uncompressed size/i);
   });
 });

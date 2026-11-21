@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso, toIsoOrNull } from "../../../lib/date.utils.js";
 
 export const taskPrioritySchema = z.enum(["low", "medium", "high"]);
 export const taskStatusSchema = z.enum(["todo", "in_progress", "done"]);
@@ -112,14 +113,6 @@ export interface TaskDTO {
   isOverdue: boolean;
   createdAt: string;
   updatedAt: string;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
 }
 
 /** Collapses the three nullable FK columns into a single logical link. */

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso } from "../../../lib/date.utils.js";
 
 // ---------------------------------------------------------------------------
 // Контакт.
@@ -237,10 +238,6 @@ export interface ContactDTO {
   updatedAt: string;
   dealsCount: number;
   tasksCount: number;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 /**

@@ -95,12 +95,15 @@ describe("Начальное состояние", () => {
     expect(result.current.columnWidth(COLUMNS[0]!)).toBe(200);
   });
 
-  it("не опускает ширину ниже минимума", () => {
-    const narrow: RecordColumn<Row>[] = [{ id: "name", header: "Имя", width: 10, render: (row) => row.name }];
+  it("не опускает сохранённую ширину ниже минимума", () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ widths: { name: 10 }, order: [], hidden: [] }),
+    );
 
-    const { result } = render({ columns: narrow });
+    const { result } = render();
 
-    expect(result.current.columnWidth(narrow[0]!)).toBe(RECORD_TABLE_COLUMN_MIN_WIDTH);
+    expect(result.current.columnWidth(COLUMNS[0]!)).toBe(RECORD_TABLE_COLUMN_MIN_WIDTH);
   });
 });
 

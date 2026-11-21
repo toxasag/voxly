@@ -120,9 +120,13 @@ describe("DialogueFeedbackModal", () => {
 
     fireEvent.click(quoteButtons[1]); // Quote AI message
 
-    // Textarea should contain previous text AND the new blockquote
+    // Textarea should contain previous text AND the new blockquote (timezone-independent HH:MM)
+    const expectedTime = new Date(sampleMessages[1].createdAt).toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
     expect(textarea.value).toBe(
-      'Нельзя называть заниженную цену.\n\n> [Ассистент, 01:01]: "Стоимость аппарата составляет 10 000 рублей, доставим бесплатно."\n\n',
+      `Нельзя называть заниженную цену.\n\n> [Ассистент, ${expectedTime}]: "Стоимость аппарата составляет 10 000 рублей, доставим бесплатно."\n\n`,
     );
   });
 

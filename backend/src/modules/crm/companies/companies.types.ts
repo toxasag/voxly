@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso } from "../../../lib/date.utils.js";
 
 // ---------------------------------------------------------------------------
 // Russian legal requisites
@@ -134,10 +135,6 @@ export interface CompanyDTO {
   contactsCount: number;
   dealsCount: number;
   dealsBudgetTotal: number;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 export function toCompanyDTO(row: CompanyRow): CompanyDTO {
