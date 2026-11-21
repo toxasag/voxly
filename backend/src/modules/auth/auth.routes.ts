@@ -602,7 +602,17 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
    * Public self-service registration: creates the tenant, its subdomain and
    * the owner account, then signs the owner in.
    */
-  app.post("/register", async (request, reply) => {
+  app.post(
+    "/register",
+    {
+      config: {
+        rateLimit: {
+          max: 15,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
     const body = registerBody.parse(request.body);
 
     app.log.info(

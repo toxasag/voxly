@@ -17,7 +17,13 @@ export type Permission =
   | "ai_bots:read"
   | "ai_bots:configure"
   | "tenant:admin"
-  | "billing:manage";
+  | "billing:manage"
+  | "billing:view"
+  | "stories:read"
+  | "stories:write"
+  | "stories:publish"
+  | "chat:read"
+  | "chat:write";
 
 export type Role = "owner" | "admin" | "partner" | "manager" | "technician" | "viewer";
 

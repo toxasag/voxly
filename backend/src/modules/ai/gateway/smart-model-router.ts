@@ -480,6 +480,10 @@ export class SmartModelRouter {
     }
 
     const activeBaseUrl = await this.resolveBaseUrl(selectedModelProfile.provider);
+    const timeoutSignal = AbortSignal.timeout(120_000);
+    const streamSignal = options.signal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : timeoutSignal;
     const response = await fetch(`${activeBaseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -493,7 +497,7 @@ export class SmartModelRouter {
         max_tokens: input.maxTokens ?? 1024,
         stream: true,
       }),
-      signal: options.signal,
+      signal: streamSignal,
     });
 
     if (!response.ok || !response.body) {

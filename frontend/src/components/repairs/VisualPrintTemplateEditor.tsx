@@ -41,6 +41,7 @@ import {
   DEFAULT_PREVIEW_SAMPLE_DATA,
   mapRepairToPreviewSampleData,
   type PreviewSampleData,
+  type RepairPreviewSource,
 } from "@/lib/repairs/print-presets-client";
 import { VisualPrintCanvas } from "./VisualPrintCanvas";
 import {

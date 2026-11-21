@@ -1,6 +1,7 @@
 "use client";
 
 import { Sheet } from "@/components/ui/sheet";
+import type { RepairPreviewSource } from "@/lib/repairs/print-presets-client";
 import { VisualPrintTemplateEditor, type VisualPrintTemplateEditorProps } from "./VisualPrintTemplateEditor";
 
 export interface PrintTemplateSettingsDrawerProps {

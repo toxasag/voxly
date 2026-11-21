@@ -7,8 +7,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { apiClient, API_BASE_URL, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
-import { readAccessToken } from "@/lib/auth/session";
+import { apiClient, triggerBrowserDownload, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
 import type {
   ContactChannel,
   ContactType,
@@ -614,46 +613,17 @@ export interface ExportContactsPayload {
 }
 
 export async function downloadContactsExport(payload: ExportContactsPayload = {}): Promise<void> {
-  const token = readAccessToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${API_BASE_URL}/api/v1/crm/contacts/export`, {
+  const { blob, filename } = await apiClient.downloadBlob("/api/v1/crm/contacts/export", {
     method: "POST",
-    headers,
-    body: JSON.stringify({
+    body: {
       format: payload.format || "csv",
       search: payload.search,
       channel: payload.channel,
       contact_type: payload.contactType ?? payload.contact_type,
-    }),
-    credentials: "include",
+    },
   });
-
-  if (!res.ok) {
-    throw new Error("Не удалось экспортировать контакты");
-  }
-
-  const blob = await res.blob();
-  const contentDisp = res.headers.get("content-disposition");
-  let filename = payload.format === "xlsx" ? "contacts.xlsx" : "contacts.csv";
-  if (contentDisp) {
-    const match = contentDisp.match(/filename="?([^";]+)"?/);
-    if (match && match[1]) {
-      filename = decodeURIComponent(match[1]);
-    }
-  }
-
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
+  const fallback = payload.format === "xlsx" ? "contacts.xlsx" : "contacts.csv";
+  triggerBrowserDownload(blob, filename ?? fallback);
 }
 
 export function useExportContacts() {

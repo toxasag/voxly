@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
 import { closePool, query, queryOne, runWithPlatformScope } from "./db/client.js";
+import { closeRedis } from "./infrastructure/redis.js";
 import { getEnv } from "./config/env.js";
 import { TelegramService } from "./modules/auth/telegram.service.js";
 import { MaxService } from "./services/max.service.js";
@@ -207,9 +208,18 @@ async function main(): Promise<void> {
     }
   });
 
-  // Drain in-flight requests, then release DB connections.
+  // Drain in-flight requests, then release DB and Redis connections.
+  let isShuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     app.log.info({ signal }, "Shutting down");
+
+    const forceExitTimer = setTimeout(() => {
+      app.log.error("Graceful shutdown timed out after 15s, forcing exit");
+      process.exit(1);
+    }, 15_000);
+    forceExitTimer.unref?.();
 
     try {
       // Первым делом: прогон очистки или ответ агента, начавшийся во время
@@ -225,10 +235,13 @@ async function main(): Promise<void> {
       unregisterWhatsappOutbound();
       messagingRegistry.destroy();
       await app.close();
+      await closeRedis();
       await closePool();
+      clearTimeout(forceExitTimer);
       process.exit(0);
     } catch (error) {
       app.log.error(error, "Graceful shutdown failed");
+      clearTimeout(forceExitTimer);
       process.exit(1);
     }
   };

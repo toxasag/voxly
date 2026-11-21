@@ -1320,6 +1320,50 @@ export class CrmPipelineService {
     attachment?: string | null;
     attachmentType?: string | null;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
+    // Fallback через bridge для MAX выполняется вне открытой транзакции БД:
+    // внешний HTTP-запрос никогда не удерживает коннект пула PostgreSQL.
+    let maxFallbackDialog: { phone: string; userId?: string } | null = null;
+    if (input.channel === "max" && input.channelAccountId && !input.senderPhone) {
+      const existingByMax = await queryOne<{ id: string }>(
+        `SELECT id FROM contacts
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+           AND (
+             custom_fields->>'max_chat_id' = $2
+             OR ($3::text IS NOT NULL AND custom_fields->>'max_user_id' = $3)
+             OR socials @> $4::jsonb
+             OR ($3::text IS NOT NULL AND socials @> $5::jsonb)
+           )
+         LIMIT 1`,
+        [
+          input.tenantId,
+          input.chatId,
+          input.peerUserId ?? null,
+          JSON.stringify([{ kind: "max", value: input.chatId }]),
+          JSON.stringify([{ kind: "max", value: input.peerUserId ?? "" }]),
+        ],
+      );
+      if (!existingByMax) {
+        try {
+          const bridge = new MaxBridgeService();
+          const dialogsResp = await bridge.getPrivateDialogs({
+            botId: input.channelAccountId,
+            dialogLimit: 30,
+            messageLimit: 1,
+          });
+          if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
+            const foundDialog = dialogsResp.dialogs.find(
+              (d) => d.chatId === input.chatId || (input.peerUserId && d.userId === input.peerUserId),
+            );
+            if (foundDialog?.phone) {
+              maxFallbackDialog = { phone: foundDialog.phone, userId: foundDialog.userId };
+            }
+          }
+        } catch {
+          // best-effort lookup
+        }
+      }
+    }
+
     return transaction(async (tx) => {
       let contact = await this.findContact(tx, input.tenantId, {
         tenantId: input.tenantId,
@@ -1358,40 +1402,23 @@ export class CrmPipelineService {
         );
       }
 
-      // Fallback через bridge для MAX: если телефон не пришел в вебхуке, берем его из диалогов моста
-      if (!contact && input.channel === "max" && input.channelAccountId) {
-        try {
-          const bridge = new MaxBridgeService();
-          const dialogsResp = await bridge.getPrivateDialogs({
-            botId: input.channelAccountId,
-            dialogLimit: 30,
-            messageLimit: 1,
-          });
-          if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
-            const foundDialog = dialogsResp.dialogs.find(
-              (d) => d.chatId === input.chatId || (input.peerUserId && d.userId === input.peerUserId),
-            );
-            if (foundDialog?.phone) {
-              contact = await this.findContactByPhone(tx, input.tenantId, foundDialog.phone);
-              if (contact) {
-                await tx.query(
-                  `UPDATE contacts
-                   SET custom_fields = jsonb_set(
-                     jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
-                     '{max_user_id}', to_jsonb($2::text), true
-                   )
-                   WHERE id = $3 AND tenant_id = $4`,
-                  [input.chatId, foundDialog.userId || input.peerUserId || "", contact.id, input.tenantId],
-                );
-              }
-            }
-          }
-        } catch {
-          // best-effort lookup
+      // Применяем предварительно найденный вне транзакции телефон из MAX bridge
+      if (!contact && maxFallbackDialog) {
+        contact = await this.findContactByPhone(tx, input.tenantId, maxFallbackDialog.phone);
+        if (contact) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(
+               jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
+               '{max_user_id}', to_jsonb($2::text), true
+             )
+             WHERE id = $3 AND tenant_id = $4`,
+            [input.chatId, maxFallbackDialog.userId || input.peerUserId || "", contact.id, input.tenantId],
+          );
         }
       }
 
-      if (contact === null) {
+      if (!contact) {
         return { dealId: null, messageId: null, pausedUntil: null };
       }
 

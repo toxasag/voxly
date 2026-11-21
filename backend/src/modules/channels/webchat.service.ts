@@ -630,10 +630,19 @@ export class WebchatService {
     WebchatService.sessionLocks.set(sessionKey, currentLock);
 
     // Ожидаем завершения предыдущего обращения по этой же сессии (с защитой от зависания и ошибок)
-    await Promise.race([
-      previousLock.catch(() => {}),
-      new Promise<void>((resolve) => setTimeout(resolve, 20000)),
-    ]);
+    let lockTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        previousLock.catch(() => {}),
+        new Promise<void>((resolve) => {
+          lockTimer = setTimeout(resolve, 20000);
+        }),
+      ]);
+    } finally {
+      if (lockTimer !== undefined) {
+        clearTimeout(lockTimer);
+      }
+    }
 
     try {
       return await this.executeProcessIncomingMessage(input);
