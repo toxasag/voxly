@@ -402,8 +402,8 @@ export class MaxTsAdapter implements IMessagingAdapter {
 
   async healthCheck(tenantId: string, channelAccountId: string): Promise<AdapterHealthStatus> {
     try {
-      const session = this.sessions.get(channelAccountId);
-      if (session && session.connected && session.authorized) {
+      const session = this.sessions.get(this.sessionKey(tenantId, channelAccountId));
+      if (session && session.tenantId === tenantId && session.connected && session.authorized) {
         return {
           ok: true,
           status: "connected",

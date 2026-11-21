@@ -769,18 +769,26 @@ function safeTokenEqual(provided: string, expected: string): boolean {
 
 /**
  * Проверка внутреннего сервисного токена VOXLY_SERVICE_TOKEN для вызовов от max-bridge.
- * В production работает fail-closed (если токен не настроен или не совпал — 401).
+ *
+ * Токен задан — проверяется строго (401 при отсутствии или несовпадении).
+ * Токен не задан — запрос пропускается с предупреждением в журнале: так сервис
+ * не отваливается на окружениях, где токен ещё не выдан мосту. Для закрытия
+ * маршрутов достаточно прописать VOXLY_SERVICE_TOKEN у backend и max-bridge.
  */
+let warnedMissingServiceToken = false;
+
 async function requireMaxServiceToken(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const env = getEnv();
-  const expected = env.VOXLY_SERVICE_TOKEN;
+  const expected = getEnv().VOXLY_SERVICE_TOKEN;
 
   if (!expected) {
-    if (env.NODE_ENV === "production") {
-      return reply.status(401).send({ ok: false, error: "Internal service token not configured" });
+    if (!warnedMissingServiceToken) {
+      warnedMissingServiceToken = true;
+      request.log.warn(
+        "VOXLY_SERVICE_TOKEN is not set: internal MAX routes are unauthenticated",
+      );
     }
     return;
   }

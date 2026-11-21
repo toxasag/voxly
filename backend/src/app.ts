@@ -645,19 +645,11 @@ export async function buildApp(): Promise<FastifyInstance> {
           return reply.redirect(message.attachment, 302);
         }
 
-        let safeFilename = path.basename(message.attachment.split("?")[0] || "");
-        let filePath = path.join(process.cwd(), "uploads", safeFilename);
-        if (!existsSync(filePath)) {
-          try {
-            const decoded = decodeURIComponent(safeFilename);
-            if (decoded !== safeFilename && existsSync(path.join(process.cwd(), "uploads", decoded))) {
-              safeFilename = decoded;
-              filePath = path.join(process.cwd(), "uploads", decoded);
-            }
-          } catch {}
-        }
+        const resolvedAtt = await resolveSafeUploadPath(message.attachment.split("?")[0] || "");
 
         try {
+          if (resolvedAtt === null) throw new Error("attachment not found");
+          const { safeFilename, filePath } = resolvedAtt;
           const stat = await fs.stat(filePath);
           if (stat.isFile()) {
             const ext = path.extname(safeFilename).toLowerCase();

@@ -57,7 +57,7 @@ function toIso(value: Date | string | null): string | null {
  */
 async function countUsers(tenantId: string): Promise<number> {
   const row = await queryOne<{ total: string }>(
-    `SELECT count(*)::text AS total FROM users WHERE tenant_id = $1`,
+    `SELECT count(*)::text AS total FROM users WHERE tenant_id = $1 AND deleted_at IS NULL`,
     [tenantId],
   );
   return Number(row?.total ?? 0);
