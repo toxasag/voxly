@@ -44,7 +44,7 @@ export function amountToWords(rubles: number, kopecks: number): string {
   const kopDigit = kop.toString().padStart(2, "0");
   const kopWord = pluralForm(kop, KOPECKS);
 
-  const trimmed = rubStr.trim();
+  const trimmed = rubStr.replace(/\s+/g, " ").trim();
   const rubCapitalized = trimmed ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1) + " " : "";
   return `${rubCapitalized}${rubWord} ${kopDigit} ${kopWord}`;
 }
