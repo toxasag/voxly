@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Printer, X, ExternalLink, FileText, CheckCircle, ShieldCheck, Receipt, SlidersHorizontal } from "lucide-react";
 import { usePrintTemplates, getPrintRenderUrl, type PrintTemplateDTO } from "@/lib/api/use-print-templates";
 import { PrintTemplateSettingsDrawer } from "./PrintTemplateSettingsDrawer";
@@ -32,6 +32,12 @@ export function PrintDocumentModal({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  useEffect(() => {
+    if (open && initialSlug) {
+      setSelectedSlug(initialSlug);
+    }
+  }, [open, initialSlug]);
+
   // Load only templates marked as visible for quick print
   const { data: visibleTemplates = [] } = usePrintTemplates({ visibleOnly: true });
 
@@ -53,8 +59,9 @@ export function PrintDocumentModal({
   };
 
   const activeTemplate =
-    visibleTemplates.find((t) => t.slug === selectedSlug || t.id === selectedSlug) ??
-    visibleTemplates[0];
+    visibleTemplates.find(
+      (t) => t.slug === selectedSlug || t.id === selectedSlug || t.documentType === selectedSlug,
+    ) ?? visibleTemplates[0];
 
   const currentSlugOrId = activeTemplate ? (activeTemplate.slug || activeTemplate.id) : selectedSlug;
   const renderUrl = orderId ? getPrintRenderUrl(currentSlugOrId, orderId) : "";

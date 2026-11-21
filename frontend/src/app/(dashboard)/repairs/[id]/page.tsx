@@ -16,10 +16,9 @@ import { WorkItemsTable } from "@/components/repairs/detail/WorkItemsTable";
 import { PartsTable } from "@/components/repairs/detail/PartsTable";
 import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
 import { formatOrderNumber } from "@/components/repairs/RepairsTable";
-import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
-import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
 import { PrintDocumentModal } from "@/components/repairs/PrintDocumentModal";
 import { PrintTemplateSettingsDrawer } from "@/components/repairs/PrintTemplateSettingsDrawer";
+import { usePrintTemplates } from "@/lib/api/use-print-templates";
 import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerModal";
 import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
@@ -140,14 +139,18 @@ export default function RepairDetailPage() {
     [dictionariesQuery.data],
   );
 
-  const [receiptOpen, setReceiptOpen] = useState(false);
-  const [workOrderOpen, setWorkOrderOpen] = useState(false);
+  const { data: visiblePrintTemplates = [] } = usePrintTemplates({ visibleOnly: true });
   const [printModalOpen, setPrintModalOpen] = useState(false);
-  const [printModalSlug, setPrintModalSlug] = useState<"work_order" | "completion_act" | "warranty_ticket" | "receipt">("work_order");
+  const [printModalSlug, setPrintModalSlug] = useState<string>("work_order");
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+
+  const openPrintTemplate = useCallback((slugOrId: string) => {
+    setPrintModalSlug(slugOrId);
+    setPrintModalOpen(true);
+  }, []);
 
   // История по серийному номеру оборудования
   const serialNumber = detail?.equipment?.serialNumber ?? "";
@@ -246,8 +249,6 @@ export default function RepairDetailPage() {
 
   useEffect(() => {
     if (detail && !isLoading) {
-      setReceiptOpen(false);
-      setWorkOrderOpen(false);
       setInvoiceCreateOpen(false);
       syncFormFromDetail();
     }
@@ -542,41 +543,40 @@ export default function RepairDetailPage() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setPrintModalSlug("receipt");
-                setPrintModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
-            >
-              <Printer className="h-3.5 w-3.5 text-[#666666]" />
-              Акт приемки
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPrintModalSlug("completion_act");
-                setPrintModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
-            >
-              <Printer className="h-3.5 w-3.5 text-[#666666]" />
-              Акт выполненных работ
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPrintModalSlug("work_order");
-                setPrintModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#4a38f5] shadow-2xs hover:bg-[#4a38f5]/5 transition-colors cursor-pointer"
-              title="Печать документов и выбор шаблона"
-            >
-              <Printer className="h-3.5 w-3.5 text-[#4a38f5]" />
-              Печать
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {visiblePrintTemplates.length > 0 ? (
+              visiblePrintTemplates.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => openPrintTemplate(tpl.slug || tpl.id)}
+                  title={tpl.name}
+                  className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer max-w-[240px]"
+                >
+                  <Printer className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+                  <span className="truncate">{tpl.name}</span>
+                </button>
+              ))
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openPrintTemplate("work_order")}
+                  className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
+                >
+                  <Printer className="h-3.5 w-3.5 text-[#666666]" />
+                  Акт приема-передачи
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openPrintTemplate("completion_act")}
+                  className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
+                >
+                  <Printer className="h-3.5 w-3.5 text-[#666666]" />
+                  Акт выполненных работ
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => setSettingsDrawerOpen(true)}
@@ -1324,11 +1324,22 @@ export default function RepairDetailPage() {
 
                   {/* Блок 2: Документооборот и гарантия */}
                   <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
-                    <div className="flex items-center gap-2 pb-3 border-b border-[#f0f0f0]">
-                      <ShieldCheck className="h-4 w-4 text-[#4a38f5]" />
-                      <h3 className="text-[13px] font-semibold text-[#111111]">
-                        Документооборот и гарантия
-                      </h3>
+                    <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#f0f0f0]">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 text-[#4a38f5]" />
+                        <h3 className="text-[13px] font-semibold text-[#111111]">
+                          Документооборот и гарантия
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsDrawerOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/5 transition-colors cursor-pointer"
+                        title="Настроить печатные бланки и реквизиты"
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        Настроить бланки
+                      </button>
                     </div>
 
                     <div className="space-y-2">
@@ -1336,22 +1347,38 @@ export default function RepairDetailPage() {
                         Печатные формы
                       </span>
                       <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setReceiptOpen(true)}
-                          className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                        >
-                          <Printer className="h-3.5 w-3.5 text-[#666666]" />
-                          Акт приемки (Договор)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setWorkOrderOpen(true)}
-                          className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                        >
-                          <Printer className="h-3.5 w-3.5 text-[#666666]" />
-                          Акт выполненных работ
-                        </button>
+                        {visiblePrintTemplates.length > 0 ? (
+                          visiblePrintTemplates.map((tpl) => (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              onClick={() => openPrintTemplate(tpl.slug || tpl.id)}
+                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+                            >
+                              <FileText className="h-3.5 w-3.5 text-[#666666] shrink-0" />
+                              <span>{tpl.name}</span>
+                            </button>
+                          ))
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openPrintTemplate("work_order")}
+                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+                            >
+                              <FileText className="h-3.5 w-3.5 text-[#666666]" />
+                              Акт приема-передачи оборудования
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openPrintTemplate("completion_act")}
+                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+                            >
+                              <FileText className="h-3.5 w-3.5 text-[#666666]" />
+                              Акт выполненных работ
+                            </button>
+                          </>
+                        )}
                         {hasFinance && (
                           <button
                             type="button"
@@ -1751,8 +1778,6 @@ export default function RepairDetailPage() {
         </div>
       </div>
 
-      <RepairReceiptModal open={receiptOpen} ticket={ticket} onClose={() => setReceiptOpen(false)} />
-      <RepairWorkOrderModal open={workOrderOpen} ticket={ticket} onClose={() => setWorkOrderOpen(false)} />
       <PrintDocumentModal
         open={printModalOpen}
         orderId={ticket.id}
