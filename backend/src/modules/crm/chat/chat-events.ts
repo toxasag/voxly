@@ -9,6 +9,11 @@ export interface ChatStreamEvent {
 }
 
 class ChatEventBus extends EventEmitter {
+  constructor() {
+    super();
+    this.setMaxListeners(0);
+  }
+
   emitChatEvent(event: ChatStreamEvent): void {
     this.emit(`tenant:${event.tenantId}`, event);
     if (event.dealId) {

@@ -73,6 +73,10 @@ export class MaxTsAdapter implements IMessagingAdapter {
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly eventSubscribers = new Set<(event: IncomingEvent) => void>();
 
+  private sessionKey(tenantId: string, channelAccountId: string): string {
+    return `${tenantId}:${channelAccountId}`;
+  }
+
   /**
    * Подключение к сессии аккаунта или получение существующего активного сокета.
    */
@@ -80,8 +84,9 @@ export class MaxTsAdapter implements IMessagingAdapter {
     tenantId: string,
     channelAccountId: string,
   ): Promise<ActiveSession> {
-    const existing = this.sessions.get(channelAccountId);
-    if (existing && existing.connected && existing.authorized) {
+    const key = this.sessionKey(tenantId, channelAccountId);
+    const existing = this.sessions.get(key);
+    if (existing && existing.tenantId === tenantId && existing.connected && existing.authorized) {
       return existing;
     }
 
@@ -159,8 +164,9 @@ export class MaxTsAdapter implements IMessagingAdapter {
                 this.sendPacket(session, MaxOpcode.INIT, { ping: true }).catch(() => {});
               }
             }, 30_000);
+            session.heartbeatTimer.unref?.();
 
-            this.sessions.set(channelAccountId, session);
+            this.sessions.set(key, session);
             resolve(session);
           } catch (err) {
             clearTimeout(timeout);
@@ -182,7 +188,7 @@ export class MaxTsAdapter implements IMessagingAdapter {
           session.connected = false;
           session.authorized = false;
           if (session.heartbeatTimer) clearInterval(session.heartbeatTimer);
-          this.sessions.delete(channelAccountId);
+          this.sessions.delete(key);
         };
       } catch (err) {
         reject(err instanceof Error ? err : new Error(String(err)));
@@ -396,8 +402,8 @@ export class MaxTsAdapter implements IMessagingAdapter {
 
   async healthCheck(tenantId: string, channelAccountId: string): Promise<AdapterHealthStatus> {
     try {
-      const session = this.sessions.get(channelAccountId);
-      if (session && session.connected && session.authorized) {
+      const session = this.sessions.get(this.sessionKey(tenantId, channelAccountId));
+      if (session && session.tenantId === tenantId && session.connected && session.authorized) {
         return {
           ok: true,
           status: "connected",

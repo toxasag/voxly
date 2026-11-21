@@ -1,8 +1,8 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { TimelineService } from "./timeline.service.js";
 import { timelineRecordTypeSchema, type TimelineRecordType } from "./timeline.types.js";
-import { PermissionDeniedError } from "../../../plugins/errorHandler.js";
+import { assertPermission } from "../../../plugins/authorize.js";
 import type { Permission } from "../../../types/index.js";
 
 const paramsSchema = z.object({
@@ -20,12 +20,6 @@ const READ_PERMISSIONS: Record<TimelineRecordType, Permission> = {
   company: "companies:read",
   deal: "deals:read",
 };
-
-function assertPermission(request: FastifyRequest, permission: Permission): void {
-  if (!request.permissions.has(permission)) {
-    throw new PermissionDeniedError(`Missing permission: ${permission}`);
-  }
-}
 
 export async function timelineRoutes(app: FastifyInstance): Promise<void> {
   const service = new TimelineService();

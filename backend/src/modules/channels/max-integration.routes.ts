@@ -1,7 +1,10 @@
+import { timingSafeEqual } from "node:crypto";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import QRCode from "qrcode";
 
+import { getEnv } from "../../config/env.js";
+import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService } from "./max-bridge.service.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
@@ -116,28 +119,6 @@ function isDuplicateInbound(key: string): boolean {
   if (recentInboundMessages.has(key)) return true;
   recentInboundMessages.set(key, now);
   return false;
-}
-
-function guessMimeType(fileName: string, mime?: string): string {
-  if (mime && mime !== "application/octet-stream") return mime;
-  const ext = fileName.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "pdf": return "application/pdf";
-    case "wav": return "audio/wav";
-    case "ogg": return "audio/ogg";
-    case "mp3": return "audio/mpeg";
-    case "m4a": return "audio/mp4";
-    case "jpg":
-    case "jpeg": return "image/jpeg";
-    case "png": return "image/png";
-    case "webp": return "image/webp";
-    case "gif": return "image/gif";
-    case "doc": return "application/msword";
-    case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case "xls": return "application/vnd.ms-excel";
-    case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    default: return mime || "application/octet-stream";
-  }
 }
 
 async function resolveAndStoreMaxAttachment(opts: {
@@ -759,7 +740,58 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
   });
 }
 
+function safeTokenEqual(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Проверка внутреннего сервисного токена VOXLY_SERVICE_TOKEN для вызовов от max-bridge.
+ *
+ * Токен задан — проверяется строго (401 при отсутствии или несовпадении).
+ * Токен не задан — запрос пропускается с предупреждением в журнале: так сервис
+ * не отваливается на окружениях, где токен ещё не выдан мосту. Для закрытия
+ * маршрутов достаточно прописать VOXLY_SERVICE_TOKEN у backend и max-bridge.
+ */
+let warnedMissingServiceToken = false;
+
+async function requireMaxServiceToken(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const expected = getEnv().VOXLY_SERVICE_TOKEN;
+
+  if (!expected) {
+    if (!warnedMissingServiceToken) {
+      warnedMissingServiceToken = true;
+      request.log.warn(
+        "VOXLY_SERVICE_TOKEN is not set: internal MAX routes are unauthenticated",
+      );
+    }
+    return;
+  }
+
+  const headerToken =
+    (typeof request.headers["x-voxly-service-token"] === "string"
+      ? request.headers["x-voxly-service-token"]
+      : undefined) ||
+    (typeof request.headers["x-service-token"] === "string"
+      ? request.headers["x-service-token"]
+      : undefined) ||
+    (typeof request.headers.authorization === "string" &&
+    request.headers.authorization.startsWith("Bearer ")
+      ? request.headers.authorization.slice("Bearer ".length)
+      : undefined);
+
+  if (!headerToken || !safeTokenEqual(headerToken.trim(), expected)) {
+    return reply.status(401).send({ ok: false, error: "Invalid internal service token" });
+  }
+}
+
 export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("preHandler", requireMaxServiceToken);
+
   // Список активных подключений MAX для восстановления сессий в max-bridge
   app.get("/bots/active", async (_request, reply) => {
     const bots = await runWithPlatformScope(() =>
@@ -862,74 +894,79 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
   const service = new MaxBridgeService();
 
   // Дублирование внутренних маршрутов под префиксом /internal/ для обратной совместимости
-  app.get("/internal/bots/active", async (_request, reply) => {
-    const bots = await runWithPlatformScope(() =>
-      query<{
-        id: string;
-        tenant_id: string;
-        label: string;
-        external_id: string;
-        remote_user_id: string | null;
-      }>(
-        `SELECT id, tenant_id, label, external_id, remote_user_id
-         FROM channel_accounts
-         WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-         ORDER BY created_at ASC`,
-      ),
-    );
+  // (обязательно закрыты requireMaxServiceToken в отдельном encapsulated sub-plugin)
+  await app.register(async (internalAliasApp) => {
+    internalAliasApp.addHook("preHandler", requireMaxServiceToken);
 
-    return reply.send({
-      ok: true,
-      bots: bots.map((b) => ({
-        id: b.id,
-        botId: b.id,
-        tenantId: b.tenant_id,
-        name: b.label,
-        maxUserId: b.remote_user_id || b.external_id,
-      })),
-    });
-  });
-
-  app.post("/internal/bots/upsert", async (request, reply) => {
-    const body = internalBotUpsertSchema.parse(request.body);
-
-    const botId = await withTenant(body.tenantId, async (tx) => {
-      const extId = body.maxUserId || body.username || body.name;
-      const label = body.firstName ? `${body.name} (${body.firstName})` : body.name;
-
-      const existing = await tx.queryOne<{ id: string }>(
-        `SELECT id FROM channel_accounts
-         WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
-           AND (external_id = $2 OR label = $3)
-         LIMIT 1`,
-        [body.tenantId, extId, body.name],
+    internalAliasApp.get("/internal/bots/active", async (_request, reply) => {
+      const bots = await runWithPlatformScope(() =>
+        query<{
+          id: string;
+          tenant_id: string;
+          label: string;
+          external_id: string;
+          remote_user_id: string | null;
+        }>(
+          `SELECT id, tenant_id, label, external_id, remote_user_id
+           FROM channel_accounts
+           WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+           ORDER BY created_at ASC`,
+        ),
       );
 
-      if (existing) {
-        await tx.query(
-          `UPDATE channel_accounts
-           SET status = 'connected', status_message = '', label = $3, external_id = $4, remote_user_id = $5,
-               connected_at = COALESCE(connected_at, now()), last_sync_at = now()
-           WHERE tenant_id = $1 AND id = $2`,
-          [body.tenantId, existing.id, label, extId, body.maxUserId || null],
+      return reply.send({
+        ok: true,
+        bots: bots.map((b) => ({
+          id: b.id,
+          botId: b.id,
+          tenantId: b.tenant_id,
+          name: b.label,
+          maxUserId: b.remote_user_id || b.external_id,
+        })),
+      });
+    });
+
+    internalAliasApp.post("/internal/bots/upsert", async (request, reply) => {
+      const body = internalBotUpsertSchema.parse(request.body);
+
+      const botId = await withTenant(body.tenantId, async (tx) => {
+        const extId = body.maxUserId || body.username || body.name;
+        const label = body.firstName ? `${body.name} (${body.firstName})` : body.name;
+
+        const existing = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
+             AND (external_id = $2 OR label = $3)
+           LIMIT 1`,
+          [body.tenantId, extId, body.name],
         );
-        return existing.id;
-      }
 
-      const inserted = await tx.queryOneOrThrow<{ id: string }>(
-        `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, status_message, remote_user_id, connected_at, last_sync_at)
-         VALUES ($1, 'max', $2, $3, 'connected', '', $4, now(), now())
-         RETURNING id`,
-        [body.tenantId, label, extId, body.maxUserId || null],
-      );
-      return inserted.id;
+        if (existing) {
+          await tx.query(
+            `UPDATE channel_accounts
+             SET status = 'connected', status_message = '', label = $3, external_id = $4, remote_user_id = $5,
+                 connected_at = COALESCE(connected_at, now()), last_sync_at = now()
+             WHERE tenant_id = $1 AND id = $2`,
+            [body.tenantId, existing.id, label, extId, body.maxUserId || null],
+          );
+          return existing.id;
+        }
+
+        const inserted = await tx.queryOneOrThrow<{ id: string }>(
+          `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, status_message, remote_user_id, connected_at, last_sync_at)
+           VALUES ($1, 'max', $2, $3, 'connected', '', $4, now(), now())
+           RETURNING id`,
+          [body.tenantId, label, extId, body.maxUserId || null],
+        );
+        return inserted.id;
+      });
+
+      return reply.send({ ok: true, botId });
     });
 
-    return reply.send({ ok: true, botId });
+    internalAliasApp.post("/internal/inbound", processMaxInbound);
+    internalAliasApp.post("/internal/outbound", processMaxOutbound);
   });
-
-  app.post("/internal/inbound", processMaxInbound);
-  app.post("/internal/outbound", processMaxOutbound);
 
   // Пользовательские эндпоинты авторизации по QR
   const protectedRoutes = async (subApp: FastifyInstance) => {

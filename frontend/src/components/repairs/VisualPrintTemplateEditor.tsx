@@ -41,6 +41,7 @@ import {
   DEFAULT_PREVIEW_SAMPLE_DATA,
   mapRepairToPreviewSampleData,
   type PreviewSampleData,
+  type RepairPreviewSource,
 } from "@/lib/repairs/print-presets-client";
 import { VisualPrintCanvas } from "./VisualPrintCanvas";
 import {
@@ -54,7 +55,7 @@ export interface VisualPrintTemplateEditorProps {
   onClose: () => void;
   initialDocumentType?: string;
   orderId?: string;
-  order?: any;
+  order?: RepairPreviewSource | null;
   sampleData?: PreviewSampleData;
   isDrawer?: boolean;
 }

@@ -1,8 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { apiClient, API_BASE_URL } from "./apiClient";
-import { readAccessToken } from "@/lib/auth/session";
+import { apiClient, triggerBrowserDownload } from "./apiClient";
 
 export interface WarehouseItemModelDTO {
   id: string;
@@ -755,41 +754,12 @@ export interface BulkDeleteWarehouseItemsPayload {
 }
 
 export async function downloadWarehouseExport(payload: ExportWarehouseItemsPayload): Promise<void> {
-  const token = readAccessToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${API_BASE_URL}/api/v1/warehouse/export`, {
+  const { blob, filename } = await apiClient.downloadBlob("/api/v1/warehouse/export", {
     method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    credentials: "include",
+    body: payload,
   });
-
-  if (!res.ok) {
-    throw new Error("Не удалось экспортировать номенклатуру");
-  }
-
-  const blob = await res.blob();
-  const contentDisp = res.headers.get("content-disposition");
-  let filename = payload.format === "csv" ? "catalog.csv" : "catalog.xlsx";
-  if (contentDisp) {
-    const match = contentDisp.match(/filename="?([^";]+)"?/);
-    if (match && match[1]) {
-      filename = decodeURIComponent(match[1]);
-    }
-  }
-
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
+  const fallback = payload.format === "csv" ? "catalog.csv" : "catalog.xlsx";
+  triggerBrowserDownload(blob, filename ?? fallback);
 }
 
 export function useExportWarehouseItems() {

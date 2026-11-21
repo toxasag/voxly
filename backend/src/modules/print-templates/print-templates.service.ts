@@ -114,7 +114,7 @@ export function numberToWordsRu(num: number): string {
     "шестьсот",
     "семьсот",
     "восемьсот",
-    "девяносто",
+    "девятьсот",
   ];
 
   function plural(n: number, forms: [string, string, string]): string {

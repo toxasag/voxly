@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../../lib/string.utils.js";
 import type {
   CreateTaskPayload,
   LinkedEntityType,
@@ -31,11 +32,6 @@ export interface ListTasksOptions {
   currentUserId: string;
   limit: number;
   offset: number;
-}
-
-function nullIfBlank(value: string | null | undefined): string | null {
-  if (value === undefined || value === null || value === "") return null;
-  return value;
 }
 
 /** Maps a logical entity link onto the three nullable FK columns. */

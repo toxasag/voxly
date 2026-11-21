@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { hashToken } from "../../lib/crypto.utils.js";
 import { query, queryOne, transaction } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
@@ -124,10 +125,6 @@ function toIsoOrNull(value: Date | string | null): string | null {
 
 function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
-}
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
 }
 
 function buildInviteUrl(token: string): string {

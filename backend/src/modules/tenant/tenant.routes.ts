@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ALL_PERMISSIONS } from "../../config/permissions.js";
 import type { Permission } from "../../types/index.js";
@@ -352,7 +352,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     return reply.send({ data });
   });
 
-  const handleInvite = async (request: any, reply: any) => {
+  const handleInvite = async (request: FastifyRequest, reply: FastifyReply) => {
     const body = inviteBody.parse(request.body);
 
     const result = await team.invite({

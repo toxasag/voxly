@@ -556,8 +556,95 @@ export const DEFAULT_PREVIEW_SAMPLE_DATA: PreviewSampleData = {
  * Преобразует реальные поля заказ-наряда (RepairOrderDTO / RepairTicket)
  * в структуру PreviewSampleData для конструктора и превью бланков.
  */
+export interface RepairPreviewWorkSource {
+  id?: string | null;
+  description?: string | null;
+  name?: string | null;
+  quantity?: number | string | null;
+  unit?: string | null;
+  unitPrice?: number | string | null;
+  unit_price?: number | string | null;
+  cost?: number | string | null;
+}
+
+export interface RepairPreviewPartSource {
+  id?: string | null;
+  name?: string | null;
+  article?: string | null;
+  quantity?: number | string | null;
+  unit?: string | null;
+  retailPrice?: number | string | null;
+  retail_price?: number | string | null;
+  price?: number | string | null;
+  total?: number | string | null;
+}
+
+/** Наряд приходит из API в camelCase и snake_case; описаны все поля, читаемые превью. */
+export interface RepairPreviewSource {
+  ticketNumber?: string | null;
+  ticket_number?: string | null;
+  receivedAt?: string | number | Date | null;
+  received_at?: string | number | Date | null;
+  createdAt?: string | number | Date | null;
+  created_at?: string | number | Date | null;
+  companyName?: string | null;
+  company_name?: string | null;
+  companyInn?: string | null;
+  company_inn?: string | null;
+  companyLegalAddress?: string | null;
+  legalAddress?: string | null;
+  company?: { name?: string | null; inn?: string | null; legalAddress?: string | null } | null;
+  deal?: { companyName?: string | null } | null;
+  customerName?: string | null;
+  customer_name?: string | null;
+  customerPhone?: string | null;
+  customer_phone?: string | null;
+  customerEmail?: string | null;
+  customer_email?: string | null;
+  customerAddress?: string | null;
+  customer_address?: string | null;
+  customerPassport?: string | null;
+  customer_passport?: string | null;
+  customer?: { name?: string | null; phone?: string | null; email?: string | null } | null;
+  equipment?: {
+    type?: string | null;
+    brand?: string | null;
+    model?: string | null;
+    serialNumber?: string | null;
+    serial_number?: string | null;
+    serial?: string | null;
+    appearance?: string | null;
+    packageContents?: string | null;
+    package_contents?: string | null;
+    packageContentsItems?: string[] | null;
+  } | null;
+  malfunctions?: string[] | string | null;
+  defectDescription?: string | null;
+  defect_description?: string | null;
+  masterName?: string | null;
+  master_name?: string | null;
+  estimatedCost?: number | string | null;
+  estimated_cost?: number | string | null;
+  finalCost?: number | string | null;
+  final_cost?: number | string | null;
+  works?: RepairPreviewWorkSource[] | null;
+  work_items?: RepairPreviewWorkSource[] | null;
+  parts?: RepairPreviewPartSource[] | null;
+  parts_used?: RepairPreviewPartSource[] | null;
+  toolInfo?: string | null;
+  tool_info?: string | null;
+  clientInfo?: string | null;
+  client_info?: string | null;
+  notes?: string | null;
+  note?: string | null;
+  comments?: string | null;
+  comment?: string | null;
+  intakeComments?: string | null;
+  intake_comments?: string | null;
+}
+
 export function mapRepairToPreviewSampleData(
-  order: any,
+  order: RepairPreviewSource | null | undefined,
 ): PreviewSampleData {
   if (!order) return DEFAULT_PREVIEW_SAMPLE_DATA;
 
@@ -678,7 +765,7 @@ export function mapRepairToPreviewSampleData(
   const rawWorks = order.works || order.work_items || [];
   const works =
     Array.isArray(rawWorks) && rawWorks.length > 0
-      ? rawWorks.map((w: any, idx: number) => {
+      ? rawWorks.map((w: RepairPreviewWorkSource, idx: number) => {
           const qty = Number(w.quantity ?? 1) || 1;
           const price = Number(w.unitPrice ?? w.unit_price ?? w.cost ?? 0);
           const total = Number(w.cost ?? qty * price);
@@ -696,7 +783,7 @@ export function mapRepairToPreviewSampleData(
   const rawParts = order.parts || order.parts_used || [];
   const parts =
     Array.isArray(rawParts) && rawParts.length > 0
-      ? rawParts.map((p: any, idx: number) => {
+      ? rawParts.map((p: RepairPreviewPartSource, idx: number) => {
           const qty = Number(p.quantity ?? 1) || 1;
           const price = Number(p.retailPrice ?? p.retail_price ?? p.price ?? 0);
           const total = Number(p.total ?? qty * price);

@@ -1,6 +1,7 @@
 "use client";
 
 import { Sheet } from "@/components/ui/sheet";
+import type { RepairPreviewSource } from "@/lib/repairs/print-presets-client";
 import { VisualPrintTemplateEditor, type VisualPrintTemplateEditorProps } from "./VisualPrintTemplateEditor";
 
 export interface PrintTemplateSettingsDrawerProps {
@@ -8,7 +9,7 @@ export interface PrintTemplateSettingsDrawerProps {
   onClose: () => void;
   initialDocumentType?: string;
   orderId?: string;
-  order?: any;
+  order?: RepairPreviewSource | null;
 }
 
 export function PrintTemplateSettingsDrawer({

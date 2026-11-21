@@ -31,6 +31,7 @@ import { BatchPaymentModal } from "./BatchPaymentModal";
 import { GenerateInvoiceModal } from "./GenerateInvoiceModal";
 import { TagPill } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
+import { apiClient } from "@/lib/api/apiClient";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface FinancialSummaryProps {
@@ -120,13 +121,7 @@ export const FinancialSummary = memo(function FinancialSummary({
   const handleDownloadPdf = useCallback(async (inv: InvoiceDTO) => {
     try {
       setDownloadingId(inv.id);
-      const res = await fetch(`/api/v1/invoices/${inv.id}/pdf`, {
-        credentials: "include",
-      });
-      if (!res.ok) {
-        throw new Error("Ошибка скачивания PDF с сервера");
-      }
-      const blob = await res.blob();
+      const { blob } = await apiClient.downloadBlob(`/api/v1/invoices/${inv.id}/pdf`);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

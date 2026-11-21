@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { createHash, randomInt, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomInt, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
+import { hashToken } from "../../lib/crypto.utils.js";
+import { toDate } from "../../lib/date.utils.js";
 import { query, queryOne, transaction, setRequestTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
@@ -203,14 +205,6 @@ const SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
  * пробный период аккаунта.
  */
 const TRIAL_DAYS = 14;
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
-}
 
 /** Tenants that are suspended or past due must not receive fresh tokens. */
 function assertTenantActive(status: string): void {
@@ -881,7 +875,7 @@ export class AuthService {
     if (candidateRefresh && typeof candidateRefresh === "string" && candidateRefresh.trim().length > 0) {
       try {
         const refreshed = await this.refreshToken(candidateRefresh.trim(), meta);
-        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; role: string }>(
+        const payload = this.app.jwt.verify<{ sub: string; tenant_id: string; role: string }>(
           refreshed.access_token,
         );
         if (payload?.sub) {
@@ -909,19 +903,20 @@ export class AuthService {
           }
         }
       } catch {
-        // Fallback к проверке access token
+        // Fallback к проверке подписанного access token
       }
     }
 
-    // 2. Попытка восстановить через access token
+    // 2. Попытка восстановить через криптографически подписанный access token
     if (
       tokens.adminAccessToken &&
       typeof tokens.adminAccessToken === "string" &&
       tokens.adminAccessToken.trim().length > 0
     ) {
       try {
-        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; impersonator_id?: string }>(
+        const payload = this.app.jwt.verify<{ sub: string; tenant_id: string; impersonator_id?: string }>(
           tokens.adminAccessToken.trim(),
+          { ignoreExpiration: true },
         );
         const targetUserId = payload?.impersonator_id || payload?.sub;
         if (targetUserId) {
@@ -944,11 +939,11 @@ export class AuthService {
           }
         }
       } catch {
-        // Ошибка декодирования
+        // Подпись невалидна
       }
     }
 
-    // 3. Прямое восстановление по переданному impersonatorId
+    // 3. Восстановление по impersonatorId, извлечённому из уже верифицированной сессии
     if (tokens.impersonatorId) {
       const adminUser = await queryOne<AuthUserRow>(
         `SELECT ${USER_COLUMNS}

@@ -142,7 +142,7 @@ export class MessagingRegistry {
     }
 
     // Сохраняем в CRM только входящие сообщения от клиентов
-    if (event.message.direction === "inbound" || !event.message.fromMe) {
+    if (event.message.direction === "inbound" && event.message.fromMe !== true) {
       const pipeline = await this.getCrmPipeline();
       await pipeline.processIncoming({
         tenantId: event.tenantId,

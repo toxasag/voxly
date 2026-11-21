@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../../lib/string.utils.js";
 import type {
   CallerIdLookupDTO,
   ContactDTO,
@@ -66,11 +67,6 @@ const CONTACT_COUNT_JOIN = `
   -- окажись его идентификатор в created_by.
   LEFT JOIN users u ON u.id = c.created_by AND u.tenant_id = c.tenant_id
 `;
-
-function nullIfBlank(value: string | null | undefined): string | null {
-  if (value === undefined || value === null || value === "") return null;
-  return value;
-}
 
 function cleanEmail(value: string | null | undefined): string | null {
   if (value === undefined || value === null) return null;

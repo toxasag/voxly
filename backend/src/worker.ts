@@ -5,6 +5,9 @@ import { notifyTaskAssignment, type TaskAssignmentNotificationJob } from "./modu
 import { processInvoiceReminder, type InvoiceReminderJob } from "./modules/finance/invoice-reminders.service.js";
 import { leadNotificationQueue } from "./modules/crm/leads/lead-notification.queue.js";
 import { notificationQueue } from "./modules/notifications/notification.queue.js";
+import { knowledgeBaseQueue } from "./modules/ai/knowledge-base.queue.js";
+import { conversionDispatcher } from "./modules/analytics/conversion-dispatcher.service.js";
+import { tenantProvisioningQueue } from "./modules/tenant/tenant-provisioning.queue.js";
 
 // ---------------------------------------------------------------------------
 // Background Worker (M7.2): обработчики задач очередей.
@@ -61,7 +64,12 @@ export function initBackgroundWorker(): void {
 
 // Graceful shutdown
 export async function shutdownWorker(): Promise<void> {
-  await queueManager.shutdown();
-  await leadNotificationQueue.shutdown();
-  await notificationQueue.shutdown();
+  await Promise.allSettled([
+    queueManager.shutdown(),
+    leadNotificationQueue.shutdown(),
+    notificationQueue.shutdown(),
+    knowledgeBaseQueue.shutdown(),
+    conversionDispatcher.close(),
+    tenantProvisioningQueue.close(),
+  ]);
 }

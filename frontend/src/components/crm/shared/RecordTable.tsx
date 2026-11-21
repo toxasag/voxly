@@ -18,6 +18,7 @@ import {
   Plus,
   Search,
   Settings,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -1053,6 +1054,28 @@ export function RecordTable<T>({
         </>,
         document.body
       )}
+    </div>
+  );
+}
+
+/** Пустое состояние таблицы: иконка + подпись + опциональная кнопка. */
+export function TableEmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="rounded-[8px] border border-dashed border-[#e5e5e5] bg-[#fafafa] px-6 py-16 text-center">
+      <Icon className="mx-auto h-8 w-8 text-[#888888]" />
+      <p className="mt-3 text-sm font-semibold text-[#111111]">{title}</p>
+      <p className="mt-1 text-sm text-[#666666]">{description}</p>
+      {action !== undefined && <div className="mt-4 flex justify-center">{action}</div>}
     </div>
   );
 }

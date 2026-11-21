@@ -33,8 +33,10 @@ export function getRedisClient(): Redis | null {
       enableOfflineQueue: true,
       connectTimeout: 4000,
       retryStrategy(times: number) {
-        if (times > 5) return null; // Прекращаем попытки при длительном отсутствии Redis
-        return Math.min(times * 300, 2000);
+        // Без `return null`: после исчерпания попыток ioredis переводит клиента в
+        // терминальный статус `end` и больше не переподключается, поэтому любой
+        // рестарт Redis дольше нескольких секунд навсегда ломал очереди и /health.
+        return Math.min(times * 300, 5000);
       },
     });
 
@@ -106,8 +108,7 @@ export function getRedisConnectionOptions(): {
       enableOfflineQueue: false,
       connectTimeout: 3000,
       retryStrategy(times: number) {
-        if (times > 3) return null;
-        return Math.min(times * 300, 1500);
+        return Math.min(times * 300, 5000);
       },
     };
   } catch {
