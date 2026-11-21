@@ -49,12 +49,26 @@ export class CredentialsEncryptionUnavailableError extends Error {
  * `openssl rand -base64 32` давали бы разный результат, и настройка зависела бы
  * от того, какую команду выбрал администратор.
  */
+let warnedJwtFallback = false;
+
 function readKey(): Buffer {
-  const raw = getEnv().CREDENTIALS_ENCRYPTION_KEY;
+  const env = getEnv();
+  const raw = env.CREDENTIALS_ENCRYPTION_KEY;
 
   if (raw === undefined) {
-    const seed = getEnv().JWT_SECRET || "getvoxly-default-dev-aes-encryption-key-32b";
-    return createHash("sha256").update(seed).digest();
+    if (env.JWT_SECRET && env.JWT_SECRET.length >= 16) {
+      if (env.NODE_ENV === "production" && !warnedJwtFallback) {
+        warnedJwtFallback = true;
+        process.stderr.write(
+          "[credentials-cipher] WARNING: CREDENTIALS_ENCRYPTION_KEY is not set; falling back to JWT_SECRET-derived key. Configure a dedicated 32-byte CREDENTIALS_ENCRYPTION_KEY.\n",
+        );
+      }
+      return createHash("sha256").update(env.JWT_SECRET).digest();
+    }
+    if (env.NODE_ENV === "production") {
+      throw new CredentialsEncryptionUnavailableError();
+    }
+    return createHash("sha256").update("getvoxly-default-dev-aes-encryption-key-32b").digest();
   }
 
   const candidate = /^[a-f0-9]{64}$/i.test(raw)
@@ -70,9 +84,12 @@ function readKey(): Buffer {
   return candidate;
 }
 
-/** Настроено ли шифрование: канал без ключа не запускается вовсе. */
+/** Настроено ли шифрование: в production требует ключ окружения. */
 export function isEncryptionConfigured(): boolean {
-  return true;
+  const env = getEnv();
+  if (env.CREDENTIALS_ENCRYPTION_KEY) return true;
+  if (env.JWT_SECRET && env.JWT_SECRET.length >= 16) return true;
+  return env.NODE_ENV !== "production";
 }
 
 export function encryptSecret(plaintext: string): string {
