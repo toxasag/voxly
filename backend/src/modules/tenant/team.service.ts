@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { hashToken } from "../../lib/crypto.utils.js";
+import { toDate, toIso, toIsoOrNull } from "../../lib/date.utils.js";
 import { query, queryOne, transaction } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
@@ -113,18 +114,6 @@ class SeatLimitError extends AppError {
   constructor(message: string) {
     super(409, "SEAT_LIMIT_CONFIRMATION_REQUIRED", message);
   }
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
-}
-
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
 }
 
 function buildInviteUrl(token: string): string {

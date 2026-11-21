@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { toIso, toIsoOrNull } from "../../lib/date.utils.js";
+
+export { toIso };
 
 // ---------------------------------------------------------------------------
 // Status workflow
@@ -557,14 +560,6 @@ export interface RepairOrderDetailDTO extends RepairOrderDTO {
 // ---------------------------------------------------------------------------
 // Mappers
 // ---------------------------------------------------------------------------
-
-export function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
-}
 
 export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
   return {

@@ -90,12 +90,18 @@ describe("CrmEnrichmentService (Block 4.2 Cross-Channel Enrichment)", () => {
     expect(res.enrichedFields).toContain("socials:whatsapp");
     expect(res.enrichedFields).toContain("name");
 
-    expect(mockTxQuery).toHaveBeenCalledTimes(1);
+    // 1) UPDATE contacts + 2) UPDATE deals (обновление placeholder-заголовка сделки после обогащения имени)
+    expect(mockTxQuery).toHaveBeenCalledTimes(2);
     const updateParams = mockTxQuery.mock.calls[0]?.[1];
     expect(updateParams?.[0]).toBe("Алексей");
     expect(updateParams?.[1]).toBe("Смирнов");
     expect(updateParams?.[2]).toBe("alex_dev");
     expect(updateParams?.[3]).toBe("12345678");
     expect(updateParams?.[4]).toBe("+79997654321");
+
+    const dealUpdateSql = String(mockTxQuery.mock.calls[1]?.[0] ?? "");
+    const dealUpdateParams = mockTxQuery.mock.calls[1]?.[1];
+    expect(dealUpdateSql).toContain("UPDATE deals");
+    expect(dealUpdateParams?.[0]).toBe("Алексей Смирнов");
   });
 });

@@ -194,6 +194,8 @@ export function SourceMultiSelect({
       {/* Поле выбора / Триггер комбобокса */}
       <div
         role="button"
+        aria-label="Источники заявок для экспорта"
+        aria-expanded={open}
         tabIndex={disabled ? -1 : 0}
         onClick={() => !disabled && setOpen((prev) => !prev)}
         onKeyDown={(e) => {

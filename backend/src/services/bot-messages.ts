@@ -1,4 +1,5 @@
 import { getEnv } from "../config/env.js";
+import { pluralRu } from "../lib/string.utils.js";
 
 // ---------------------------------------------------------------------------
 // Общие тексты и склонения для сообщений ботов.
@@ -21,11 +22,7 @@ export const CODE_PURPOSE_LABEL: Record<CodePurpose, string> = {
 
 /** «5 минут», «2 минуты», «1 минута». */
 export function pluralMinutes(count: number): string {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return "минуту";
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "минуты";
-  return "минут";
+  return pluralRu(count, ["минуту", "минуты", "минут"]);
 }
 
 /** Строка «Код действует 5 минут» с актуальным сроком из конфигурации. */

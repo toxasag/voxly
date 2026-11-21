@@ -4,7 +4,7 @@ import {
   parseCsvText,
   parseXlsxBuffer,
   type ExportColumnDef,
-} from "../../warehouse/warehouse-io.service.js";
+} from "../../../lib/spreadsheet-io.js";
 import { ContactsService } from "./contacts.service.js";
 import { DealsService } from "../deals/deals.service.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";

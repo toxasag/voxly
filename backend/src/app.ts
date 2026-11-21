@@ -507,9 +507,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   }
 
   // Эндпоинт отдачи загруженных файлов (/uploads/:filename).
-  // Публичные ассеты (аватары, логотипы, маркер _public_, изображения) отдаются
-  // без авторизации с открытыми CORS/CORP заголовками для виджетов на клиентских сайтах.
-  // Конфиденциальные документы (PDF, XLSX, DOCX) требуют валидный JWT и проверку арендатора.
+  // Публичные ассеты (аватары, логотипы, явно помеченные _public_ файлы виджета)
+  // отдаются без авторизации с открытыми CORS/CORP заголовками для виджетов.
+  // Все остальные файлы (включая приватные фото из WhatsApp/Telegram/MAX и документы)
+  // требуют валидный JWT (cookie getvoxly_auth_token / Bearer / ?token=) и проверку арендатора.
   app.get("/uploads/:filename", async (request, reply) => {
     const { filename } = request.params as { filename: string };
     const resolvedUpload = await resolveSafeUploadPath(filename);
@@ -523,8 +524,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const isPublicAsset =
       safeFilename.includes("_avatar_") ||
       safeFilename.includes("_logo_") ||
-      safeFilename.includes("_public_") ||
-      contentType.startsWith("image/");
+      safeFilename.includes("_public_");
 
     let isAuthorized = isPublicAsset;
     let hasToken = false;
