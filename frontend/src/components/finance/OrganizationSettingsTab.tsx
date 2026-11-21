@@ -349,7 +349,7 @@ export function OrganizationSettingsTab() {
     }
     setIsLookingUpInn(true);
     try {
-      const res = await apiClient.get<CompanyInnLookupResult>("/api/v1/companies/lookup-inn", {
+      const res = await apiClient.get<CompanyInnLookupResult>("/api/v1/finance/lookup-inn", {
         query: { inn: cleanInn },
       });
       const info = res.data;
@@ -370,9 +370,11 @@ export function OrganizationSettingsTab() {
               ogrn: info.ogrn || prev.ogrn,
               legalAddress: info.legalAddress || prev.legalAddress,
               directorTitle:
-                detectedType === "ooo"
+                info.directorPost ||
+                (detectedType === "ooo"
                   ? "Генеральный директор"
-                  : "Индивидуальный предприниматель",
+                  : "Индивидуальный предприниматель"),
+              directorName: info.directorName || prev.directorName,
               vatMode: detectedType === "ip" ? "none" : prev.vatMode,
             }
           : prev,

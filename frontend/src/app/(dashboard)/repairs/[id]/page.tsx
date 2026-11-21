@@ -7,7 +7,7 @@ import {
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase,
   AlertCircle, ExternalLink, Clock, ShieldCheck, Users, NotebookPen,
-  SlidersHorizontal,
+  SlidersHorizontal, Smartphone, Tag, Layers, Cpu, Bug, Flag,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -25,13 +25,14 @@ import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerMod
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { RepairNotesSection } from "@/components/repairs/RepairNotesSection";
+import { DictionarySelectField } from "@/components/repairs/DictionarySelectField";
 import { TagPill, type TagColor } from "@/components/ui/tag";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Guard } from "@/components/shared/Guard";
 import { isModuleInstalled } from "@/lib/context/tenant";
 import { useAuth } from "@/lib/auth/use-auth";
-import type { RepairTicket, RepairStatus } from "@/lib/repairs/repairs.types";
-import { getRepairStatusLabel, getRepairStatusColors, EQUIPMENT_TYPES } from "@/lib/repairs/repairs.types";
+import type { RepairTicket, RepairStatus, RepairPriority } from "@/lib/repairs/repairs.types";
+import { getRepairStatusLabel, getRepairStatusColors } from "@/lib/repairs/repairs.types";
 import {
   useRepair,
   useChangeRepairStatus,
@@ -39,8 +40,10 @@ import {
   useRepairParts,
   useUpdateRepair,
   useRepairMasters,
+  useRepairDictionaries,
   useSearchEquipmentBySerial,
   type RepairMasterDTO,
+  type ServiceDictionariesDTO,
 } from "@/lib/api/use-repairs";
 import { useTeamMembers } from "@/lib/api/use-team";
 import { cn } from "@/lib/utils";
@@ -124,6 +127,18 @@ export default function RepairDetailPage() {
 
   const changeStatusMutation = useChangeRepairStatus();
   const updateMutation = useUpdateRepair();
+  const dictionariesQuery = useRepairDictionaries();
+  const dictionaries: ServiceDictionariesDTO = useMemo(
+    () =>
+      dictionariesQuery.data ?? {
+        types: [],
+        brands: [],
+        models: [],
+        accessories: [],
+        malfunctions: [],
+      },
+    [dictionariesQuery.data],
+  );
 
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
@@ -141,7 +156,27 @@ export default function RepairDetailPage() {
 
   // Состояние инлайн-редактирования карточки наряда
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({
+  const [editForm, setEditForm] = useState<{
+    customerName: string;
+    customerPhone: string;
+    customerEmail: string;
+    companyName: string;
+    companyInn: string;
+    dealTitle: string;
+    dealNote: string;
+    equipmentType: string;
+    equipmentBrand: string;
+    equipmentModel: string;
+    equipmentSerial: string;
+    packageContentsItems: string[];
+    appearance: string;
+    malfunctions: string[];
+    defectDescription: string;
+    priority: RepairPriority;
+    notes: string;
+    masterId: string;
+    estimatedCost: string;
+  }>({
     customerName: "",
     customerPhone: "",
     customerEmail: "",
@@ -153,15 +188,39 @@ export default function RepairDetailPage() {
     equipmentBrand: "",
     equipmentModel: "",
     equipmentSerial: "",
-    packageContents: "",
+    packageContentsItems: [],
     appearance: "",
+    malfunctions: [],
     defectDescription: "",
+    priority: "normal",
+    notes: "",
     masterId: "",
     estimatedCost: "0",
   });
 
+  const selectedBrandId = useMemo(() => {
+    if (!editForm.equipmentBrand) return undefined;
+    const found = dictionaries.brands.find(
+      (b) => b.name.toLowerCase() === editForm.equipmentBrand.trim().toLowerCase(),
+    );
+    return found?.id;
+  }, [dictionaries.brands, editForm.equipmentBrand]);
+
   const syncFormFromDetail = useCallback(() => {
     if (!detail) return;
+    const pkgItems =
+      Array.isArray(detail.equipment?.packageContentsItems) && detail.equipment.packageContentsItems.length > 0
+        ? detail.equipment.packageContentsItems
+        : detail.equipment?.packageContents
+          ? detail.equipment.packageContents.split(/,\s*/).map((s) => s.trim()).filter(Boolean)
+          : [];
+    const malfItems = Array.isArray(detail.malfunctions) ? detail.malfunctions.filter(Boolean) : [];
+    const rawDesc = (detail.defectDescription ?? "").trim();
+    const extraDesc =
+      malfItems.length > 0 && rawDesc === malfItems.join(", ").trim()
+        ? ""
+        : rawDesc;
+
     setEditForm({
       customerName: detail.customerName ?? "",
       customerPhone: detail.customerPhone ?? "",
@@ -174,9 +233,12 @@ export default function RepairDetailPage() {
       equipmentBrand: detail.equipment?.brand ?? "",
       equipmentModel: detail.equipment?.model ?? "",
       equipmentSerial: detail.equipment?.serialNumber ?? "",
-      packageContents: detail.equipment?.packageContents ?? "",
+      packageContentsItems: pkgItems,
       appearance: detail.equipment?.appearance ?? "",
-      defectDescription: detail.defectDescription ?? "",
+      malfunctions: malfItems,
+      defectDescription: extraDesc,
+      priority: detail.priority ?? "normal",
+      notes: detail.notes ?? "",
       masterId: detail.masterId ?? "",
       estimatedCost: String(detail.estimatedCost ?? 0),
     });
@@ -203,21 +265,43 @@ export default function RepairDetailPage() {
 
   const handleSaveEdit = async () => {
     if (!detail) return;
+
+    const eqType = editForm.equipmentType.trim();
+    const eqBrand = editForm.equipmentBrand.trim();
+    const eqModel = editForm.equipmentModel.trim();
+    const trimmedDesc = editForm.defectDescription.trim();
+
+    if (!eqType || !eqBrand || !eqModel) {
+      toast.error("Укажите тип оборудования, бренд и модель");
+      return;
+    }
+
+    if (editForm.malfunctions.length === 0 && trimmedDesc.length === 0) {
+      toast.error("Укажите хотя бы одну заявленную неисправность или описание");
+      return;
+    }
+
     const estNum = parseFloat(editForm.estimatedCost);
+    const trimmedDealNote = editForm.dealNote.trim();
+    const prevDealNote = (detail.dealNote ?? "").trim();
 
     try {
       await updateMutation.mutateAsync({
         id: detail.id,
         payload: {
           deal_title: editForm.dealTitle.trim() || undefined,
-          deal_note: editForm.dealNote.trim() || undefined,
-          equipment_type: editForm.equipmentType.trim() || undefined,
-          equipment_brand: editForm.equipmentBrand.trim() || undefined,
-          equipment_model: editForm.equipmentModel.trim() || undefined,
-          equipment_serial: editForm.equipmentSerial.trim() || undefined,
-          package_contents: editForm.packageContents.trim() || undefined,
-          appearance: editForm.appearance.trim() || undefined,
-          defect_description: editForm.defectDescription.trim() || undefined,
+          deal_note: trimmedDealNote !== prevDealNote ? trimmedDealNote : undefined,
+          equipment_type: eqType,
+          equipment_brand: eqBrand,
+          equipment_model: eqModel,
+          equipment_serial: editForm.equipmentSerial.trim(),
+          package_contents_items: editForm.packageContentsItems,
+          package_contents: editForm.packageContentsItems.join(", "),
+          appearance: editForm.appearance.trim(),
+          malfunctions: editForm.malfunctions,
+          defect_description: trimmedDesc,
+          priority: editForm.priority,
+          notes: editForm.notes.trim(),
           master_id: editForm.masterId || undefined,
           estimated_cost: !isNaN(estNum) && estNum >= 0 ? estNum : undefined,
         },
@@ -356,9 +440,11 @@ export default function RepairDetailPage() {
           model: detail.equipment.model,
           serial_number: detail.equipment.serialNumber,
           package_contents: detail.equipment.packageContents,
+          package_contents_items: detail.equipment.packageContentsItems ?? [],
           appearance: detail.equipment.appearance,
         },
         defect_description: detail.defectDescription,
+        malfunctions: detail.malfunctions ?? [],
         defect_photos: detail.defectPhotos,
         status: detail.status,
         payment_status: detail.paymentStatus || (detail.status === "issued" ? "paid" : "unpaid"),
@@ -853,10 +939,30 @@ export default function RepairDetailPage() {
                     </span>
                   </div>
                   <div className="text-[#666666]">
-                    Комплектация:{" "}
-                    <span className="text-[#111111]">
-                      {ticket.equipment.package_contents || "Без комплекта"}
-                    </span>
+                    <span>Комплектация: </span>
+                    {(() => {
+                      const items =
+                        ticket.equipment.package_contents_items && ticket.equipment.package_contents_items.length > 0
+                          ? ticket.equipment.package_contents_items
+                          : ticket.equipment.package_contents
+                            ? ticket.equipment.package_contents.split(/,\s*/).map((s) => s.trim()).filter(Boolean)
+                            : [];
+                      if (items.length === 0) {
+                        return <span className="text-[#111111]">Без комплекта</span>;
+                      }
+                      return (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {items.map((item) => (
+                            <span
+                              key={item}
+                              className="inline-flex items-center rounded-[4px] border border-[#e5e5e5] bg-[#fbfbfb] px-1.5 py-0.5 text-[11px] font-medium text-[#111111]"
+                            >
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="text-[#666666]">
                     Внешний вид:{" "}
@@ -866,67 +972,87 @@ export default function RepairDetailPage() {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-2 text-xs">
+                <div className="space-y-2.5 text-xs">
+                  <DictionarySelectField
+                    label="Тип оборудования"
+                    required
+                    icon={Smartphone}
+                    category="type"
+                    mode="single"
+                    placeholder="Выберите тип..."
+                    items={dictionaries.types}
+                    value={editForm.equipmentType}
+                    onChange={(val) =>
+                      setEditForm((prev) => ({ ...prev, equipmentType: (val as string) || "" }))
+                    }
+                  />
+                  <DictionarySelectField
+                    label="Бренд"
+                    required
+                    icon={Tag}
+                    category="brand"
+                    mode="single"
+                    placeholder="Выберите бренд..."
+                    items={dictionaries.brands}
+                    value={editForm.equipmentBrand}
+                    onChange={(val) => {
+                      const nextBrand = (val as string) || "";
+                      setEditForm((prev) => {
+                        const isDifferent =
+                          nextBrand.trim().toLowerCase() !== prev.equipmentBrand.trim().toLowerCase();
+                        return {
+                          ...prev,
+                          equipmentBrand: nextBrand,
+                          equipmentModel: isDifferent ? "" : prev.equipmentModel,
+                        };
+                      });
+                    }}
+                  />
+                  <DictionarySelectField
+                    label="Модель"
+                    required
+                    icon={Layers}
+                    category="model"
+                    brandName={editForm.equipmentBrand}
+                    brandId={selectedBrandId}
+                    mode="single"
+                    placeholder={editForm.equipmentBrand ? "Выберите модель..." : "Сначала выберите бренд"}
+                    items={dictionaries.models}
+                    value={editForm.equipmentModel}
+                    onChange={(val) =>
+                      setEditForm((prev) => ({ ...prev, equipmentModel: (val as string) || "" }))
+                    }
+                  />
                   <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">Тип устройства</label>
-                    <select
-                      value={editForm.equipmentType}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, equipmentType: e.target.value }))}
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                    >
-                      <option value="">Выберите тип...</option>
-                      {EQUIPMENT_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[11px] text-[#666666] mb-0.5 block">Бренд</label>
-                      <input
-                        type="text"
-                        value={editForm.equipmentBrand}
-                        onChange={(e) => setEditForm((prev) => ({ ...prev, equipmentBrand: e.target.value }))}
-                        className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-[#666666] mb-0.5 block">Модель</label>
-                      <input
-                        type="text"
-                        value={editForm.equipmentModel}
-                        onChange={(e) => setEditForm((prev) => ({ ...prev, equipmentModel: e.target.value }))}
-                        className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">Серийный номер (S/N)</label>
+                    <label className="text-xs font-medium text-slate-700 mb-1 block">Серийный номер (S/N)</label>
                     <input
                       type="text"
+                      placeholder="S/N или IMEI..."
                       value={editForm.equipmentSerial}
                       onChange={(e) => setEditForm((prev) => ({ ...prev, equipmentSerial: e.target.value }))}
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none font-mono"
+                      className="h-9 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono tabular-nums"
                     />
                   </div>
+                  <DictionarySelectField
+                    label="Комплектация"
+                    icon={Cpu}
+                    category="accessory"
+                    mode="multi"
+                    placeholder="Выберите или добавьте комплектующие..."
+                    items={dictionaries.accessories}
+                    value={editForm.packageContentsItems}
+                    onChange={(val) =>
+                      setEditForm((prev) => ({ ...prev, packageContentsItems: val as string[] }))
+                    }
+                  />
                   <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">Комплектация</label>
+                    <label className="text-xs font-medium text-slate-700 mb-1 block">Внешний вид</label>
                     <input
                       type="text"
-                      value={editForm.packageContents}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, packageContents: e.target.value }))}
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-[#666666] mb-0.5 block">Внешний вид</label>
-                    <input
-                      type="text"
+                      placeholder="Б/У, потертости корпуса, без повреждений..."
                       value={editForm.appearance}
                       onChange={(e) => setEditForm((prev) => ({ ...prev, appearance: e.target.value }))}
-                      className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                      className="h-9 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                     />
                   </div>
                 </div>
@@ -934,53 +1060,167 @@ export default function RepairDetailPage() {
             </div>
 
             {/* Defect Description Card */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2.5">
               <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
                 Неисправность со слов клиента
               </span>
 
               {!isEditing ? (
-                <p className="text-xs text-[#111111] leading-relaxed whitespace-pre-wrap">
-                  {ticket.defect_description || "Описание не указано."}
-                </p>
+                <div className="space-y-2">
+                  {ticket.malfunctions && ticket.malfunctions.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {ticket.malfunctions.map((m) => (
+                        <span
+                          key={m}
+                          className="inline-flex items-center rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2 py-0.5 text-[11px] font-medium text-[#4a38f5]"
+                        >
+                          {m}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {(() => {
+                    const malfJoined = (ticket.malfunctions ?? []).join(", ").trim();
+                    const desc = (ticket.defect_description ?? "").trim();
+                    const showDesc = desc && desc !== malfJoined;
+                    if (showDesc) {
+                      return (
+                        <p className="text-xs text-[#111111] leading-relaxed whitespace-pre-wrap">
+                          {desc}
+                        </p>
+                      );
+                    }
+                    if (!ticket.malfunctions || ticket.malfunctions.length === 0) {
+                      return (
+                        <p className="text-xs text-[#888888]">
+                          Описание не указано.
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
               ) : (
-                <textarea
-                  rows={3}
-                  value={editForm.defectDescription}
-                  onChange={(e) => setEditForm((prev) => ({ ...prev, defectDescription: e.target.value }))}
-                  className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none resize-none leading-relaxed"
-                />
+                <div className="space-y-2.5">
+                  <DictionarySelectField
+                    label="Заявленные неисправности"
+                    required
+                    icon={Bug}
+                    category="malfunction"
+                    mode="multi"
+                    placeholder="Выберите неисправности..."
+                    items={dictionaries.malfunctions}
+                    value={editForm.malfunctions}
+                    onChange={(val) =>
+                      setEditForm((prev) => ({ ...prev, malfunctions: val as string[] }))
+                    }
+                  />
+                  <div>
+                    <label className="text-xs font-medium text-slate-700 mb-1 block">
+                      Дополнительное описание
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="Подробности со слов клиента..."
+                      value={editForm.defectDescription}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, defectDescription: e.target.value }))}
+                      className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-none leading-relaxed"
+                    />
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Master Assignment Card */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-2">
-              <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
-                Ответственный мастер
-              </span>
+            {/* Master Assignment, Priority & Notes Card */}
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 shadow-2xs space-y-3">
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
+                  Ответственный мастер
+                </span>
+                <div className="flex items-center gap-2">
+                  <User className="h-4 w-4 text-[#888888] shrink-0" />
+                  <select
+                    value={isEditing ? editForm.masterId : (ticket.master_id ?? "")}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      if (isEditing) {
+                        setEditForm((prev) => ({ ...prev, masterId: newId }));
+                      } else {
+                        handleMasterChange(newId);
+                      }
+                    }}
+                    disabled={updateMutation.isPending}
+                    className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:border-[#cccccc] focus:border-[#4a38f5] focus:outline-none cursor-pointer transition-colors"
+                  >
+                    <option value="">Не назначен</option>
+                    {teamMembers.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.fullName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-              <div className="flex items-center gap-2">
-                <User className="h-4 w-4 text-[#888888] shrink-0" />
-                <select
-                  value={isEditing ? editForm.masterId : (ticket.master_id ?? "")}
-                  onChange={(e) => {
-                    const newId = e.target.value;
-                    if (isEditing) {
-                      setEditForm((prev) => ({ ...prev, masterId: newId }));
-                    } else {
-                      handleMasterChange(newId);
+              <div className="pt-2.5 border-t border-[#f0f0f0] space-y-1.5">
+                <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider flex items-center gap-1">
+                  <Flag className="h-3 w-3 text-[#888888]" />
+                  Приоритет
+                </span>
+                {!isEditing ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center text-xs font-medium",
+                      ticket.priority === "urgent"
+                        ? "text-rose-600"
+                        : ticket.priority === "high"
+                          ? "text-amber-600"
+                          : ticket.priority === "low"
+                            ? "text-[#888888]"
+                            : "text-[#111111]",
+                    )}
+                  >
+                    {ticket.priority === "urgent"
+                      ? "Срочный"
+                      : ticket.priority === "high"
+                        ? "Высокий"
+                        : ticket.priority === "low"
+                          ? "Низкий"
+                          : "Обычный"}
+                  </span>
+                ) : (
+                  <select
+                    value={editForm.priority}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({ ...prev, priority: e.target.value as RepairPriority }))
                     }
-                  }}
-                  disabled={updateMutation.isPending}
-                  className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:border-[#cccccc] focus:border-[#4a38f5] focus:outline-none cursor-pointer transition-colors"
-                >
-                  <option value="">Не назначен</option>
-                  {teamMembers.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.fullName}
-                    </option>
-                  ))}
-                </select>
+                    className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
+                  >
+                    <option value="low">Низкий</option>
+                    <option value="normal">Обычный</option>
+                    <option value="high">Высокий</option>
+                    <option value="urgent">Срочный</option>
+                  </select>
+                )}
+              </div>
+
+              <div className="pt-2.5 border-t border-[#f0f0f0] space-y-1.5">
+                <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
+                  Примечания к наряду
+                </span>
+                {!isEditing ? (
+                  <p className="text-xs text-[#111111] leading-relaxed whitespace-pre-wrap">
+                    {ticket.notes || <span className="text-[#888888]">Примечания не указаны</span>}
+                  </p>
+                ) : (
+                  <textarea
+                    rows={2}
+                    placeholder="Дополнительные пожелания клиента..."
+                    value={editForm.notes}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, notes: e.target.value }))}
+                    className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-none leading-relaxed"
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -1389,10 +1629,25 @@ export default function RepairDetailPage() {
                             </div>
 
                             {/* Неисправность */}
-                            {item.defectDescription && (
-                              <div className="text-xs bg-[#fafafa] p-2.5 rounded-[6px] border border-[#f0f0f0]">
-                                <span className="text-[#888888] font-medium mr-1.5">Неисправность:</span>
-                                <span className="text-[#222222]">{item.defectDescription}</span>
+                            {((item.malfunctions && item.malfunctions.length > 0) || item.defectDescription) && (
+                              <div className="text-xs bg-[#fafafa] p-2.5 rounded-[6px] border border-[#f0f0f0] space-y-1.5">
+                                <span className="text-[#888888] font-medium block">Неисправность:</span>
+                                {item.malfunctions && item.malfunctions.length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {item.malfunctions.map((m) => (
+                                      <span
+                                        key={m}
+                                        className="inline-flex items-center rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-1.5 py-0.5 text-[11px] font-medium text-[#4a38f5]"
+                                      >
+                                        {m}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {item.defectDescription &&
+                                  item.defectDescription.trim() !== (item.malfunctions ?? []).join(", ").trim() && (
+                                    <span className="text-[#222222] block">{item.defectDescription}</span>
+                                  )}
                               </div>
                             )}
 

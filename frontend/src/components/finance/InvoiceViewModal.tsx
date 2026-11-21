@@ -9,16 +9,23 @@ import {
   CheckCircle2,
   CloudUpload,
   Loader2,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import type { Invoice } from "@/lib/finance/invoices.types";
 import { getInvoiceStatusLabel, getInvoiceStatusColors } from "@/lib/finance/invoices.types";
 import {
+  fetchInvoiceRfHtml,
   openInvoiceRfPrintWindow,
+  useDeleteInvoice,
   useFinanceOrganizations,
   useSyncInvoiceToElba,
 } from "@/lib/api/use-invoices";
+import { apiClient, triggerBrowserDownload } from "@/lib/api/apiClient";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { InvoicePaymentModal } from "@/components/finance/InvoicePaymentModal";
+import { InvoiceEditModal } from "@/components/finance/InvoiceEditModal";
+import { Guard } from "@/components/shared/Guard";
 import { cn } from "@/lib/utils";
 
 interface InvoiceViewModalProps {
@@ -33,12 +40,15 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
   onClose,
 }: InvoiceViewModalProps) {
   const [payModalOpen, setPayModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState<string>("");
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   const { data: organizations = [] } = useFinanceOrganizations();
   const syncElba = useSyncInvoiceToElba();
+  const deleteInvoice = useDeleteInvoice();
 
   const hasElbaConfigured = organizations.some(
     (o) => o.elbaEnabled && o.elbaHasApiKey && o.elbaOrganizationId,
@@ -51,8 +61,7 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
     }
     let cancelled = false;
     setLoadingHtml(true);
-    fetch(`/api/v1/invoices/${invoice.id}/html`, { credentials: "include" })
-      .then((res) => (res.ok ? res.text() : Promise.reject(new Error("Ошибка загрузки счёта"))))
+    fetchInvoiceRfHtml(invoice.id, false)
       .then((html) => {
         if (!cancelled) setPreviewHtml(html);
       })
@@ -65,7 +74,7 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
     return () => {
       cancelled = true;
     };
-  }, [open, invoice?.id]);
+  }, [open, invoice?.id, reloadTick]);
 
   const handlePrint = useCallback(async () => {
     if (!invoice) return;
@@ -80,19 +89,8 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
     if (!invoice) return;
     try {
       setDownloadingPdf(true);
-      const res = await fetch(`/api/v1/invoices/${invoice.id}/pdf`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Ошибка скачивания PDF");
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Invoice-${invoice.invoice_number}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      a.remove();
+      const { blob } = await apiClient.downloadBlob(`/api/v1/invoices/${invoice.id}/pdf`);
+      triggerBrowserDownload(blob, `Invoice-${invoice.invoice_number}.pdf`);
       toast.success(`PDF счёта №${invoice.invoice_number} скачан`);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Не удалось скачать PDF");
@@ -111,7 +109,25 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
     }
   }, [invoice, syncElba]);
 
+  const handleDelete = useCallback(async () => {
+    if (!invoice) return;
+    if (invoice.status === "paid") {
+      toast.error("Оплаченный счёт нельзя удалить");
+      return;
+    }
+    if (!window.confirm(`Удалить счёт № ${invoice.invoice_number}?`)) return;
+    try {
+      await deleteInvoice.mutateAsync(invoice.id);
+      toast.success(`Счёт № ${invoice.invoice_number} удалён`);
+      onClose();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить счёт");
+    }
+  }, [invoice, deleteInvoice, onClose]);
+
   if (!open || !invoice) return null;
+
+  const isPaid = invoice.status === "paid";
 
   return (
     <>
@@ -150,31 +166,62 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {invoice.status !== "paid" && invoice.status !== "cancelled" && (
-                <button
-                  type="button"
-                  onClick={() => setPayModalOpen(true)}
-                  className="flex h-8 items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Принять оплату
-                </button>
+              {!isPaid && invoice.status !== "cancelled" && (
+                <Guard requiredPermission="finance:write">
+                  <button
+                    type="button"
+                    onClick={() => setPayModalOpen(true)}
+                    className="flex h-8 items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Принять оплату
+                  </button>
+                </Guard>
+              )}
+
+              {!isPaid && (
+                <Guard requiredPermission="finance:write">
+                  <button
+                    type="button"
+                    onClick={() => setEditModalOpen(true)}
+                    className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-[#666666]" />
+                    Редактировать
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete()}
+                    disabled={deleteInvoice.isPending}
+                    className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors cursor-pointer disabled:opacity-50"
+                    title="Удалить счёт"
+                  >
+                    {deleteInvoice.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                    Удалить
+                  </button>
+                </Guard>
               )}
 
               {hasElbaConfigured && !invoice.elba_bill_id && (
-                <button
-                  type="button"
-                  onClick={() => void handleSyncElba()}
-                  disabled={syncElba.isPending}
-                  className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {syncElba.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
-                  ) : (
-                    <CloudUpload className="h-3.5 w-3.5 text-[#4a38f5]" />
-                  )}
-                  В Эльбу
-                </button>
+                <Guard requiredPermission="finance:write">
+                  <button
+                    type="button"
+                    onClick={() => void handleSyncElba()}
+                    disabled={syncElba.isPending}
+                    className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {syncElba.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                    ) : (
+                      <CloudUpload className="h-3.5 w-3.5 text-[#4a38f5]" />
+                    )}
+                    В Эльбу
+                  </button>
+                </Guard>
               )}
 
               <button
@@ -229,6 +276,37 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
         onSuccess={() => {
           setPayModalOpen(false);
           onClose();
+        }}
+      />
+
+      <InvoiceEditModal
+        open={editModalOpen}
+        invoice={{
+          id: invoice.id,
+          invoiceNumber: invoice.invoice_number,
+          status: invoice.status,
+          dueDate: invoice.due_date,
+          issuerOrganizationId: invoice.issuer_organization_id ?? null,
+          companyName: invoice.company_name,
+          companyInn: invoice.company_inn,
+          companyAddress: invoice.company_address,
+          contactName: invoice.contact_name,
+          contactPhone: invoice.contact_phone,
+          vatMode: invoice.vat_mode,
+          vatRate: invoice.vat_rate,
+          notes: invoice.notes,
+          lineItems: invoice.line_items.map((li) => ({
+            id: li.id,
+            description: li.description,
+            quantity: li.quantity,
+            unitPrice: li.unit_price,
+            source: li.source,
+            sourceLabel: li.source_label,
+          })),
+        }}
+        onClose={() => setEditModalOpen(false)}
+        onSaved={() => {
+          setReloadTick((t) => t + 1);
         }}
       />
     </>

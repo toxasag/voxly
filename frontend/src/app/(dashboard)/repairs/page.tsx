@@ -72,6 +72,7 @@ function RepairsPageContent() {
         model: item.equipment.model,
         serial_number: item.equipment.serialNumber,
         package_contents: item.equipment.packageContents,
+        package_contents_items: item.equipment.packageContentsItems ?? [],
         appearance: item.equipment.appearance,
       },
       defect_description: item.defectDescription,

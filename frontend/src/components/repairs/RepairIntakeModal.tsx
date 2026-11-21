@@ -280,6 +280,18 @@ function EquipmentCard({
         />
       </div>
 
+      {/* Внешний вид */}
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-slate-700">Внешний вид</label>
+        <input
+          type="text"
+          placeholder="Например: Б/У, потертости корпуса, без видимых повреждений..."
+          value={item.appearance}
+          onChange={(e) => onChange({ ...item, appearance: e.target.value })}
+          className="h-9 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+        />
+      </div>
+
       {/* Заявленные неисправности */}
       <div className="space-y-3 rounded-lg border border-[#e5e5e5] p-3.5 bg-white shadow-2xs mt-2">
         <DictionarySelectField
