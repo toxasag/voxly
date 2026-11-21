@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  vatModeSchema,
+  type InvoiceIssuerSnapshot,
+  type VatMode,
+} from "./finance-organizations.types.js";
 
 export const accountIdSchema = z.string().uuid("account_id must be a UUID");
 export const accountTypeSchema = z.enum(["bank", "cash", "acquiring", "safe"]);
@@ -50,13 +55,14 @@ export const pnlQuerySchema = z.object({
 
 export const invoiceItemSchema = z.object({
   description: z.string().min(1).max(500),
-  quantity: z.number().int().positive().default(1),
+  quantity: z.number().positive().default(1),
   unit_price: z.number().nonnegative(),
   source: z.enum(["manual", "repair_work", "repair_part", "deal"]).default("manual"),
   source_label: z.string().max(200).optional().or(z.literal("")),
 });
 
 export const createInvoiceSchema = z.object({
+  issuer_organization_id: optionalUuid,
   company_id: optionalUuid,
   company_name: z.string().min(1).max(200),
   company_inn: z.string().max(20).optional().or(z.literal("")),
@@ -66,9 +72,11 @@ export const createInvoiceSchema = z.object({
   deal_id: optionalUuid,
   repair_order_id: optionalUuid,
   due_date: isoDate,
-  vat_rate: z.number().min(0).max(100).default(20),
+  vat_mode: vatModeSchema.optional(),
+  vat_rate: z.number().min(0).max(100).optional(),
   currency: z.string().length(3).default("RUB"),
   notes: z.string().max(2000).optional().or(z.literal("")),
+  sync_to_elba: z.boolean().optional(),
   line_items: z.array(invoiceItemSchema).min(1).max(100),
 });
 
@@ -88,11 +96,15 @@ export const batchPaymentSchema = z.object({
   repair_order_ids: z.array(z.string().uuid()).min(1),
   cash_account_id: accountIdSchema,
   category_id: optionalUuid,
+  works_category_id: optionalUuid,
+  parts_category_id: optionalUuid,
+  split_works_and_parts: z.boolean().default(true),
   description: z.string().max(500).optional().or(z.literal("")),
 });
 
 export const createInvoiceFromActsSchema = z.object({
   repair_order_ids: z.array(z.string().uuid()).min(1),
+  issuer_organization_id: optionalUuid,
   company_id: optionalUuid,
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: z.string().max(20).optional().or(z.literal("")),
@@ -101,9 +113,11 @@ export const createInvoiceFromActsSchema = z.object({
   contact_phone: z.string().max(30).optional().or(z.literal("")),
   deal_id: optionalUuid,
   due_date: isoDate.optional(),
-  vat_rate: z.number().min(0).max(100).default(20),
+  vat_mode: vatModeSchema.optional(),
+  vat_rate: z.number().min(0).max(100).optional(),
   currency: z.string().length(3).default("RUB"),
   notes: z.string().max(2000).optional().or(z.literal("")),
+  sync_to_elba: z.boolean().optional(),
 });
 
 export const sendInvoiceSchema = z.object({
@@ -166,8 +180,13 @@ export interface InvoiceDTO {
   dueDate: string; companyId: string | null; companyName: string; companyInn: string;
   companyAddress: string; contactName: string; contactPhone: string;
   dealId: string | null; repairOrderId: string | null; subtotal: number;
-  vatRate: number; vatAmount: number; total: number; currency: string;
+  vatMode: VatMode; vatRate: number; vatAmount: number; total: number; currency: string;
   notes: string; paidAt: string | null; paidAccountId: string | null;
+  issuerOrganizationId: string | null;
+  issuerSnapshot: InvoiceIssuerSnapshot | null;
+  elbaBillId: string;
+  elbaSyncedAt: string | null;
+  elbaSyncError: string;
   lineItems: InvoiceItemDTO[];
 }
 

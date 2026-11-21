@@ -151,9 +151,19 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
     const master = masters.find((m) => m.id === newMaster);
     const masterName = master?.fullName ?? "Не назначен";
 
+    const normalizedDesc = desc.toLowerCase().replace(/\s+/g, " ");
+    const existingItem = items.find((it) => {
+      const existingQty = it.quantity != null && it.quantity > 0 ? it.quantity : 1;
+      const existingUnit = it.unit_price != null ? it.unit_price : it.cost / existingQty;
+      return (
+        it.description.trim().toLowerCase().replace(/\s+/g, " ") === normalizedDesc &&
+        Math.abs(existingUnit - unitPriceNum) < 0.01
+      );
+    });
+
     if (orderId) {
       try {
-        await createWorkMutation.mutateAsync({
+        const result = await createWorkMutation.mutateAsync({
           orderId,
           payload: {
             description: desc,
@@ -164,7 +174,11 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
             cost: costNum,
           },
         });
-        toast.success(`Работа «${desc}» добавлена`);
+        if (existingItem) {
+          toast.success(`Количество «${desc}» увеличено до ${result.quantity ?? (existingItem.quantity ?? 1) + qtyNum}`);
+        } else {
+          toast.success(`Работа «${desc}» добавлена`);
+        }
         setNewDesc("");
         setNewQty("1");
         setNewUnitPrice("");
@@ -174,17 +188,32 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
         toast.error(err instanceof Error ? err.message : "Не удалось добавить работу");
       }
     } else {
-      const newItem: WorkItem = {
-        id: `wi${Date.now()}`,
-        description: desc,
-        master_name: master?.fullName ?? "Не назначен",
-        master_id: newMaster,
-        quantity: qtyNum,
-        unit_price: unitPriceNum,
-        cost: costNum,
-      };
-
-      onChange?.([...items, newItem]);
+      if (existingItem) {
+        const nextItems = items.map((it) => {
+          if (it.id !== existingItem.id) return it;
+          const prevQty = it.quantity != null && it.quantity > 0 ? it.quantity : 1;
+          const nextQty = Math.round((prevQty + qtyNum) * 1000) / 1000;
+          const unit = it.unit_price != null ? it.unit_price : unitPriceNum;
+          return {
+            ...it,
+            quantity: nextQty,
+            unit_price: unit,
+            cost: Math.round(nextQty * unit * 100) / 100,
+          };
+        });
+        onChange?.(nextItems);
+      } else {
+        const newItem: WorkItem = {
+          id: `wi${Date.now()}`,
+          description: desc,
+          master_name: master?.fullName ?? "Не назначен",
+          master_id: newMaster,
+          quantity: qtyNum,
+          unit_price: unitPriceNum,
+          cost: costNum,
+        };
+        onChange?.([...items, newItem]);
+      }
       setNewDesc("");
       setNewQty("1");
       setNewUnitPrice("");

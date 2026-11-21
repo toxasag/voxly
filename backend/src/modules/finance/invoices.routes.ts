@@ -37,6 +37,13 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
     return rep.send({ data: invoice });
   });
 
+  app.get("/:id/html", { onRequest: read }, async (r, rep) => {
+    const { id: invoiceId } = id.parse(r.params);
+    const q = z.object({ print: z.string().optional() }).parse(r.query);
+    const html = await s.getHtml(r.tenant_id, invoiceId, { autoPrint: q.print === "1" });
+    return rep.header("Content-Type", "text/html; charset=utf-8").send(html);
+  });
+
   app.get("/:id/pdf", { onRequest: read }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
     const { buffer, filename } = await s.getPdf(r.tenant_id, invoiceId);
@@ -44,6 +51,12 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
       .header("Content-Type", "application/pdf")
       .header("Content-Disposition", `attachment; filename="${filename}"`)
       .send(buffer);
+  });
+
+  app.post("/:id/sync-elba", { onRequest: write }, async (r, rep) => {
+    const { id: invoiceId } = id.parse(r.params);
+    const result = await s.syncToElba(r.tenant_id, invoiceId);
+    return rep.send({ data: result });
   });
 
   app.post("", { onRequest: write }, async (r, rep) => {

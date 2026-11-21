@@ -1,3 +1,5 @@
+import type { InvoiceIssuerSnapshot, VatMode } from "@/lib/api/use-invoices";
+
 export type InvoiceStatus = "draft" | "sent" | "paid" | "overdue" | "cancelled";
 
 export interface InvoiceLineItem {
@@ -23,28 +25,34 @@ export interface Invoice {
   contact_phone: string;
   line_items: InvoiceLineItem[];
   subtotal: number;
+  vat_mode?: VatMode;
   vat_rate: number;
   vat_amount: number;
   total: number;
   currency: string;
   notes: string;
   created_by: string;
+  issuer_organization_id?: string | null;
+  issuer_snapshot?: InvoiceIssuerSnapshot | null;
+  elba_bill_id?: string;
+  elba_synced_at?: string | null;
+  elba_sync_error?: string;
 }
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
-  draft: "Draft",
-  sent: "Sent",
-  paid: "Paid",
-  overdue: "Overdue",
-  cancelled: "Cancelled",
+  draft: "Черновик",
+  sent: "Выставлен",
+  paid: "Оплачен",
+  overdue: "Просрочен",
+  cancelled: "Отменён",
 };
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
-  draft: "bg-slate-500/10 text-slate-400 border-slate-500/30",
-  sent: "bg-sky-500/10 text-sky-400 border-sky-500/30",
-  paid: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  overdue: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-  cancelled: "bg-slate-500/10 text-slate-500 border-slate-500/30 line-through",
+  draft: "bg-[#f5f5f5] text-[#666666] border-[#e5e5e5]",
+  sent: "bg-sky-50 text-sky-700 border-sky-200",
+  paid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  overdue: "bg-rose-50 text-rose-700 border-rose-200",
+  cancelled: "bg-[#f5f5f5] text-[#888888] border-[#e5e5e5] line-through",
 };
 
 export type InvoiceFilterStatus = InvoiceStatus | "all";
