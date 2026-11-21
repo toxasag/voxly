@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso } from "../../../lib/date.utils.js";
 
 // ---------------------------------------------------------------------------
 // Заметки. Образец — объект Note в Twenty плюс junction-таблица NoteTarget.
@@ -63,10 +64,6 @@ export interface NoteDTO {
   createdByName: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 /**

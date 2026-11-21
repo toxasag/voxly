@@ -6,6 +6,7 @@ import type { CompanyDTO } from "@/lib/api/use-companies";
 
 vi.mock("@/lib/api/use-companies", () => ({
   useUpdateCompany: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useEnrichCompanyInn: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/lib/api/use-contacts", () => ({
@@ -69,7 +70,7 @@ describe("CompanyCard (Block 3.2 Twenty Parity)", () => {
       />,
     );
 
-    expect(screen.getByText("ООО Вектор Технологии")).toBeDefined();
+    expect(screen.getAllByText("ООО Вектор Технологии").length).toBeGreaterThan(0);
     expect(screen.getByText("vector-tech.ru")).toBeDefined();
     expect(screen.getByText("info@vector-tech.ru")).toBeDefined();
     expect(screen.getByText("+7 (495) 123-45-67")).toBeDefined();

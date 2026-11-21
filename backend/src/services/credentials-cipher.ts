@@ -49,24 +49,16 @@ export class CredentialsEncryptionUnavailableError extends Error {
  * `openssl rand -base64 32` давали бы разный результат, и настройка зависела бы
  * от того, какую команду выбрал администратор.
  */
-let warnedJwtFallback = false;
-
 function readKey(): Buffer {
   const env = getEnv();
   const raw = env.CREDENTIALS_ENCRYPTION_KEY;
 
   if (raw === undefined) {
-    if (env.JWT_SECRET && env.JWT_SECRET.length >= 16) {
-      if (env.NODE_ENV === "production" && !warnedJwtFallback) {
-        warnedJwtFallback = true;
-        process.stderr.write(
-          "[credentials-cipher] WARNING: CREDENTIALS_ENCRYPTION_KEY is not set; falling back to JWT_SECRET-derived key. Configure a dedicated 32-byte CREDENTIALS_ENCRYPTION_KEY.\n",
-        );
-      }
-      return createHash("sha256").update(env.JWT_SECRET).digest();
-    }
     if (env.NODE_ENV === "production") {
       throw new CredentialsEncryptionUnavailableError();
+    }
+    if (env.JWT_SECRET && env.JWT_SECRET.length >= 16) {
+      return createHash("sha256").update(env.JWT_SECRET).digest();
     }
     return createHash("sha256").update("getvoxly-default-dev-aes-encryption-key-32b").digest();
   }
@@ -84,12 +76,12 @@ function readKey(): Buffer {
   return candidate;
 }
 
-/** Настроено ли шифрование: в production требует ключ окружения. */
+/** Настроено ли шифрование: в production требует выделенный CREDENTIALS_ENCRYPTION_KEY. */
 export function isEncryptionConfigured(): boolean {
   const env = getEnv();
   if (env.CREDENTIALS_ENCRYPTION_KEY) return true;
-  if (env.JWT_SECRET && env.JWT_SECRET.length >= 16) return true;
-  return env.NODE_ENV !== "production";
+  if (env.NODE_ENV === "production") return false;
+  return Boolean(env.JWT_SECRET && env.JWT_SECRET.length >= 16);
 }
 
 export function encryptSecret(plaintext: string): string {

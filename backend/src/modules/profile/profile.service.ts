@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { toIso } from "../../lib/date.utils.js";
 import { queryOne, transaction } from "../../db/client.js";
 import { AppError, NotFoundError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { AuthService } from "../auth/auth.service.js";
@@ -63,10 +64,6 @@ interface ProfileRow {
   telegram_chat_id: string | null;
   max_user_id: string | null;
   created_at: Date | string;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 /**

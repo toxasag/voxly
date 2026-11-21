@@ -187,9 +187,13 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       }
 
       const mediaService = new ChatMediaService();
+      const baseName = file.filename || `upload_${Date.now()}`;
+      // Маркер `_public_` нужен для отображения вложений веб-виджета на сторонних
+      // клиентских сайтах, где нет авторизационной cookie CRM.
+      const publicName = baseName.includes("_public_") ? baseName : `public_${baseName}`;
       const stored = await mediaService.storeBuffer({
         buffer,
-        originalName: file.filename || `upload_${Date.now()}`,
+        originalName: publicName,
         mimeType: file.mimetype || "application/octet-stream",
         tenantId: account.tenantId,
       });

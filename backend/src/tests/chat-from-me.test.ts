@@ -82,8 +82,8 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
   });
 
   it("does not create contact or deal when operator writes first from phone to unknown recipient", async () => {
-    // 1. mock findContact -> null (recipient not in CRM)
-    mockQueryOne.mockResolvedValueOnce(null);
+    // 1. mock findContact -> null (по senderPhone и по whatsapp chatId — оба возвращают null)
+    mockQueryOne.mockResolvedValue(null);
 
     const result = await service.processNativeOutbound({
       tenantId: "tenant-1",
@@ -98,8 +98,12 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
     expect(result.dealId).toBeNull();
     expect(result.messageId).toBeNull();
     expect(result.pausedUntil).toBeNull();
-    // Only findContact was called, no deal creation or message insertion
-    expect(mockQueryOne).toHaveBeenCalledTimes(1);
+    // Только SELECT-поиски контакта, никаких INSERT/UPDATE для сделки или контакта
+    expect(mockQueryOne).toHaveBeenCalled();
+    for (const call of mockQueryOne.mock.calls) {
+      expect(String(call[0])).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+    }
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it("does not create deal when contact exists but has no active deal", async () => {

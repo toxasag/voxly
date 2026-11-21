@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { toIso } from "../../lib/date.utils.js";
 import { query, queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { EmailService } from "../../services/email.service.js";
@@ -68,10 +69,6 @@ const logsQuery = z.object({
 const testEmailBody = z
   .object({ to: z.string().trim().toLowerCase().email("Некорректный e-mail").optional() })
   .default({});
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
 
 export default async function adminPlatformRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
