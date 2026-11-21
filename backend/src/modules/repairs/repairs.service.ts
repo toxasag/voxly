@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../lib/string.utils.js";
 import type {
   ChangeStatusPayload,
   ClientLookupDealDTO,
@@ -82,11 +83,6 @@ export class InvalidStatusTransitionError extends AppError {
       { status: [`Allowed from "${from}": ${allowedTransitionsFrom(from).join(", ") || "none"}`] },
     );
   }
-}
-
-function nullIfBlank(value: string | null | undefined): string | null {
-  if (value === undefined || value === null || value === "") return null;
-  return value;
 }
 
 export interface ListRepairsOptions {

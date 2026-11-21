@@ -8,7 +8,8 @@
 import { query, queryOne } from "../../db/client.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { EmailService } from "../../services/email.service.js";
-import { TelegramService, escapeHtml } from "../auth/telegram.service.js";
+import { escapeTelegramHtml as escapeHtml } from "../../lib/html.utils.js";
+import { TelegramService } from "../auth/telegram.service.js";
 import {
   bitrix24Service,
   normalizeBitrixWebhookUrl,

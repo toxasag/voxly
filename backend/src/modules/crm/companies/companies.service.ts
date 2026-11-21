@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../../lib/string.utils.js";
 import type {
   CompanyDTO,
   CompanyRow,
@@ -46,11 +47,6 @@ const COMPANY_COUNT_JOINS = `
   -- подставил бы имя пользователя чужого арендатора.
   LEFT JOIN users u ON u.id = c.created_by AND u.tenant_id = c.tenant_id
 `;
-
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
-  return value;
-}
 
 export interface ListCompaniesOptions {
   search?: string;

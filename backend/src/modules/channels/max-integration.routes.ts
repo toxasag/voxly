@@ -4,6 +4,7 @@ import { z } from "zod";
 import QRCode from "qrcode";
 
 import { getEnv } from "../../config/env.js";
+import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService } from "./max-bridge.service.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
@@ -118,28 +119,6 @@ function isDuplicateInbound(key: string): boolean {
   if (recentInboundMessages.has(key)) return true;
   recentInboundMessages.set(key, now);
   return false;
-}
-
-function guessMimeType(fileName: string, mime?: string): string {
-  if (mime && mime !== "application/octet-stream") return mime;
-  const ext = fileName.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "pdf": return "application/pdf";
-    case "wav": return "audio/wav";
-    case "ogg": return "audio/ogg";
-    case "mp3": return "audio/mpeg";
-    case "m4a": return "audio/mp4";
-    case "jpg":
-    case "jpeg": return "image/jpeg";
-    case "png": return "image/png";
-    case "webp": return "image/webp";
-    case "gif": return "image/gif";
-    case "doc": return "application/msword";
-    case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case "xls": return "application/vnd.ms-excel";
-    case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    default: return mime || "application/octet-stream";
-  }
 }
 
 async function resolveAndStoreMaxAttachment(opts: {

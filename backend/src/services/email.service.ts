@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { getEnv } from "../config/env.js";
+import { escapeHtml } from "../lib/html.utils.js";
 import { AppError } from "../plugins/errorHandler.js";
 
 // ---------------------------------------------------------------------------
@@ -33,14 +34,6 @@ export class EmailNotConfiguredError extends AppError {
 }
 
 /** Экранирование под HTML-шаблоны: в письма попадают поддомен и адрес. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 // ---------------------------------------------------------------------------
 // Шаблон письма
 // ---------------------------------------------------------------------------

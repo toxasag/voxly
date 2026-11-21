@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../../lib/string.utils.js";
 import type {
   CreateDealItemPayload,
   CreateDealMessagePayload,
@@ -179,11 +180,6 @@ export function notifyDealWon(payload: { tenantId: string; dealId: string }): vo
 }
 
 /** Treats "" from form payloads as "no value". */
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
-  return value;
-}
-
 export interface ListDealsOptions {
   pipelineId?: string;
   stageId?: string;

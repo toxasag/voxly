@@ -222,10 +222,13 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   // Остальные маршруты требуют авторизации
   await app.register(authenticatePlugin);
 
+  const canRead = app.requirePermission("deals:read");
+  const canAdmin = app.requirePermission("tenant:admin");
+
   /**
    * Сводные показатели аналитики (KPI, PnL, воронка сделок, загрузка мастеров, топ ремонтов)
    */
-  app.get("/overview", async (request, reply) => {
+  app.get("/overview", { onRequest: canRead }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const data = await service.getOverview(tenantId);
     return reply.send({ data });
@@ -234,7 +237,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Список подключенных систем веб-аналитики и серверных конверсий
    */
-  app.get("/integrations", async (request, reply) => {
+  app.get("/integrations", { onRequest: canRead }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const data = await analyticsIntegrationsService.listIntegrations(tenantId);
     return reply.send({ data });
@@ -243,7 +246,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Создание нового счётчика / сайта
    */
-  app.post("/integrations", async (request, reply) => {
+  app.post("/integrations", { onRequest: canAdmin }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const payload = createIntegrationSchema.parse(request.body);
     const data = await analyticsIntegrationsService.createIntegration(tenantId, payload);
@@ -253,7 +256,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Получение настроек интеграции конкретного провайдера (обратная совместимость)
    */
-  app.get("/integrations/:provider", async (request, reply) => {
+  app.get("/integrations/:provider", { onRequest: canRead }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const { provider } = providerParamSchema.parse(request.params);
     const data = await analyticsIntegrationsService.getIntegration(tenantId, provider);
@@ -286,9 +289,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     throw new ValidationError("Параметр должен быть валидным UUID интеграции или именем провайдера");
   };
 
-  app.patch("/integrations/:id", handleUpdate);
-  app.put("/integrations/:id", handleUpdate);
-  app.put("/integrations/by-id/:id", handleUpdate);
+  app.patch("/integrations/:id", { onRequest: canAdmin }, handleUpdate);
+  app.put("/integrations/:id", { onRequest: canAdmin }, handleUpdate);
+  app.put("/integrations/by-id/:id", { onRequest: canAdmin }, handleUpdate);
 
   /**
    * Удаление интеграции по ID
@@ -303,14 +306,14 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     return reply.status(204).send();
   };
 
-  app.delete("/integrations/:id", handleDelete);
-  app.delete("/integrations/by-id/:id", handleDelete);
+  app.delete("/integrations/:id", { onRequest: canAdmin }, handleDelete);
+  app.delete("/integrations/by-id/:id", { onRequest: canAdmin }, handleDelete);
 
   /**
    * Прямая синхронная тестовая отправка события в систему аналитики
    * Поддерживает :id (UUID конкретного счётчика) или :provider (имя провайдера)
    */
-  app.post("/integrations/:id/test", async (request, reply) => {
+  app.post("/integrations/:id/test", { onRequest: canAdmin }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const { id } = request.params as { id: string };
 
@@ -332,7 +335,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Постановка тестовой задачи в фоновую очередь BullMQ для проверки настроек
    */
-  app.post("/integrations/:provider/test-queue", async (request, reply) => {
+  app.post("/integrations/:provider/test-queue", { onRequest: canAdmin }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const { provider } = providerParamSchema.parse(request.params);
     const result = await analyticsIntegrationsService.testIntegrationInQueue(tenantId, provider);
@@ -342,7 +345,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Получение статуса выполнения тестовой задачи из очереди BullMQ
    */
-  app.get("/integrations/:provider/test-queue/:jobId", async (request, reply) => {
+  app.get("/integrations/:provider/test-queue/:jobId", { onRequest: canRead }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const { jobId } = testQueueParamsSchema.parse(request.params);
     const result = await analyticsIntegrationsService.getTestJobStatus(tenantId, jobId);
@@ -355,7 +358,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Получение настроек двухшагового пре-чат модала для арендатора
    */
-  app.get("/pre-chat-config", async (request, reply) => {
+  app.get("/pre-chat-config", { onRequest: canRead }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const data = await preChatModalService.getConfig(tenantId);
     return reply.send({ data });
@@ -364,7 +367,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Обновление настроек двухшагового пре-чат модала и режима A/B тестирования
    */
-  app.put("/pre-chat-config", async (request, reply) => {
+  app.put("/pre-chat-config", { onRequest: canAdmin }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const payload = updatePreChatConfigSchema.parse(request.body);
     const data = await preChatModalService.updateConfig(tenantId, payload);
@@ -374,7 +377,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Метрики и сводка A/B тестирования (Direct Click vs Pre-Chat Modal)
    */
-  app.get("/pre-chat-stats", async (request, reply) => {
+  app.get("/pre-chat-stats", { onRequest: canRead }, async (request, reply) => {
     const tenantId = request.tenant_id;
     const data = await preChatModalService.getStats(tenantId);
     return reply.send({ data });

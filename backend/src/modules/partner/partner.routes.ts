@@ -244,10 +244,15 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
     const redis = isRedisAvailable() ? getRedisClient() : null;
     if (redis && impersonatorId) {
       try {
-        const keys = await redis.keys(`partner:switch:${impersonatorId}:*`);
-        if (keys.length > 0) {
-          await redis.del(...keys);
-        }
+        const pattern = `partner:switch:${impersonatorId}:*`;
+        let cursor = "0";
+        do {
+          const [nextCursor, batch] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+          cursor = nextCursor;
+          if (batch.length > 0) {
+            await redis.del(...batch);
+          }
+        } while (cursor !== "0");
       } catch {
         // неблокирующий
       }

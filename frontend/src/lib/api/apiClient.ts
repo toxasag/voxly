@@ -578,3 +578,19 @@ export const apiClient = {
     return request<T>("DELETE", path, undefined, options);
   },
 };
+
+/**
+ * Извлекает человекочитаемое сообщение об ошибке из ApiClientError / Error / unknown.
+ */
+export function getApiErrorMessage(err: unknown, fallback = "Произошла ошибка"): string {
+  if (err instanceof ApiClientError && err.message) {
+    return err.message;
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  if (typeof err === "string" && err.trim().length > 0) {
+    return err;
+  }
+  return fallback;
+}

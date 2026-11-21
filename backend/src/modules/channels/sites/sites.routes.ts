@@ -21,16 +21,18 @@ export const siteManagementRoutes: FastifyPluginAsync = async (app: FastifyInsta
   await app.register(authenticatePlugin);
 
   const sitesService = new SitesService();
+  const canRead = app.requirePermission("deals:read");
+  const canManage = app.requirePermission("tenant:admin");
 
   // GET /api/v1/channels/sites — список сайтов арендатора
-  app.get("", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get("", { onRequest: canRead }, async (request: FastifyRequest, reply: FastifyReply) => {
     const apiBase = getApiBase(request);
     const sites = await sitesService.listSites(request.tenant_id, apiBase);
     return reply.send({ data: sites });
   });
 
   // POST /api/v1/channels/sites — подключение нового сайта
-  app.post("", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post("", { onRequest: canManage }, async (request: FastifyRequest, reply: FastifyReply) => {
     const payload = createSiteSchema.parse(request.body);
     const apiBase = getApiBase(request);
     const created = await sitesService.createSite(request.tenant_id, payload, apiBase);
@@ -38,7 +40,7 @@ export const siteManagementRoutes: FastifyPluginAsync = async (app: FastifyInsta
   });
 
   // GET /api/v1/channels/sites/:id — получение данных конкретного сайта
-  app.get("/:id", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get("/:id", { onRequest: canRead }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = siteParamsSchema.parse(request.params);
     const apiBase = getApiBase(request);
     const site = await sitesService.getSite(request.tenant_id, id, apiBase);
@@ -46,7 +48,7 @@ export const siteManagementRoutes: FastifyPluginAsync = async (app: FastifyInsta
   });
 
   // PATCH /api/v1/channels/sites/:id — обновление настроек сайта
-  app.patch("/:id", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.patch("/:id", { onRequest: canManage }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = siteParamsSchema.parse(request.params);
     const payload = updateSiteSchema.parse(request.body);
     const apiBase = getApiBase(request);
@@ -55,14 +57,14 @@ export const siteManagementRoutes: FastifyPluginAsync = async (app: FastifyInsta
   });
 
   // DELETE /api/v1/channels/sites/:id — удаление сайта
-  app.delete("/:id", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.delete("/:id", { onRequest: canManage }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = siteParamsSchema.parse(request.params);
     await sitesService.deleteSite(request.tenant_id, id);
     return reply.status(204).send();
   });
 
   // POST /api/v1/channels/sites/:id/regenerate-token — перегенерация токена вебхука
-  app.post("/:id/regenerate-token", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post("/:id/regenerate-token", { onRequest: canManage }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = siteParamsSchema.parse(request.params);
     const apiBase = getApiBase(request);
     const updated = await sitesService.regenerateToken(request.tenant_id, id, apiBase);

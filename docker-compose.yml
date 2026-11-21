@@ -30,6 +30,18 @@ services:
       dockerfile: docker/postgres-pgvector.Dockerfile
     image: getvoxly-postgres-pgvector:16-0.8.0
     restart: unless-stopped
+    mem_limit: 1536m
+    cpus: "2.0"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "work_mem=4MB"
     environment:
       POSTGRES_USER: getvoxly
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -51,10 +63,13 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    mem_limit: 1024m
+    cpus: "2.0"
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=768"
       HOST: 0.0.0.0
       PORT: 4000
       # Подключение идёт непривилегированной ролью app_user, а не владельцем
@@ -195,10 +210,13 @@ services:
       args:
         NEXT_PUBLIC_API_URL: https://api.getvoxly.ru
     restart: unless-stopped
+    mem_limit: 768m
+    cpus: "1.5"
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=512"
       NEXT_PUBLIC_API_URL: https://api.getvoxly.ru
     depends_on:
       - backend
@@ -215,6 +233,8 @@ services:
   evolution-api:
     image: voxly-evolution-api:v2.3.7-lid
     restart: unless-stopped
+    mem_limit: 1024m
+    cpus: "1.0"
     environment:
       SERVER_URL: ${EVOLUTION_SERVER_URL:-http://evolution-api:8080}
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required}
@@ -234,6 +254,12 @@ services:
       QRCODE_LIMIT: 30
     volumes:
       - evolution-instances:/evolution/instances
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - automation
 
@@ -241,6 +267,8 @@ services:
   max-bridge:
     image: voxly-max-bridge:latest
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: "1.0"
     environment:
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
       SAAS_API_URL: http://backend:4000
@@ -248,6 +276,18 @@ services:
       MAX_SESSION_DIR: /data/max-sessions
     volumes:
       - max-sessions-data:/data/max-sessions
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3010/health', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - automation
 

@@ -1,4 +1,5 @@
 import { getEnv } from "../../config/env.js";
+import { escapeTelegramHtml } from "../../lib/html.utils.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { CODE_PURPOSE_LABEL, codeTtlSentence, type CodePurpose } from "../../services/bot-messages.js";
 
@@ -41,12 +42,8 @@ export class TelegramUnavailableError extends AppError {
 }
 
 /** Экранирование под parse_mode=HTML: код и логин подставляются в сообщение. */
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
+export { escapeTelegramHtml as escapeHtml } from "../../lib/html.utils.js";
+const escapeHtml = escapeTelegramHtml;
 
 export class TelegramService {
   private readonly token: string | undefined;

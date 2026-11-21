@@ -69,3 +69,25 @@ export function parseDateField(raw: unknown): string | null {
 
   return null;
 }
+
+/**
+ * Нормализует Date или ISO-строку из pg в объект Date.
+ */
+export function toDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
+}
+
+/**
+ * Нормализует Date или ISO-строку из pg в ISO-строку.
+ */
+export function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+/**
+ * Нормализует nullable Date/строку из pg в ISO-строку или null.
+ */
+export function toIsoOrNull(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}

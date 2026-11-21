@@ -58,6 +58,7 @@ import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import { getRedisHealth } from "./infrastructure/redis.js";
 import { getBullQueueMetrics } from "./infrastructure/queue-metrics.js";
+import { extensionToMime } from "./lib/mime.utils.js";
 import releaseManifest from "./release-manifest.json" with { type: "json" };
 import fastify from "fastify";
 
@@ -410,33 +411,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.status(404).send({ error: "Avatar not found" });
   });
 
-  const mimeMap: Record<string, string> = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-    ".svg": "image/svg+xml",
-    ".ico": "image/x-icon",
-    ".bmp": "image/bmp",
-    ".heic": "image/heic",
-    ".mp3": "audio/mpeg",
-    ".ogg": "audio/ogg",
-    ".opus": "audio/ogg",
-    ".m4a": "audio/mp4",
-    ".wav": "audio/wav",
-    ".mp4": "video/mp4",
-    ".mov": "video/quicktime",
-    ".webm": "video/webm",
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".doc": "application/msword",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".xls": "application/vnd.ms-excel",
-    ".txt": "text/plain",
-    ".zip": "application/zip",
-  };
-
   function streamFileWithRange(
     filePath: string,
     stat: { size: number },
@@ -544,7 +518,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
     const { safeFilename, filePath } = resolvedUpload;
     const ext = path.extname(safeFilename).toLowerCase();
-    const contentType = mimeMap[ext] ?? "application/octet-stream";
+    const contentType = extensionToMime(ext);
 
     const isPublicAsset =
       safeFilename.includes("_avatar_") ||
@@ -655,7 +629,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           const stat = await fs.stat(filePath);
           if (stat.isFile()) {
             const ext = path.extname(safeFilename).toLowerCase();
-            const contentType = message.attachment_type || mimeMap[ext] || "application/octet-stream";
+            const contentType = message.attachment_type || extensionToMime(ext);
             const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
             const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
             const disposition = isInline
@@ -716,7 +690,7 @@ export async function buildApp(): Promise<FastifyInstance> {
               if (downloaded.ok && downloaded.buffer) {
                 const cleanName = matchingAttach.fileName || expectedFileName || "file.bin";
                 const ext = path.extname(cleanName).toLowerCase();
-                const realMime = downloaded.mimeType || mimeMap[ext] || "application/octet-stream";
+                const realMime = downloaded.mimeType || extensionToMime(ext);
 
                 const mediaService = new ChatMediaService();
                 const stored = await mediaService.storeBuffer({

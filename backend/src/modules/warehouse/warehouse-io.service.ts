@@ -1,19 +1,6 @@
 import JSZip from "jszip";
 import { excelSerialToISO } from "../../lib/date.utils.js";
-
-/**
- * Escapes special XML characters.
- */
-function escapeXml(unsafe: string | number | null | undefined): string {
-  if (unsafe === null || unsafe === undefined) return "";
-  const str = String(unsafe);
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
+import { escapeXml } from "../../lib/html.utils.js";
 
 /**
  * Converts 0-indexed column number to Excel column letters (0 -> A, 25 -> Z, 26 -> AA).

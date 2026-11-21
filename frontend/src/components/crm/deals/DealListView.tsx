@@ -30,13 +30,20 @@ import { useCompanies } from "@/lib/api/use-companies";
 import { contactFullName, useContacts } from "@/lib/api/use-contacts";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
-import { TableEmptyState } from "@/components/crm/shared/CrmTable";
-import { type RecordColumn } from "@/components/crm/shared/RecordTable";
+import { TableEmptyState, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
 import { RecordCellShell, RecordCellEditor, RecordCellSelectEditor } from "@/components/crm/shared/RecordCell";
 import { TagPill } from "@/components/ui/tag";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
-import { CreatorCell, formatDateTwenty } from "@/components/crm/shared/twenty-table-helpers";
+import {
+  CreatorCell,
+  formatBudgetTwenty,
+  formatDateTwenty,
+  getCompanyBadgeStyle,
+  getContactAvatarColor,
+  getDealAvatarColor,
+  getSingleInitial,
+} from "@/components/crm/shared/twenty-table-helpers";
 import { cn, formatDateTime } from "@/lib/utils";
 
 interface DealListViewProps {
@@ -62,84 +69,6 @@ const CALC_OPTIONS: { id: CalcMode; label: string }[] = [
   { id: "count", label: "Количество" },
   { id: "none", label: "Не рассчитывать" },
 ];
-
-// Палитра аватаров сделок: пастельные фоны и контрастный текст (Twenty CRM)
-const DEAL_AVATAR_PALETTES = [
-  "bg-pink-100 text-pink-700 border border-pink-200/60",
-  "bg-amber-100 text-amber-800 border border-amber-200/60",
-  "bg-emerald-100 text-emerald-800 border border-emerald-200/60",
-  "bg-sky-100 text-sky-800 border border-sky-200/60",
-  "bg-lime-100 text-lime-800 border border-lime-200/60",
-  "bg-stone-100 text-stone-700 border border-stone-200/60",
-  "bg-purple-100 text-purple-800 border border-purple-200/60",
-  "bg-indigo-100 text-indigo-800 border border-indigo-200/60",
-];
-
-function getDealAvatarColor(title: string): string {
-  let hash = 0;
-  for (let i = 0; i < title.length; i++) {
-    hash = (hash * 31 + title.charCodeAt(i)) | 0;
-  }
-  return DEAL_AVATAR_PALETTES[Math.abs(hash) % DEAL_AVATAR_PALETTES.length];
-}
-
-function getSingleInitial(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > 0 ? trimmed.charAt(0).toUpperCase() : "?";
-}
-
-// Стилизация плашек компаний под Twenty: узнаваемый акцент бренда или детерминированный цвет
-function getCompanyBadgeStyle(name: string): { bg: string; text: string; initial: string } {
-  const lower = name.toLowerCase().trim();
-  if (lower.includes("stripe")) return { bg: "bg-[#635bff]", text: "text-white", initial: "S" };
-  if (lower.includes("anthropic")) return { bg: "bg-[#191919]", text: "text-white", initial: "A" };
-  if (lower.includes("notion")) return { bg: "bg-[#000000]", text: "text-white", initial: "N" };
-  if (lower.includes("airbnb")) return { bg: "bg-[#ff385c]", text: "text-white", initial: "A" };
-  if (lower.includes("figma")) return { bg: "bg-[#1e1e1e]", text: "text-white", initial: "F" };
-
-  const colors = [
-    { bg: "bg-blue-600", text: "text-white" },
-    { bg: "bg-violet-600", text: "text-white" },
-    { bg: "bg-emerald-600", text: "text-white" },
-    { bg: "bg-amber-600", text: "text-white" },
-    { bg: "bg-rose-600", text: "text-white" },
-    { bg: "bg-[#4a38f5]", text: "text-white" },
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  const picked = colors[Math.abs(hash) % colors.length];
-  return {
-    bg: picked.bg,
-    text: picked.text,
-    initial: name.trim().charAt(0).toUpperCase() || "C",
-  };
-}
-
-// Цвета аватаров контактов (Twenty CRM: круглые цветные аватары в нейтральной пилюле)
-const CONTACT_AVATAR_COLORS = [
-  "bg-emerald-100 text-emerald-800",
-  "bg-sky-100 text-sky-800",
-  "bg-lime-100 text-lime-800",
-  "bg-purple-100 text-purple-800",
-  "bg-amber-100 text-amber-800",
-  "bg-rose-100 text-rose-800",
-  "bg-indigo-100 text-indigo-800",
-];
-
-function getContactAvatarColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return CONTACT_AVATAR_COLORS[Math.abs(hash) % CONTACT_AVATAR_COLORS.length];
-}
-
-// Форматирование сумм под Twenty: $ 60k, ₽ 100k, $ 45k
-function formatBudgetTwenty(budget: number, currency: string = "RUB"): string {
-  const symbol = currency === "USD" ? "$" : currency === "EUR" ? "€" : "₽";
-  if (budget >= 1000 && budget % 1000 === 0) {
-    return `${symbol} ${Math.round(budget / 1000)}k`;
-  }
-  return `${symbol} ${budget.toLocaleString("ru-RU")}`;
-}
 
 /**
  * Таблица сделок по образцу Opportunities в Twenty CRM.

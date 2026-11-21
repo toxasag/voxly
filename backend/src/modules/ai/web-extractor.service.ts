@@ -2,6 +2,7 @@ import {
   GatewayChatProvider,
   type ChatProvider,
 } from "../../services/chat.service.js";
+import { cleanHtmlToMarkdown } from "./html-cleaner.js";
 
 export interface StructuredSection {
   title: string;
@@ -20,103 +21,14 @@ export interface WebExtractionResult {
  * Сохраняет каталог оборудования, карточки товаров, таблицы характеристик и списки параметров.
  */
 export function cleanHtmlForKnowledge(html: string): { title: string; cleanText: string } {
-  // 1. Извлекаем заголовок страницы
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  let title = titleMatch && titleMatch[1] ? titleMatch[1].replace(/\s+/g, " ").trim() : "";
-
-  if (!title) {
-    const h1Match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-    title = h1Match && h1Match[1] ? h1Match[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "Материалы сайта";
-  }
-
-  // 2. Удаляем адаптивные дубликаты мобильных блоков (Tilda и др.), сохраняя основной контент
-  let cleaned = html
-    .replace(/<div\b[^>]*class="[^"]*t-screenmax-(?:480|640)px[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi, " ");
-
-  // 3. Вычищаем служебные и нерелевантные теги целиком
-  cleaned = cleaned
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
-    .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ")
-    .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, " ")
-    .replace(/<canvas\b[^<]*(?:(?!<\/canvas>)<[^<]*)*<\/canvas>/gi, " ")
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, " ")
-    // Удаляем навигацию, футеры и служебные обвязки
-    .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, " ")
-    .replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, " ")
-    .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, " ")
-    .replace(/<aside\b[^<]*(?:(?!<\/aside>)<[^<]*)*<\/aside>/gi, " ")
-    // Удаляем элементы управления слайдерами и крестики закрытия попапов
-    .replace(/<button\b[^>]*class="[^"]*t-popup__close-wrapper[^"]*"[\s\S]*?<\/button>/gi, " ")
-    .replace(/<ul\b[^>]*class="[^"]*t-slds__arrow_container[^"]*"[\s\S]*?<\/ul>/gi, " ")
-    .replace(/<div\b[^>]*class="[^"]*t-slds__arrow_container[^"]*"[\s\S]*?<\/div>/gi, " ");
-
-  // 4. Форматируем таблицы в Markdown
-  cleaned = cleaned.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi, (_match, row) => {
-    const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) =>
-      c[1].replace(/<[^>]+>/g, " ").trim(),
-    );
-    if (cells.length === 0) return "\n";
-    return `\n| ${cells.join(" | ")} |\n`;
+  const { title, text } = cleanHtmlToMarkdown(html, {
+    stripLayoutChrome: true,
+    stripCookieBanners: true,
   });
 
-  // 5. Форматируем списки определений (<dl>, <dt>, <dd>)
-  cleaned = cleaned
-    .replace(/<dt\b[^>]*>([\s\S]*?)<\/dt>/gi, "\n**$1:** ")
-    .replace(/<dd\b[^>]*>([\s\S]*?)<\/dd>/gi, " $1\n");
-
-  // 6. Структурные теги заменяем на переносы строк и маркеры Markdown
-  cleaned = cleaned
-    .replace(/<\/(div|p|section|article|table)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<h1[^>]*>/gi, "\n\n# ")
-    .replace(/<h2[^>]*>/gi, "\n\n## ")
-    .replace(/<h3[^>]*>/gi, "\n\n### ")
-    .replace(/<h4[^>]*>/gi, "\n\n#### ")
-    .replace(/<li[^>]*>/gi, "\n- ");
-
-  // 7. Удаляем оставшиеся HTML-теги
-  cleaned = cleaned.replace(/<[^>]+>/g, " ");
-
-  // 8. Декодируем HTML-сущности
-  cleaned = cleaned
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&quot;/gi, '"')
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#39;/gi, "'")
-    .replace(/&laquo;/gi, "«")
-    .replace(/&raquo;/gi, "»")
-    .replace(/&#([0-9]+);/g, (_, code) => String.fromCharCode(Number(code)));
-
-  // 9. Убираем типовой мусор cookie-согласий и плашек персональных данных
-  cleaned = cleaned
-    .replace(/мы используем файлы cookie[^\n.]*[.\n]?/gi, "")
-    .replace(/соглашаюсь с политикой конфиденциальности[^\n.]*[.\n]?/gi, "")
-    .replace(/даю согласие на обработку персональных данных[^\n.]*[.\n]?/gi, "")
-    .replace(/нажимая кнопку,? вы соглашаетесь[^\n.]*[.\n]?/gi, "");
-
-  // 10. Фильтрация пустых служебных строк, кнопок и дублей
-  const NOISE_LINE_REGEX =
-    /^(р\.|руб\.|рублей|от|до|подробнее|получить прайс|оставить заявку|заказать звонок|заявка|отправить|купить|\d+\s*из\s*\d+|предыдущий слайд|следующий слайд|закрыть диалоговое окно|[-–—•*])$/i;
-
-  const rawLines = cleaned.split("\n");
-  const filteredLines: string[] = [];
-  let lastLine = "";
-
-  for (const rawLine of rawLines) {
-    const line = rawLine.replace(/[ \t]+/g, " ").trim();
-    if (!line) continue;
-    if (NOISE_LINE_REGEX.test(line)) continue;
-    if (line === lastLine) continue;
-    filteredLines.push(line);
-    lastLine = line;
-  }
-
   return {
-    title,
-    cleanText: filteredLines.join("\n"),
+    title: title || "Материалы сайта",
+    cleanText: text,
   };
 }
 

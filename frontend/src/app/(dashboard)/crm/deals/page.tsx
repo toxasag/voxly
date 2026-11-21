@@ -15,7 +15,7 @@ import {
 import { DealListView } from "@/components/crm/deals/DealListView";
 import { DealsCalendarView } from "@/components/crm/deals/DealsCalendarView";
 import { useDealsViewMode } from "@/components/crm/deals/use-deals-view-mode";
-import { CreateDealModal } from "@/components/crm/deals/CreateDealModal";
+import { DrawerCreateDeal } from "@/components/crm/deals/DrawerCreateDeal";
 import { ContactImportDialog } from "@/components/crm/contacts/ContactImportDialog";
 import { DealDrawer } from "@/components/crm/deals/DealDrawer";
 import {
@@ -530,7 +530,7 @@ function DealsContent() {
           />
         )}
 
-      <CreateDealModal open={createOpen} onClose={() => setCreateOpen(false)} onSubmit={handleCreate} defaultPipelineId={pipelineId ?? undefined} />
+      <DrawerCreateDeal open={createOpen} onClose={() => setCreateOpen(false)} onSubmit={handleCreate} defaultPipelineId={pipelineId ?? undefined} />
 
       <ContactImportDialog
         open={importOpen}

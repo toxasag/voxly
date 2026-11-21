@@ -1,19 +1,11 @@
 import * as QRCode from "qrcode";
+import { escapeHtml } from "../../lib/html.utils.js";
 import type { InvoiceDTO } from "./finance.types.js";
 import { amountToWords } from "./amount-to-words.js";
 import {
   normalizeInvoiceFormConfig,
   type InvoiceIssuerSnapshot,
 } from "./finance-organizations.types.js";
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function formatMoneyRu(amount: number): string {
   return new Intl.NumberFormat("ru-RU", {

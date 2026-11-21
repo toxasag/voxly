@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../lib/string.utils.js";
 import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
 import { DealsService, notifyDealStageChanged } from "./deals/deals.service.js";
 import { ContactsService } from "./contacts/contacts.service.js";
@@ -129,11 +130,6 @@ const DEFAULT_STAGES: ReadonlyArray<{
   { name: "Успешно реализовано", isWon: true, isLost: false, isSystem: true, color: "emerald" },
   { name: "Закрыто и не реализовано", isWon: false, isLost: true, isSystem: true, color: "rose" },
 ];
-
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
-  return value;
-}
 
 interface PipelineLogger {
   info: (obj: object, message: string) => void;

@@ -1,5 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { extensionToMime } from "../../lib/mime.utils.js";
+
+export { extensionToMime };
 
 /** Верхняя граница вложения, скачиваемого по внешнему URL: защита от исчерпания памяти. */
 const MAX_REMOTE_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -52,49 +55,6 @@ export function classifyMediaType(
   }
 
   return "document";
-}
-
-/**
- * Сопоставляет расширение файла со стандартным MIME-типом.
- */
-export function extensionToMime(ext: string): string {
-  const cleanExt = ext.toLowerCase().replace(/^\./, "");
-  switch (cleanExt) {
-    case "pdf":
-      return "application/pdf";
-    case "docx":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case "doc":
-      return "application/msword";
-    case "xlsx":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    case "xls":
-      return "application/vnd.ms-excel";
-    case "txt":
-      return "text/plain";
-    case "png":
-      return "image/png";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "webp":
-      return "image/webp";
-    case "gif":
-      return "image/gif";
-    case "mp4":
-      return "video/mp4";
-    case "mov":
-      return "video/quicktime";
-    case "mp3":
-      return "audio/mpeg";
-    case "ogg":
-    case "opus":
-      return "audio/ogg";
-    case "m4a":
-      return "audio/mp4";
-    default:
-      return "application/octet-stream";
-  }
 }
 
 /**

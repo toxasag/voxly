@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { createHash, randomInt, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomInt, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
+import { hashToken } from "../../lib/crypto.utils.js";
+import { toDate } from "../../lib/date.utils.js";
 import { query, queryOne, transaction, setRequestTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
@@ -203,14 +205,6 @@ const SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
  * пробный период аккаунта.
  */
 const TRIAL_DAYS = 14;
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
-}
 
 /** Tenants that are suspended or past due must not receive fresh tokens. */
 function assertTenantActive(status: string): void {
