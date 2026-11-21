@@ -1569,24 +1569,56 @@ export class RepairsService {
     const unitPrice =
       payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
     const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
+    const normalizedDescription = payload.description.trim();
 
     return withTenant(tenantId, async (tx) => {
-      const row = await tx.queryOneOrThrow<RepairWorkRow>(
-        `INSERT INTO repair_works
-           (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING ${WORK_COLUMNS}`,
-        [
-          tenantId,
-          orderId,
-          payload.description,
-          payload.master_id,
-          payload.master_name,
-          quantity,
-          unitPrice,
-          cost,
-        ],
+      // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
+      // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
+      const existing = await tx.queryOne<RepairWorkRow>(
+        `SELECT ${WORK_COLUMNS}
+         FROM repair_works
+         WHERE tenant_id = $1
+           AND repair_order_id = $2
+           AND lower(btrim(description)) = lower(btrim($3))
+           AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
+         ORDER BY created_at ASC
+         LIMIT 1
+         FOR UPDATE`,
+        [tenantId, orderId, normalizedDescription, unitPrice],
       );
+
+      let row: RepairWorkRow;
+      if (existing) {
+        const prevQty = Number(existing.quantity ?? 1);
+        const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
+        const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
+        const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+
+        row = await tx.queryOneOrThrow<RepairWorkRow>(
+          `UPDATE repair_works
+           SET quantity = $3, unit_price = $4, cost = $5
+           WHERE tenant_id = $1 AND id = $2
+           RETURNING ${WORK_COLUMNS}`,
+          [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
+        );
+      } else {
+        row = await tx.queryOneOrThrow<RepairWorkRow>(
+          `INSERT INTO repair_works
+             (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING ${WORK_COLUMNS}`,
+          [
+            tenantId,
+            orderId,
+            normalizedDescription,
+            payload.master_id,
+            payload.master_name,
+            quantity,
+            unitPrice,
+            cost,
+          ],
+        );
+      }
 
       const result = toRepairWorkDTO(row);
       void this.recalculateOrderCost(tenantId, orderId).then(() => {

@@ -385,6 +385,8 @@ export default function RepairDetailPage() {
           description: w.description,
           master_name: w.masterName,
           master_id: w.masterId,
+          quantity: w.quantity ?? 1,
+          unit_price: w.unitPrice ?? (w.quantity && w.quantity > 0 ? w.cost / w.quantity : w.cost),
           cost: w.cost,
         })),
         parts_used: parts.map((p) => ({
@@ -1449,6 +1451,9 @@ export default function RepairDetailPage() {
                     workItems={ticket.work_items}
                     parts={ticket.parts_used}
                     hasFinanceModule={hasFinance}
+                    companyId={ticket.company_id}
+                    companyName={ticket.company_name}
+                    companyInn={ticket.company_inn}
                     customerName={ticket.customer_name}
                     customerPhone={ticket.customer_phone}
                     dealId={ticket.deal_id}
