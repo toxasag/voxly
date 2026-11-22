@@ -115,6 +115,31 @@ export interface TestQueueStatus {
   deliveredAt: string | null;
 }
 
+export interface ConversionDeliveryAttemptDTO {
+  id: string;
+  tenantId: string;
+  dealId: string | null;
+  dealTitle: string | null;
+  provider: string;
+  eventKey: string;
+  eventName: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  lastStatus: number | null;
+  lastError: string | null;
+  responseSnippet: string | null;
+  isTest: boolean;
+  jobId: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReplayConversionsResult {
+  queuedCount: number;
+  results: TestIntegrationResult[];
+}
+
 export const analyticsIntegrationsKeys = {
   all: ["analytics", "integrations"] as const,
   detail: (provider: string) => ["analytics", "integrations", provider] as const,
@@ -243,5 +268,34 @@ export function useTestQueueStatus(provider: AnalyticsProvider, jobId: string | 
       }
       return 1500;
     },
+  });
+}
+
+export function useReplayAnalyticsConversions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<ReplayConversionsResult> => {
+      const res = await apiClient.post<ReplayConversionsResult>(
+        "/api/v1/analytics/integrations/replay",
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["analytics", "attempts"] });
+    },
+  });
+}
+
+export function useAnalyticsConversionAttempts() {
+  return useQuery({
+    queryKey: ["analytics", "attempts"],
+    queryFn: async (): Promise<ConversionDeliveryAttemptDTO[]> => {
+      const res = await apiClient.get<ConversionDeliveryAttemptDTO[]>(
+        "/api/v1/analytics/integrations/attempts",
+      );
+      return res.data ?? [];
+    },
+    refetchInterval: 5000,
   });
 }

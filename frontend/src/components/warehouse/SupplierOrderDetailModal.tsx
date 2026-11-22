@@ -225,30 +225,30 @@ export function SupplierOrderDetailModal({
         {/* Footer с кнопками действий */}
         <div className="flex items-center justify-between border-t border-[#e5e5e5] px-6 py-3.5 bg-white shrink-0">
           <div>
-            {!isReceived && order.status !== "cancelled" && (
-              <button
-                type="button"
-                onClick={() => onDelete(order)}
-                className="inline-flex items-center gap-1.5 rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer"
-                title="Удалить заказ и вернуть заявки на закупку в статус «В ожидании»"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Удалить заказ
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => onDelete(order)}
+              className="inline-flex items-center gap-1.5 rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer"
+              title={
+                isReceived
+                  ? "Удалить заказ, откатить оприходованные партии, движения и кассовую проводку"
+                  : "Удалить заказ и вернуть заявки на закупку в статус «В ожидании»"
+              }
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Удалить заказ
+            </button>
           </div>
 
           <div className="flex items-center gap-2">
-            {!isReceived && order.status !== "cancelled" && (
-              <button
-                type="button"
-                onClick={() => onEdit(order)}
-                className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
-              >
-                <Edit2 className="h-3.5 w-3.5 text-[#666666]" />
-                Редактировать
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => onEdit(order)}
+              className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+            >
+              <Edit2 className="h-3.5 w-3.5 text-[#666666]" />
+              Редактировать
+            </button>
 
             {!isPaid && order.status !== "cancelled" && (
               <button

@@ -33,6 +33,8 @@ import {
   Edit2,
   SquarePen,
   Filter,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -51,6 +53,12 @@ import {
   usePaySupplierOrder,
   useCreateReceiptFromSupplierOrder,
   useDeleteSupplierOrder,
+  useBulkDeleteSupplierOrders,
+  useDeleteWarehouseBatch,
+  useBulkDeleteWarehouseBatches,
+  useDeleteWarehouseMovement,
+  useBulkDeleteWarehouseMovements,
+  useBulkDeletePurchaseRequests,
   useWarehouseSettings,
   useUpdateWarehouseSettings,
   useDeleteWarehouseItem,
@@ -61,6 +69,8 @@ import {
   useWarehouseCategories,
   useWarehouseBrands,
   type WarehouseItemDTO,
+  type WarehouseBatchDTO,
+  type WarehouseMovementDTO,
   type PurchaseRequestDTO,
   type AggregatedPurchaseRequestDTO,
   type SupplierOrderDTO,
@@ -76,6 +86,8 @@ import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierO
 import { EditSupplierOrderModal } from "@/components/warehouse/EditSupplierOrderModal";
 import { SupplierOrderDetailModal } from "@/components/warehouse/SupplierOrderDetailModal";
 import { ReceiptSupplierOrderModal } from "@/components/warehouse/ReceiptSupplierOrderModal";
+import { EditBatchModal } from "@/components/warehouse/EditBatchModal";
+import { EditMovementModal } from "@/components/warehouse/EditMovementModal";
 import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
 import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
 import { EditItemModal } from "@/components/warehouse/EditItemModal";
@@ -215,13 +227,18 @@ function WarehouseContent() {
   const [selectedAggregatedIds, setSelectedAggregatedIds] = useState<Set<string>>(new Set());
   const [selectedPurchaseForEdit, setSelectedPurchaseForEdit] = useState<AggregatedPurchaseRequestDTO | null>(null);
 
-  // Модальные окна заказов поставщикам
+  // Модальные окна заказов поставщикам, партий и движений
   const [selectedOrderForEdit, setSelectedOrderForEdit] = useState<SupplierOrderDTO | null>(null);
   const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<SupplierOrderDTO | null>(null);
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<SupplierOrderDTO | null>(null);
+  const [selectedBatchForEdit, setSelectedBatchForEdit] = useState<WarehouseBatchDTO | null>(null);
+  const [selectedMovementForEdit, setSelectedMovementForEdit] = useState<WarehouseMovementDTO | null>(null);
 
-  // Выбор позиций для массовых действий и модалки
+  // Выбор записей для массовых действий на всех вкладках
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
+  const [selectedSupplierOrderIds, setSelectedSupplierOrderIds] = useState<Set<string>>(new Set());
+  const [selectedMovementIds, setSelectedMovementIds] = useState<Set<string>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
   const [editItemModalOpen, setEditItemModalOpen] = useState(false);
@@ -261,9 +278,15 @@ function WarehouseContent() {
   const deleteItemMutation = useDeleteWarehouseItem();
   const updatePurchaseMutation = useUpdatePurchaseRequest();
   const deletePurchaseMutation = useDeletePurchaseRequest();
+  const bulkDeletePurchasesMutation = useBulkDeletePurchaseRequests();
   const paySupplierOrderMutation = usePaySupplierOrder();
   const createReceiptMutation = useCreateReceiptFromSupplierOrder();
   const deleteSupplierOrderMutation = useDeleteSupplierOrder();
+  const bulkDeleteSupplierOrdersMutation = useBulkDeleteSupplierOrders();
+  const deleteBatchMutation = useDeleteWarehouseBatch();
+  const bulkDeleteBatchesMutation = useBulkDeleteWarehouseBatches();
+  const deleteMovementMutation = useDeleteWarehouseMovement();
+  const bulkDeleteMovementsMutation = useBulkDeleteWarehouseMovements();
   const exportMutation = useExportWarehouseItems();
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
 
@@ -343,6 +366,32 @@ function WarehouseContent() {
       );
     });
   }, [supplierOrders, supplierOrderStatusFilter, searchQuery]);
+
+  // Фильтрация партий
+  const filteredBatches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return batches;
+    return batches.filter(
+      (b) =>
+        (b.itemName || "").toLowerCase().includes(q) ||
+        (b.batchNumber || "").toLowerCase().includes(q) ||
+        (b.supplierName || "").toLowerCase().includes(q),
+    );
+  }, [batches, searchQuery]);
+
+  // Фильтрация движений
+  const filteredMovements = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return movements;
+    return movements.filter(
+      (m) =>
+        (m.itemName || "").toLowerCase().includes(q) ||
+        (m.description || "").toLowerCase().includes(q) ||
+        (m.repairTicketNumber || "").toLowerCase().includes(q) ||
+        (m.dealTitle || "").toLowerCase().includes(q) ||
+        (m.createdByName || "").toLowerCase().includes(q),
+    );
+  }, [movements, searchQuery]);
 
   // Статистика склада (приоритетно из серверного партионного агрегата по всему складу)
   const stats = useMemo(() => {
@@ -430,25 +479,144 @@ function WarehouseContent() {
   };
 
   const handleDeleteSupplierOrder = async (order: SupplierOrderDTO) => {
-    if (order.status === "received") {
-      toast.error("Нельзя удалить заказ, по которому уже оприходован товар на склад");
-      return;
-    }
-    if (
-      !confirm(
-        `Удалить заказ поставщику №${order.orderNumber}? Все заявки на закупку вернутся в статус «В ожидании», а оплата (если была) будет отменена.`,
-      )
-    ) {
+    const isReceived = order.status === "received";
+    const confirmMsg = isReceived
+      ? `Удалить оприходованный заказ №${order.orderNumber}? Все созданные им партии, движения прихода/резерва и кассовая оплата будут откачены, а заявки вернутся в «В ожидании».`
+      : `Удалить заказ поставщику №${order.orderNumber}? Все заявки на закупку вернутся в статус «В ожидании», а оплата (если была) будет отменена.`;
+    if (!confirm(confirmMsg)) {
       return;
     }
     try {
       await deleteSupplierOrderMutation.mutateAsync(order.id);
-      toast.success(`Заказ №${order.orderNumber} удален, заявки возвращены в очередь`);
+      toast.success(
+        isReceived
+          ? `Заказ №${order.orderNumber} и связанные партии удалены, остатки и касса пересчитаны`
+          : `Заказ №${order.orderNumber} удален, заявки возвращены в очередь`,
+      );
+      setSelectedSupplierOrderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(order.id);
+        return next;
+      });
       if (selectedOrderForDetail?.id === order.id) {
         setSelectedOrderForDetail(null);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить заказ поставщику");
+    }
+  };
+
+  const handleBulkDeleteSupplierOrders = async () => {
+    if (selectedSupplierOrderIds.size === 0) return;
+    if (
+      !confirm(
+        `Удалить выбранные заказы поставщикам (${selectedSupplierOrderIds.size} шт.)? Связанные партии, движения и кассовые проводки будут откачены, а заявки вернутся в «В ожидании».`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await bulkDeleteSupplierOrdersMutation.mutateAsync(Array.from(selectedSupplierOrderIds));
+      toast.success(
+        `Удалено заказов: ${res.deletedCount}${res.rolledBackBatchesCount > 0 ? ` (откачено партий: ${res.rolledBackBatchesCount})` : ""}`,
+      );
+      setSelectedSupplierOrderIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные заказы");
+    }
+  };
+
+  const handleDeleteBatch = async (batch: WarehouseBatchDTO) => {
+    if (
+      !confirm(
+        `Удалить партию ${batch.batchNumber || batch.id.slice(0, 8)} («${batch.itemName ?? "Товар"}»)? Связанные движения, резервы и FIFO-аллокации этой партии будут удалены, а остатки пересчитаны.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteBatchMutation.mutateAsync(batch.id);
+      toast.success("Партия и связанные движения удалены, остатки пересчитаны");
+      setSelectedBatchIds((prev) => {
+        const next = new Set(prev);
+        next.delete(batch.id);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить партию");
+    }
+  };
+
+  const handleBulkDeleteBatches = async () => {
+    if (selectedBatchIds.size === 0) return;
+    if (
+      !confirm(
+        `Удалить выбранные партии (${selectedBatchIds.size} шт.)? Все связанные движения, резервы и аллокации этих партий будут очищены.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await bulkDeleteBatchesMutation.mutateAsync(Array.from(selectedBatchIds));
+      toast.success(`Удалено партий: ${res.deletedCount}`);
+      setSelectedBatchIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные партии");
+    }
+  };
+
+  const handleDeleteMovement = async (movement: WarehouseMovementDTO) => {
+    if (
+      !confirm(
+        `Удалить запись движения по «${movement.itemName ?? "Товар"}» (${movement.quantity} шт.)? Влияние операции на остатки партии / резервы / списания будет откачено.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteMovementMutation.mutateAsync(movement.id);
+      toast.success("Запись движения удалена, остатки пересчитаны");
+      setSelectedMovementIds((prev) => {
+        const next = new Set(prev);
+        next.delete(movement.id);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить движение");
+    }
+  };
+
+  const handleBulkDeleteMovements = async () => {
+    if (selectedMovementIds.size === 0) return;
+    if (
+      !confirm(
+        `Удалить выбранные записи движений (${selectedMovementIds.size} шт.)? Влияние операций на остатки и резервы будет откачено.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await bulkDeleteMovementsMutation.mutateAsync(Array.from(selectedMovementIds));
+      toast.success(`Удалено записей движений: ${res.deletedCount}`);
+      setSelectedMovementIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные движения");
+    }
+  };
+
+  const handleBulkDeletePurchases = async () => {
+    if (selectedAggregatedIds.size === 0) return;
+    const allIds = filteredAggregatedPurchases
+      .filter((pr) => selectedAggregatedIds.has(pr.id))
+      .flatMap((pr) => (pr.requestIds && pr.requestIds.length > 0 ? pr.requestIds : [pr.id]));
+    if (allIds.length === 0) return;
+    if (!confirm(`Удалить выбранные заявки на закупку (${allIds.length} шт.)?`)) return;
+    try {
+      const res = await bulkDeletePurchasesMutation.mutateAsync(allIds);
+      toast.success(`Удалено заявок на закупку: ${res.deletedCount}`);
+      setSelectedAggregatedIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить заявки на закупку");
     }
   };
 
@@ -1205,10 +1373,61 @@ function WarehouseContent() {
       {/* Вкладка 2: Партии и приходные накладные */}
       {activeTab === "batches" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+          {selectedBatchIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
+              <div className="flex items-center gap-2 text-[#111111] font-medium">
+                <Check className="h-4 w-4 text-[#4a38f5]" />
+                <span>
+                  Выбрано партий: <b className="font-mono">{selectedBatchIds.size}</b>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedBatchIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteBatches}
+                  disabled={bulkDeleteBatchesMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeleteBatchesMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedBatchIds.size})
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-3 py-2.5 text-center w-[40px]">
+                    <input
+                      type="checkbox"
+                      aria-label="Выбрать все партии"
+                      checked={
+                        filteredBatches.length > 0 &&
+                        selectedBatchIds.size === filteredBatches.length
+                      }
+                      onChange={() => {
+                        if (selectedBatchIds.size === filteredBatches.length && filteredBatches.length > 0) {
+                          setSelectedBatchIds(new Set());
+                        } else {
+                          setSelectedBatchIds(new Set(filteredBatches.map((b) => b.id)));
+                        }
+                      }}
+                      className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Дата прихода
                   </th>
@@ -1227,53 +1446,100 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
                     Принято
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
+                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[95px]">
                     Остаток FIFO
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
+                    Действия
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
-                {batches.map((b) => (
-                  <tr key={b.id} className="transition-colors hover:bg-[#fafafa]">
-                    <td className="px-4 py-3">
-                      <span className="text-xs text-[#666666]">{formatDate(b.receivedAt)}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-xs font-semibold text-[#111111]">
-                        {b.batchNumber}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-[13px] font-medium text-[#111111]">
-                        {b.itemName ?? "Товар"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs text-[#666666]">{b.supplierName || "—"}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-[13px] text-[#111111]">
-                        {formatRub(b.purchasePrice)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className="font-mono text-xs text-[#666666]">{b.initialQuantity}</span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span
-                        className={cn(
-                          "font-mono text-xs font-semibold",
-                          b.remainingQuantity > 0 ? "text-emerald-700" : "text-[#888888]",
-                        )}
-                      >
-                        {b.remainingQuantity}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-                {batches.length === 0 && (
+                {filteredBatches.map((b) => {
+                  const isSelected = selectedBatchIds.has(b.id);
+                  return (
+                    <tr
+                      key={b.id}
+                      className={cn(
+                        "transition-colors hover:bg-[#fafafa]",
+                        isSelected && "bg-indigo-50/40",
+                      )}
+                    >
+                      <td className="px-3 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать партию ${b.batchNumber || b.id}`}
+                          checked={isSelected}
+                          onChange={() => {
+                            const next = new Set(selectedBatchIds);
+                            if (next.has(b.id)) next.delete(b.id);
+                            else next.add(b.id);
+                            setSelectedBatchIds(next);
+                          }}
+                          className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-[#666666]">{formatDate(b.receivedAt)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-xs font-semibold text-[#111111]">
+                          {b.batchNumber || "—"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-[13px] font-medium text-[#111111]">
+                          {b.itemName ?? "Товар"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-[#666666]">{b.supplierName || "—"}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="font-mono text-[13px] text-[#111111]">
+                          {formatRub(b.purchasePrice)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="font-mono text-xs text-[#666666]">{b.initialQuantity}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span
+                          className={cn(
+                            "font-mono text-xs font-semibold",
+                            b.remainingQuantity > 0 ? "text-emerald-700" : "text-[#888888]",
+                          )}
+                        >
+                          {b.remainingQuantity}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBatchForEdit(b)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                            title="Редактировать партию"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteBatch(b)}
+                            disabled={deleteBatchMutation.isPending}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
+                            title="Удалить партию и откатить связанные движения"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredBatches.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={9} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isBatchesLoading ? "Загрузка партий..." : "Партий пока не оприходовано."}
                     </td>
                   </tr>
@@ -1289,21 +1555,43 @@ function WarehouseContent() {
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
           {/* Тулбар мультиселекта */}
           {selectedAggregatedIds.size > 0 && (
-            <div className="flex items-center justify-between bg-sky-50 border-b border-sky-200 px-4 py-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-sky-50 border-b border-sky-200 px-4 py-2 text-xs">
               <div className="flex items-center gap-2 text-sky-900 font-medium">
                 <Check className="h-4 w-4 text-sky-700" />
                 <span>
-                  Выбрано позиций для заказа поставщику: <b>{selectedAggregatedIds.size}</b>
+                  Выбрано позиций: <b className="font-mono">{selectedAggregatedIds.size}</b>
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setCreateSupplierOrderModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
-              >
-                <Truck className="h-3.5 w-3.5" />
-                Сформировать заказ поставщику ({selectedAggregatedIds.size})
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedAggregatedIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeletePurchases}
+                  disabled={bulkDeletePurchasesMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeletePurchasesMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedAggregatedIds.size})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateSupplierOrderModalOpen(true)}
+                  className="flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#3d2ee0] shadow-xs transition-colors cursor-pointer"
+                >
+                  <Truck className="h-3.5 w-3.5" />
+                  Сформировать заказ поставщику ({selectedAggregatedIds.size})
+                </button>
+              </div>
             </div>
           )}
 
@@ -1500,10 +1788,64 @@ function WarehouseContent() {
       {/* Вкладка 4: Заказы поставщикам */}
       {activeTab === "supplier_orders" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+          {selectedSupplierOrderIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
+              <div className="flex items-center gap-2 text-[#111111] font-medium">
+                <Check className="h-4 w-4 text-[#4a38f5]" />
+                <span>
+                  Выбрано заказов: <b className="font-mono">{selectedSupplierOrderIds.size}</b>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSupplierOrderIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteSupplierOrders}
+                  disabled={bulkDeleteSupplierOrdersMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeleteSupplierOrdersMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedSupplierOrderIds.size})
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-3 py-2.5 text-center w-[40px]">
+                    <input
+                      type="checkbox"
+                      aria-label="Выбрать все заказы поставщикам"
+                      checked={
+                        filteredSupplierOrders.length > 0 &&
+                        selectedSupplierOrderIds.size === filteredSupplierOrders.length
+                      }
+                      onChange={() => {
+                        if (
+                          selectedSupplierOrderIds.size === filteredSupplierOrders.length &&
+                          filteredSupplierOrders.length > 0
+                        ) {
+                          setSelectedSupplierOrderIds(new Set());
+                        } else {
+                          setSelectedSupplierOrderIds(new Set(filteredSupplierOrders.map((o) => o.id)));
+                        }
+                      }}
+                      className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
                     Номер
                   </th>
@@ -1522,7 +1864,7 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Оплата / Приход
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[260px]">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[280px]">
                     Действия
                   </th>
                 </tr>
@@ -1540,13 +1882,34 @@ function WarehouseContent() {
 
                   const isPaid = order.status === "paid" || order.status === "received";
                   const isReceived = order.status === "received";
+                  const isSelected = selectedSupplierOrderIds.has(order.id);
 
                   return (
                     <tr
                       key={order.id}
                       onClick={() => setSelectedOrderForDetail(order)}
-                      className="transition-colors hover:bg-[#fafafa] cursor-pointer"
+                      className={cn(
+                        "transition-colors hover:bg-[#fafafa] cursor-pointer",
+                        isSelected && "bg-indigo-50/40",
+                      )}
                     >
+                      <td
+                        className="px-3 py-3 text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать заказ ${order.orderNumber}`}
+                          checked={isSelected}
+                          onChange={() => {
+                            const next = new Set(selectedSupplierOrderIds);
+                            if (next.has(order.id)) next.delete(order.id);
+                            else next.add(order.id);
+                            setSelectedSupplierOrderIds(next);
+                          }}
+                          className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs font-bold text-[#111111]">
                           {order.orderNumber}
@@ -1615,17 +1978,15 @@ function WarehouseContent() {
                             <Eye className="h-3.5 w-3.5" />
                           </button>
 
-                          {/* Кнопка Редактировать */}
-                          {!isReceived && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditModal(order)}
-                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors"
-                              title="Редактировать заказ"
-                            >
-                              <Edit2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          {/* Кнопка Редактировать — доступна для всех заказов */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditModal(order)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors cursor-pointer"
+                            title="Редактировать заказ"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
 
                           {/* Кнопка Оплачено */}
                           {!isPaid && order.status !== "cancelled" && (
@@ -1633,7 +1994,7 @@ function WarehouseContent() {
                               type="button"
                               onClick={() => handlePayOrder(order)}
                               disabled={paySupplierOrderMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 h-7 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 h-7 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors cursor-pointer"
                               title="Оплатить заказ поставщику (создать расходный ордер в кассе)"
                             >
                               <CreditCard className="h-3 w-3" />
@@ -1647,7 +2008,7 @@ function WarehouseContent() {
                               type="button"
                               onClick={() => handleOpenReceiptModal(order)}
                               disabled={createReceiptMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 h-7 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 h-7 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors cursor-pointer"
                               title="Оприходовать заказ на склад"
                             >
                               <ArrowDownToLine className="h-3 w-3" />
@@ -1662,18 +2023,20 @@ function WarehouseContent() {
                             </span>
                           )}
 
-                          {/* Кнопка Удалить */}
-                          {!isReceived && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSupplierOrder(order)}
-                              disabled={deleteSupplierOrderMutation.isPending}
-                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 shadow-xs transition-colors"
-                              title="Удалить заказ поставщику"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          {/* Кнопка Удалить — доступна для всех заказов (для оприходованных откатывает партии и кассу) */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSupplierOrder(order)}
+                            disabled={deleteSupplierOrderMutation.isPending}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                            title={
+                              isReceived
+                                ? "Удалить заказ и откатить связанные партии, движения и оплату"
+                                : "Удалить заказ поставщику"
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1681,7 +2044,7 @@ function WarehouseContent() {
                 })}
                 {filteredSupplierOrders.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isSupplierOrdersLoading
                         ? "Загрузка заказов поставщикам..."
                         : "Заказов поставщикам пока нет. Выберите заявки на закупку и нажмите «Сформировать заказ поставщику»."}
@@ -1694,23 +2057,77 @@ function WarehouseContent() {
         </div>
       )}
 
-      {/* Вкладка 4: Журнал движений */}
+      {/* Вкладка 5: Журнал движений */}
       {activeTab === "movements" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+          {selectedMovementIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
+              <div className="flex items-center gap-2 text-[#111111] font-medium">
+                <Check className="h-4 w-4 text-[#4a38f5]" />
+                <span>
+                  Выбрано движений: <b className="font-mono">{selectedMovementIds.size}</b>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedMovementIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteMovements}
+                  disabled={bulkDeleteMovementsMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeleteMovementsMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedMovementIds.size})
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-3 py-2.5 text-center w-[40px]">
+                    <input
+                      type="checkbox"
+                      aria-label="Выбрать все движения"
+                      checked={
+                        filteredMovements.length > 0 &&
+                        selectedMovementIds.size === filteredMovements.length
+                      }
+                      onChange={() => {
+                        if (
+                          selectedMovementIds.size === filteredMovements.length &&
+                          filteredMovements.length > 0
+                        ) {
+                          setSelectedMovementIds(new Set());
+                        } else {
+                          setSelectedMovementIds(new Set(filteredMovements.map((m) => m.id)));
+                        }
+                      }}
+                      className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Дата и время
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Товар
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[140px]">
+                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Тип операции
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
+                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[95px]">
                     Кол-во
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
@@ -1719,22 +2136,47 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
                     Инициатор
                   </th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
+                    Действия
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
-                {movements.map((m) => {
+                {filteredMovements.map((m) => {
                   const typeMap: Record<string, { label: string; color: string; sign: string }> = {
                     intake: { label: "Приход", color: "bg-emerald-50 text-emerald-700 border-emerald-200", sign: "+" },
-                    reserve: { label: "Резерв", color: "bg-amber-50 text-amber-700 border-amber-200", sign: "🔒" },
-                    release: { label: "Снятие резерва", color: "bg-sky-50 text-sky-700 border-sky-200", sign: "🔓" },
+                    reserve: { label: "Резерв", color: "bg-amber-50 text-amber-700 border-amber-200", sign: "lock" },
+                    release: { label: "Снятие резерва", color: "bg-sky-50 text-sky-700 border-sky-200", sign: "unlock" },
+                    write_off: { label: "Списание FIFO", color: "bg-rose-50 text-rose-700 border-rose-200", sign: "-" },
                     repair_consumption: { label: "Списание по наряду", color: "bg-rose-50 text-rose-700 border-rose-200", sign: "-" },
                     consume: { label: "Списание", color: "bg-rose-50 text-rose-700 border-rose-200", sign: "-" },
                     adjustment: { label: "Корректировка", color: "bg-neutral-100 text-neutral-700 border-neutral-300", sign: "±" },
                   };
                   const t = typeMap[m.type] ?? { label: m.type, color: "bg-gray-100 text-gray-700 border-gray-200", sign: "" };
+                  const isSelected = selectedMovementIds.has(m.id);
 
                   return (
-                    <tr key={m.id} className="transition-colors hover:bg-[#fafafa]">
+                    <tr
+                      key={m.id}
+                      className={cn(
+                        "transition-colors hover:bg-[#fafafa]",
+                        isSelected && "bg-indigo-50/40",
+                      )}
+                    >
+                      <td className="px-3 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать движение ${m.itemName ?? m.id}`}
+                          checked={isSelected}
+                          onChange={() => {
+                            const next = new Set(selectedMovementIds);
+                            if (next.has(m.id)) next.delete(m.id);
+                            else next.add(m.id);
+                            setSelectedMovementIds(next);
+                          }}
+                          className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#666666]">{formatDate(m.createdAt)}</span>
                       </td>
@@ -1754,8 +2196,15 @@ function WarehouseContent() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className="font-mono text-[13px] font-semibold text-[#111111]">
-                          {t.sign} {m.quantity}
+                        <span className="inline-flex items-center justify-center gap-1 font-mono text-[13px] font-semibold text-[#111111]">
+                          {t.sign === "lock" ? (
+                            <Lock className="h-3 w-3 text-amber-600" />
+                          ) : t.sign === "unlock" ? (
+                            <Unlock className="h-3 w-3 text-sky-600" />
+                          ) : (
+                            <span>{t.sign}</span>
+                          )}
+                          <span>{m.quantity}</span>
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -1782,12 +2231,33 @@ function WarehouseContent() {
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#888888]">{m.createdByName || "Система"}</span>
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMovementForEdit(m)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                            title="Редактировать запись движения"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMovement(m)}
+                            disabled={deleteMovementMutation.isPending}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
+                            title="Удалить запись движения и откатить остатки/резерв"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
-                {movements.length === 0 && (
+                {filteredMovements.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isMovementsLoading ? "Загрузка движений..." : "Журнал движений пуст."}
                     </td>
                   </tr>
@@ -1897,6 +2367,18 @@ function WarehouseContent() {
         onClose={() => setSelectedPurchaseForEdit(null)}
         aggregatedRow={selectedPurchaseForEdit}
         allRequests={purchaseRequests}
+      />
+
+      <EditBatchModal
+        open={Boolean(selectedBatchForEdit)}
+        onClose={() => setSelectedBatchForEdit(null)}
+        batch={selectedBatchForEdit}
+      />
+
+      <EditMovementModal
+        open={Boolean(selectedMovementForEdit)}
+        onClose={() => setSelectedMovementForEdit(null)}
+        movement={selectedMovementForEdit}
       />
 
       {/* Floating Action Bar при выборе позиций */}
