@@ -1704,6 +1704,7 @@ CREATE TABLE IF NOT EXISTS warehouse_batches (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  supplier_order_id UUID NULL REFERENCES supplier_orders(id) ON DELETE SET NULL,
   batch_number TEXT NOT NULL DEFAULT '',
   supplier_name TEXT NOT NULL DEFAULT '',
   purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
