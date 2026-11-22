@@ -1093,8 +1093,37 @@ export class WarehouseService {
       );
       if (updatedRows.length === 0) return null;
 
-      const list = await this.listPurchaseRequests(tenantId);
-      return list.find((r) => r.id === requestId) ?? null;
+      const row = await tx.queryOne<PurchaseRequestRow>(
+        `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
+                pr.quantity, pr.unit, pr.estimated_price, pr.status, pr.comment,
+                pr.created_by, pr.created_at, pr.updated_at,
+                ro.ticket_number AS repair_ticket_number,
+                u.name AS created_by_name
+         FROM purchase_requests pr
+         LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+         LEFT JOIN users u ON u.id = pr.created_by AND u.tenant_id = pr.tenant_id
+         WHERE pr.tenant_id = $1 AND pr.id = $2`,
+        [tenantId, requestId],
+      );
+      if (!row) return null;
+
+      return {
+        id: row.id,
+        repairOrderId: row.repair_order_id,
+        supplierOrderId: row.supplier_order_id,
+        repairTicketNumber: row.repair_ticket_number,
+        itemId: row.item_id,
+        itemName: row.item_name,
+        sku: row.sku,
+        quantity: Number(row.quantity),
+        unit: row.unit,
+        estimatedPrice: Number(row.estimated_price),
+        status: (row.status as PurchaseRequestStatus) || "pending",
+        comment: row.comment,
+        createdByName: row.created_by_name,
+        createdAt: toIso(row.created_at),
+        updatedAt: toIso(row.updated_at),
+      };
     });
   }
 
