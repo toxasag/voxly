@@ -580,13 +580,16 @@ export class DealsService {
 
     if (row === null) return null;
 
-    // Если стадия сменилась на won через PATCH /deals/:id — выполняем FIFO-списание и автозаявки
+    // Если стадия сменилась через PATCH /deals/:id — уведомляем слушателей (автоворонки, сквозная аналитика)
     if (payload.stage_id !== undefined) {
+      notifyDealStageChanged({ tenantId, dealId: id, stageId: payload.stage_id });
+
       const targetStage = await queryOne<{ is_won: boolean }>(
         `SELECT is_won FROM stages WHERE id = $1`,
         [payload.stage_id],
       );
       if (targetStage?.is_won) {
+        notifyDealWon({ tenantId, dealId: id });
         await withTenant(tenantId, async (tx) => {
           if (payload.closed_at === undefined) {
             await tx.query(
