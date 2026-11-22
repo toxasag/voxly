@@ -55,7 +55,8 @@ export class SmartModelRouter {
           (provider === "gemini" && (config.baseUrl.includes("googleapis.com") || config.providerId?.includes("gemini"))) ||
           (provider === "openai" && (config.baseUrl.includes("openai.com") || config.providerId?.includes("openai"))) ||
           (provider === "deepseek" && (config.baseUrl.includes("deepseek.com") || config.providerId?.includes("deepseek"))) ||
-          (provider === "openrouter" && (config.baseUrl.includes("openrouter.ai") || config.providerId?.includes("openrouter")));
+          (provider === "openrouter" && (config.baseUrl.includes("openrouter.ai") || config.providerId?.includes("openrouter"))) ||
+          (provider === "custom" && (config.providerId?.includes("custom") || (config.baseUrl && !config.baseUrl.includes("googleapis.com"))));
         if (isMatch) {
           return config.baseUrl.replace(/\/+$/, "");
         }
@@ -81,6 +82,17 @@ export class SmartModelRouter {
     }
     if (provider === "openrouter") {
       return "https://openrouter.ai/api/v1";
+    }
+    if (provider === "custom") {
+      try {
+        const integrations = await platformConfigService.getEffectiveIntegrations();
+        const customProv = integrations.llmProviders.find(
+          (p) => p.isActive && Boolean(p.baseUrl) && (p.providerType === "custom" || p.id.includes("custom")),
+        );
+        if (customProv?.baseUrl) {
+          return customProv.baseUrl.replace(/\/+$/, "");
+        }
+      } catch {}
     }
 
     return "https://generativelanguage.googleapis.com/v1beta/openai";
