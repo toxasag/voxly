@@ -76,6 +76,7 @@ const CHANNELS = [
   { id: "telegram", label: "Telegram" },
   { id: "whatsapp", label: "WhatsApp" },
   { id: "max", label: "MAX" },
+  { id: "webchat", label: "Онлайн-чат" },
 ] as const;
 
 export default function InboxPage() {
