@@ -381,7 +381,150 @@ export class FinanceService {
       };
     });
   }
- async pnl(tenantId:string,from:string,to:string):Promise<PnlDTO>{const rows=await query<{direction:"income"|"expense";category_name:string;amount:string}>(`SELECT direction,category_name,SUM(amount)::text amount FROM transactions WHERE tenant_id=$1 AND deleted_at IS NULL AND occurred_at >= $2 AND occurred_at <= $3 GROUP BY direction,category_name`,[tenantId,from,to]);const incomeRows=rows.filter(r=>r.direction==="income"), expenseRows=rows.filter(r=>r.direction==="expense");const income=incomeRows.reduce((s,r)=>s+Number(r.amount),0),expenses=expenseRows.reduce((s,r)=>s+Number(r.amount),0);const map=(items:typeof rows,total:number)=>items.map(r=>({categoryName:r.category_name,amount:Number(r.amount),percentage:total===0?0:Math.round(Number(r.amount)/total*1000)/10}));return {from,to,income,expenses,netProfit:income-expenses,incomeByCategory:map(incomeRows,income),expensesByCategory:map(expenseRows,expenses)};}
+  async pnl(tenantId: string, from: string, to: string): Promise<PnlDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{ direction: "income" | "expense"; category_name: string; amount: string }>(
+        `SELECT direction, category_name, SUM(amount)::text AS amount
+         FROM transactions
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND occurred_at >= $2 AND occurred_at <= $3
+         GROUP BY direction, category_name`,
+        [tenantId, from, to],
+      );
+      const incomeRows = rows.filter((r) => r.direction === "income");
+      const expenseRows = rows.filter((r) => r.direction === "expense");
+      const income = incomeRows.reduce((s, r) => s + Number(r.amount), 0);
+      const expenses = expenseRows.reduce((s, r) => s + Number(r.amount), 0);
+      const map = (items: typeof rows, total: number) =>
+        items.map((r) => ({
+          categoryName: r.category_name,
+          amount: Number(r.amount),
+          percentage: total === 0 ? 0 : Math.round((Number(r.amount) / total) * 1000) / 10,
+        }));
+
+      // Партионная себестоимость списания (FIFO COGS) за период
+      const cogsTotals = await tx.queryOne<{ parts_cogs: string; write_offs_count: string }>(
+        `SELECT
+           COALESCE(SUM(m.quantity * m.cost_price), 0)::numeric(14,2)::text AS parts_cogs,
+           COUNT(*)::text AS write_offs_count
+         FROM warehouse_movements m
+         WHERE m.tenant_id = $1
+           AND m.type = 'write_off'
+           AND m.created_at >= $2
+           AND m.created_at <= $3`,
+        [tenantId, from, to],
+      );
+
+      // Выручка по запчастям и работам по выданным/списанным нарядам за период
+      const partsRevRow = await tx.queryOne<{ parts_revenue: string }>(
+        `SELECT COALESCE(SUM(rp.quantity * rp.retail_price), 0)::numeric(14,2)::text AS parts_revenue
+         FROM repair_parts rp
+         JOIN repair_orders ro ON ro.id = rp.repair_order_id AND ro.tenant_id = rp.tenant_id
+         WHERE rp.tenant_id = $1
+           AND ro.deleted_at IS NULL
+           AND (
+             (rp.consumed_at IS NOT NULL AND rp.consumed_at >= $2 AND rp.consumed_at <= $3)
+             OR (rp.consumed_at IS NULL AND ro.status = 'issued' AND ro.delivered_at >= $2 AND ro.delivered_at <= $3)
+           )`,
+        [tenantId, from, to],
+      );
+
+      const worksRevRow = await tx.queryOne<{ works_revenue: string }>(
+        `SELECT COALESCE(SUM(rw.cost), 0)::numeric(14,2)::text AS works_revenue
+         FROM repair_works rw
+         JOIN repair_orders ro ON ro.id = rw.repair_order_id AND ro.tenant_id = rw.tenant_id
+         WHERE rw.tenant_id = $1
+           AND ro.deleted_at IS NULL
+           AND ro.status = 'issued'
+           AND ro.delivered_at >= $2
+           AND ro.delivered_at <= $3`,
+        [tenantId, from, to],
+      );
+
+      const stockValRow = await tx.queryOne<{ stock_valuation: string }>(
+        `SELECT COALESCE(SUM(b.remaining_quantity * b.purchase_price), 0)::numeric(14,2)::text AS stock_valuation
+         FROM warehouse_batches b
+         JOIN warehouse_items wi ON wi.id = b.item_id AND wi.tenant_id = b.tenant_id AND wi.deleted_at IS NULL
+         WHERE b.tenant_id = $1 AND b.remaining_quantity > 0`,
+        [tenantId],
+      );
+
+      const breakdownRows = await tx.query<{
+        movement_id: string;
+        item_name: string;
+        batch_number: string | null;
+        supplier_name: string | null;
+        ticket_number: string | null;
+        quantity: string;
+        unit_cost: string;
+        total_cost: string;
+        occurred_at: Date | string;
+      }>(
+        `SELECT m.id AS movement_id,
+                COALESCE(wi.name, m.description) AS item_name,
+                b.batch_number,
+                b.supplier_name,
+                ro.ticket_number,
+                m.quantity::text AS quantity,
+                m.cost_price::text AS unit_cost,
+                (m.quantity * m.cost_price)::numeric(14,2)::text AS total_cost,
+                m.created_at AS occurred_at
+         FROM warehouse_movements m
+         LEFT JOIN warehouse_items wi ON wi.id = m.item_id AND wi.tenant_id = m.tenant_id
+         LEFT JOIN warehouse_batches b ON b.id = m.batch_id AND b.tenant_id = m.tenant_id
+         LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+         WHERE m.tenant_id = $1
+           AND m.type = 'write_off'
+           AND m.created_at >= $2
+           AND m.created_at <= $3
+         ORDER BY m.created_at DESC
+         LIMIT 50`,
+        [tenantId, from, to],
+      );
+
+      const partsCogs = Math.round(Number(cogsTotals?.parts_cogs ?? 0) * 100) / 100;
+      const partsRevenue = Math.round(Number(partsRevRow?.parts_revenue ?? 0) * 100) / 100;
+      const worksRevenue = Math.round(Number(worksRevRow?.works_revenue ?? 0) * 100) / 100;
+      const partsGrossProfit = Math.round((partsRevenue - partsCogs) * 100) / 100;
+      const partsMarkupPercent =
+        partsCogs > 0 ? Math.round((partsGrossProfit / partsCogs) * 1000) / 10 : 0;
+      const partsMarginPercent =
+        partsRevenue > 0 ? Math.round((partsGrossProfit / partsRevenue) * 1000) / 10 : 0;
+      const accrualGrossProfit = Math.round((partsRevenue + worksRevenue - partsCogs) * 100) / 100;
+      const stockValuation = Math.round(Number(stockValRow?.stock_valuation ?? 0) * 100) / 100;
+
+      return {
+        from,
+        to,
+        income,
+        expenses,
+        netProfit: income - expenses,
+        incomeByCategory: map(incomeRows, income),
+        expensesByCategory: map(expenseRows, expenses),
+        cogs: {
+          partsRevenue,
+          worksRevenue,
+          partsCogs,
+          partsGrossProfit,
+          partsMarkupPercent,
+          partsMarginPercent,
+          accrualGrossProfit,
+          stockValuation,
+          writeOffsCount: Number(cogsTotals?.write_offs_count ?? 0),
+          breakdown: breakdownRows.map((b) => ({
+            movementId: b.movement_id,
+            itemName: b.item_name,
+            batchNumber: b.batch_number ?? "",
+            supplierName: b.supplier_name ?? "",
+            ticketNumber: b.ticket_number ?? null,
+            quantity: Number(b.quantity),
+            unitCost: Number(b.unit_cost),
+            totalCost: Number(b.total_cost),
+            occurredAt: iso(b.occurred_at),
+          })),
+        },
+      };
+    });
+  }
  async recordRepairOrderPayment(tenantId:string,repairOrderId:string,ticketNumber:string,customerName:string,worksAmount:number,partsAmount:number,accountId?:string):Promise<void>{
   const total=worksAmount+partsAmount;
   if(total<=0)return;

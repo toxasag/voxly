@@ -350,17 +350,23 @@ function WarehouseContent() {
     });
   }, [supplierOrders, supplierOrderStatusFilter, searchQuery]);
 
-  // Статистика склада
+  // Статистика склада (приоритетно из серверного партионного агрегата по всему складу)
   const stats = useMemo(() => {
     const totalItemsCount = meta.total > 0 ? meta.total : items.length;
-    const lowStockCount = items.filter((i) => i.availableStock <= i.minStock).length;
-    const totalValuation = items.reduce((sum, i) => sum + i.totalStock * i.costPrice, 0);
+    const lowStockCount =
+      meta.lowStockCount !== undefined
+        ? meta.lowStockCount
+        : items.filter((i) => i.availableStock <= i.minStock).length;
+    const totalValuation =
+      meta.totalValuation !== undefined
+        ? meta.totalValuation
+        : items.reduce((sum, i) => sum + (i.stockValuation ?? i.totalStock * i.costPrice), 0);
     const pendingPurchasesCount = aggregatedPurchases.filter(
       (p) => p.status === "pending" || p.status === "ordered",
     ).length;
 
     return { totalItemsCount, lowStockCount, totalValuation, pendingPurchasesCount };
-  }, [items, meta.total, aggregatedPurchases]);
+  }, [items, meta, aggregatedPurchases]);
 
   const handleToggleNegativeStock = async (checked: boolean) => {
     try {
@@ -1127,9 +1133,21 @@ function WarehouseContent() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <span className="font-mono text-[13px] text-[#666666]">
-                          {formatRub(item.costPrice)}
-                        </span>
+                        <div className="flex flex-col items-end">
+                          <span className="font-mono text-[13px] text-[#666666]" title="Себестоимость следующей списываемой партии (FIFO)">
+                            {formatRub(item.fifoCostPrice ?? item.costPrice)}
+                          </span>
+                          {(item.activeBatchesCount ?? 0) > 1 &&
+                            item.avgBatchCostPrice !== undefined &&
+                            Math.abs(item.avgBatchCostPrice - (item.fifoCostPrice ?? item.costPrice)) >= 0.01 && (
+                              <span
+                                className="font-mono text-[10px] text-[#888888]"
+                                title={`Активных партий: ${item.activeBatchesCount}. Средняя по остаткам партий.`}
+                              >
+                                ср. {formatRub(item.avgBatchCostPrice)} ({item.activeBatchesCount} п.)
+                              </span>
+                            )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="font-mono text-[13px] font-semibold text-[#111111]">

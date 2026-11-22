@@ -1,20 +1,21 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { TrendingUp, TrendingDown, DollarSign } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, Package } from "lucide-react";
 import type { Transaction } from "@/lib/finance/finance.types";
-import { useFinanceCategories } from "@/lib/api/use-invoices";
+import { useFinanceCategories, type PnlDTO } from "@/lib/api/use-invoices";
 import { cn } from "@/lib/utils";
 
 interface ProfitLossViewProps {
   transactions: Transaction[];
+  pnl?: PnlDTO;
 }
 
 function formatCost(amount: number): string {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(amount);
 }
 
-export const ProfitLossView = memo(function ProfitLossView({ transactions }: ProfitLossViewProps) {
+export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }: ProfitLossViewProps) {
   const { data: dbCategories = [] } = useFinanceCategories();
 
   const { incomeByCategory, expenseByCategory, totalIncome, totalExpense, profit, margin, incomeCategories, expenseCategories } = useMemo(() => {
@@ -76,10 +77,108 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions }: Pro
           <p className="mt-2 text-2xl font-bold text-[#111111]">{formatCost(totalExpense)}</p>
         </div>
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-[#4a38f5]" /></div><span className="text-xs font-medium text-[#666666]">Чистая прибыль</span></div>
-          <p className={cn("mt-2 text-2xl font-bold", profit >= 0 ? "text-emerald-700" : "text-rose-700")}>{formatCost(profit)}<span className="text-xs ml-1.5 text-[#666666]">наценка {margin}%</span></p>
+          <div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-[#4a38f5]" /></div><span className="text-xs font-medium text-[#666666]">Чистая прибыль (ДДС)</span></div>
+          <p className={cn("mt-2 text-2xl font-bold", profit >= 0 ? "text-emerald-700" : "text-rose-700")}>{formatCost(profit)}<span className="text-xs ml-1.5 text-[#666666]">рентабельность {margin}%</span></p>
         </div>
       </div>
+
+      {/* Партионная себестоимость и наценка (FIFO COGS) */}
+      {pnl?.cogs && (
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-[#4a38f5]/10 p-1.5">
+                <Package className="h-4 w-4 text-[#4a38f5]" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-[#111111]">
+                  Партионная себестоимость и наценка (FIFO)
+                </h3>
+                <p className="text-[11px] text-[#666666]">
+                  Фактическая себестоимость списанных партий за период и текущая оценка остатков склада
+                </p>
+              </div>
+            </div>
+            <span className="text-xs font-mono text-[#666666]">
+              Списаний по партиям: <strong className="text-[#111111]">{pnl.cogs.writeOffsCount}</strong>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] px-4 py-3">
+              <span className="text-[11px] text-[#666666]">Выручка по запчастям</span>
+              <p className="mt-1 text-lg font-bold font-mono text-[#111111]">
+                {formatCost(pnl.cogs.partsRevenue)}
+              </p>
+              {pnl.cogs.worksRevenue > 0 && (
+                <span className="text-[11px] text-[#666666]">
+                  + работы {formatCost(pnl.cogs.worksRevenue)}
+                </span>
+              )}
+            </div>
+
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] px-4 py-3">
+              <span className="text-[11px] text-[#666666]">Себестоимость списания (FIFO)</span>
+              <p className="mt-1 text-lg font-bold font-mono text-[#111111]">
+                {formatCost(pnl.cogs.partsCogs)}
+              </p>
+              <span className="text-[11px] text-[#666666]">по ценам закупленных партий</span>
+            </div>
+
+            <div className="rounded-[8px] border border-emerald-200 bg-emerald-50/70 px-4 py-3">
+              <span className="text-[11px] text-emerald-800">Прибыль по запчастям</span>
+              <p className={cn("mt-1 text-lg font-bold font-mono", pnl.cogs.partsGrossProfit >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                {formatCost(pnl.cogs.partsGrossProfit)}
+              </p>
+              <span className="text-[11px] font-mono text-emerald-800/80">
+                наценка {pnl.cogs.partsMarkupPercent >= 0 ? `+${pnl.cogs.partsMarkupPercent}%` : `${pnl.cogs.partsMarkupPercent}%`} · маржа {pnl.cogs.partsMarginPercent}%
+              </span>
+            </div>
+
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] px-4 py-3">
+              <span className="text-[11px] text-[#666666]">Оценка склада (по партиям)</span>
+              <p className="mt-1 text-lg font-bold font-mono text-[#111111]">
+                {formatCost(pnl.cogs.stockValuation)}
+              </p>
+              <span className="text-[11px] text-[#666666]">SUM(остаток × цена партии)</span>
+            </div>
+          </div>
+
+          {pnl.cogs.breakdown.length > 0 && (
+            <div className="overflow-x-auto rounded-[6px] border border-[#e5e5e5]">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-[11px] text-[#666666]">
+                    <th className="px-3 py-2 text-left font-medium">Позиция</th>
+                    <th className="px-3 py-2 text-left font-medium">Партия / Поставщик</th>
+                    <th className="px-3 py-2 text-left font-medium">Наряд</th>
+                    <th className="px-3 py-2 text-right font-medium">Кол-во</th>
+                    <th className="px-3 py-2 text-right font-medium">Цена партии</th>
+                    <th className="px-3 py-2 text-right font-medium">Себестоимость</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#f0f0f0]">
+                  {pnl.cogs.breakdown.map((row) => (
+                    <tr key={row.movementId} className="hover:bg-[#fafafa]">
+                      <td className="px-3 py-2 font-medium text-[#111111]">{row.itemName}</td>
+                      <td className="px-3 py-2 text-[#666666]">
+                        {row.batchNumber || "Без партии"}
+                        {row.supplierName ? ` · ${row.supplierName}` : ""}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[#4a38f5]">
+                        {row.ticketNumber || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-[#111111]">{row.quantity}</td>
+                      <td className="px-3 py-2 text-right font-mono text-[#666666]">{formatCost(row.unitCost)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-semibold text-[#111111]">{formatCost(row.totalCost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Income breakdown */}
       <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">

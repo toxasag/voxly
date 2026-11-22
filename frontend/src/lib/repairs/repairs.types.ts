@@ -61,6 +61,15 @@ export interface WorkItem {
   cost: number;
 }
 
+export interface PartBatchAllocation {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
 export interface PartItem {
   id: string;
   warehouse_item_id?: string | null;
@@ -70,6 +79,9 @@ export interface PartItem {
   quantity: number;
   retail_price: number;
   cost_price: number;
+  consumed_at?: string | null;
+  cost_source?: string;
+  batch_allocations?: PartBatchAllocation[];
 }
 
 export interface RepairTicket {

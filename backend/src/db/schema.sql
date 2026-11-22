@@ -1944,6 +1944,29 @@ CREATE TABLE IF NOT EXISTS deal_items (
 CREATE INDEX IF NOT EXISTS idx_deal_items_tenant_deal ON deal_items (tenant_id, deal_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_deal_items_item_id ON deal_items (tenant_id, item_id) WHERE item_id IS NOT NULL;
 
+-- Привязка списания запчастей наряда к конкретным складским партиям (FIFO)
+CREATE TABLE IF NOT EXISTS repair_part_batch_allocations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  repair_part_id UUID NOT NULL REFERENCES repair_parts(id) ON DELETE CASCADE,
+  warehouse_item_id UUID NULL REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  batch_id UUID NULL REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  quantity NUMERIC(10, 2) NOT NULL,
+  unit_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rpba_tenant_part ON repair_part_batch_allocations (tenant_id, repair_part_id);
+CREATE INDEX IF NOT EXISTS idx_rpba_tenant_order ON repair_part_batch_allocations (tenant_id, repair_order_id);
+CREATE INDEX IF NOT EXISTS idx_rpba_tenant_created ON repair_part_batch_allocations (tenant_id, created_at DESC);
+ALTER TABLE repair_part_batch_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE repair_part_batch_allocations FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON repair_part_batch_allocations;
+CREATE POLICY tenant_isolation ON repair_part_batch_allocations
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 
 
 

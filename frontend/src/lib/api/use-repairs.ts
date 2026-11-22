@@ -39,6 +39,15 @@ export interface RepairWorkDTO {
   createdAt: string;
 }
 
+export interface RepairPartBatchAllocationDTO {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
 export interface RepairPartDTO {
   id: string;
   warehouseItemId?: string | null;
@@ -51,6 +60,11 @@ export interface RepairPartDTO {
   retailTotal: number;
   costTotal: number;
   margin: number;
+  markupPercent?: number;
+  marginPercent?: number;
+  consumedAt?: string | null;
+  costSource?: string;
+  batchAllocations?: RepairPartBatchAllocationDTO[];
   createdAt: string;
 }
 

@@ -410,7 +410,18 @@ export interface RepairPartRow {
   quantity: number;
   retail_price: string;
   cost_price: string;
+  consumed_at?: Date | string | null;
+  cost_source?: string | null;
   created_at: Date | string;
+}
+
+export interface RepairPartBatchAllocationDTO {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
 }
 
 export interface RepairNoteRow {
@@ -464,6 +475,13 @@ export interface RepairPartDTO {
   costTotal: number;
   /** retailTotal − costTotal */
   margin: number;
+  /** Наценка от себестоимости: (retailTotal − costTotal) / costTotal × 100 */
+  markupPercent?: number;
+  /** Маржа от цены продажи: (retailTotal − costTotal) / retailTotal × 100 */
+  marginPercent?: number;
+  consumedAt?: string | null;
+  costSource?: string;
+  batchAllocations?: RepairPartBatchAllocationDTO[];
   createdAt: string;
 }
 
@@ -630,11 +648,17 @@ export function toRepairWorkDTO(row: RepairWorkRow): RepairWorkDTO {
   };
 }
 
-export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
+export function toRepairPartDTO(
+  row: RepairPartRow,
+  batchAllocations?: RepairPartBatchAllocationDTO[],
+): RepairPartDTO {
   const retailPrice = Number(row.retail_price);
   const costPrice = Number(row.cost_price);
-  const retailTotal = retailPrice * row.quantity;
-  const costTotal = costPrice * row.quantity;
+  const retailTotal = Math.round(retailPrice * row.quantity * 100) / 100;
+  const costTotal = Math.round(costPrice * row.quantity * 100) / 100;
+  const margin = Math.round((retailTotal - costTotal) * 100) / 100;
+  const markupPercent = costTotal > 0 ? Math.round((margin / costTotal) * 1000) / 10 : 0;
+  const marginPercent = retailTotal > 0 ? Math.round((margin / retailTotal) * 1000) / 10 : 0;
 
   return {
     id: row.id,
@@ -647,7 +671,12 @@ export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
     costPrice,
     retailTotal,
     costTotal,
-    margin: retailTotal - costTotal,
+    margin,
+    markupPercent,
+    marginPercent,
+    consumedAt: row.consumed_at ? toIso(row.consumed_at) : null,
+    costSource: row.cost_source ?? "manual",
+    batchAllocations: batchAllocations ?? [],
     createdAt: toIso(row.created_at),
   };
 }

@@ -69,7 +69,7 @@ const ORDER_COLUMNS = `
 `;
 
 const WORK_COLUMNS = `id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost, created_at`;
-const PART_COLUMNS = `id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price, created_at`;
+const PART_COLUMNS = `id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price, consumed_at, cost_source, created_at`;
 const NOTE_COLUMNS = `id, repair_order_id, author_id, author_name, kind, content, from_status, to_status, created_at`;
 const PHOTO_COLUMNS = `id, repair_order_id, url, caption, uploaded_by, created_at`;
 
@@ -498,15 +498,59 @@ export class RepairsService {
   }
 
   async listParts(tenantId: string, orderId: string): Promise<RepairPartDTO[]> {
-    const rows = await query<RepairPartRow>(
-      `SELECT ${PART_COLUMNS}
-       FROM repair_parts
-       WHERE tenant_id = $1 AND repair_order_id = $2
-       ORDER BY created_at ASC`,
-      [tenantId, orderId],
-    );
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<RepairPartRow>(
+        `SELECT ${PART_COLUMNS}
+         FROM repair_parts
+         WHERE tenant_id = $1 AND repair_order_id = $2
+         ORDER BY created_at ASC`,
+        [tenantId, orderId],
+      );
 
-    return rows.map(toRepairPartDTO);
+      if (rows.length === 0) return [];
+
+      const allocRows = await tx.query<{
+        repair_part_id: string;
+        batch_id: string | null;
+        batch_number: string | null;
+        supplier_name: string | null;
+        quantity: string | number;
+        unit_cost: string | number;
+        total_cost: string | number;
+      }>(
+        `SELECT a.repair_part_id, a.batch_id, b.batch_number, b.supplier_name,
+                a.quantity, a.unit_cost, a.total_cost
+         FROM repair_part_batch_allocations a
+         LEFT JOIN warehouse_batches b ON b.id = a.batch_id AND b.tenant_id = a.tenant_id
+         WHERE a.tenant_id = $1 AND a.repair_order_id = $2
+         ORDER BY a.created_at ASC`,
+        [tenantId, orderId],
+      );
+
+      const allocMap = new Map<string, Array<{
+        batchId: string | null;
+        batchNumber: string;
+        supplierName: string;
+        quantity: number;
+        unitCost: number;
+        totalCost: number;
+      }>>();
+
+      for (const a of allocRows) {
+        const list = allocMap.get(a.repair_part_id) ?? [];
+        list.push({
+          batchId: a.batch_id,
+          batchNumber: a.batch_number ?? "",
+          supplierName: a.supplier_name ?? "",
+          quantity: Number(a.quantity),
+          unitCost: Number(a.unit_cost),
+          totalCost: Number(a.total_cost),
+        });
+        allocMap.set(a.repair_part_id, list);
+      }
+
+      return rows.map((r) => toRepairPartDTO(r, allocMap.get(r.id) ?? []));
+    });
   }
 
   async listNotes(tenantId: string, orderId: string) {
@@ -1568,15 +1612,12 @@ export class RepairsService {
 
       if (to === "issued") {
         assignments.push("delivered_at = COALESCE(delivered_at, now())");
+        // Атомарное списание запчастей со склада FIFO до расчёта итогов и фиксации себестоимости
+        await warehouseService.consumePartsForOrderInTx(tx, tenantId, id, author.id);
         // Freeze the amount actually charged from the works + parts totals.
         const totals = await this.totalsInTx(tx, tenantId, id);
         params.push(totals.grandTotal);
         assignments.push(`final_cost = $${params.length}`);
-
-        // Списание запчастей со склада FIFO
-        void warehouseService.consumePartsForOrder(tenantId, id, author.id).catch((err) => {
-          console.error("Failed to consume warehouse parts on order issue", { err, orderId: id });
-        });
       }
 
       if (to === "rejected") {
@@ -1618,7 +1659,7 @@ export class RepairsService {
       [tenantId, orderId],
     );
 
-    return calculateTotals(workRows.map(toRepairWorkDTO), partRows.map(toRepairPartDTO));
+    return calculateTotals(workRows.map(toRepairWorkDTO), partRows.map((p) => toRepairPartDTO(p)));
   }
 
   /** Rejects that the order exists and is still editable. */
@@ -1837,10 +1878,29 @@ export class RepairsService {
             ? "reserved"
             : "used");
 
+      let resolvedCostPrice = payload.cost_price;
+      let costSource = "manual";
+
+      if (payload.warehouse_item_id) {
+        const fifoEstimate = await warehouseService.estimateFifoUnitCost(
+          tx,
+          tenantId,
+          payload.warehouse_item_id,
+          payload.quantity,
+        );
+        if (
+          fifoEstimate.hasBatches &&
+          (payload.cost_price === 0 || Math.abs(payload.cost_price - fifoEstimate.itemCostPrice) < 0.01)
+        ) {
+          resolvedCostPrice = fifoEstimate.unitCost;
+          costSource = "estimated_fifo";
+        }
+      }
+
       const row = await tx.queryOneOrThrow<RepairPartRow>(
         `INSERT INTO repair_parts
-           (tenant_id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (tenant_id, repair_order_id, warehouse_item_id, status, name, article, quantity, retail_price, cost_price, cost_source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING ${PART_COLUMNS}`,
         [
           tenantId,
@@ -1851,7 +1911,8 @@ export class RepairsService {
           payload.article ?? "",
           payload.quantity,
           payload.retail_price,
-          payload.cost_price,
+          resolvedCostPrice,
+          costSource,
         ],
       );
 
@@ -1866,14 +1927,15 @@ export class RepairsService {
 
         await tx.query(
           `INSERT INTO warehouse_movements
-             (tenant_id, item_id, repair_order_id, type, quantity, cost_price, description)
-           VALUES ($1, $2, $3, 'reserve', $4, $5, $6)`,
+             (tenant_id, item_id, repair_order_id, repair_part_id, type, quantity, cost_price, description)
+           VALUES ($1, $2, $3, $4, 'reserve', $5, $6, $7)`,
           [
             tenantId,
             payload.warehouse_item_id,
             orderId,
+            row.id,
             payload.quantity,
-            payload.cost_price,
+            resolvedCostPrice,
             `Резерв под наряд №${orderId.slice(0, 8)} (${payload.name})`,
           ],
         );
@@ -1951,14 +2013,37 @@ export class RepairsService {
   }
 
   async deletePart(tenantId: string, orderId: string, partId: string): Promise<boolean> {
-    const row = await queryOne<{ id: string }>(
-      `DELETE FROM repair_parts
-       WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
-       RETURNING id`,
-      [tenantId, orderId, partId],
-    );
+    const deleted = await withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOne<{
+        id: string;
+        warehouse_item_id: string | null;
+        quantity: number;
+        consumed_at: Date | string | null;
+      }>(
+        `DELETE FROM repair_parts
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
+         RETURNING id, warehouse_item_id, quantity, consumed_at`,
+        [tenantId, orderId, partId],
+      );
 
-    if (row !== null) {
+      if (row && row.warehouse_item_id && row.consumed_at === null) {
+        await tx.query(
+          `UPDATE warehouse_reservations
+           SET status = 'released', updated_at = now()
+           WHERE id = (
+             SELECT id FROM warehouse_reservations
+             WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'
+             ORDER BY created_at DESC
+             LIMIT 1
+           )`,
+          [tenantId, orderId, row.warehouse_item_id],
+        );
+      }
+
+      return row !== null;
+    });
+
+    if (deleted) {
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
         void this.getOrderDealId(tenantId, orderId).then((dealId) => {
           if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
@@ -1966,7 +2051,7 @@ export class RepairsService {
       });
     }
 
-    return row !== null;
+    return deleted;
   }
 
   // -------------------------------------------------------------------------
