@@ -55,6 +55,7 @@ import {
   useUpdateWarehouseSettings,
   useDeleteWarehouseItem,
   useUpdatePurchaseRequest,
+  useDeletePurchaseRequest,
   useExportWarehouseItems,
   useBulkDeleteWarehouseItems,
   useWarehouseCategories,
@@ -78,6 +79,7 @@ import { ReceiptSupplierOrderModal } from "@/components/warehouse/ReceiptSupplie
 import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
 import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
 import { EditItemModal } from "@/components/warehouse/EditItemModal";
+import { EditPurchaseRequestModal } from "@/components/warehouse/EditPurchaseRequestModal";
 import { WarehouseDictionariesModal } from "@/components/warehouse/WarehouseDictionariesModal";
 import { cn } from "@/lib/utils";
 
@@ -217,6 +219,7 @@ function WarehouseContent() {
   const [intakePurchaseRequest, setIntakePurchaseRequest] = useState<PurchaseRequestDTO | null>(null);
   const [createSupplierOrderModalOpen, setCreateSupplierOrderModalOpen] = useState(false);
   const [selectedAggregatedIds, setSelectedAggregatedIds] = useState<Set<string>>(new Set());
+  const [selectedPurchaseForEdit, setSelectedPurchaseForEdit] = useState<AggregatedPurchaseRequestDTO | null>(null);
 
   // Модальные окна заказов поставщикам
   const [selectedOrderForEdit, setSelectedOrderForEdit] = useState<SupplierOrderDTO | null>(null);
@@ -263,6 +266,7 @@ function WarehouseContent() {
 
   const deleteItemMutation = useDeleteWarehouseItem();
   const updatePurchaseMutation = useUpdatePurchaseRequest();
+  const deletePurchaseMutation = useDeletePurchaseRequest();
   const paySupplierOrderMutation = usePaySupplierOrder();
   const createReceiptMutation = useCreateReceiptFromSupplierOrder();
   const deleteSupplierOrderMutation = useDeleteSupplierOrder();
@@ -1409,13 +1413,58 @@ function WarehouseContent() {
                                 setSelectedAggregatedIds(new Set([pr.id]));
                                 setCreateSupplierOrderModalOpen(true);
                               }}
-                              className="inline-flex items-center gap-1 rounded bg-[#4a38f5] px-2 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                              className="inline-flex items-center gap-1 rounded bg-[#4a38f5] px-2 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer"
                               title="Сформировать заказ поставщику на эту позицию"
                             >
                               <Truck className="h-3 w-3" />
                               В заказ
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPurchaseForEdit(pr)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:border-[#4a38f5] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                            title="Редактировать заявку"
+                            aria-label="Редактировать заявку"
+                          >
+                            <SquarePen className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletePurchaseMutation.isPending}
+                            onClick={async () => {
+                              const count = pr.requestIds.length;
+                              const promptText =
+                                count > 1
+                                  ? `Удалить все заявки (${count} шт.) по позиции «${pr.itemName}»?`
+                                  : `Удалить заявку на закупку «${pr.itemName}»?`;
+                              if (!confirm(promptText)) return;
+                              try {
+                                await Promise.all(
+                                  pr.requestIds.map((reqId) => deletePurchaseMutation.mutateAsync(reqId)),
+                                );
+                                setSelectedAggregatedIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(pr.id);
+                                  return next;
+                                });
+                                toast.success(
+                                  count > 1
+                                    ? `Удалено заявок: ${count}`
+                                    : `Заявка «${pr.itemName}» удалена`,
+                                );
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof Error ? err.message : "Не удалось удалить заявку",
+                                );
+                              }
+                            }}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#888888] hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-50 cursor-pointer"
+                            title="Удалить заявку"
+                            aria-label="Удалить заявку"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1820,6 +1869,13 @@ function WarehouseContent() {
         onSuccess={() => {
           setSelectedItemIds(new Set());
         }}
+      />
+
+      <EditPurchaseRequestModal
+        open={Boolean(selectedPurchaseForEdit)}
+        onClose={() => setSelectedPurchaseForEdit(null)}
+        aggregatedRow={selectedPurchaseForEdit}
+        allRequests={purchaseRequests}
       />
 
       {/* Floating Action Bar при выборе позиций */}

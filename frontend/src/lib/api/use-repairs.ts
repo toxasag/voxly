@@ -850,6 +850,9 @@ export function useRenameRepairDictionaryItem(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "items"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "models"] });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
     },
   });
 }
@@ -871,6 +874,9 @@ export function useDeleteRepairDictionaryItem(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "items"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "models"] });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
     },
   });
 }

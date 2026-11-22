@@ -2896,7 +2896,9 @@ export class RepairsService {
   }
 
   /**
-   * Renames an existing dictionary item.
+   * Renames an existing dictionary item and cascades the update to linked records
+   * (warehouse_items, equipment_models, repair_orders, device_models) so stale
+   * values never reappear alongside the renamed entry.
    */
   async renameDictionaryItem(
     tenantId: string,
@@ -2907,32 +2909,95 @@ export class RepairsService {
     const trimmed = newName.trim();
     if (!trimmed) throw new ValidationError("Name cannot be empty", {});
 
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
 
       if (table === "warehouse_categories") {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-        const existing = await tx.queryOne<{ id: string; name: string }>(
+        const existingCat = await tx.queryOne<{ id: string; name: string }>(
           isUuid
             ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
             : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
           [tenantId, id],
         );
 
-        let row: { id: string; name: string } | null = null;
-        const oldName = existing ? existing.name : id;
+        const existingEqType = !existingCat
+          ? await tx.queryOne<{ id: string; name: string }>(
+              isUuid
+                ? `SELECT id, name FROM equipment_types WHERE tenant_id = $1 AND id = $2`
+                : `SELECT id, name FROM equipment_types WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+              [tenantId, id],
+            )
+          : await tx.queryOne<{ id: string; name: string }>(
+              `SELECT id, name FROM equipment_types WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+              [tenantId, existingCat.name],
+            );
 
-        if (existing) {
-          row = await tx.queryOne<{ id: string; name: string }>(
-            `UPDATE warehouse_categories SET name = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
-            [trimmed, tenantId, existing.id],
+        if (isUuid && !existingCat && !existingEqType) {
+          throw new NotFoundError("Категория не найдена");
+        }
+
+        const oldName = existingCat?.name ?? existingEqType?.name ?? id;
+        let resultRow: { id: string; name: string } | null = null;
+
+        // Обновляем или сливаем запись в warehouse_categories
+        if (existingCat) {
+          const conflictCat = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2) AND id <> $3`,
+            [tenantId, trimmed, existingCat.id],
           );
-        } else {
-          row = await tx.queryOne<{ id: string; name: string }>(
+          if (conflictCat) {
+            await tx.query(
+              `DELETE FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, existingCat.id],
+            );
+            resultRow = conflictCat;
+          } else {
+            resultRow = await tx.queryOne<{ id: string; name: string }>(
+              `UPDATE warehouse_categories SET name = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+              [trimmed, tenantId, existingCat.id],
+            );
+          }
+        } else if (!existingEqType) {
+          // Строковая категория из warehouse_items без записи в справочнике
+          resultRow = await tx.queryOne<{ id: string; name: string }>(
             `INSERT INTO warehouse_categories (tenant_id, name) VALUES ($1, $2)
              ON CONFLICT (tenant_id, name) DO UPDATE SET updated_at = now()
              RETURNING id, name`,
             [tenantId, trimmed],
+          );
+        }
+
+        // Если категория также/только существует в equipment_types — синхронно переименовываем её
+        if (existingEqType) {
+          const conflictType = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT id, name FROM equipment_types WHERE tenant_id = $1 AND lower(name) = lower($2) AND id <> $3`,
+            [tenantId, trimmed, existingEqType.id],
+          );
+          if (conflictType) {
+            await tx.query(
+              `DELETE FROM equipment_types WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, existingEqType.id],
+            );
+            if (!resultRow) resultRow = conflictType;
+          } else {
+            const updatedType = await tx.queryOne<{ id: string; name: string }>(
+              `UPDATE equipment_types SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+              [trimmed, tenantId, existingEqType.id],
+            );
+            if (!resultRow && updatedType) resultRow = updatedType;
+          }
+
+          await tx.query(
+            `UPDATE repair_orders SET equipment_type = $1, updated_at = now()
+             WHERE tenant_id = $2 AND equipment_type = $3 AND deleted_at IS NULL`,
+            [trimmed, tenantId, oldName],
+          );
+          await tx.query(
+            `UPDATE device_models SET equipment_type = $1
+             WHERE tenant_id = $2 AND equipment_type = $3`,
+            [trimmed, tenantId, oldName],
           );
         }
 
@@ -2943,20 +3008,127 @@ export class RepairsService {
           [trimmed, tenantId, oldName],
         );
 
-        return row ?? { id, name: trimmed };
+        return resultRow ?? { id, name: trimmed };
       }
 
       if (table === "equipment_brands") {
+        const existingBrand = await tx.queryOne<{ id: string; name: string }>(
+          isUuid
+            ? `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND id = $2`
+            : `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+
+        if (isUuid && !existingBrand) {
+          throw new NotFoundError("Элемент справочника не найден");
+        }
+
+        const oldName = existingBrand?.name ?? id;
+        let resultRow: { id: string; name: string } | null = null;
+
+        if (existingBrand) {
+          const conflictBrand = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2) AND id <> $3`,
+            [tenantId, trimmed, existingBrand.id],
+          );
+          if (conflictBrand) {
+            // Переносим модели без дублей на целевой бренд и удаляем старый
+            await tx.query(
+              `DELETE FROM equipment_models em
+               WHERE em.tenant_id = $1 AND em.brand_id = $2
+                 AND EXISTS (
+                   SELECT 1 FROM equipment_models em2
+                   WHERE em2.tenant_id = $1 AND em2.brand_id = $3 AND lower(em2.name) = lower(em.name)
+                 )`,
+              [tenantId, existingBrand.id, conflictBrand.id],
+            );
+            await tx.query(
+              `UPDATE equipment_models SET brand_id = $1, brand_name = $2
+               WHERE tenant_id = $3 AND brand_id = $4`,
+              [conflictBrand.id, conflictBrand.name, tenantId, existingBrand.id],
+            );
+            await tx.query(
+              `DELETE FROM equipment_brands WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, existingBrand.id],
+            );
+            resultRow = conflictBrand;
+          } else {
+            resultRow = await tx.queryOne<{ id: string; name: string }>(
+              `UPDATE equipment_brands SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+              [trimmed, tenantId, existingBrand.id],
+            );
+            await tx.query(
+              `UPDATE equipment_models SET brand_name = $1 WHERE tenant_id = $2 AND brand_id = $3`,
+              [trimmed, tenantId, existingBrand.id],
+            );
+          }
+        } else {
+          // Строковый бренд из warehouse_items без записи в equipment_brands
+          resultRow = await tx.queryOne<{ id: string; name: string }>(
+            `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id, name`,
+            [tenantId, trimmed],
+          );
+        }
+
+        // Каскадно обновляем бренд на складе, в нарядах и device_models
+        await tx.query(
+          `UPDATE warehouse_items SET brand = $1, updated_at = now()
+           WHERE tenant_id = $2 AND brand = $3 AND deleted_at IS NULL`,
+          [trimmed, tenantId, oldName],
+        );
+        await tx.query(
+          `UPDATE repair_orders SET equipment_brand = $1, updated_at = now()
+           WHERE tenant_id = $2 AND equipment_brand = $3 AND deleted_at IS NULL`,
+          [trimmed, tenantId, oldName],
+        );
+        await tx.query(
+          `DELETE FROM device_models dm
+           WHERE dm.tenant_id = $1 AND dm.brand = $2
+             AND EXISTS (
+               SELECT 1 FROM device_models dm2
+               WHERE dm2.tenant_id = $1 AND dm2.brand = $3 AND dm2.model = dm.model
+             )`,
+          [tenantId, oldName, trimmed],
+        );
+        await tx.query(
+          `UPDATE device_models SET brand = $1 WHERE tenant_id = $2 AND brand = $3`,
+          [trimmed, tenantId, oldName],
+        );
+
+        return resultRow ?? { id, name: trimmed };
+      }
+
+      if (table === "equipment_types") {
+        const existingType = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_types WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, id],
+        );
+        if (!existingType) {
+          throw new NotFoundError("Элемент справочника не найден");
+        }
         const row = await tx.queryOne<{ id: string; name: string }>(
-          `UPDATE equipment_brands SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+          `UPDATE equipment_types SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
           [trimmed, tenantId, id],
         );
         if (!row) {
           throw new NotFoundError("Элемент справочника не найден");
         }
         await tx.query(
-          `UPDATE equipment_models SET brand_name = $1 WHERE tenant_id = $2 AND brand_id = $3`,
-          [trimmed, tenantId, id],
+          `UPDATE repair_orders SET equipment_type = $1, updated_at = now()
+           WHERE tenant_id = $2 AND equipment_type = $3 AND deleted_at IS NULL`,
+          [trimmed, tenantId, existingType.name],
+        );
+        await tx.query(
+          `UPDATE device_models SET equipment_type = $1
+           WHERE tenant_id = $2 AND equipment_type = $3`,
+          [trimmed, tenantId, existingType.name],
+        );
+        await tx.query(
+          `UPDATE warehouse_items SET category = $1, updated_at = now()
+           WHERE tenant_id = $2 AND category = $3 AND deleted_at IS NULL`,
+          [trimmed, tenantId, existingType.name],
         );
         return row;
       }
@@ -2981,17 +3153,52 @@ export class RepairsService {
     category: string,
     id: string,
   ): Promise<{ success: boolean; id: string }> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
 
       if (table === "warehouse_categories") {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
         const existing = await tx.queryOne<{ id: string; name: string }>(
           isUuid
             ? `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND id = $2`
             : `SELECT id, name FROM warehouse_categories WHERE tenant_id = $1 AND lower(name) = lower($2)`,
           [tenantId, id],
         );
+
+        const existingEqType = !existing
+          ? await tx.queryOne<{ id: string; name: string }>(
+              isUuid
+                ? `SELECT id, name FROM equipment_types WHERE tenant_id = $1 AND id = $2`
+                : `SELECT id, name FROM equipment_types WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+              [tenantId, id],
+            )
+          : null;
+
+        if (existingEqType) {
+          const usedRes = await tx.queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM repair_orders WHERE tenant_id = $1 AND equipment_type = $2 AND deleted_at IS NULL`,
+            [tenantId, existingEqType.name],
+          );
+          const usedCount = Number(usedRes?.count ?? 0);
+          if (usedCount > 0) {
+            throw new AppError(
+              409,
+              "DICTIONARY_ITEM_IN_USE",
+              `Нельзя удалить «${existingEqType.name}»: используется в ${usedCount} нарядах на ремонт`,
+            );
+          }
+          await tx.query(
+            `DELETE FROM equipment_types WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, existingEqType.id],
+          );
+          await tx.query(
+            `UPDATE warehouse_items SET category = '', updated_at = now()
+             WHERE tenant_id = $1 AND category = $2 AND deleted_at IS NULL`,
+            [tenantId, existingEqType.name],
+          );
+          return { success: true, id: existingEqType.id };
+        }
 
         const targetId = existing ? existing.id : id;
         const categoryName = existing ? existing.name : id;
@@ -3011,6 +3218,38 @@ export class RepairsService {
         );
 
         return { success: true, id: targetId };
+      }
+
+      if (table === "equipment_brands" && !isUuid) {
+        const existingByName = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, id],
+        );
+        const brandName = existingByName?.name ?? id;
+        const usedRes = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM repair_orders WHERE tenant_id = $1 AND equipment_brand = $2 AND deleted_at IS NULL`,
+          [tenantId, brandName],
+        );
+        const usedCount = Number(usedRes?.count ?? 0);
+        if (usedCount > 0) {
+          throw new AppError(
+            409,
+            "DICTIONARY_ITEM_IN_USE",
+            `Нельзя удалить «${brandName}»: используется в ${usedCount} нарядах на ремонт`,
+          );
+        }
+        if (existingByName) {
+          await tx.query(
+            `DELETE FROM equipment_brands WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, existingByName.id],
+          );
+        }
+        await tx.query(
+          `UPDATE warehouse_items SET brand = '', updated_at = now()
+           WHERE tenant_id = $1 AND brand = $2 AND deleted_at IS NULL`,
+          [tenantId, brandName],
+        );
+        return { success: true, id: existingByName?.id ?? id };
       }
 
       const existing = await tx.queryOne<{ id: string; name: string }>(
