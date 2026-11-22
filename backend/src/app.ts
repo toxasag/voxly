@@ -267,6 +267,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(crmRoutes, { prefix: "/api" });
   await app.register(leadsRoutes, { prefix: "/api/v1/leads" });
   await app.register(stageRulesRoutes, { prefix: "/api/v1/crm/stage-rules" });
+  await app.register(stageRulesRoutes, { prefix: "/crm/stage-rules" });
 
   // Service Center — additionally gated on the `service_center` module being
   // installed for the tenant (403 MODULE_NOT_INSTALLED otherwise).
@@ -284,6 +285,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
+  await app.register(storiesRoutes, { prefix: "/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
   await app.register(marketplaceRoutes, { prefix: "/api/marketplace" });
   await app.register(marketplaceRoutes, { prefix: "/api" });

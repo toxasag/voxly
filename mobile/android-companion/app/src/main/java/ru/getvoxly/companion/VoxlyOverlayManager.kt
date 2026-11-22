@@ -83,7 +83,7 @@ object VoxlyOverlayManager {
                     tvDeal.visibility = View.GONE
                 }
 
-                val crmUrl = contact?.crmUrl ?: "https://voxly.getvoxly.ru/dashboard"
+                val crmUrl = contact?.crmUrl ?: "https://getvoxly.ru/dashboard"
 
                 btnOpen.setOnClickListener {
                     try {

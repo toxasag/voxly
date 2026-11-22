@@ -1,3 +1,4 @@
+import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
 import { withTenant, type SqlParam } from "../../db/client.js";
 import { NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import type {
@@ -6,11 +7,6 @@ import type {
   ServiceItemRow,
   UpdateServicePayload,
 } from "./services.types.js";
-
-function toIso(value: Date | string | null | undefined): string {
-  if (!value) return new Date().toISOString();
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-}
 
 function mapRowToDTO(row: ServiceItemRow): ServiceItemDTO {
   const price = Number(row.default_price ?? 0);

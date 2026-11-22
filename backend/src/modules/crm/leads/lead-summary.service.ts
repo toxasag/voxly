@@ -232,9 +232,14 @@ export async function getDealConversationSummary(
 ): Promise<string | null> {
   try {
     const rows = await query<ChatMessageItem>(
-      `SELECT source, sender_name, content, created_at
-       FROM deal_messages
-       WHERE tenant_id = $1 AND deal_id = $2
+      `SELECT *
+       FROM (
+         SELECT source, sender_name, content, created_at
+         FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+         ORDER BY created_at DESC
+         LIMIT 300
+       ) AS recent_summary_messages
        ORDER BY created_at ASC`,
       [tenantId, dealId],
     );

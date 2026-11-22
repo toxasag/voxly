@@ -44,6 +44,7 @@ export interface CreateStoryPayload {
 }
 
 export const STORIES_QUERY_KEY = ["stories"] as const;
+const BASE_PATH = "/api/v1/stories";
 
 export function useStories(options?: {
   channel?: string;
@@ -62,7 +63,7 @@ export function useStories(options?: {
     queryKey: [...STORIES_QUERY_KEY, options],
     queryFn: async () => {
       const res = await apiClient.get<{ items: StoryPostDTO[]; total: number }>(
-        `/stories${qs ? `?${qs}` : ""}`,
+        `${BASE_PATH}${qs ? `?${qs}` : ""}`,
       );
       return res.data;
     },
@@ -74,7 +75,7 @@ export function useCreateStory(): UseMutationResult<StoryPostDTO, ApiClientError
 
   return useMutation({
     mutationFn: async (payload) => {
-      const res = await apiClient.post<StoryPostDTO>("/stories", payload);
+      const res = await apiClient.post<StoryPostDTO>(BASE_PATH, payload);
       return res.data;
     },
     onSuccess: () => {
@@ -88,7 +89,7 @@ export function usePublishStory(): UseMutationResult<StoryPostDTO, ApiClientErro
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await apiClient.post<StoryPostDTO>(`/stories/${id}/publish`);
+      const res = await apiClient.post<StoryPostDTO>(`${BASE_PATH}/${id}/publish`);
       return res.data;
     },
     onSuccess: () => {
@@ -102,7 +103,7 @@ export function useDeleteStory(): UseMutationResult<void, ApiClientError, string
 
   return useMutation({
     mutationFn: async (id: string) => {
-      await apiClient.delete<void>(`/stories/${id}`);
+      await apiClient.delete<void>(`${BASE_PATH}/${id}`);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: STORIES_QUERY_KEY });

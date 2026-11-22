@@ -53,6 +53,7 @@ function getStatusBadge(status: string): { label: string; color: TagColor } {
     case "in-progress":
       return { label: "В работе", color: "sky" };
     case "waiting_parts":
+    case "parts_order":
       return { label: "Ожидает запчастей", color: "amber" };
     case "ready":
     case "completed":
