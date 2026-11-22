@@ -56,6 +56,9 @@ export interface WarehouseMovementDTO {
   batchId: string | null;
   repairOrderId: string | null;
   repairTicketNumber?: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
+  dealTitle?: string | null;
   type: string;
   quantity: number;
   costPrice: number;
@@ -67,7 +70,10 @@ export interface WarehouseMovementDTO {
 export interface PurchaseRequestDTO {
   id: string;
   repairOrderId: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
   repairTicketNumber?: string | null;
+  dealTitle?: string | null;
   itemId: string | null;
   itemName: string;
   sku: string;
@@ -111,6 +117,8 @@ export interface IntakeBatchPayload {
 
 export interface CreatePurchaseRequestPayload {
   repair_order_id?: string;
+  deal_id?: string;
+  deal_item_id?: string;
   item_id?: string;
   item_name: string;
   sku?: string;
@@ -245,12 +253,15 @@ export const warehouseKeys = {
   brands: () => [...warehouseKeys.all, "brands"] as const,
   models: (brandId?: string, brand?: string) =>
     [...warehouseKeys.all, "models", brandId ?? "", brand ?? ""] as const,
-  purchases: (status?: string, orderId?: string) => {
+  purchases: (status?: string, orderId?: string, dealId?: string) => {
     const key = [...warehouseKeys.all, "purchases"] as string[];
-    if (status !== undefined || orderId !== undefined) {
+    if (status !== undefined || orderId !== undefined || dealId !== undefined) {
       key.push(status ?? "");
-      if (orderId !== undefined) {
-        key.push(orderId);
+      if (orderId !== undefined || dealId !== undefined) {
+        key.push(orderId ?? "");
+        if (dealId !== undefined) {
+          key.push(dealId);
+        }
       }
     }
     return key;
@@ -444,13 +455,14 @@ export function useWarehouseMovements(limit: number = 100) {
   });
 }
 
-export function usePurchaseRequests(status?: string, orderId?: string) {
+export function usePurchaseRequests(status?: string, orderId?: string, dealId?: string) {
   return useQuery({
-    queryKey: warehouseKeys.purchases(status, orderId),
+    queryKey: warehouseKeys.purchases(status, orderId, dealId),
     queryFn: async () => {
       const q = new URLSearchParams();
       if (status) q.append("status", status);
       if (orderId) q.append("repair_order_id", orderId);
+      if (dealId) q.append("deal_id", dealId);
       const res = await apiClient.get<PurchaseRequestDTO[]>(`/api/v1/warehouse/purchases?${q.toString()}`);
       return res.data;
     },

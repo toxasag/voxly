@@ -1339,7 +1339,7 @@ function WarehouseContent() {
                     Остаток на складе
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Наряды-заказы
+                    Наряды / Сделки
                   </th>
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
                     Ориент. цена
@@ -1772,6 +1772,15 @@ function WarehouseContent() {
                             className="inline-flex items-center gap-1 text-[11px] text-[#4a38f5] hover:underline mt-0.5"
                           >
                             <span>Наряд №{m.repairTicketNumber ?? "—"}</span>
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </Link>
+                        )}
+                        {!m.repairOrderId && m.dealId && (
+                          <Link
+                            href={`/crm/deals?record=${m.dealId}`}
+                            className="inline-flex items-center gap-1 text-[11px] text-[#4a38f5] hover:underline mt-0.5"
+                          >
+                            <span>Сделка: {m.dealTitle ?? "Открыть"}</span>
                             <ExternalLink className="h-2.5 w-2.5" />
                           </Link>
                         )}

@@ -106,7 +106,7 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] px-4 py-3">
-              <span className="text-[11px] text-[#666666]">Выручка по запчастям</span>
+              <span className="text-[11px] text-[#666666]">Выручка (товары и запчасти)</span>
               <p className="mt-1 text-lg font-bold font-mono text-[#111111]">
                 {formatCost(pnl.cogs.partsRevenue)}
               </p>
@@ -126,7 +126,7 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }
             </div>
 
             <div className="rounded-[8px] border border-emerald-200 bg-emerald-50/70 px-4 py-3">
-              <span className="text-[11px] text-emerald-800">Прибыль по запчастям</span>
+              <span className="text-[11px] text-emerald-800">Прибыль по товарам</span>
               <p className={cn("mt-1 text-lg font-bold font-mono", pnl.cogs.partsGrossProfit >= 0 ? "text-emerald-700" : "text-rose-700")}>
                 {formatCost(pnl.cogs.partsGrossProfit)}
               </p>
@@ -151,7 +151,7 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }
                   <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-[11px] text-[#666666]">
                     <th className="px-3 py-2 text-left font-medium">Позиция</th>
                     <th className="px-3 py-2 text-left font-medium">Партия / Поставщик</th>
-                    <th className="px-3 py-2 text-left font-medium">Наряд</th>
+                    <th className="px-3 py-2 text-left font-medium">Наряд / Сделка</th>
                     <th className="px-3 py-2 text-right font-medium">Кол-во</th>
                     <th className="px-3 py-2 text-right font-medium">Цена партии</th>
                     <th className="px-3 py-2 text-right font-medium">Себестоимость</th>
@@ -166,7 +166,11 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }
                         {row.supplierName ? ` · ${row.supplierName}` : ""}
                       </td>
                       <td className="px-3 py-2 font-mono text-[#4a38f5]">
-                        {row.ticketNumber || "—"}
+                        {row.ticketNumber
+                          ? row.ticketNumber
+                          : row.dealTitle
+                            ? `Сделка: ${row.dealTitle}`
+                            : "—"}
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-[#111111]">{row.quantity}</td>
                       <td className="px-3 py-2 text-right font-mono text-[#666666]">{formatCost(row.unitCost)}</td>
