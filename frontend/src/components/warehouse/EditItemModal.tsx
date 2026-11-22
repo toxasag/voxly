@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { X, Loader2, SquarePen, Tag, Layers, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -96,32 +96,41 @@ export function EditItemModal({
     return list;
   }, [dictionaries.categories, dictionaries.types, warehouseCategoriesQuery.data]);
 
+  const lastSyncedKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
-    const src = itemQuery.data ?? initialItem;
-    if (src && open) {
-      setName(src.name ?? "");
-      setSku(src.sku ?? "");
-      setBrand(src.brand ?? "");
-      setCategory(src.category ?? "");
-      const initialModelNames =
-        src.modelNames ?? (src.models ? src.models.map((m) => m.name) : []);
-      setModelNames(initialModelNames);
-      setUnit(src.unit ?? "шт.");
-      setMinStock(src.minStock !== undefined ? String(src.minStock) : "0");
-      setRetailPrice(
-        src.retailPrice !== undefined && src.retailPrice !== null
-          ? String(src.retailPrice)
-          : src.price !== undefined
-          ? String(src.price)
-          : "",
-      );
-      setCostPrice(
-        src.costPrice !== undefined && src.costPrice !== null
-          ? String(src.costPrice)
-          : "",
-      );
+    if (!open) {
+      lastSyncedKeyRef.current = null;
+      return;
     }
-  }, [itemQuery.data, initialItem, open]);
+    const src = itemQuery.data ?? initialItem;
+    if (!src || !itemId) return;
+    const syncKey = `${itemId}:${itemQuery.data ? "full" : "initial"}`;
+    if (lastSyncedKeyRef.current === syncKey) return;
+    lastSyncedKeyRef.current = syncKey;
+
+    setName(src.name ?? "");
+    setSku(src.sku ?? "");
+    setBrand(src.brand ?? "");
+    setCategory(src.category ?? "");
+    const initialModelNames =
+      src.modelNames ?? (src.models ? src.models.map((m) => m.name) : []);
+    setModelNames(initialModelNames);
+    setUnit(src.unit ?? "шт.");
+    setMinStock(src.minStock !== undefined ? String(src.minStock) : "0");
+    setRetailPrice(
+      src.retailPrice !== undefined && src.retailPrice !== null
+        ? String(src.retailPrice)
+        : src.price !== undefined
+        ? String(src.price)
+        : "",
+    );
+    setCostPrice(
+      src.costPrice !== undefined && src.costPrice !== null
+        ? String(src.costPrice)
+        : "",
+    );
+  }, [itemId, itemQuery.data, initialItem, open]);
 
   useEffect(() => {
     if (!open) return;

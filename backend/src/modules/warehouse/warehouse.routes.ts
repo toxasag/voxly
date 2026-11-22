@@ -358,7 +358,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.status(201).send({ data: created });
   });
 
-  // Обновление статуса заявки
+  // Обновление заявки на закупку
   app.patch("/purchases/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
@@ -368,6 +368,17 @@ export async function warehouseRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Purchase request not found" });
     }
     return reply.send({ data: updated });
+  });
+
+  // Удаление заявки на закупку
+  app.delete("/purchases/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const deleted = await warehouseService.deletePurchaseRequest(tenant_id, id);
+    if (!deleted) {
+      return reply.status(404).send({ error: "Purchase request not found" });
+    }
+    return reply.send({ data: { deleted: true, id } });
   });
 
   // -------------------------------------------------------------------------

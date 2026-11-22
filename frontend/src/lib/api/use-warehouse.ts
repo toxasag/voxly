@@ -464,6 +464,16 @@ export function useCreatePurchaseRequest() {
   });
 }
 
+export interface UpdatePurchaseRequestPayload {
+  item_name?: string;
+  sku?: string;
+  quantity?: number;
+  unit?: string;
+  estimated_price?: number;
+  status?: "pending" | "ordered" | "received" | "cancelled";
+  comment?: string;
+}
+
 export function useUpdatePurchaseRequest() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -472,13 +482,29 @@ export function useUpdatePurchaseRequest() {
       payload,
     }: {
       id: string;
-      payload: { status?: string; comment?: string };
+      payload: UpdatePurchaseRequestPayload;
     }) => {
       const res = await apiClient.patch<PurchaseRequestDTO>(`/api/v1/warehouse/purchases/${id}`, payload);
       return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+    },
+  });
+}
+
+export function useDeletePurchaseRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete<{ deleted: boolean; id: string }>(`/api/v1/warehouse/purchases/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
     },
   });
 }

@@ -70,6 +70,11 @@ export const createPurchaseRequestSchema = z.object({
 export type CreatePurchaseRequestPayload = z.infer<typeof createPurchaseRequestSchema>;
 
 export const updatePurchaseRequestSchema = z.object({
+  item_name: z.string().min(1, "Наименование обязательно").max(300).optional(),
+  sku: z.string().max(100).optional(),
+  quantity: z.number().positive("Количество должно быть больше 0").optional(),
+  unit: z.string().min(1).max(20).optional(),
+  estimated_price: z.number().nonnegative("Цена не может быть отрицательной").optional(),
   status: purchaseRequestStatusSchema.optional(),
   comment: z.string().max(1000).optional(),
 });

@@ -253,9 +253,11 @@ export function DictionarySelectField({
 
       setEditingId(null);
       setActionError(null);
+      toast.success(`Переименовано: ${trimmed}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Не удалось переименовать";
       setActionError(msg);
+      toast.error(msg);
     }
   };
 
