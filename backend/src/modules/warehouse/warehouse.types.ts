@@ -59,6 +59,8 @@ export type PurchaseRequestStatus = z.infer<typeof purchaseRequestStatusSchema>;
 
 export const createPurchaseRequestSchema = z.object({
   repair_order_id: z.string().uuid().optional(),
+  deal_id: z.string().uuid().optional(),
+  deal_item_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
   item_name: z.string().min(1, "Item name is required").max(300),
   sku: z.string().max(100).optional().default(""),
@@ -277,6 +279,9 @@ export interface WarehouseMovementRow {
   batch_id: string | null;
   repair_order_id: string | null;
   repair_ticket_number?: string | null;
+  deal_id?: string | null;
+  deal_item_id?: string | null;
+  deal_title?: string | null;
   type: string;
   quantity: string | number;
   cost_price: string | number;
@@ -293,6 +298,9 @@ export interface WarehouseMovementDTO {
   batchId: string | null;
   repairOrderId: string | null;
   repairTicketNumber?: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
+  dealTitle?: string | null;
   type: string;
   quantity: number;
   costPrice: number;
@@ -305,8 +313,11 @@ export interface PurchaseRequestRow {
   id: string;
   tenant_id: string;
   repair_order_id: string | null;
+  deal_id?: string | null;
+  deal_item_id?: string | null;
   supplier_order_id: string | null;
   repair_ticket_number?: string | null;
+  deal_title?: string | null;
   item_id: string | null;
   item_name: string;
   sku: string;
@@ -324,8 +335,11 @@ export interface PurchaseRequestRow {
 export interface PurchaseRequestDTO {
   id: string;
   repairOrderId: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
   supplierOrderId?: string | null;
   repairTicketNumber?: string | null;
+  dealTitle?: string | null;
   itemId: string | null;
   itemName: string;
   sku: string;

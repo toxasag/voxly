@@ -336,6 +336,15 @@ export function useUnmarkDealPersonal(): UseMutationResult<
 // Deal Items (Услуги/Товары в сделке)
 // ---------------------------------------------------------------------------
 
+export interface DealItemBatchAllocationDTO {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
 export interface DealItemDTO {
   id: string;
   dealId: string;
@@ -345,6 +354,14 @@ export interface DealItemDTO {
   description: string;
   sku: string;
   price: number;
+  costPrice?: number;
+  costSource?: "manual" | "estimated_fifo" | "fifo_batch" | "negative_stock" | "pending_purchase";
+  consumedAt?: string | null;
+  batchAllocations?: DealItemBatchAllocationDTO[];
+  markupPercent?: number;
+  marginPercent?: number;
+  purchaseRequestId?: string | null;
+  purchaseRequestStatus?: string | null;
   quantity: number;
   unit: string;
   discountPercent: number;
@@ -362,11 +379,13 @@ export interface CreateDealItemPayload {
   description?: string;
   sku?: string;
   price?: number;
+  cost_price?: number;
   quantity?: number;
   unit?: string;
   discount_percent?: number;
   discount_amount?: number;
   sort_order?: number;
+  add_to_purchase_request?: boolean;
 }
 
 export interface UpdateDealItemPayload {
@@ -374,6 +393,7 @@ export interface UpdateDealItemPayload {
   description?: string;
   sku?: string;
   price?: number;
+  cost_price?: number;
   quantity?: number;
   unit?: string;
   discount_percent?: number;
@@ -409,6 +429,8 @@ export function useAddDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
   });
 }
@@ -424,6 +446,8 @@ export function useUpdateDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
   });
 }
@@ -441,6 +465,8 @@ export function useDeleteDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
   });
 }

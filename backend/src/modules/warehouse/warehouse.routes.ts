@@ -336,8 +336,12 @@ export async function warehouseRoutes(app: FastifyInstance) {
   // Список заявок на закупку (индивидуальные строки)
   app.get("/purchases", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { status, repair_order_id } = request.query as { status?: string; repair_order_id?: string };
-    const list = await warehouseService.listPurchaseRequests(tenant_id, status, repair_order_id);
+    const { status, repair_order_id, deal_id } = request.query as {
+      status?: string;
+      repair_order_id?: string;
+      deal_id?: string;
+    };
+    const list = await warehouseService.listPurchaseRequests(tenant_id, status, repair_order_id, deal_id);
     return reply.send({ data: list });
   });
 

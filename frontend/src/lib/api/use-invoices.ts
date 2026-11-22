@@ -238,6 +238,8 @@ export interface PnlCogsBreakdownItemDTO {
   batchNumber: string;
   supplierName: string;
   ticketNumber: string | null;
+  dealId?: string | null;
+  dealTitle?: string | null;
   quantity: number;
   unitCost: number;
   totalCost: number;
@@ -246,6 +248,8 @@ export interface PnlCogsBreakdownItemDTO {
 
 export interface PnlCogsSummaryDTO {
   partsRevenue: number;
+  repairPartsRevenue?: number;
+  dealProductsRevenue?: number;
   worksRevenue: number;
   partsCogs: number;
   partsGrossProfit: number;
