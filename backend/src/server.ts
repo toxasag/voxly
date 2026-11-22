@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
 import { closePool, query, queryOne, runWithPlatformScope } from "./db/client.js";
 import { closeRedis } from "./infrastructure/redis.js";
+import { closeAllSseStreams } from "./infrastructure/sse-registry.js";
 import { getEnv } from "./config/env.js";
 import { TelegramService } from "./modules/auth/telegram.service.js";
 import { MaxService } from "./services/max.service.js";
@@ -234,6 +235,7 @@ async function main(): Promise<void> {
       unregisterMaxOutbound();
       unregisterWhatsappOutbound();
       messagingRegistry.destroy();
+      closeAllSseStreams();
       await app.close();
       await closeRedis();
       await closePool();

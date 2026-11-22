@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticatePlugin } from "../../../plugins/authenticate.js";
+import { registerSseStream } from "../../../infrastructure/sse-registry.js";
 import { chatEventBus, type ChatStreamEvent } from "./chat-events.js";
 import { query } from "../../../db/client.js";
 import { DealsService } from "../deals/deals.service.js";
@@ -65,15 +66,19 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
         ? chatEventBus.subscribeDeal(tenantId, dealId, onEvent)
         : chatEventBus.subscribeTenant(tenantId, onEvent);
 
+      const unregisterStream = registerSseStream(reply.raw);
+
       const pingInterval = setInterval(() => {
         if (!reply.raw.destroyed) {
           reply.raw.write(`: ping\n\n`);
         }
       }, 15_000);
+      pingInterval.unref?.();
 
       request.raw.on("close", () => {
         clearInterval(pingInterval);
         unsubscribe();
+        unregisterStream();
       });
 
       return reply;
