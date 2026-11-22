@@ -379,6 +379,20 @@
   - `frontend/src/lib/api/use-warehouse.ts`, `frontend/src/components/warehouse/EditPurchaseRequestModal.tsx`, `frontend/src/app/(dashboard)/warehouse/page.tsx`: добавлены `useDeletePurchaseRequest`, инвалидация `aggregated-purchases`, модалка `EditPurchaseRequestModal` (поддерживает одиночные и агрегированные строки) и кнопки редактирования/удаления в таблице заявок.
 - **Где ещё используется:** `CreateItemModal.tsx`, `WarehouseDictionariesModal.tsx`, `RepairIntakeModal.tsx`, `repairs/[id]/page.tsx` — автоматически получают исправленное каскадное переименование и актуальный кэш.
 
+---
+
+## Сквозной партионный учёт себестоимости (FIFO) и интеграция с финансами (2026-11-22)
+
+- **Root Cause:** При приходе партий `warehouse_batches` перезаписывалась единственная `warehouse_items.cost_price` ценой последней партии; оценка склада считалась на клиенте по текущей странице пагинации (`totalStock * lastCostPrice`); `consumePartsForOrder` запускался fire-and-forget без `await` и защиты от повторного списания, списывал партии FIFO, но **не обновлял `repair_parts.cost_price`** и не сохранял разбивку по партиям; `deletePart` не освобождал резерв; `GET /api/v1/finance/pnl` считал только ДДС без списанной партионной себестоимости (COGS); на фронте `PartsTable`, `FinancialSummary` и `ProfitLossView` путали маржу (`profit / retail`) и наценку (`profit / cost`).
+- **Что изменено:**
+  - Миграция `backend/src/db/migrations/0121_batch_cost_tracking.sql` + `backend/src/db/schema.sql`: добавлены `repair_parts.consumed_at`, `repair_parts.cost_source`, `warehouse_movements.repair_part_id` и RLS-таблица `repair_part_batch_allocations`.
+  - `backend/src/modules/warehouse/{warehouse.types.ts,warehouse.service.ts}`: добавлены `fifoCostPrice`, `avgBatchCostPrice`, `stockValuation`, `activeBatchesCount` в `WarehouseItemDTO` и полная серверная оценка склада `meta.totalValuation` / `meta.lowStockCount`; заполнение `batch_id` в `warehouse_reservations` при приходе из заказа поставщику; метод `estimateFifoUnitCost`; атомарный идемпотентный `consumePartsForOrderInTx` с фиксацией партионной разбивки и обновлением `repair_parts.cost_price`.
+  - `backend/src/modules/repairs/{repairs.types.ts,repairs.service.ts}`: синхронный вызов `consumePartsForOrderInTx` при выдаче наряда (`issued`) до расчёта итогов; оценка FIFO при `addPart`; освобождение резерва при `deletePart`; возврат `batchAllocations`, `markupPercent`, `marginPercent` в `RepairPartDTO`.
+  - `backend/src/modules/finance/{finance.types.ts,finance.service.ts}`: в `GET /api/v1/finance/pnl` добавлен блок `cogs` (выручка по запчастям/работам, партионная себестоимость списаний `warehouse_movements.write_off`, валовая прибыль, наценка %, маржа %, текущая оценка склада и детализация списаний по партиям).
+  - Frontend (`warehouse/page.tsx`, `PartsTable.tsx`, `FinancialSummary.tsx`, `ProfitLossView.tsx`, `finance/page.tsx`, `repairs/[id]/page.tsx`, `use-warehouse.ts`, `use-repairs.ts`, `use-invoices.ts`): подключены серверная оценка склада, FIFO-себестоимость, расшифровка партий в наряде, раздельные формулы наценки и маржи, блок «Партионная себестоимость и наценка (FIFO)» в P&L.
+- **Что осталось вне скоупа (бизнес-решение):** списание партий при прямой продаже товаров через CRM-сделки (`deal_items` не имеет `cost_price` и списания со склада); переключение метода списания (FIFO vs средневзвешенная vs ручной выбор партии).
+
+
 
 ---
 
@@ -414,3 +428,69 @@
   - **Реальные баги и unit-тесты (7/7 + новый тест):** исправлены `agent-reply.ts` и `channel-identity.ts`, актуализированы `phone-validation.test.ts`, `agent-reply.test.ts`, `incoming-buffer.test.ts`, `bitrix24-connector.test.ts`, `chat-write-first.test.ts`, `media-resolver.test.ts`, `repairs-client-block.test.ts`, добавлен `auth-cache.test.ts`.
   - **High-load (100+ RPS / 5000+ строк):** создан `backend/src/plugins/auth-cache.ts` (Redis TTL 30s, tenant-scoped, fail-open) и подключён в `authenticate.ts` с синхронной инвалидацией во всех точках мутации (`team.service.ts`, `profile.service.ts`, `invite.service.ts`, `marketplace.routes.ts`, `admin-tenants.routes.ts`); подключён Redis store с `skipOnError: true` для `@fastify/rate-limit` в `app.ts`; добавлены безопасные `LIMIT` с обратной совместимостью в `deals.service.ts:listMessages` (500, clamp 1..2000), `deals.service.ts:kanban` (2000, clamp 1..5000) и `contacts-io.service.ts:exportContacts` (25 000).
 - **Где ещё используется:** все защищённые API-роуты (`authenticatePlugin`), rate-limiter (`app.ts`), чат и канбан CRM (`deals.service.ts`), экспорт контактов (`contacts-io.service.ts`), AI-пайплайн (`agent-reply.ts`), парсинг телефонов (`channel-identity.ts`), SSE-стримы (`chat-stream`, `push-notification`).
+
+
+### 2026-11-22 — Интеграция кастомных моделей NoirLight AI (`api.noirlight.pro`), бенчмарк 22 моделей и двусторонняя отказоустойчивая ротация
+- **Root Cause & Запрос:**
+  1. Пользователь добавил нового кастомного провайдера `https://api.noirlight.pro/v1` с API-ключом `sk-noir-UAwLmhz9aSHp39EIgottWp8AgQYi3R4D1eyfpJ` в админке `https://getvoxly.ru/admin/integrations`.
+  2. Вопросы пользователя: какую модель выбрать в выпадающем списке, выбирает ли система лучшую автоматически, включить модели в ротацию для 100% стабильности AI Агента и досконально протестировать все 22 доступные модели.
+- **Результаты тестирования 22 моделей:**
+  - 🥇 **`agnes-3.0-flash`**: 1435ms, идеальный JSON-вывод (`parseAgentReply`), чистый русский язык, нулевая утечка CoT/рассуждений — **лучший выбор**.
+  - 🥈 **`glm-4-flash`**: 3517ms, корректный JSON, надёжная модель Zhipu AI GLM.
+  - 🥉 **`qwen-omni-plus`**: 5420ms, валидный JSON, модель Alibaba Qwen.
+  - ❌ **`muse`**: HTTP 503 (`Модель временно недоступна`) — модель, на которой был фокус на скриншоте пользователя, в апстриме не работает!
+  - ❌ **`llama`**: HTTP 503 (`Модель временно недоступна`).
+  - ❌ **`deepseek`**, **`combo`**: HTTP 503 (`no upstream for this model`).
+  - ❌ **`nemotron-super`**, **`nemotron-lightning`**, **`kimi-k3.1-pro`**, **`hy4-flash`**: утечка внутренних рассуждений (CoT/system monologue) прямо в ответ пользователю.
+  - ❌ **`qwen3.8-27b`**: галлюцинации и системный уклон (обращение «Криптан»).
+- **Что изменено:**
+  - `backend/src/modules/ai/gateway/model-tier-router.ts`:
+    - Добавлены профили `agnes-3.0-flash`, `glm-4-flash`, `qwen-omni-plus`, `qwen-omni-flash`, `laguna`, `glm-4.5`, `glm-5.3` в `MODEL_PROFILES_CATALOG`.
+    - Добавлена двусторонняя матрица переключения `HIERARCHICAL_FALLBACK_MATRIX`: модели Google Gemini при спайке 429 переключаются на `agnes-3.0-flash` и `glm-4-flash`; китайские модели кастомного провайдера при сбоях переключаются на соседние и на Gemini; нерабочие модели (`muse`, `llama`, `deepseek`) мгновенно подменяются на `agnes-3.0-flash`.
+  - `backend/src/modules/ai/gateway/key-pool-manager.ts` и `smart-model-router.ts`:
+    - Добавлено корректное сопоставление провайдера `custom` и провайдеров NoirLight для извлечения ключей и base URL.
+  - `frontend/src/lib/ai-bots/ai-bots.types.ts` и `frontend/src/components/admin/AdminIntegrationsEditor.tsx`:
+    - Добавлены рекомендуемые модели `agnes-3.0-flash`, `glm-4-flash`, `qwen-omni-plus` в каталог и подсказки админки.
+- **Где ещё используется:** AI Gateway (`SmartModelRouter`, `KeyPoolManager`, `ModelTierRouter`), админка интеграций (`AdminIntegrationsEditor`), виджет онлайн-чата (`webchat.service.ts`).
+
+
+### 2026-11-22 — Прямые продажи в сделках CRM (`deal_items`): FIFO-списание, COGS в P&L и автозаявки на закупку на `/warehouse`
+- **Контекст:** По подтверждённым бизнес-правилам `remtoua` метод списания — строго FIFO, одна валюта без выделения НДС, и товары продаются напрямую через сделки CRM (`deal_items`) минуя заказ-наряды СЦ; при отсутствии товара на складе должна формироваться заявка на закупку на `/warehouse`.
+- **БД и RLS:** добавлена миграция `backend/src/db/migrations/0122_deal_items_fifo_and_purchases.sql` (синхронизирована в `backend/src/db/schema.sql`):
+  - `deal_items`: `cost_price`, `cost_source`, `consumed_at`;
+  - `deal_item_batch_allocations` (с RLS `ENABLE/FORCE ROW LEVEL SECURITY` + `tenant_isolation` и индексами);
+  - `warehouse_movements`: `deal_id`, `deal_item_id`;
+  - `purchase_requests`: `deal_id`, `deal_item_id`.
+- **Backend:**
+  - `warehouse.service.ts`: добавлены `consumeDealItemsInTx` (атомарное идемпотентное FIFO-списание при закрытии сделки в `won` + автосоздание `purchase_requests` на недостающее количество без дублей) и `fulfillWonDealIfReadyInTx` (автодосписание дефицита закрытой сделки при оприходовании заявки через заказ поставщику или ручной приход); `listPurchaseRequests` / `listAggregatedPurchaseRequests` / `listMovements` теперь включают привязку и отображение сделок CRM (`deal_id`, `deal_title`).
+  - `deals.service.ts` / `deals.routes.ts` / `deals.types.ts`: при `moveStage` и `update` в `is_won` стадию вызывается `consumeDealItemsInTx`; `addDealItem` считает прогнозную FIFO-себестоимость и поддерживает флаг `add_to_purchase_request`; `listDealItems` отдаёт `batchAllocations`, `markupPercent`, `marginPercent`, статус заявки.
+  - `finance.service.ts`: `pnl()` включает выручку `deal_items` (`item_type = 'product'`) в P&L COGS и отображает сделки в `cogs.breakdown`.
+- **Frontend:** обновлены `DealProductsServicesTab.tsx`, `use-deals.ts`, `use-warehouse.ts`, `use-invoices.ts`, `ProfitLossView.tsx`, `warehouse/page.tsx`.
+
+
+### 2026-11-22 — Сквозной аудит моковых данных и подключение реальных источников (UI -> API -> DB)
+- **Контекст & Задача:** Провести полный аудит проекта на предмет «mock vs real data», выявить хардкод-массивы, фикстуры, фейковые ответы и заглушки, проверить связность UI -> API -> БД на боевом сервере и заменить заглушки на реальные данные.
+- **Root Cause & Находки:**
+  1. `frontend/src/app/(dashboard)/dashboard/page.tsx`: содержал константу `STATS = [...]` с захардкоженными цифрами (24 сделки, 148 контактов, 32 компании, 17 задач) и пустые заглушки без данных («Здесь появится воронка сделок», «Здесь появится список ваших задач»).
+  2. `frontend/src/app/(dashboard)/inbox/page.tsx`: в списке каналов фильтрации `CHANNELS` отсутствовал `webchat` («Онлайн-чат»), из-за чего операторы не могли отфильтровать сообщения, приходящие с виджета сайта.
+  3. `frontend/src/app/(dashboard)/settings/caller-id/page.tsx`: использовался фиктивный образец токена `companionToken = "voxly_live_device_token_sample"`, который при копировании не позволял авторизовать Android-компаньон.
+  4. `frontend/src/app/(admin)/layout.tsx`: ссылка в навигации вела на устаревший дублирующий маршрут `/tenants` вместо `/admin/tenants`.
+- **Что изменено:**
+  - `frontend/src/app/(dashboard)/dashboard/page.tsx`:
+    - Полностью переписан на получение живых данных тенанта: `useDeals({ limit: 5 })`, `useContacts({ limit: 1 })`, `useCompanies({ limit: 1 })`, `useTasks({ limit: 5, status: "todo" })`.
+    - Карточки метрик показывают реальное число записей в БД (`total`) и сумму бюджета сделок.
+    - Блок «Последние сделки» отображает список последних сделок тенанта с интерактивным переходом в дровер `?record=${id}` и честным `EmptyState`, если сделок нет.
+    - Блок «Ближайшие задачи» отображает список реальных задач с чекбоксом выполнения (мутация `useToggleTaskStatus`), дедлайном и бейджем приоритета.
+    - Активные модули платформы снабжены прямыми ссылками на разделы.
+  - `frontend/src/app/(dashboard)/inbox/page.tsx`: добавлен канал `webchat` («Онлайн-чат») в список фильтров `CHANNELS`.
+  - `frontend/src/app/(dashboard)/settings/caller-id/page.tsx`: подключен реальный Bearer-токен текущей сессии через `readAccessToken()`.
+  - `frontend/src/app/(admin)/layout.tsx`: навигация переведена на официальный маршрут `/admin/tenants`.
+- **Верификация:**
+  - Проверена компиляция TypeScript: `tsc --noEmit` во frontend и backend (код 0).
+  - Успешный деплой на VPS (150.241.98.135): `vf-deploy GETVOXLY` (код 0).
+  - Проверены реальные эндпоинты API Fastify через JWT токен:
+    - `/api/v1/crm/deals`: 9 реальных сделок тенанта;
+    - `/api/v1/crm/contacts`: 7 реальных контактов;
+    - `/api/v1/crm/companies`: 3 реальные компании;
+    - `/api/v1/crm/tasks`: 0 открытых задач (корректный EmptyState);
+    - `/api/v1/analytics/overview`: реальные агрегации по 7 этапам воронки и 6 месяцам P&L.

@@ -293,6 +293,35 @@ export class WarehouseService {
       const total = typeof countRow?.count === "number" ? countRow.count : parseInt(String(countRow?.count || 0), 10);
       const pages = total === 0 ? 0 : Math.ceil(total / limit);
 
+      const summaryRow = await tx.queryOne<{ total_valuation: string | number; low_stock_count: string | number }>(
+        `SELECT
+           COALESCE((
+             SELECT SUM(b.remaining_quantity * b.purchase_price)
+             FROM warehouse_batches b
+             JOIN warehouse_items wi ON wi.id = b.item_id AND wi.tenant_id = b.tenant_id AND wi.deleted_at IS NULL
+             WHERE b.tenant_id = $1 AND b.remaining_quantity > 0
+           ), 0)::numeric(14,2) AS total_valuation,
+           COALESCE((
+             SELECT COUNT(*)
+             FROM (
+               SELECT i.id, i.min_stock,
+                      COALESCE(SUM(b.remaining_quantity), 0)
+                      - COALESCE((
+                        SELECT SUM(r.quantity) FROM warehouse_reservations r
+                        WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
+                      ), 0) AS avail
+               FROM warehouse_items i
+               LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+               WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+               GROUP BY i.id, i.min_stock
+             ) s
+             WHERE s.avail <= s.min_stock
+           ), 0)::int AS low_stock_count`,
+        [tenantId],
+      );
+      const totalValuation = Math.round(Number(summaryRow?.total_valuation ?? 0) * 100) / 100;
+      const lowStockCount = Number(summaryRow?.low_stock_count ?? 0);
+
       const offset = (page - 1) * limit;
 
       // Если в выборке 0 позиций или запрошенная страница превышает общее число
@@ -304,6 +333,8 @@ export class WarehouseService {
             page,
             limit: all ? total : limit,
             pages: all ? (total > 0 ? 1 : 0) : pages,
+            totalValuation,
+            lowStockCount,
           },
         };
       }
@@ -319,6 +350,15 @@ export class WarehouseService {
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
                 i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
+                COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
+                COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
+                (
+                  SELECT b2.purchase_price
+                  FROM warehouse_batches b2
+                  WHERE b2.tenant_id = i.tenant_id AND b2.item_id = i.id AND b2.remaining_quantity > 0
+                  ORDER BY b2.received_at ASC, b2.created_at ASC
+                  LIMIT 1
+                ) AS fifo_cost_price,
                 COALESCE((
                   SELECT SUM(r.quantity)
                   FROM warehouse_reservations r
@@ -348,6 +388,15 @@ export class WarehouseService {
           : Math.max(totalStock - reserved, 0);
 
         const retailPrice = Number(r.retail_price ?? 0);
+        const costPrice = Number(r.cost_price ?? 0);
+        const stockValuation = Math.round(Number(r.stock_valuation ?? 0) * 100) / 100;
+        const activeBatchesCount = Number(r.active_batches_count ?? 0);
+        const fifoCostPrice =
+          r.fifo_cost_price !== null && r.fifo_cost_price !== undefined
+            ? Number(r.fifo_cost_price)
+            : costPrice;
+        const avgBatchCostPrice =
+          totalStock > 0 ? Math.round((stockValuation / totalStock) * 100) / 100 : costPrice;
         const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
         return {
           id: r.id,
@@ -359,7 +408,11 @@ export class WarehouseService {
           minStock: Number(r.min_stock ?? 0),
           retailPrice,
           price: retailPrice,
-          costPrice: Number(r.cost_price ?? 0),
+          costPrice,
+          fifoCostPrice,
+          avgBatchCostPrice,
+          stockValuation,
+          activeBatchesCount,
           totalStock: totalStock,
           quantity: totalStock,
           reservedStock: reserved,
@@ -379,6 +432,8 @@ export class WarehouseService {
           page,
           limit: all ? total : limit,
           pages: all ? (total > 0 ? 1 : 0) : pages,
+          totalValuation,
+          lowStockCount,
         },
       };
     });
@@ -392,6 +447,15 @@ export class WarehouseService {
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
                 i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
+                COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
+                COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
+                (
+                  SELECT b2.purchase_price
+                  FROM warehouse_batches b2
+                  WHERE b2.tenant_id = i.tenant_id AND b2.item_id = i.id AND b2.remaining_quantity > 0
+                  ORDER BY b2.received_at ASC, b2.created_at ASC
+                  LIMIT 1
+                ) AS fifo_cost_price,
                 COALESCE((
                   SELECT SUM(r.quantity)
                   FROM warehouse_reservations r
@@ -421,6 +485,14 @@ export class WarehouseService {
 
       const retailPrice = Number(r.retail_price ?? 0);
       const costPrice = Number(r.cost_price ?? 0);
+      const stockValuation = Math.round(Number(r.stock_valuation ?? 0) * 100) / 100;
+      const activeBatchesCount = Number(r.active_batches_count ?? 0);
+      const fifoCostPrice =
+        r.fifo_cost_price !== null && r.fifo_cost_price !== undefined
+          ? Number(r.fifo_cost_price)
+          : costPrice;
+      const avgBatchCostPrice =
+        total > 0 ? Math.round((stockValuation / total) * 100) / 100 : costPrice;
       const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
 
       return {
@@ -434,6 +506,10 @@ export class WarehouseService {
         retailPrice,
         price: retailPrice,
         costPrice,
+        fifoCostPrice,
+        avgBatchCostPrice,
+        stockValuation,
+        activeBatchesCount,
         totalStock: total,
         quantity: total,
         reservedStock: reserved,
@@ -832,13 +908,16 @@ export class WarehouseService {
   async listMovements(tenantId: string, limit: number = 100): Promise<WarehouseMovementDTO[]> {
     const rows = await query<WarehouseMovementRow>(
       `SELECT m.id, m.tenant_id, m.item_id, m.batch_id, m.repair_order_id,
+              m.deal_id, m.deal_item_id,
               m.type, m.quantity, m.cost_price, m.description, m.created_by, m.created_at,
               i.name AS item_name,
               ro.ticket_number AS repair_ticket_number,
+              d.title AS deal_title,
               u.name AS created_by_name
        FROM warehouse_movements m
        JOIN warehouse_items i ON i.id = m.item_id AND i.tenant_id = m.tenant_id
        LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+       LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
        LEFT JOIN users u ON u.id = m.created_by AND u.tenant_id = m.tenant_id
        WHERE m.tenant_id = $1
        ORDER BY m.created_at DESC
@@ -853,6 +932,9 @@ export class WarehouseService {
       batchId: r.batch_id,
       repairOrderId: r.repair_order_id,
       repairTicketNumber: r.repair_ticket_number,
+      dealId: r.deal_id ?? null,
+      dealItemId: r.deal_item_id ?? null,
+      dealTitle: r.deal_title ?? null,
       type: r.type,
       quantity: Number(r.quantity),
       costPrice: Number(r.cost_price),
@@ -870,6 +952,7 @@ export class WarehouseService {
     tenantId: string,
     status?: string,
     repairOrderId?: string,
+    dealId?: string,
   ): Promise<PurchaseRequestDTO[]> {
     const params: (string | number)[] = [tenantId];
     const filters: string[] = [];
@@ -882,17 +965,24 @@ export class WarehouseService {
       params.push(repairOrderId);
       filters.push(`pr.repair_order_id = $${params.length}`);
     }
+    if (dealId) {
+      params.push(dealId);
+      filters.push(`pr.deal_id = $${params.length}`);
+    }
 
     const whereExtra = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
 
     const rows = await query<PurchaseRequestRow>(
-      `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
+      `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.deal_id, pr.deal_item_id,
+              pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
               pr.quantity, pr.unit, pr.estimated_price, pr.status, pr.comment,
               pr.created_by, pr.created_at, pr.updated_at,
               ro.ticket_number AS repair_ticket_number,
+              d.title AS deal_title,
               u.name AS created_by_name
        FROM purchase_requests pr
        LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+       LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
        LEFT JOIN users u ON u.id = pr.created_by AND u.tenant_id = pr.tenant_id
        WHERE pr.tenant_id = $1 ${whereExtra}
        ORDER BY pr.created_at DESC`,
@@ -902,8 +992,11 @@ export class WarehouseService {
     return rows.map((r) => ({
       id: r.id,
       repairOrderId: r.repair_order_id,
+      dealId: r.deal_id ?? null,
+      dealItemId: r.deal_item_id ?? null,
       supplierOrderId: r.supplier_order_id,
       repairTicketNumber: r.repair_ticket_number,
+      dealTitle: r.deal_title ?? null,
       itemId: r.item_id,
       itemName: r.item_name,
       sku: r.sku,
@@ -920,7 +1013,7 @@ export class WarehouseService {
 
   /**
    * Агрегированный список заявок на закупку (группировка по деталям)
-   * Суммирует количество и собирает наряды через запятую (#1042, #1055, ...)
+   * Суммирует количество и собирает наряды и сделки через запятую (#1042, Сделка: ...)
    */
   async listAggregatedPurchaseRequests(
     tenantId: string,
@@ -956,7 +1049,20 @@ export class WarehouseService {
          SUM(pr.quantity)::numeric AS quantity,
          COALESCE(AVG(pr.estimated_price), 0)::numeric AS estimated_price,
          pr.status,
-         COALESCE(STRING_AGG(DISTINCT ro.ticket_number, ', ' ORDER BY ro.ticket_number), '—') AS repair_orders,
+         COALESCE(
+           STRING_AGG(
+             DISTINCT COALESCE(
+               ro.ticket_number,
+               CASE WHEN d.title IS NOT NULL THEN 'Сделка: ' || d.title ELSE NULL END
+             ),
+             ', '
+             ORDER BY COALESCE(
+               ro.ticket_number,
+               CASE WHEN d.title IS NOT NULL THEN 'Сделка: ' || d.title ELSE NULL END
+             )
+           ),
+           '—'
+         ) AS repair_orders,
          ARRAY_AGG(pr.id) AS request_ids,
          COALESCE((
            SELECT SUM(b.remaining_quantity)
@@ -970,6 +1076,7 @@ export class WarehouseService {
          ), 0)::numeric AS reserved_stock
        FROM purchase_requests pr
        LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+       LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
        WHERE pr.tenant_id = $1 ${statusFilter}
        GROUP BY pr.tenant_id, pr.item_id, pr.item_name, pr.sku, pr.unit, pr.status
        ORDER BY pr.item_name ASC`,
@@ -1005,13 +1112,15 @@ export class WarehouseService {
   ): Promise<PurchaseRequestDTO> {
     const row = await queryOneOrThrow<PurchaseRequestRow>(
       `INSERT INTO purchase_requests
-         (tenant_id, repair_order_id, item_id, item_name, sku, quantity, unit, estimated_price, comment, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id, tenant_id, repair_order_id, supplier_order_id, item_id, item_name, sku, quantity, unit,
+         (tenant_id, repair_order_id, deal_id, deal_item_id, item_id, item_name, sku, quantity, unit, estimated_price, comment, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, tenant_id, repair_order_id, deal_id, deal_item_id, supplier_order_id, item_id, item_name, sku, quantity, unit,
                  estimated_price, status, comment, created_by, created_at, updated_at`,
       [
         tenantId,
         payload.repair_order_id ?? null,
+        payload.deal_id ?? null,
+        payload.deal_item_id ?? null,
         payload.item_id ?? null,
         payload.item_name,
         payload.sku ?? "",
@@ -1026,8 +1135,11 @@ export class WarehouseService {
     return {
       id: row.id,
       repairOrderId: row.repair_order_id,
+      dealId: row.deal_id ?? null,
+      dealItemId: row.deal_item_id ?? null,
       supplierOrderId: row.supplier_order_id,
       repairTicketNumber: null,
+      dealTitle: null,
       itemId: row.item_id,
       itemName: row.item_name,
       sku: row.sku,
@@ -1094,24 +1206,42 @@ export class WarehouseService {
       if (updatedRows.length === 0) return null;
 
       const row = await tx.queryOne<PurchaseRequestRow>(
-        `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
+        `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.deal_id, pr.deal_item_id,
+                pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
                 pr.quantity, pr.unit, pr.estimated_price, pr.status, pr.comment,
                 pr.created_by, pr.created_at, pr.updated_at,
                 ro.ticket_number AS repair_ticket_number,
+                d.title AS deal_title,
                 u.name AS created_by_name
          FROM purchase_requests pr
          LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+         LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
          LEFT JOIN users u ON u.id = pr.created_by AND u.tenant_id = pr.tenant_id
          WHERE pr.tenant_id = $1 AND pr.id = $2`,
         [tenantId, requestId],
       );
       if (!row) return null;
 
+      // Если заявка под закрытую (won) сделку поступила на склад — дописываем дефицит FIFO
+      if (payload.status === "received" && row.deal_id) {
+        await this.fulfillWonDealIfReadyInTx(
+          tx,
+          tenantId,
+          row.deal_id,
+          row.deal_item_id ?? null,
+          row.item_id,
+          row.created_by,
+        );
+      }
+
       return {
         id: row.id,
         repairOrderId: row.repair_order_id,
+        dealId: row.deal_id ?? null,
+        dealItemId: row.deal_item_id ?? null,
         supplierOrderId: row.supplier_order_id,
         repairTicketNumber: row.repair_ticket_number,
+        dealTitle: row.deal_title ?? null,
         itemId: row.item_id,
         itemName: row.item_name,
         sku: row.sku,
@@ -1774,12 +1904,12 @@ export class WarehouseService {
         for (const req of linkedRequests) {
           const partQty = Number(req.quantity);
           if (req.repair_order_id && partQty > 0) {
-            // 1. Резервируем количество под заказ-наряд
+            // 1. Резервируем количество под заказ-наряд с привязкой к партии
             await tx.query(
               `INSERT INTO warehouse_reservations
-                 (tenant_id, repair_order_id, item_id, quantity, status)
-               VALUES ($1, $2, $3, $4, 'reserved')`,
-              [tenantId, req.repair_order_id, itemId, partQty],
+                 (tenant_id, repair_order_id, item_id, batch_id, quantity, status)
+               VALUES ($1, $2, $3, $4, $5, 'reserved')`,
+              [tenantId, req.repair_order_id, itemId, batch.id, partQty],
             );
 
             // 2. Движение резервирования
@@ -1812,10 +1942,22 @@ export class WarehouseService {
           // Переводим заявку на закупку в статус 'received'
           await tx.query(
             `UPDATE purchase_requests
-             SET status = 'received', updated_at = now()
+             SET status = 'received', item_id = COALESCE(item_id, $3), updated_at = now()
              WHERE tenant_id = $1 AND id = $2`,
-            [tenantId, req.id],
+            [tenantId, req.id, itemId],
           );
+
+          // Если заявка была создана под закрытую (won) сделку CRM — дописываем дефицит FIFO
+          if (req.deal_id) {
+            await this.fulfillWonDealIfReadyInTx(
+              tx,
+              tenantId,
+              req.deal_id,
+              req.deal_item_id ?? null,
+              itemId,
+              userId,
+            );
+          }
         }
         // Излишки сверх наряда (extra_quantity) остаются на свободном остатке склада!
       }
@@ -1897,40 +2039,352 @@ export class WarehouseService {
   // Repair Order FIFO Consumption & Deficit Write-off
   // ---------------------------------------------------------------------------
 
-  async consumePartsForOrder(tenantId: string, orderId: string, userId: string): Promise<void> {
-    await withTenant(tenantId, async (tx) => {
-      const parts = await tx.query<{
-        id: string;
-        warehouse_item_id: string | null;
-        name: string;
-        quantity: number;
-        retail_price: string;
-        cost_price: string;
-      }>(
-        `SELECT id, warehouse_item_id, name, quantity, retail_price, cost_price
-         FROM repair_parts
-         WHERE tenant_id = $1 AND repair_order_id = $2`,
-        [tenantId, orderId],
+  /**
+   * Рассчитывает ожидаемую FIFO-себестоимость за единицу для запрошенного количества
+   * по непустым партиям товара (ORDER BY received_at ASC).
+   */
+  async estimateFifoUnitCost(
+    tx: TransactionClient,
+    tenantId: string,
+    itemId: string,
+    quantity: number,
+  ): Promise<{ unitCost: number; hasBatches: boolean; itemCostPrice: number }> {
+    const itemRow = await tx.queryOne<{ cost_price: string }>(
+      `SELECT cost_price FROM warehouse_items WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, itemId],
+    );
+    const fallbackCost = Number(itemRow?.cost_price ?? 0);
+
+    const batches = await tx.query<{ remaining_quantity: string; purchase_price: string }>(
+      `SELECT remaining_quantity, purchase_price
+       FROM warehouse_batches
+       WHERE tenant_id = $1 AND item_id = $2 AND remaining_quantity > 0
+       ORDER BY received_at ASC, created_at ASC`,
+      [tenantId, itemId],
+    );
+
+    if (batches.length === 0 || quantity <= 0) {
+      return { unitCost: fallbackCost, hasBatches: false, itemCostPrice: fallbackCost };
+    }
+
+    let remaining = quantity;
+    let totalCost = 0;
+
+    for (const batch of batches) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, Number(batch.remaining_quantity));
+      totalCost += take * Number(batch.purchase_price);
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      const lastBatchPrice = Number(batches[batches.length - 1]?.purchase_price ?? fallbackCost);
+      totalCost += remaining * lastBatchPrice;
+    }
+
+    return {
+      unitCost: Math.round((totalCost / quantity) * 100) / 100,
+      hasBatches: true,
+      itemCostPrice: fallbackCost,
+    };
+  }
+
+  /**
+   * Идемпотентное списание запчастей наряда по партиям (FIFO) внутри открытой транзакции.
+   * Приоритизирует явно зарезервированные под наряд партии (batch_id), затем остальные по received_at ASC.
+   * Фиксирует разбивку в repair_part_batch_allocations, движения write_off с repair_part_id
+   * и обновляет repair_parts.cost_price фактической средневзвешенной себестоимостью списания.
+   */
+  async consumePartsForOrderInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    orderId: string,
+    userId: string,
+  ): Promise<void> {
+    const parts = await tx.query<{
+      id: string;
+      warehouse_item_id: string | null;
+      name: string;
+      quantity: number;
+      retail_price: string;
+      cost_price: string;
+      consumed_at: Date | string | null;
+    }>(
+      `SELECT id, warehouse_item_id, name, quantity, retail_price, cost_price, consumed_at
+       FROM repair_parts
+       WHERE tenant_id = $1 AND repair_order_id = $2
+       FOR UPDATE`,
+      [tenantId, orderId],
+    );
+
+    const settingsRow = await tx.queryOne<{ allow_negative_stock: boolean }>(
+      `SELECT allow_negative_stock FROM warehouse_settings WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    const allowNegativeStock = Boolean(settingsRow?.allow_negative_stock);
+
+    for (const part of parts) {
+      if (!part.warehouse_item_id || part.consumed_at !== null) continue;
+
+      const totalQty = Number(part.quantity);
+      if (totalQty <= 0) continue;
+
+      let needed = totalQty;
+      let totalCost = 0;
+      let consumedFromBatches = 0;
+
+      // Сначала собираем явно зарезервированные партии под этот наряд
+      const reservedBatches = await tx.query<{ batch_id: string }>(
+        `SELECT DISTINCT batch_id
+         FROM warehouse_reservations
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3
+           AND status = 'reserved' AND batch_id IS NOT NULL`,
+        [tenantId, orderId, part.warehouse_item_id],
+      );
+      const reservedBatchIds = reservedBatches.map((r) => r.batch_id);
+
+      const batches = await tx.query<{ id: string; remaining_quantity: string; purchase_price: string }>(
+        `SELECT id, remaining_quantity, purchase_price
+         FROM warehouse_batches
+         WHERE tenant_id = $1 AND item_id = $2 AND remaining_quantity > 0
+         ORDER BY
+           CASE WHEN id = ANY($3::uuid[]) THEN 0 ELSE 1 END ASC,
+           received_at ASC,
+           created_at ASC
+         FOR UPDATE`,
+        [tenantId, part.warehouse_item_id, reservedBatchIds],
       );
 
-      for (const part of parts) {
-        if (!part.warehouse_item_id) continue;
+      for (const batch of batches) {
+        if (needed <= 0) break;
+        const rem = Number(batch.remaining_quantity);
+        const take = Math.min(needed, rem);
+        const unitCost = Number(batch.purchase_price);
+        const allocCost = Math.round(take * unitCost * 100) / 100;
 
-        let needed = Number(part.quantity);
+        await tx.query(
+          `UPDATE warehouse_batches
+           SET remaining_quantity = remaining_quantity - $1
+           WHERE tenant_id = $2 AND id = $3`,
+          [take, tenantId, batch.id],
+        );
+
+        await tx.query(
+          `INSERT INTO warehouse_movements
+             (tenant_id, item_id, batch_id, repair_order_id, repair_part_id, type, quantity, cost_price, description, created_by)
+           VALUES ($1, $2, $3, $4, $5, 'write_off', $6, $7, $8, $9)`,
+          [
+            tenantId,
+            part.warehouse_item_id,
+            batch.id,
+            orderId,
+            part.id,
+            take,
+            unitCost,
+            `Списание в заказ-наряд (${part.name})`,
+            userId,
+          ],
+        );
+
+        await tx.query(
+          `INSERT INTO repair_part_batch_allocations
+             (tenant_id, repair_order_id, repair_part_id, warehouse_item_id, batch_id, quantity, unit_cost, total_cost)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            tenantId,
+            orderId,
+            part.id,
+            part.warehouse_item_id,
+            batch.id,
+            take,
+            unitCost,
+            allocCost,
+          ],
+        );
+
+        totalCost += allocCost;
+        consumedFromBatches += take;
+        needed -= take;
+      }
+
+      // Если остался дефицит (продажа в минус / пересорт)
+      let costSource: "fifo_batch" | "negative_stock" = "fifo_batch";
+      if (needed > 0) {
+        costSource = "negative_stock";
+        const fallbackUnitCost = Number(part.cost_price || 0);
+        const deficitCost = Math.round(needed * fallbackUnitCost * 100) / 100;
+        totalCost += deficitCost;
+
+        if (allowNegativeStock) {
+          await tx.query(
+            `INSERT INTO warehouse_movements
+               (tenant_id, item_id, repair_order_id, repair_part_id, type, quantity, cost_price, description, created_by)
+             VALUES ($1, $2, $3, $4, 'write_off', $5, $6, $7, $8)`,
+            [
+              tenantId,
+              part.warehouse_item_id,
+              orderId,
+              part.id,
+              needed,
+              fallbackUnitCost,
+              `Списание в заказ-наряд (дефицит/продажа в минус: ${part.name})`,
+              userId,
+            ],
+          );
+
+          await tx.query(
+            `INSERT INTO repair_part_batch_allocations
+               (tenant_id, repair_order_id, repair_part_id, warehouse_item_id, batch_id, quantity, unit_cost, total_cost)
+             VALUES ($1, $2, $3, $4, NULL, $5, $6, $7)`,
+            [
+              tenantId,
+              orderId,
+              part.id,
+              part.warehouse_item_id,
+              needed,
+              fallbackUnitCost,
+              deficitCost,
+            ],
+          );
+        }
+      }
+
+      const effectiveUnitCost =
+        consumedFromBatches > 0 || allowNegativeStock
+          ? Math.round((totalCost / totalQty) * 100) / 100
+          : Number(part.cost_price || 0);
+
+      await tx.query(
+        `UPDATE repair_parts
+         SET cost_price = $1,
+             status = 'used',
+             consumed_at = now(),
+             cost_source = $2
+         WHERE tenant_id = $3 AND id = $4`,
+        [effectiveUnitCost, costSource, tenantId, part.id],
+      );
+
+      await tx.query(
+        `UPDATE warehouse_reservations
+         SET status = 'consumed', updated_at = now()
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'`,
+        [tenantId, orderId, part.warehouse_item_id],
+      );
+    }
+  }
+
+  async consumePartsForOrder(tenantId: string, orderId: string, userId: string): Promise<void> {
+    await withTenant(tenantId, async (tx) => {
+      await this.consumePartsForOrderInTx(tx, tenantId, orderId, userId);
+    });
+  }
+
+  /**
+   * Атомарное, идемпотентное списание товаров сделки CRM по FIFO при переходе в стадию `won`.
+   * - Списывает доступные партии (received_at ASC) и сохраняет аллокации в deal_item_batch_allocations.
+   * - Записывает движения write_off в warehouse_movements (с deal_id, deal_item_id) — попадает в P&L COGS.
+   * - Если товара нет на складе (или не хватает количества) — автоматически формирует заявку на закупку
+   *   в purchase_requests на странице /warehouse (без дублей при повторных вызовах).
+   */
+  async consumeDealItemsInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    dealId: string,
+    userId: string | null,
+  ): Promise<{ consumedItemsCount: number; purchaseRequestsCreated: number }> {
+    const dealRow = await tx.queryOne<{ id: string; title: string }>(
+      `SELECT id, title FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+    if (!dealRow) {
+      return { consumedItemsCount: 0, purchaseRequestsCreated: 0 };
+    }
+
+    const items = await tx.query<{
+      id: string;
+      item_id: string | null;
+      name: string;
+      sku: string | null;
+      unit: string | null;
+      quantity: string | number;
+      cost_price: string | number;
+      consumed_at: Date | string | null;
+    }>(
+      `SELECT id, item_id, name, sku, unit, quantity, cost_price, consumed_at
+       FROM deal_items
+       WHERE tenant_id = $1 AND deal_id = $2 AND item_type = 'product' AND consumed_at IS NULL
+       ORDER BY sort_order ASC, created_at ASC
+       FOR UPDATE`,
+      [tenantId, dealId],
+    );
+
+    if (items.length === 0) {
+      return { consumedItemsCount: 0, purchaseRequestsCreated: 0 };
+    }
+
+    let consumedItemsCount = 0;
+    let purchaseRequestsCreated = 0;
+
+    for (const item of items) {
+      const totalQty = Number(item.quantity);
+      if (totalQty <= 0) continue;
+
+      // Проверяем сколько уже списано по этой позиции (защита от двойного списания при частичном дефиците)
+      const prevAlloc = await tx.queryOne<{ qty: string; cost: string }>(
+        `SELECT
+           COALESCE(SUM(quantity), 0)::numeric(10,2)::text AS qty,
+           COALESCE(SUM(total_cost), 0)::numeric(12,2)::text AS cost
+         FROM deal_item_batch_allocations
+         WHERE tenant_id = $1 AND deal_item_id = $2 AND batch_id IS NOT NULL`,
+        [tenantId, item.id],
+      );
+      const alreadyConsumedQty = Number(prevAlloc?.qty ?? 0);
+      const alreadyConsumedCost = Number(prevAlloc?.cost ?? 0);
+
+      let needed = Math.round((totalQty - alreadyConsumedQty) * 100) / 100;
+      if (needed <= 0) {
+        const avgCost =
+          alreadyConsumedQty > 0
+            ? Math.round((alreadyConsumedCost / alreadyConsumedQty) * 100) / 100
+            : Number(item.cost_price || 0);
+        await tx.query(
+          `UPDATE deal_items
+           SET cost_price = $1, cost_source = 'fifo_batch', consumed_at = now(), updated_at = now()
+           WHERE tenant_id = $2 AND id = $3`,
+          [avgCost, tenantId, item.id],
+        );
+        consumedItemsCount++;
+        continue;
+      }
+
+      let newlyConsumedQty = 0;
+      let newlyConsumedCost = 0;
+      let warehouseItemCostPrice = Number(item.cost_price || 0);
+
+      if (item.item_id) {
+        const whItem = await tx.queryOne<{ cost_price: string }>(
+          `SELECT cost_price::text FROM warehouse_items WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, item.item_id],
+        );
+        if (whItem && warehouseItemCostPrice <= 0) {
+          warehouseItemCostPrice = Number(whItem.cost_price || 0);
+        }
 
         const batches = await tx.query<{ id: string; remaining_quantity: string; purchase_price: string }>(
           `SELECT id, remaining_quantity, purchase_price
            FROM warehouse_batches
            WHERE tenant_id = $1 AND item_id = $2 AND remaining_quantity > 0
-           ORDER BY received_at ASC
+           ORDER BY received_at ASC, created_at ASC
            FOR UPDATE`,
-          [tenantId, part.warehouse_item_id],
+          [tenantId, item.item_id],
         );
 
         for (const batch of batches) {
           if (needed <= 0) break;
           const rem = Number(batch.remaining_quantity);
           const take = Math.min(needed, rem);
+          const unitCost = Number(batch.purchase_price);
+          const allocCost = Math.round(take * unitCost * 100) / 100;
 
           await tx.query(
             `UPDATE warehouse_batches
@@ -1941,52 +2395,142 @@ export class WarehouseService {
 
           await tx.query(
             `INSERT INTO warehouse_movements
-               (tenant_id, item_id, batch_id, repair_order_id, type, quantity, cost_price, description, created_by)
-             VALUES ($1, $2, $3, $4, 'write_off', $5, $6, $7, $8)`,
+               (tenant_id, item_id, batch_id, deal_id, deal_item_id, type, quantity, cost_price, description, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'write_off', $6, $7, $8, $9)`,
             [
               tenantId,
-              part.warehouse_item_id,
+              item.item_id,
               batch.id,
-              orderId,
+              dealId,
+              item.id,
               take,
-              Number(batch.purchase_price),
-              `Списание в заказ-наряд (${part.name})`,
+              unitCost,
+              `Продажа по сделке «${dealRow.title}» (${item.name})`,
               userId,
             ],
           );
 
-          needed -= take;
+          await tx.query(
+            `INSERT INTO deal_item_batch_allocations
+               (tenant_id, deal_id, deal_item_id, warehouse_item_id, batch_id, quantity, unit_cost, total_cost)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              tenantId,
+              dealId,
+              item.id,
+              item.item_id,
+              batch.id,
+              take,
+              unitCost,
+              allocCost,
+            ],
+          );
+
+          newlyConsumedCost += allocCost;
+          newlyConsumedQty += take;
+          needed = Math.round((needed - take) * 100) / 100;
+        }
+      }
+
+      const totalConsumedQty = Math.round((alreadyConsumedQty + newlyConsumedQty) * 100) / 100;
+      const totalConsumedCost = Math.round((alreadyConsumedCost + newlyConsumedCost) * 100) / 100;
+
+      if (needed > 0) {
+        // Нехватка на складе (или товар вне каталога): создаём заявку на закупку на /warehouse, если активной ещё нет
+        const existingReq = await tx.queryOne<{ id: string }>(
+          `SELECT id
+           FROM purchase_requests
+           WHERE tenant_id = $1 AND deal_item_id = $2 AND status IN ('pending', 'ordered')
+           LIMIT 1`,
+          [tenantId, item.id],
+        );
+
+        if (!existingReq) {
+          const reason = item.item_id
+            ? `Автозаявка: дефицит на складе при закрытии сделки «${dealRow.title}»`
+            : `Автозаявка: товар вне каталога склада при закрытии сделки «${dealRow.title}»`;
+          await tx.query(
+            `INSERT INTO purchase_requests
+               (tenant_id, deal_id, deal_item_id, item_id, item_name, sku, quantity, unit, estimated_price, status, comment, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11)`,
+            [
+              tenantId,
+              dealId,
+              item.id,
+              item.item_id,
+              item.name,
+              item.sku ?? "",
+              needed,
+              item.unit ?? "шт",
+              warehouseItemCostPrice,
+              reason,
+              userId,
+            ],
+          );
+          purchaseRequestsCreated++;
         }
 
-        // Если остался дефицит (продажа в минус / пересорт)
-        if (needed > 0) {
-          const settings = await this.getSettings(tenantId);
-          if (settings.allowNegativeStock) {
-            await tx.query(
-              `INSERT INTO warehouse_movements
-                 (tenant_id, item_id, repair_order_id, type, quantity, cost_price, description, created_by)
-               VALUES ($1, $2, $3, 'write_off', $4, $5, $6, $7)`,
-              [
-                tenantId,
-                part.warehouse_item_id,
-                orderId,
-                needed,
-                Number(part.cost_price || 0),
-                `Списание в заказ-наряд (дефицит/продажа в минус: ${part.name})`,
-                userId,
-              ],
-            );
-          }
-        }
+        const estTotalCost = totalConsumedCost + needed * warehouseItemCostPrice;
+        const effectiveUnitCost =
+          totalQty > 0 ? Math.round((estTotalCost / totalQty) * 100) / 100 : warehouseItemCostPrice;
 
         await tx.query(
-          `UPDATE warehouse_reservations
-           SET status = 'consumed', updated_at = now()
-           WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'`,
-          [tenantId, orderId, part.warehouse_item_id],
+          `UPDATE deal_items
+           SET cost_price = $1, cost_source = 'pending_purchase', updated_at = now()
+           WHERE tenant_id = $2 AND id = $3`,
+          [effectiveUnitCost, tenantId, item.id],
         );
+      } else {
+        const effectiveUnitCost =
+          totalConsumedQty > 0
+            ? Math.round((totalConsumedCost / totalConsumedQty) * 100) / 100
+            : warehouseItemCostPrice;
+
+        await tx.query(
+          `UPDATE deal_items
+           SET cost_price = $1, cost_source = 'fifo_batch', consumed_at = now(), updated_at = now()
+           WHERE tenant_id = $2 AND id = $3`,
+          [effectiveUnitCost, tenantId, item.id],
+        );
+        consumedItemsCount++;
       }
-    });
+    }
+
+    return { consumedItemsCount, purchaseRequestsCreated };
+  }
+
+  /**
+   * Если заявка на закупку под сделку оприходована, а сделка уже в стадии won —
+   * привязываем item_id к позиции сделки (если его не было) и дописываем дефицит FIFO.
+   */
+  private async fulfillWonDealIfReadyInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    dealId: string,
+    dealItemId: string | null,
+    warehouseItemId: string | null,
+    userId: string | null,
+  ): Promise<void> {
+    if (dealItemId && warehouseItemId) {
+      await tx.query(
+        `UPDATE deal_items
+         SET item_id = COALESCE(item_id, $3), updated_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, dealItemId, warehouseItemId],
+      );
+    }
+
+    const wonDeal = await tx.queryOne<{ id: string }>(
+      `SELECT d.id
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL AND s.is_won = true`,
+      [tenantId, dealId],
+    );
+
+    if (wonDeal) {
+      await this.consumeDealItemsInTx(tx, tenantId, dealId, userId);
+    }
   }
 
   async releaseReservationsForOrder(tenantId: string, orderId: string): Promise<void> {

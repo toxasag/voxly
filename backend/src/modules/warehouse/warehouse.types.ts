@@ -59,6 +59,8 @@ export type PurchaseRequestStatus = z.infer<typeof purchaseRequestStatusSchema>;
 
 export const createPurchaseRequestSchema = z.object({
   repair_order_id: z.string().uuid().optional(),
+  deal_id: z.string().uuid().optional(),
+  deal_item_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
   item_name: z.string().min(1, "Item name is required").max(300),
   sku: z.string().max(100).optional().default(""),
@@ -162,6 +164,9 @@ export interface WarehouseItemRow {
   cost_price: string | number;
   total_stock?: string | number;
   reserved_stock?: string | number;
+  stock_valuation?: string | number;
+  fifo_cost_price?: string | number | null;
+  active_batches_count?: string | number;
   models_json?: WarehouseItemModelDTO[] | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -185,6 +190,14 @@ export interface WarehouseItemDTO {
   retailPrice: number;
   price?: number;
   costPrice: number;
+  /** Себестоимость ближайшей непустой партии (FIFO) */
+  fifoCostPrice?: number;
+  /** Средневзвешенная себестоимость по текущим остаткам партий */
+  avgBatchCostPrice?: number;
+  /** Реальная оценка остатка позиции по партиям SUM(remaining_quantity * purchase_price) */
+  stockValuation?: number;
+  /** Количество активных непустых партий */
+  activeBatchesCount?: number;
   totalStock: number;
   quantity?: number;
   reservedStock: number;
@@ -220,6 +233,10 @@ export interface WarehousePaginationMeta {
   page: number;
   limit: number;
   pages: number;
+  /** Полная оценка всего склада по остаткам партий SUM(remaining_quantity * purchase_price) */
+  totalValuation?: number;
+  /** Позиций ниже порога min_stock по всему складу */
+  lowStockCount?: number;
 }
 
 export interface PaginatedWarehouseItemsDTO {
@@ -262,6 +279,9 @@ export interface WarehouseMovementRow {
   batch_id: string | null;
   repair_order_id: string | null;
   repair_ticket_number?: string | null;
+  deal_id?: string | null;
+  deal_item_id?: string | null;
+  deal_title?: string | null;
   type: string;
   quantity: string | number;
   cost_price: string | number;
@@ -278,6 +298,9 @@ export interface WarehouseMovementDTO {
   batchId: string | null;
   repairOrderId: string | null;
   repairTicketNumber?: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
+  dealTitle?: string | null;
   type: string;
   quantity: number;
   costPrice: number;
@@ -290,8 +313,11 @@ export interface PurchaseRequestRow {
   id: string;
   tenant_id: string;
   repair_order_id: string | null;
+  deal_id?: string | null;
+  deal_item_id?: string | null;
   supplier_order_id: string | null;
   repair_ticket_number?: string | null;
+  deal_title?: string | null;
   item_id: string | null;
   item_name: string;
   sku: string;
@@ -309,8 +335,11 @@ export interface PurchaseRequestRow {
 export interface PurchaseRequestDTO {
   id: string;
   repairOrderId: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
   supplierOrderId?: string | null;
   repairTicketNumber?: string | null;
+  dealTitle?: string | null;
   itemId: string | null;
   itemName: string;
   sku: string;

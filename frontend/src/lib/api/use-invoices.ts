@@ -232,6 +232,35 @@ export interface PnlCategoryDTO {
   percentage: number;
 }
 
+export interface PnlCogsBreakdownItemDTO {
+  movementId: string;
+  itemName: string;
+  batchNumber: string;
+  supplierName: string;
+  ticketNumber: string | null;
+  dealId?: string | null;
+  dealTitle?: string | null;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  occurredAt: string;
+}
+
+export interface PnlCogsSummaryDTO {
+  partsRevenue: number;
+  repairPartsRevenue?: number;
+  dealProductsRevenue?: number;
+  worksRevenue: number;
+  partsCogs: number;
+  partsGrossProfit: number;
+  partsMarkupPercent: number;
+  partsMarginPercent: number;
+  accrualGrossProfit: number;
+  stockValuation: number;
+  writeOffsCount: number;
+  breakdown: PnlCogsBreakdownItemDTO[];
+}
+
 export interface PnlDTO {
   from: string;
   to: string;
@@ -240,6 +269,7 @@ export interface PnlDTO {
   netProfit: number;
   incomeByCategory: PnlCategoryDTO[];
   expensesByCategory: PnlCategoryDTO[];
+  cogs?: PnlCogsSummaryDTO;
 }
 
 export interface TransactionsListResult {

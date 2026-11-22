@@ -195,7 +195,7 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/:id", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const body = updateDealSchema.parse(request.body);
-    const deal = await service.update(request.tenant_id, id, body);
+    const deal = await service.update(request.tenant_id, id, body, request.authUser.id);
 
     if (deal === null) throw new NotFoundError("Deal not found");
 
@@ -447,7 +447,7 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
   app.post("/:id/items", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const body = createDealItemSchema.parse(request.body);
-    const result = await service.addDealItem(request.tenant_id, id, body);
+    const result = await service.addDealItem(request.tenant_id, id, body, request.authUser.id);
     return reply.status(201).send({ data: result.item, totalBudget: result.totalBudget });
   });
 

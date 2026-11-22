@@ -116,12 +116,25 @@ export const FinancialSummary = memo(function FinancialSummary({
     const totalWork = workItems.reduce((sum, w) => sum + w.cost, 0);
     const totalPartsRetail = parts.reduce((sum, p) => sum + p.retail_price * p.quantity, 0);
     const totalPartsCost = parts.reduce((sum, p) => sum + p.cost_price * p.quantity, 0);
+    const partsMarkupAmount = totalPartsRetail - totalPartsCost;
+    const partsMarkupPct =
+      totalPartsCost > 0 ? Math.round((partsMarkupAmount / totalPartsCost) * 100) : 0;
     const totalClient = totalWork + totalPartsRetail;
     const totalCost = totalPartsCost;
     const grossProfit = totalClient - totalCost;
     const marginPct = totalClient > 0 ? Math.round((grossProfit / totalClient) * 100) : 0;
 
-    return { totalWork, totalPartsRetail, totalPartsCost, totalClient, totalCost, grossProfit, marginPct };
+    return {
+      totalWork,
+      totalPartsRetail,
+      totalPartsCost,
+      partsMarkupAmount,
+      partsMarkupPct,
+      totalClient,
+      totalCost,
+      grossProfit,
+      marginPct,
+    };
   }, [workItems, parts]);
 
   const hasData = workItems.length > 0 || parts.length > 0;
@@ -275,9 +288,11 @@ export const FinancialSummary = memo(function FinancialSummary({
                   <span className="text-xs text-[#666666] font-mono">{formatCost(summary.totalPartsCost)}</span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
-                  <span className="text-xs text-emerald-700 pl-6">Наценка на запчасти</span>
+                  <span className="text-xs text-emerald-700 pl-6">
+                    Наценка на запчасти{summary.totalPartsCost > 0 ? ` (+${summary.partsMarkupPct}%)` : ""}
+                  </span>
                   <span className="text-xs font-semibold font-mono text-emerald-700">
-                    {formatCost(summary.totalPartsRetail - summary.totalPartsCost)}
+                    {formatCost(summary.partsMarkupAmount)}
                   </span>
                 </div>
               </div>
@@ -302,7 +317,7 @@ export const FinancialSummary = memo(function FinancialSummary({
               </div>
               <div className="text-right">
                 <span className="text-lg font-bold text-emerald-700">{formatCost(summary.grossProfit)}</span>
-                <span className="block text-xs text-emerald-700/80">наценка {summary.marginPct}%</span>
+                <span className="block text-xs text-emerald-700/80">маржа {summary.marginPct}%</span>
               </div>
             </div>
           </div>

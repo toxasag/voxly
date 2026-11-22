@@ -507,11 +507,13 @@ export const createDealItemSchema = z.object({
   description: z.string().max(2000).optional().default(""),
   sku: z.string().max(100).optional().default(""),
   price: z.number().nonnegative("Цена не может быть отрицательной").default(0),
+  cost_price: z.number().nonnegative("Себестоимость не может быть отрицательной").optional(),
   quantity: z.number().positive("Количество должно быть больше 0").default(1),
   unit: z.string().max(30).optional().default("шт"),
   discount_percent: z.number().min(0).max(100).optional().default(0),
   discount_amount: z.number().nonnegative().optional().default(0),
   sort_order: z.number().int().optional().default(0),
+  add_to_purchase_request: z.boolean().optional().default(false),
 });
 
 export type CreateDealItemPayload = z.infer<typeof createDealItemSchema>;
@@ -521,6 +523,7 @@ export const updateDealItemSchema = z.object({
   description: z.string().max(2000).optional(),
   sku: z.string().max(100).optional(),
   price: z.number().nonnegative().optional(),
+  cost_price: z.number().nonnegative().optional(),
   quantity: z.number().positive().optional(),
   unit: z.string().max(30).optional(),
   discount_percent: z.number().min(0).max(100).optional(),
@@ -529,6 +532,22 @@ export const updateDealItemSchema = z.object({
 });
 
 export type UpdateDealItemPayload = z.infer<typeof updateDealItemSchema>;
+
+export type DealItemCostSource =
+  | "manual"
+  | "estimated_fifo"
+  | "fifo_batch"
+  | "negative_stock"
+  | "pending_purchase";
+
+export interface DealItemBatchAllocationDTO {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
 
 export interface DealItemRow {
   id: string;
@@ -540,6 +559,9 @@ export interface DealItemRow {
   description: string | null;
   sku: string | null;
   price: string | number;
+  cost_price?: string | number;
+  cost_source?: string | null;
+  consumed_at?: Date | string | null;
   quantity: string | number;
   unit: string | null;
   discount_percent: string | number;
@@ -559,6 +581,14 @@ export interface DealItemDTO {
   description: string;
   sku: string;
   price: number;
+  costPrice: number;
+  costSource?: DealItemCostSource;
+  consumedAt?: string | null;
+  batchAllocations?: DealItemBatchAllocationDTO[];
+  markupPercent?: number;
+  marginPercent?: number;
+  purchaseRequestId?: string | null;
+  purchaseRequestStatus?: string | null;
   quantity: number;
   unit: string;
   discountPercent: number;
