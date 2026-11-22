@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   Radio,
+  RefreshCw,
   Search,
   Send,
   Share2,
@@ -29,6 +30,8 @@ import {
   useUpdateAnalyticsIntegration,
   useDeleteAnalyticsIntegration,
   useTestAnalyticsIntegrationById,
+  useReplayAnalyticsConversions,
+  useAnalyticsConversionAttempts,
   type AnalyticsIntegrationDTO,
   type AnalyticsProvider,
   type CanonicalAnalyticsProvider,
@@ -157,6 +160,21 @@ export function ServerConversionIntegrationsView() {
   const updateMutation = useUpdateAnalyticsIntegration();
   const deleteMutation = useDeleteAnalyticsIntegration();
   const testMutation = useTestAnalyticsIntegrationById();
+  const replayMutation = useReplayAnalyticsConversions();
+  const { data: attempts = [] } = useAnalyticsConversionAttempts();
+
+  const handleReplayConversions = async () => {
+    try {
+      const res = await replayMutation.mutateAsync();
+      const sentCount = res.results.filter((r) => r.success).length;
+      toast.success(
+        `Синхронизация завершена: обработано ${res.queuedCount} сделок, успешно отправлено ${sentCount} конверсий`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Ошибка синхронизации: ${msg}`);
+    }
+  };
 
   // Фильтрация и поиск
   const [selectedSiteFilter, setSelectedSiteFilter] = useState<string>("all");
@@ -477,6 +495,21 @@ export function ServerConversionIntegrationsView() {
 
           <button
             type="button"
+            onClick={handleReplayConversions}
+            disabled={replayMutation.isPending || activeCount === 0}
+            className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fbfbfb] disabled:opacity-50 shrink-0 cursor-pointer"
+            title="Отправить конверсии по всем недавним сделкам в подключенные счетчики"
+          >
+            {replayMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 text-[#666666]" />
+            )}
+            <span>Синхронизировать сделки</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => openCreateSheet()}
             className="inline-flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 text-xs font-semibold text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] shrink-0"
           >
@@ -721,6 +754,105 @@ export function ServerConversionIntegrationsView() {
           })}
         </div>
       )}
+
+      {/* Журнал отправки серверных конверсий */}
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3 bg-[#fbfbfb]">
+          <div className="flex items-center gap-2">
+            <Radio className="h-4 w-4 text-[#4a38f5]" />
+            <h3 className="text-xs font-semibold text-[#111111]">
+              Журнал отправки серверных конверсий
+            </h3>
+            <span className="rounded-full bg-[#f0f0f0] px-2 py-0.5 text-[10px] font-medium text-[#666666]">
+              {attempts.length}
+            </span>
+          </div>
+          <div className="text-[11px] text-[#666666]">
+            Автообновление каждые 5 сек
+          </div>
+        </div>
+
+        {attempts.length === 0 ? (
+          <div className="p-8 text-center text-xs text-[#888888]">
+            Нет записей о попытках отправки конверсий. Нажмите «Синхронизировать сделки» или отправьте тестовую конверсию.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-[11px] font-medium text-[#666666]">
+                  <th className="py-2.5 px-3">Статус</th>
+                  <th className="py-2.5 px-3">Событие</th>
+                  <th className="py-2.5 px-3">Сделка</th>
+                  <th className="py-2.5 px-3">Провайдер</th>
+                  <th className="py-2.5 px-3">HTTP / Ответ</th>
+                  <th className="py-2.5 px-3 text-right">Время</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#f0f0f0]">
+                {attempts.map((attempt) => {
+                  const isSent = attempt.status === "sent";
+                  const isFailed = attempt.status === "failed";
+                  return (
+                    <tr key={attempt.id} className="hover:bg-[#fbfbfb] transition-colors">
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            isSent
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : isFailed
+                                ? "bg-rose-50 text-rose-700 border border-rose-200"
+                                : "bg-amber-50 text-amber-700 border border-amber-200"
+                          }`}
+                        >
+                          {isSent ? (
+                            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                          ) : isFailed ? (
+                            <XCircle className="h-3 w-3 text-rose-600" />
+                          ) : (
+                            <Loader2 className="h-3 w-3 animate-spin text-amber-600" />
+                          )}
+                          <span>{isSent ? "Отправлено" : isFailed ? "Ошибка" : "В очереди"}</span>
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 font-mono text-[11px] text-[#111111]">
+                        {attempt.eventName}
+                      </td>
+                      <td className="py-2 px-3 max-w-[200px] truncate text-[#111111]">
+                        {attempt.dealTitle || (attempt.isTest ? "Тестовое событие" : "—")}
+                      </td>
+                      <td className="py-2 px-3 uppercase text-[11px] font-medium text-[#666666]">
+                        {attempt.provider === "yandex" ? "Яндекс Метрика" : attempt.provider}
+                      </td>
+                      <td className="py-2 px-3 text-[11px] max-w-[240px] truncate">
+                        {attempt.lastStatus && (
+                          <span
+                            className={`mr-1.5 font-mono font-semibold ${
+                              attempt.lastStatus >= 200 && attempt.lastStatus < 300
+                                ? "text-emerald-600"
+                                : "text-rose-600"
+                            }`}
+                          >
+                            [{attempt.lastStatus}]
+                          </span>
+                        )}
+                        <span className="text-[#666666]" title={attempt.lastError || attempt.responseSnippet || ""}>
+                          {attempt.lastError || attempt.responseSnippet || "OK"}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-right text-[11px] text-[#888888] font-mono whitespace-nowrap">
+                        {attempt.deliveredAt
+                          ? new Date(attempt.deliveredAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                          : new Date(attempt.createdAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Выдвижная шторка (Sheet) для добавления / редактирования счётчика */}
       <Sheet open={isSheetOpen} onClose={() => setIsSheetOpen(false)} width="w-[520px]">

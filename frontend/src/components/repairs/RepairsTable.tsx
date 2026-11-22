@@ -476,6 +476,7 @@ function renderStatusBadge(status: RepairStatus) {
         </span>
       );
     case "waiting_parts":
+    case "parts_order":
       return (
         <span className="inline-flex items-center rounded-[4px] border border-[#fde68a] bg-[#fef3c7] px-2 py-0.5 text-xs font-medium text-[#92400e]">
           Заказ запчастей

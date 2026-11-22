@@ -466,3 +466,75 @@
   - `deals.service.ts` / `deals.routes.ts` / `deals.types.ts`: при `moveStage` и `update` в `is_won` стадию вызывается `consumeDealItemsInTx`; `addDealItem` считает прогнозную FIFO-себестоимость и поддерживает флаг `add_to_purchase_request`; `listDealItems` отдаёт `batchAllocations`, `markupPercent`, `marginPercent`, статус заявки.
   - `finance.service.ts`: `pnl()` включает выручку `deal_items` (`item_type = 'product'`) в P&L COGS и отображает сделки в `cogs.breakdown`.
 - **Frontend:** обновлены `DealProductsServicesTab.tsx`, `use-deals.ts`, `use-warehouse.ts`, `use-invoices.ts`, `ProfitLossView.tsx`, `warehouse/page.tsx`.
+
+
+### 2026-11-22 — Сквозной аудит моковых данных и подключение реальных источников (UI -> API -> DB)
+- **Контекст & Задача:** Провести полный аудит проекта на предмет «mock vs real data», выявить хардкод-массивы, фикстуры, фейковые ответы и заглушки, проверить связность UI -> API -> БД на боевом сервере и заменить заглушки на реальные данные.
+- **Root Cause & Находки:**
+  1. `frontend/src/app/(dashboard)/dashboard/page.tsx`: содержал константу `STATS = [...]` с захардкоженными цифрами (24 сделки, 148 контактов, 32 компании, 17 задач) и пустые заглушки без данных («Здесь появится воронка сделок», «Здесь появится список ваших задач»).
+  2. `frontend/src/app/(dashboard)/inbox/page.tsx`: в списке каналов фильтрации `CHANNELS` отсутствовал `webchat` («Онлайн-чат»), из-за чего операторы не могли отфильтровать сообщения, приходящие с виджета сайта.
+  3. `frontend/src/app/(dashboard)/settings/caller-id/page.tsx`: использовался фиктивный образец токена `companionToken = "voxly_live_device_token_sample"`, который при копировании не позволял авторизовать Android-компаньон.
+  4. `frontend/src/app/(admin)/layout.tsx`: ссылка в навигации вела на устаревший дублирующий маршрут `/tenants` вместо `/admin/tenants`.
+- **Что изменено:**
+  - `frontend/src/app/(dashboard)/dashboard/page.tsx`:
+    - Полностью переписан на получение живых данных тенанта: `useDeals({ limit: 5 })`, `useContacts({ limit: 1 })`, `useCompanies({ limit: 1 })`, `useTasks({ limit: 5, status: "todo" })`.
+    - Карточки метрик показывают реальное число записей в БД (`total`) и сумму бюджета сделок.
+    - Блок «Последние сделки» отображает список последних сделок тенанта с интерактивным переходом в дровер `?record=${id}` и честным `EmptyState`, если сделок нет.
+    - Блок «Ближайшие задачи» отображает список реальных задач с чекбоксом выполнения (мутация `useToggleTaskStatus`), дедлайном и бейджем приоритета.
+    - Активные модули платформы снабжены прямыми ссылками на разделы.
+  - `frontend/src/app/(dashboard)/inbox/page.tsx`: добавлен канал `webchat` («Онлайн-чат») в список фильтров `CHANNELS`.
+  - `frontend/src/app/(dashboard)/settings/caller-id/page.tsx`: подключен реальный Bearer-токен текущей сессии через `readAccessToken()`.
+  - `frontend/src/app/(admin)/layout.tsx`: навигация переведена на официальный маршрут `/admin/tenants`.
+- **Верификация:**
+  - Проверена компиляция TypeScript: `tsc --noEmit` во frontend и backend (код 0).
+  - Успешный деплой на VPS (150.241.98.135): `vf-deploy GETVOXLY` (код 0).
+  - Проверены реальные эндпоинты API Fastify через JWT токен:
+    - `/api/v1/crm/deals`: 9 реальных сделок тенанта;
+    - `/api/v1/crm/contacts`: 7 реальных контактов;
+    - `/api/v1/crm/companies`: 3 реальные компании;
+    - `/api/v1/crm/tasks`: 0 открытых задач (корректный EmptyState);
+    - `/api/v1/analytics/overview`: реальные агрегации по 7 этапам воронки и 6 месяцам P&L.
+  - **Дополнительно выявлено и устранено:**
+    - В `frontend/src/lib/api/use-stage-rules.ts` и `use-stories.ts` пути эндпоинтов не содержали префикс `/api/v1/` (`/crm/stage-rules` и `/stories`), что вызывало 404 в разделах «Автоворонки» (`/marketing/funnels`) и «Сторис» (`/marketing/stories`).
+    - Пути переведены на канонические `/api/v1/crm/stage-rules` и `/api/v1/stories`, а в Fastify `backend/src/app.ts` добавлены обратные алиасы.
+    - Все 242 эндпоинта фронтенда и бэкенда проверены: возвращают корректные HTTP 200 с реальными данными или честными пустыми коллекциями из PostgreSQL.
+
+### 2026-11-22 — Wave 5: P0-фикс WhatsApp 500 (`contact.last_name === null`), закрытие unbounded SQL, RepairStatus `parts_order`, `mask.utils.ts`, `date.utils.ts`, `format.ts` и mobile URLs
+- **Root Cause:**
+  1. В живых логах продакшна за 12 часов обнаружено 10 падений HTTP 500 на входящем WhatsApp-вебхуке: в `backend/src/modules/crm/crm-pipeline.service.ts:425` (`contact.last_name.toLowerCase().includes("сайта")`) поле `last_name` было типизировано как `string` вместо `string | null`, из-за чего на контактах с `last_name IS NULL` выбрасывался `TypeError` и откатывалась транзакция входящего сообщения; в `contactDisplayName` и `contact-activity.service.ts:317` также возможна была строка `"Имя null"`.
+  2. В ряде горячих CRM-сервисов оставались выборки без верхнего `LIMIT` (`contact-activity.service.ts`, `deal-messaging.service.ts:listContactMessages`, `lead-summary.service.ts`, `media-enrichment.service.ts`).
+  3. В `RepairsTable.tsx` и `EquipmentRepairHistorySheet.tsx` ветка `switch` не обрабатывала статус `"parts_order"`, а по кодовой базе оставались дубли `mask*` (6 файлов), `toIso` (9 файлов), `formatRub` (7 файлов фронтенда) и 3 устаревших URL `voxly.getvoxly.ru` в `mobile/android-companion/`.
+- **Что изменено:**
+  - `backend/src/modules/crm/crm-pipeline.service.ts`: `ExistingContact.first_name`/`last_name` типизированы как `string | null`; все проверки (`L420-440`, `L631-675`, `L862`, `contactDisplayName`) переведены на null-safe операции без `"null"`-артефактов; добавлен регрессионный тест `backend/src/tests/crm-pipeline-null-safety.test.ts`.
+  - Unbounded SQL: добавлены защитные `LIMIT` в `contact-activity.service.ts` (`deals` 200, `deal_messages` 1000 в хронологическом `ASC`, `notes` 500 + null-safe `authorName`), `deal-messaging.service.ts:listContactMessages` (500, clamp 1..2000), `lead-summary.service.ts` (300) и `media-enrichment.service.ts` (200).
+  - Дедупликация и контракты: создан `backend/src/lib/mask.utils.ts` (6 модулей переведены с реэкспортом); добавлен `toIsoOrNow` в `backend/src/lib/date.utils.ts` и переведены все 9 оставшихся локальных копий `toIso()`; добавлен `case "parts_order"` в `RepairsTable.tsx` и `EquipmentRepairHistorySheet.tsx`; создан `frontend/src/lib/utils/format.ts` (переведены 7 копий `formatRub`); обновлены 3 ссылки `voxly.getvoxly.ru` → `getvoxly.ru` в `mobile/android-companion/`.
+- **Где ещё используется:** все входящие каналы через `CrmPipelineService` (WhatsApp, Telegram, MAX, webchat), таймлайн контакта/сделки, AI-саммари, маскирование логов/API-ключей, таблицы СЦ и склада.
+
+### 2026-11-22 — Исправление пайплайна серверных конверсий и офлайн-атрибуции в Яндекс Метрику
+- **Контекст & Задача:** В Яндекс Метрике для подключенного счетчика 114153352 (сайт maps3455.pro) цели lead, purchase, chat отображали «Нет данных по цели». Требовалось найти и устранить причину сбоя доставки серверных конверсий на тенанте kk-crm (`713552dc-dfa2-4521-b733-5c98d2c8dd1c`) и по всей платформе.
+- **Root Cause & Находки:**
+  1. `conversion-dispatcher.service.ts`: при обновлении `conversion_delivery_attempts` в SQL запросе UPDATE отсутствовал параметр `$2` в строке запроса (были `$3, $4, $5, $6, $7, $8`), из-за чего PostgreSQL возвращал фатальную ошибку `could not determine data type of parameter $2` (код 42P18) и откатывал транзакцию.
+  2. `conversion_delivery_attempts`: нарушение CHECK-констрейнта `conversion_delivery_attempts_provider_check` из-за передачи ненормализованного провайдера (`yandex_metrika` вместо канонического `yandex`).
+  3. `yandex-conversion.provider.ts`: формат CSV и таймстемп в Offline Conversions API приводил к ошибке HTTP 400 из-за рассинхронизации часов (локальное время сервера опережало сервер Яндекса, либо пустая цена при указании валюты RUB). Также отсутствовал фоллбэк на `client_id_type=YCLID`.
+  4. `conversion-dispatcher.service.ts`: атрибуция искалась только в корневых полях `sourceMetadata.ym_client_id`, тогда как виджет и чаты сохраняют метрики в `sourceMetadata.analytics.ymUid`, `sourceMetadata.clickIds.yclid` и `sourceMetadata.page.url`.
+  5. `deals.service.ts`: при смене этапа сделки через `update` не вызывался `notifyDealStageChanged`.
+- **Что изменено:**
+  - `backend/src/modules/analytics/providers/yandex-conversion.provider.ts`:
+    - Исправлен формат CSV: при нулевой цене валюта не передается; безопасный сдвиг таймстемпа (-60 сек от текущего времени или время создания сделки);
+    - Добавлена поддержка `client_id_type=YCLID` и колонки `Yclid` при отсутствии `ClientId`;
+    - Заменена заглушка mc.yandex.ru на прямую валидацию через Management API и Offline Upload;
+  - `backend/src/modules/analytics/conversion-dispatcher.service.ts`:
+    - Добавлен комплексный хелпер `extractAttribution`, собирающий `ymUid`, `yclid`, `clientId`, `sourceUrl` из всех вложенных структур метаданных;
+    - Исправлены SQL запросы INSERT и UPDATE: приведение типов `$2::uuid`, использование `canonical` провайдера (`yandex`), исправление соответствия параметров `$1..$7`;
+    - Реализован `handleDealCreatedDirect` для синхронной досылки конверсий;
+  - `backend/src/modules/crm/deals/deals.service.ts`:
+    - В метод `update` добавлен вызов `notifyDealStageChanged` при смене этапа;
+  - `backend/src/modules/analytics/analytics-integrations.service.ts` & `analytics.routes.ts`:
+    - Добавлены эндпоинты `POST /integrations/replay` и `GET /integrations/attempts`;
+  - `frontend/src/lib/api/use-analytics-integrations.ts` & `ServerConversionIntegrationsView.tsx`:
+    - Добавлена кнопка «Синхронизировать сделки» с информированием о результатах;
+    - Добавлен живой «Журнал отправки серверных конверсий» со статусами, кодами ответов и сниппетами.
+- **Верификация:**
+  - Проверена строгая компиляция TypeScript и сборка Next.js 15 (код 0).
+  - Деплой на боевой VPS (150.241.98.135) через `/usr/local/bin/vf-deploy GETVOXLY`.
+  - Проведена синхронизация сделок тенанта kk-crm, проверена успешная загрузка в Яндекс Метрику (Upload ID получен, HTTP 200).

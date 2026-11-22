@@ -27,10 +27,10 @@ export default function AdminLayout({
           </div>
         </div>
 
-        {/* Route is /tenants — (admin) is a route group and not part of the URL. */}
+        {/* Route is /admin/tenants */}
         <nav className="flex items-center gap-1 ml-8">
           <Link
-            href="/tenants"
+            href="/admin/tenants"
             className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors"
           >
             <Building2 className="h-4 w-4" />

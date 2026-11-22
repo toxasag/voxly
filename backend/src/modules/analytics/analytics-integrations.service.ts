@@ -1,3 +1,4 @@
+import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
 import { query, queryOne } from "../../db/client.js";
 import { encryptSecret } from "../../services/credentials-cipher.js";
 import {
@@ -6,6 +7,7 @@ import {
   type AnalyticsIntegrationDTO,
   type AnalyticsIntegrationRow,
   type AnalyticsProvider,
+  type ConversionDeliveryAttemptDTO,
   type ConversionResult,
   type CreateAnalyticsIntegrationPayload,
   type TestQueueResult,
@@ -13,12 +15,6 @@ import {
   type UpdateAnalyticsIntegrationPayload,
 } from "./analytics.types.js";
 import { conversionDispatcher, maskToken } from "./conversion-dispatcher.service.js";
-
-function toIso(val: Date | string | null | undefined): string {
-  if (!val) return new Date().toISOString();
-  if (val instanceof Date) return val.toISOString();
-  return new Date(val).toISOString();
-}
 
 function maskConfigSecrets(config: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = { ...config };
@@ -376,6 +372,88 @@ export class AnalyticsIntegrationsService {
    */
   async getTestJobStatus(tenantId: string, jobId: string): Promise<TestQueueStatus | null> {
     return conversionDispatcher.getJobStatus(tenantId, jobId);
+  }
+
+  /**
+   * Пакетная синхронизация (replay) активных сделок арендатора в подключенные системы аналитики
+   */
+  async replayTenantConversions(
+    tenantId: string,
+    limit = 50,
+  ): Promise<{ queuedCount: number; results: ConversionResult[] }> {
+    const deals = await query<{ id: string }>(
+      `SELECT id FROM deals
+       WHERE tenant_id = $1 AND deleted_at IS NULL
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [tenantId, limit],
+    );
+
+    const results: ConversionResult[] = [];
+    for (const deal of deals) {
+      const res = await conversionDispatcher.handleDealCreatedDirect(tenantId, deal.id);
+      results.push(...res);
+    }
+
+    return { queuedCount: deals.length, results };
+  }
+
+  /**
+   * Журнал попыток отправки серверных конверсий
+   */
+  async getConversionAttempts(
+    tenantId: string,
+    limit = 50,
+  ): Promise<ConversionDeliveryAttemptDTO[]> {
+    const rows = await query<{
+      id: string;
+      tenant_id: string;
+      deal_id: string | null;
+      deal_title: string | null;
+      provider: string;
+      event_key: string;
+      event_name: string;
+      status: string;
+      attempts: number;
+      last_status: number | null;
+      last_error: string | null;
+      response_snippet: string | null;
+      is_test: boolean;
+      job_id: string | null;
+      delivered_at: Date | string | null;
+      created_at: Date | string;
+      updated_at: Date | string;
+    }>(
+      `SELECT a.id, a.tenant_id, a.deal_id, d.title AS deal_title, a.provider, a.event_key,
+              a.event_name, a.status, a.attempts, a.last_status, a.last_error,
+              a.response_snippet, a.is_test, a.job_id, a.delivered_at, a.created_at, a.updated_at
+       FROM conversion_delivery_attempts a
+       LEFT JOIN deals d ON d.id = a.deal_id
+       WHERE a.tenant_id = $1
+       ORDER BY a.created_at DESC
+       LIMIT $2`,
+      [tenantId, limit],
+    );
+
+    return rows.map((r) => ({
+      id: r.id,
+      tenantId: r.tenant_id,
+      dealId: r.deal_id,
+      dealTitle: r.deal_title,
+      provider: r.provider,
+      eventKey: r.event_key,
+      eventName: r.event_name,
+      status: r.status as "pending" | "sent" | "failed",
+      attempts: r.attempts,
+      lastStatus: r.last_status,
+      lastError: r.last_error,
+      responseSnippet: r.response_snippet,
+      isTest: r.is_test,
+      jobId: r.job_id,
+      deliveredAt: r.delivered_at ? toIso(r.delivered_at) : null,
+      createdAt: toIso(r.created_at),
+      updatedAt: toIso(r.updated_at),
+    }));
   }
 }
 
