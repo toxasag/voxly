@@ -143,6 +143,9 @@ const RECOMMENDED_CHAT_MODELS: Record<LlmProviderType, Array<{ id: string; name:
     { id: "google/gemini-2.5-pro", name: "Google: Gemini 2.5 Pro" },
   ],
   custom: [
+    { id: "agnes-3.0-flash", name: "agnes-3.0-flash (быстрая, стабильная, рекомендуется)" },
+    { id: "glm-4-flash", name: "glm-4-flash (Zhipu AI GLM)" },
+    { id: "qwen-omni-plus", name: "qwen-omni-plus (Alibaba Qwen)" },
     { id: "gpt-4o-mini", name: "gpt-4o-mini" },
     { id: "gpt-4o", name: "gpt-4o" },
   ],
