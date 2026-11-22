@@ -1,3 +1,4 @@
+import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
 import { query, queryOne } from "../../db/client.js";
 import { encryptSecret } from "../../services/credentials-cipher.js";
 import {
@@ -13,12 +14,6 @@ import {
   type UpdateAnalyticsIntegrationPayload,
 } from "./analytics.types.js";
 import { conversionDispatcher, maskToken } from "./conversion-dispatcher.service.js";
-
-function toIso(val: Date | string | null | undefined): string {
-  if (!val) return new Date().toISOString();
-  if (val instanceof Date) return val.toISOString();
-  return new Date(val).toISOString();
-}
 
 function maskConfigSecrets(config: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = { ...config };

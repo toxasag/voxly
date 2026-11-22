@@ -32,13 +32,7 @@ import { useServices } from "@/lib/api/use-services";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/shared/Skeleton";
 
-function formatRub(amount: number): string {
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: "RUB",
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
+import { formatRub } from "@/lib/utils/format";
 
 export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
   const { data: dealItemsData, isLoading: isItemsLoading } = useDealItems(deal.id);

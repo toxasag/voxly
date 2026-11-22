@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { randomBytes, randomInt } from "node:crypto";
 import argon2 from "argon2";
+import { maskEmail, maskPhone, maskToken } from "../../lib/mask.utils.js";
+export { maskEmail, maskPhone, maskToken };
 import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
 import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
@@ -166,28 +168,6 @@ class SessionAttemptsExceededError extends AppError {
 /** Только цифры — тот же формат, что использует AuthService. */
 function normalisePhone(phone: string): string {
   return phone.replace(/\D/g, "");
-}
-
-/** Маскирование телефона для безопасного логирования */
-export function maskPhone(phone: string): string {
-  const clean = phone.replace(/\s+/g, "");
-  return clean.length <= 5 ? "***" : `${clean.slice(0, 3)}***${clean.slice(-2)}`;
-}
-
-/** Маскирование email для безопасного логирования */
-export function maskEmail(email: string): string {
-  const parts = email.split("@");
-  if (parts.length !== 2) return "***";
-  const [local, domain] = parts;
-  if (!local || !domain) return "***";
-  const maskedLocal = local.length <= 2 ? `${local[0]}***` : `${local[0]}***${local[local.length - 1]}`;
-  return `${maskedLocal}@${domain}`;
-}
-
-/** Маскирование токена для безопасного логирования */
-export function maskToken(token: string): string {
-  if (token.length <= 6) return "***";
-  return `${token.slice(0, 4)}...${token.slice(-3)}`;
 }
 
 function toDate(value: Date | string): Date {

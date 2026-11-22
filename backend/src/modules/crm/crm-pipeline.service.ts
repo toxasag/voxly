@@ -89,8 +89,8 @@ export interface InboundMessageInput {
 /** Найденный контакт: ФИО нужно заголовку сделки, когда профиль недоступен. */
 interface ExistingContact {
   id: string;
-  first_name: string;
-  last_name: string;
+  first_name: string | null;
+  last_name: string | null;
   phone?: string | null;
   email?: string | null;
   telegram_chat_id?: string | number | null;
@@ -417,12 +417,14 @@ export class CrmPipelineService {
         }
 
         // 1.3. Если имя контакта было заглушкой «Посетитель сайта ...» или «Клиент» — обновляем с номером
+        const currentFirstName = contact.first_name ?? "";
+        const currentLastName = contact.last_name ?? "";
         if (
           effectiveSenderPhone &&
-          (contact.first_name.startsWith("Посетитель") ||
-            contact.first_name === UNKNOWN_CONTACT_NAME ||
-            contact.first_name.startsWith("Клиент") ||
-            contact.last_name.toLowerCase().includes("сайта"))
+          (currentFirstName.startsWith("Посетитель") ||
+            currentFirstName === UNKNOWN_CONTACT_NAME ||
+            currentFirstName.startsWith("Клиент") ||
+            currentLastName.toLowerCase().includes("сайта"))
         ) {
           const newClientName = `Клиент ${effectiveSenderPhone}`;
           await tx.query(
@@ -434,7 +436,7 @@ export class CrmPipelineService {
             [newClientName, contact.id, input.tenantId],
           );
           contact.first_name = newClientName;
-          if (contact.last_name.toLowerCase().includes("сайта")) {
+          if (currentLastName.toLowerCase().includes("сайта")) {
             contact.last_name = "";
           }
         }
@@ -628,7 +630,9 @@ export class CrmPipelineService {
         // представился в сообщении («Меня зовут Наталья», подпись «С уважением, Наталья Дюдяева») —
         // обогащаем карточку контакта и заголовок сделки.
         const newName = contactNameFrom(input);
-        const isCurrentPlaceholder = isPlaceholderName(contact.first_name, contact.last_name);
+        const safeFirstName = contact.first_name ?? "";
+        const safeLastName = contact.last_name ?? "";
+        const isCurrentPlaceholder = isPlaceholderName(safeFirstName, safeLastName);
 
         const identity = resolveContactIdentity({
           messageText: input.text,
@@ -641,8 +645,8 @@ export class CrmPipelineService {
             socials: Array.isArray(contact.socials) ? (contact.socials as Array<{ kind: string; value: string }>) : null,
           },
           currentContact: {
-            firstName: contact.first_name,
-            lastName: contact.last_name,
+            firstName: safeFirstName,
+            lastName: safeLastName,
           },
         });
 
@@ -650,10 +654,10 @@ export class CrmPipelineService {
           isCurrentPlaceholder ||
           identity.source === "message_body" ||
           identity.source === "email_signature" ||
-          (!contact.last_name && Boolean(identity.lastName))
+          (!safeLastName && Boolean(identity.lastName))
         );
 
-        if (shouldUpdateContact && identity && (identity.firstName !== contact.first_name || (identity.lastName || "") !== (contact.last_name || ""))) {
+        if (shouldUpdateContact && identity && (identity.firstName !== safeFirstName || (identity.lastName || "") !== safeLastName)) {
           await tx.query(
             `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
             [identity.firstName, identity.lastName || "", contact.id, input.tenantId],
@@ -662,7 +666,7 @@ export class CrmPipelineService {
           contact.last_name = identity.lastName || "";
           displayName = `${identity.firstName} ${identity.lastName || ""}`.trim();
         } else if (
-          contact.first_name === UNKNOWN_CONTACT_NAME &&
+          safeFirstName === UNKNOWN_CONTACT_NAME &&
           newName.first_name !== UNKNOWN_CONTACT_NAME &&
           !isBannedName(newName.first_name)
         ) {
@@ -859,8 +863,11 @@ export class CrmPipelineService {
         }
 
         // Если имя контакта известно (не плейсхолдер), обновляем заголовок сделки, если он был заглушкой
-        if (contact && !isPlaceholderName(contact.first_name, contact.last_name)) {
-          const resolvedContactName = `${contact.first_name} ${contact.last_name || ""}`.trim();
+        if (contact && !isPlaceholderName(contact.first_name ?? "", contact.last_name ?? "")) {
+          const resolvedContactName = [contact.first_name ?? "", contact.last_name ?? ""]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
           await tx.query(
             `UPDATE deals
              SET title = 'Заявка от ' || $1 || ' (' || $2 || ')',
@@ -1521,7 +1528,7 @@ export class CrmPipelineService {
 
   /** То же для уже существующего контакта — из его записи, а не из профиля. */
   private contactDisplayName(contact: ExistingContact): string {
-    const full = `${contact.first_name} ${contact.last_name}`.trim();
+    const full = [contact.first_name ?? "", contact.last_name ?? ""].filter(Boolean).join(" ").trim();
     return full === "" ? UNKNOWN_CONTACT_NAME : full;
   }
 
