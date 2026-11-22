@@ -224,7 +224,38 @@ export interface FinanceCategoryDTO {
 }
 
 export interface PnlCategoryDTO { categoryName: string; amount: number; percentage: number; }
+
+export interface PnlCogsBreakdownItemDTO {
+  movementId: string;
+  itemName: string;
+  batchNumber: string;
+  supplierName: string;
+  ticketNumber: string | null;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  occurredAt: string;
+}
+
+export interface PnlCogsSummaryDTO {
+  partsRevenue: number;
+  worksRevenue: number;
+  partsCogs: number;
+  partsGrossProfit: number;
+  /** Наценка от партионной себестоимости: (partsRevenue - partsCogs) / partsCogs * 100 */
+  partsMarkupPercent: number;
+  /** Маржа от цены продажи: (partsRevenue - partsCogs) / partsRevenue * 100 */
+  partsMarginPercent: number;
+  /** Валовая прибыль по начислению: (partsRevenue + worksRevenue) - partsCogs */
+  accrualGrossProfit: number;
+  /** Оценка остатков склада по фактическим ценам партий */
+  stockValuation: number;
+  writeOffsCount: number;
+  breakdown: PnlCogsBreakdownItemDTO[];
+}
+
 export interface PnlDTO {
   from: string; to: string; income: number; expenses: number; netProfit: number;
   incomeByCategory: PnlCategoryDTO[]; expensesByCategory: PnlCategoryDTO[];
+  cogs?: PnlCogsSummaryDTO;
 }

@@ -20,6 +20,10 @@ export interface WarehouseItemDTO {
   minStock: number;
   retailPrice: number;
   costPrice: number;
+  fifoCostPrice?: number;
+  avgBatchCostPrice?: number;
+  stockValuation?: number;
+  activeBatchesCount?: number;
   totalStock: number;
   reservedStock: number;
   availableStock: number;
@@ -258,6 +262,8 @@ export interface WarehousePaginationMeta {
   page: number;
   limit: number;
   pages: number;
+  totalValuation?: number;
+  lowStockCount?: number;
 }
 
 export interface PaginatedWarehouseResponse {

@@ -162,6 +162,9 @@ export interface WarehouseItemRow {
   cost_price: string | number;
   total_stock?: string | number;
   reserved_stock?: string | number;
+  stock_valuation?: string | number;
+  fifo_cost_price?: string | number | null;
+  active_batches_count?: string | number;
   models_json?: WarehouseItemModelDTO[] | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -185,6 +188,14 @@ export interface WarehouseItemDTO {
   retailPrice: number;
   price?: number;
   costPrice: number;
+  /** Себестоимость ближайшей непустой партии (FIFO) */
+  fifoCostPrice?: number;
+  /** Средневзвешенная себестоимость по текущим остаткам партий */
+  avgBatchCostPrice?: number;
+  /** Реальная оценка остатка позиции по партиям SUM(remaining_quantity * purchase_price) */
+  stockValuation?: number;
+  /** Количество активных непустых партий */
+  activeBatchesCount?: number;
   totalStock: number;
   quantity?: number;
   reservedStock: number;
@@ -220,6 +231,10 @@ export interface WarehousePaginationMeta {
   page: number;
   limit: number;
   pages: number;
+  /** Полная оценка всего склада по остаткам партий SUM(remaining_quantity * purchase_price) */
+  totalValuation?: number;
+  /** Позиций ниже порога min_stock по всему складу */
+  lowStockCount?: number;
 }
 
 export interface PaginatedWarehouseItemsDTO {

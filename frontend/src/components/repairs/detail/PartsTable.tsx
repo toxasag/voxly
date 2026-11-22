@@ -69,7 +69,7 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
     setNewName(item.name);
     setNewArticle(item.sku || "Б/А");
     setNewRetail(String(item.retailPrice ?? 0));
-    setNewCostPrice(String(item.costPrice ?? 0));
+    setNewCostPrice(String(item.fifoCostPrice ?? item.costPrice ?? 0));
     setCatalogOpen(false);
   };
 
@@ -250,7 +250,8 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
               const itemTotalRetail = item.retail_price * item.quantity;
               const itemTotalCost = item.cost_price * item.quantity;
               const margin = itemTotalRetail - itemTotalCost;
-              const marginPct = itemTotalCost > 0 ? Math.round((margin / itemTotalRetail) * 100) : 0;
+              const markupPct = itemTotalCost > 0 ? Math.round((margin / itemTotalCost) * 100) : 0;
+              const allocations = item.batch_allocations ?? [];
 
               return (
                 <tr key={item.id} className="transition-colors hover:bg-[#f5f5f5]">
@@ -281,9 +282,26 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-[13px] text-[#666666] font-mono">
-                      {formatCost(item.cost_price)}
-                    </span>
+                    <div className="flex flex-col items-end">
+                      <span className="text-[13px] text-[#666666] font-mono">
+                        {formatCost(item.cost_price)}
+                      </span>
+                      {allocations.length > 0 && (
+                        <span
+                          className="text-[10px] font-mono text-[#888888]"
+                          title={allocations
+                            .map(
+                              (a) =>
+                                `${a.batchNumber ? `Партия ${a.batchNumber}` : "Без партии"}: ${a.quantity} × ${formatCost(a.unitCost)}`,
+                            )
+                            .join("; ")}
+                        >
+                          {allocations.length === 1
+                            ? `FIFO: ${formatCost(allocations[0].unitCost)}`
+                            : `FIFO (${allocations.length} парт.)`}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div>
@@ -291,7 +309,7 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                         {formatCost(margin)}
                       </span>
                       <span className="block text-[10px] text-emerald-700/80">
-                        {marginPct}%
+                        {markupPct >= 0 ? `+${markupPct}%` : `${markupPct}%`}
                       </span>
                     </div>
                   </td>
@@ -371,8 +389,9 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                   <div className="space-y-0.5">
                     {filteredWarehouseItems.map((wi) => {
                       const isOutOfStock = wi.availableStock <= 0;
-                      const margin = (wi.retailPrice ?? 0) - (wi.costPrice ?? 0);
-                      const marginPct = (wi.retailPrice ?? 0) > 0 ? Math.round((margin / wi.retailPrice) * 100) : 0;
+                      const effectiveCost = wi.fifoCostPrice ?? wi.costPrice ?? 0;
+                      const margin = (wi.retailPrice ?? 0) - effectiveCost;
+                      const markupPct = effectiveCost > 0 ? Math.round((margin / effectiveCost) * 100) : 0;
                       return (
                         <button
                           key={wi.id}
@@ -397,9 +416,11 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                             </span>
                             <div className="flex items-center justify-end gap-2 text-[11px] font-mono mt-0.5">
                               <span className="text-[#111111] font-medium">Розница: {formatCost(wi.retailPrice)}</span>
-                              <span className="text-[#666666]">Закупка: {formatCost(wi.costPrice)}</span>
-                              {margin > 0 && (
-                                <span className="text-emerald-700 font-medium">Наценка: +{marginPct}%</span>
+                              <span className="text-[#666666]">
+                                Закупка{(wi.activeBatchesCount ?? 0) > 0 ? " FIFO" : ""}: {formatCost(effectiveCost)}
+                              </span>
+                              {margin > 0 && effectiveCost > 0 && (
+                                <span className="text-emerald-700 font-medium">Наценка: +{markupPct}%</span>
                               )}
                             </div>
                           </div>

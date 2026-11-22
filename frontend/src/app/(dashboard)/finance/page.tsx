@@ -314,7 +314,7 @@ function FinancePageContent() {
             }
           />
         )}
-        {tab === "pnl" && <ProfitLossView transactions={transactions} />}
+        {tab === "pnl" && <ProfitLossView transactions={transactions} pnl={pnlData} />}
         {tab === "organization" && <OrganizationSettingsTab />}
 
         {/* Modals */}
