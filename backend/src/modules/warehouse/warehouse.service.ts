@@ -1050,12 +1050,32 @@ export class WarehouseService {
     const fields: string[] = [];
     const params: SqlParam[] = [tenantId, requestId];
 
+    if (payload.item_name !== undefined) {
+      params.push(payload.item_name.trim());
+      fields.push(`item_name = $${params.length}`);
+    }
+    if (payload.sku !== undefined) {
+      params.push(payload.sku.trim());
+      fields.push(`sku = $${params.length}`);
+    }
+    if (payload.quantity !== undefined) {
+      params.push(payload.quantity);
+      fields.push(`quantity = $${params.length}`);
+    }
+    if (payload.unit !== undefined) {
+      params.push(payload.unit.trim());
+      fields.push(`unit = $${params.length}`);
+    }
+    if (payload.estimated_price !== undefined) {
+      params.push(payload.estimated_price);
+      fields.push(`estimated_price = $${params.length}`);
+    }
     if (payload.status) {
       params.push(payload.status);
       fields.push(`status = $${params.length}`);
     }
     if (payload.comment !== undefined) {
-      params.push(payload.comment);
+      params.push(payload.comment.trim());
       fields.push(`comment = $${params.length}`);
     }
 
@@ -1065,14 +1085,57 @@ export class WarehouseService {
     fields.push(`updated_at = $${params.length}`);
 
     return withTenant(tenantId, async (tx) => {
-      await tx.query(
+      const updatedRows = await tx.query<{ id: string }>(
         `UPDATE purchase_requests SET ${fields.join(", ")}
-         WHERE tenant_id = $1 AND id = $2`,
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING id`,
         params,
       );
+      if (updatedRows.length === 0) return null;
 
-      const list = await this.listPurchaseRequests(tenantId);
-      return list.find((r) => r.id === requestId) ?? null;
+      const row = await tx.queryOne<PurchaseRequestRow>(
+        `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
+                pr.quantity, pr.unit, pr.estimated_price, pr.status, pr.comment,
+                pr.created_by, pr.created_at, pr.updated_at,
+                ro.ticket_number AS repair_ticket_number,
+                u.name AS created_by_name
+         FROM purchase_requests pr
+         LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+         LEFT JOIN users u ON u.id = pr.created_by AND u.tenant_id = pr.tenant_id
+         WHERE pr.tenant_id = $1 AND pr.id = $2`,
+        [tenantId, requestId],
+      );
+      if (!row) return null;
+
+      return {
+        id: row.id,
+        repairOrderId: row.repair_order_id,
+        supplierOrderId: row.supplier_order_id,
+        repairTicketNumber: row.repair_ticket_number,
+        itemId: row.item_id,
+        itemName: row.item_name,
+        sku: row.sku,
+        quantity: Number(row.quantity),
+        unit: row.unit,
+        estimatedPrice: Number(row.estimated_price),
+        status: (row.status as PurchaseRequestStatus) || "pending",
+        comment: row.comment,
+        createdByName: row.created_by_name,
+        createdAt: toIso(row.created_at),
+        updatedAt: toIso(row.updated_at),
+      };
+    });
+  }
+
+  async deletePurchaseRequest(tenantId: string, requestId: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const deletedRows = await tx.query<{ id: string }>(
+        `DELETE FROM purchase_requests
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING id`,
+        [tenantId, requestId],
+      );
+      return deletedRows.length > 0;
     });
   }
 
