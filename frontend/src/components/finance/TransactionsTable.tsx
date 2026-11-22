@@ -12,6 +12,7 @@ import {
   Copy,
   Download,
   Trash2,
+  Pencil,
   Building2,
   User,
   type LucideIcon,
@@ -26,7 +27,9 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import {
   useBulkDeleteTransactions,
   useBulkDuplicateTransactions,
+  useDeleteTransaction,
 } from "@/lib/api/use-invoices";
+import { EditTransactionModal } from "./EditTransactionModal";
 import { cn } from "@/lib/utils";
 
 interface TransactionsTableProps {
@@ -38,6 +41,7 @@ interface TransactionsTableProps {
   isLoading?: boolean;
   isError?: boolean;
   error?: Error | null;
+  onOpenCategories?: () => void;
 }
 
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
@@ -124,12 +128,16 @@ export const TransactionsTable = memo(function TransactionsTable({
   isLoading,
   isError,
   error,
+  onOpenCategories,
 }: TransactionsTableProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
+  const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
 
   const bulkDeleteMutation = useBulkDeleteTransactions();
   const bulkDuplicateMutation = useBulkDuplicateTransactions();
+  const singleDeleteMutation = useDeleteTransaction();
 
   const filtered = useMemo(() => {
     return transactions.filter((t) => {
@@ -195,6 +203,17 @@ export const TransactionsTable = memo(function TransactionsTable({
       toast.error(err instanceof Error ? err.message : "Не удалось удалить операции");
     }
   }, [selectedIds, bulkDeleteMutation]);
+
+  const handleSingleDeleteConfirmed = useCallback(async () => {
+    if (!deletingTx) return;
+    try {
+      await singleDeleteMutation.mutateAsync(deletingTx.id);
+      toast.success("Операция успешно удалена");
+      setDeletingTx(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить операцию");
+    }
+  }, [deletingTx, singleDeleteMutation]);
 
   const columns = useMemo<RecordColumn<Transaction>[]>(
     () => [
@@ -319,6 +338,36 @@ export const TransactionsTable = memo(function TransactionsTable({
             </RecordCellShell>
           );
         },
+      },
+      {
+        id: "actions",
+        header: "",
+        width: 76,
+        render: (tx) => (
+          <RecordCellShell>
+            <div
+              className="flex items-center gap-1 justify-end w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                title="Редактировать операцию"
+                onClick={() => setEditingTx(tx)}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] border border-transparent text-[#666666] hover:border-[#e5e5e5] hover:bg-white hover:text-[#4a38f5] transition-colors cursor-pointer"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title="Удалить операцию"
+                onClick={() => setDeletingTx(tx)}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] border border-transparent text-[#888888] hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </RecordCellShell>
+        ),
       },
     ],
     [],
@@ -512,12 +561,45 @@ export const TransactionsTable = memo(function TransactionsTable({
         selectedIds={selectedIds}
         onSelectionChange={setSelectedIds}
         bulkBar={bulkBar}
+        onRowClick={(tx) => setEditingTx(tx)}
         emptyState={
           <div className="flex flex-col items-center gap-2 py-16 text-center">
             <Banknote className="h-8 w-8 text-[#888888]" />
             <p className="text-xs text-[#666666]">Нет операций</p>
           </div>
         }
+      />
+
+      {/* Edit Transaction Modal */}
+      <EditTransactionModal
+        open={Boolean(editingTx)}
+        transaction={editingTx}
+        onClose={() => setEditingTx(null)}
+        onOpenCategories={onOpenCategories}
+        onDelete={(tx) => {
+          setEditingTx(null);
+          setDeletingTx(tx);
+        }}
+      />
+
+      {/* Single Delete Confirm Dialog */}
+      <ConfirmDialog
+        open={Boolean(deletingTx)}
+        onClose={() => setDeletingTx(null)}
+        onConfirm={handleSingleDeleteConfirmed}
+        title="Удалить операцию?"
+        description={
+          deletingTx
+            ? `Операция от ${formatDate(deletingTx.date)} на сумму ${formatAmount(
+                deletingTx.amount,
+                deletingTx.type,
+              )} будет удалена, а баланс счёта автоматически пересчитан. Это действие необратимо.`
+            : "Операция будет удалена, а баланс счёта пересчитан."
+        }
+        confirmLabel="Удалить"
+        cancelLabel="Отмена"
+        variant="destructive"
+        isPending={singleDeleteMutation.isPending}
       />
 
       {/* Confirm Delete Dialog */}

@@ -297,6 +297,7 @@ function FinancePageContent() {
             isLoading={txLoading}
             isError={txError}
             error={txError ? new Error("Failed to load transactions") : null}
+            onOpenCategories={() => setCategoriesModalOpen(true)}
           />
         )}
         {tab === "invoices" && (

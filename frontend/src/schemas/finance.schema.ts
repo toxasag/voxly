@@ -35,6 +35,27 @@ export const createTransactionSchema = z.object({
 
 export type CreateTransactionPayload = z.infer<typeof createTransactionSchema>;
 
+export const updateTransactionSchema = z.object({
+  account_id: z.string().min(1, "Account is required").optional(),
+  type: z.enum(["income", "expense"]).optional(),
+  amount: z
+    .number({ invalid_type_error: "Amount must be a number" })
+    .min(0.01, "Amount must be greater than 0")
+    .optional(),
+  currency: z.string().length(3).default("RUB").optional(),
+  category_id: z.string().uuid().optional().or(z.literal("")),
+  category_name: z.string().min(1, "Category is required").max(120).optional(),
+  description: z.string().max(500).optional().or(z.literal("")),
+  counterparty_name: z.string().max(200).optional().or(z.literal("")),
+  counterparty_inn: z.string().max(20).optional().or(z.literal("")),
+  deal_id: z.string().uuid().optional().or(z.literal("")),
+  repair_order_id: z.string().uuid().optional().or(z.literal("")),
+  invoice_id: z.string().uuid().optional().or(z.literal("")),
+  occurred_at: z.string().optional(),
+});
+
+export type UpdateTransactionPayload = z.infer<typeof updateTransactionSchema>;
+
 export const createInvoiceSchema = z.object({
   company_id: z.string().uuid().optional().or(z.literal("")),
   company_name: z.string().min(1, "Company name is required").max(200),

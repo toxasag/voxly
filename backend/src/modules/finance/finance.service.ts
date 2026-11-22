@@ -9,6 +9,7 @@ import type {
   TransactionDTO,
   TransferPayload,
   UpdateCategoryPayload,
+  UpdateTransactionPayload,
 } from "./finance.types.js";
 import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
@@ -331,6 +332,107 @@ export class FinanceService {
         sign * p.amount,
       ]);
       return this.toTx(row);
+    });
+  }
+
+  async updateTransaction(tenantId: string, id: string, p: UpdateTransactionPayload): Promise<TransactionDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const current = await tx.queryOne<TxRow>(
+        `SELECT t.id, t.direction, t.amount, t.currency, t.category_id, t.category_name, t.description,
+                COALESCE(t.counterparty_name, '') AS counterparty_name,
+                COALESCE(t.counterparty_inn, '') AS counterparty_inn,
+                t.cash_account_id, a.name AS account_name,
+                t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at
+         FROM transactions t
+         JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+         WHERE t.tenant_id = $1 AND t.id = $2 AND t.deleted_at IS NULL
+         FOR UPDATE`,
+        [tenantId, id],
+      );
+      if (!current) throw new NotFoundError("Transaction not found");
+
+      const newAccountId = p.account_id ?? current.cash_account_id;
+      const newType = p.type ?? current.direction;
+      const newAmount = p.amount !== undefined ? p.amount : Number(current.amount);
+
+      if (newAccountId !== current.cash_account_id) {
+        const targetAcc = await this.account(tx, tenantId, newAccountId);
+        if (targetAcc.currency !== (p.currency ?? current.currency)) {
+          throw new ValidationError("Account currency differs from transaction currency");
+        }
+      }
+
+      // Revert previous transaction impact on balance
+      const oldSign = current.direction === "income" ? -1 : 1;
+      const newSign = newType === "income" ? 1 : -1;
+
+      if (newAccountId === current.cash_account_id) {
+        const diff = oldSign * Number(current.amount) + newSign * newAmount;
+        if (diff !== 0) {
+          await tx.query(
+            `UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, newAccountId, diff],
+          );
+        }
+      } else {
+        await tx.query(
+          `UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, current.cash_account_id, oldSign * Number(current.amount)],
+        );
+        await tx.query(
+          `UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, newAccountId, newSign * newAmount],
+        );
+      }
+
+      const updated = await tx.queryOneOrThrow<TxRow>(
+        `UPDATE transactions
+         SET cash_account_id = COALESCE($3, cash_account_id),
+             direction = COALESCE($4, direction),
+             amount = COALESCE($5, amount),
+             currency = COALESCE($6, currency),
+             category_id = CASE WHEN $7::boolean THEN $8 ELSE category_id END,
+             category_name = COALESCE($9, category_name),
+             description = CASE WHEN $10::boolean THEN $11 ELSE description END,
+             counterparty_name = CASE WHEN $12::boolean THEN $13 ELSE counterparty_name END,
+             counterparty_inn = CASE WHEN $14::boolean THEN $15 ELSE counterparty_inn END,
+             deal_id = CASE WHEN $16::boolean THEN $17 ELSE deal_id END,
+             repair_order_id = CASE WHEN $18::boolean THEN $19 ELSE repair_order_id END,
+             invoice_id = CASE WHEN $20::boolean THEN $21 ELSE invoice_id END,
+             occurred_at = COALESCE($22::timestamptz, occurred_at)
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         RETURNING id, direction, amount, currency, category_id, category_name, description,
+                   COALESCE(counterparty_name, '') AS counterparty_name,
+                   COALESCE(counterparty_inn, '') AS counterparty_inn,
+                   cash_account_id, (SELECT name FROM cash_accounts WHERE id = cash_account_id) AS account_name,
+                   deal_id, repair_order_id, invoice_id, occurred_at`,
+        [
+          tenantId,
+          id,
+          p.account_id ?? null,
+          p.type ?? null,
+          p.amount !== undefined ? p.amount : null,
+          p.currency ?? null,
+          p.category_id !== undefined,
+          blank(p.category_id),
+          p.category_name ?? null,
+          p.description !== undefined,
+          p.description ?? "",
+          p.counterparty_name !== undefined,
+          p.counterparty_name ?? "",
+          p.counterparty_inn !== undefined,
+          p.counterparty_inn ?? "",
+          p.deal_id !== undefined,
+          blank(p.deal_id),
+          p.repair_order_id !== undefined,
+          blank(p.repair_order_id),
+          p.invoice_id !== undefined,
+          blank(p.invoice_id),
+          p.occurred_at ?? null,
+        ],
+      );
+
+      return this.toTx(updated);
     });
   }
 
