@@ -620,23 +620,33 @@ export class DealMessagingService {
    * Возвращает хронологию сообщений для контакта по всем его сделкам
    * (включая объединённые дубликаты контакта и архивные сделки).
    */
-  async listContactMessages(tenantId: string, contactId: string): Promise<DealMessageDTO[]> {
+  async listContactMessages(
+    tenantId: string,
+    contactId: string,
+    options?: { limit?: number },
+  ): Promise<DealMessageDTO[]> {
+    const limit = Math.min(Math.max(options?.limit ?? 500, 1), 2000);
     const rows = await query<DealMessageRow>(
-      `SELECT m.id, m.tenant_id, m.deal_id, m.channel_account_id, m.source, m.direction, m.sender_name, m.content, m.channel,
-              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.metadata,
-              m.delivered_at, m.read_at, m.created_at
-       FROM deal_messages m
-       JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
-       WHERE m.tenant_id = $1
-         AND (
-           d.contact_id = $2
-           OR d.contact_id IN (
-             SELECT c2.id FROM contacts c2
-             WHERE c2.tenant_id = $1 AND c2.custom_fields->>'merged_into' = $2::text
+      `SELECT *
+       FROM (
+         SELECT m.id, m.tenant_id, m.deal_id, m.channel_account_id, m.source, m.direction, m.sender_name, m.content, m.channel,
+                m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.metadata,
+                m.delivered_at, m.read_at, m.created_at
+         FROM deal_messages m
+         JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+         WHERE m.tenant_id = $1
+           AND (
+             d.contact_id = $2
+             OR d.contact_id IN (
+               SELECT c2.id FROM contacts c2
+               WHERE c2.tenant_id = $1 AND c2.custom_fields->>'merged_into' = $2::text
+             )
            )
-         )
-       ORDER BY m.created_at ASC`,
-      [tenantId, contactId],
+         ORDER BY m.created_at DESC
+         LIMIT $3
+       ) AS recent_contact_messages
+       ORDER BY created_at ASC`,
+      [tenantId, contactId, limit],
     );
     return rows.map(toDealMessageDTO);
   }

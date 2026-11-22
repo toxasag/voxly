@@ -1,3 +1,4 @@
+import { toIsoOrNull as toIso } from "../../lib/date.utils.js";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { GatewayChatProvider } from "../../services/chat.service.js";
@@ -65,11 +66,6 @@ interface AgentRow {
   last_used_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
-}
-
-function toIso(value: Date | string | null): string | null {
-  if (value === null) return null;
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 function toDTO(row: AgentRow): AiAgentDTO {

@@ -1,3 +1,4 @@
+import { toIsoOrNull as toIso } from "../../../lib/date.utils.js";
 import { query, queryOne } from "../../../db/client.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { resolveOutboundSender } from "../../channels/outbound-registry.js";
@@ -42,11 +43,6 @@ interface StageRuleRow {
   is_active: boolean;
   created_at: Date | string;
   updated_at: Date | string;
-}
-
-function toIso(val: Date | string | null | undefined): string | null {
-  if (val === null || val === undefined) return null;
-  return typeof val === "string" ? val : val.toISOString();
 }
 
 function toRuleDTO(row: StageRuleRow): StageRuleDTO {

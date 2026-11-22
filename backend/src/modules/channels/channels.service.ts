@@ -1,3 +1,4 @@
+import { toIsoOrNull as toIso } from "../../lib/date.utils.js";
 import { pluralRu } from "../../lib/string.utils.js";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
@@ -36,11 +37,6 @@ interface ChannelAccountRow {
   cred_phone?: string | null;
   cred_bot?: string | null;
   has_session?: boolean;
-}
-
-function toIso(value: Date | string | null): string | null {
-  if (value === null) return null;
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 /** Склонение в тексте ошибки: «оплачено 1 подключение», а не «1 подключений». */

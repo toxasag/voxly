@@ -1,3 +1,4 @@
+import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
 import { query, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import {
   type AggregatedPurchaseRequestDTO,
@@ -47,11 +48,6 @@ import {
   suggestFieldMapping,
   type ExportColumnDef,
 } from "./warehouse-io.service.js";
-
-function toIso(val: Date | string | null | undefined): string {
-  if (!val) return new Date().toISOString();
-  return typeof val === "string" ? new Date(val).toISOString() : val.toISOString();
-}
 
 function toNullableIso(val: Date | string | null | undefined): string | null {
   if (!val) return null;
