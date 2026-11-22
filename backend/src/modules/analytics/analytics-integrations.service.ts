@@ -1,5 +1,5 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
-import { query, queryOne } from "../../db/client.js";
+import { query, queryOne, withTenant } from "../../db/client.js";
 import { encryptSecret } from "../../services/credentials-cipher.js";
 import {
   normalizeAnalyticsProvider,
@@ -381,13 +381,15 @@ export class AnalyticsIntegrationsService {
     tenantId: string,
     limit = 50,
   ): Promise<{ queuedCount: number; results: ConversionResult[] }> {
-    const deals = await query<{ id: string }>(
-      `SELECT id FROM deals
-       WHERE tenant_id = $1 AND deleted_at IS NULL
-       ORDER BY created_at DESC
-       LIMIT $2`,
-      [tenantId, limit],
-    );
+    const deals = await withTenant(tenantId, async (tx) => {
+      return tx.query<{ id: string }>(
+        `SELECT id FROM deals
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [tenantId, limit],
+      );
+    });
 
     const results: ConversionResult[] = [];
     for (const deal of deals) {
@@ -405,35 +407,37 @@ export class AnalyticsIntegrationsService {
     tenantId: string,
     limit = 50,
   ): Promise<ConversionDeliveryAttemptDTO[]> {
-    const rows = await query<{
-      id: string;
-      tenant_id: string;
-      deal_id: string | null;
-      deal_title: string | null;
-      provider: string;
-      event_key: string;
-      event_name: string;
-      status: string;
-      attempts: number;
-      last_status: number | null;
-      last_error: string | null;
-      response_snippet: string | null;
-      is_test: boolean;
-      job_id: string | null;
-      delivered_at: Date | string | null;
-      created_at: Date | string;
-      updated_at: Date | string;
-    }>(
-      `SELECT a.id, a.tenant_id, a.deal_id, d.title AS deal_title, a.provider, a.event_key,
-              a.event_name, a.status, a.attempts, a.last_status, a.last_error,
-              a.response_snippet, a.is_test, a.job_id, a.delivered_at, a.created_at, a.updated_at
-       FROM conversion_delivery_attempts a
-       LEFT JOIN deals d ON d.id = a.deal_id
-       WHERE a.tenant_id = $1
-       ORDER BY a.created_at DESC
-       LIMIT $2`,
-      [tenantId, limit],
-    );
+    const rows = await withTenant(tenantId, async (tx) => {
+      return tx.query<{
+        id: string;
+        tenant_id: string;
+        deal_id: string | null;
+        deal_title: string | null;
+        provider: string;
+        event_key: string;
+        event_name: string;
+        status: string;
+        attempts: number;
+        last_status: number | null;
+        last_error: string | null;
+        response_snippet: string | null;
+        is_test: boolean;
+        job_id: string | null;
+        delivered_at: Date | string | null;
+        created_at: Date | string;
+        updated_at: Date | string;
+      }>(
+        `SELECT a.id, a.tenant_id, a.deal_id, d.title AS deal_title, a.provider, a.event_key,
+                a.event_name, a.status, a.attempts, a.last_status, a.last_error,
+                a.response_snippet, a.is_test, a.job_id, a.delivered_at, a.created_at, a.updated_at
+         FROM conversion_delivery_attempts a
+         LEFT JOIN deals d ON d.id = a.deal_id
+         WHERE a.tenant_id = $1
+         ORDER BY a.created_at DESC
+         LIMIT $2`,
+        [tenantId, limit],
+      );
+    });
 
     return rows.map((r) => ({
       id: r.id,
