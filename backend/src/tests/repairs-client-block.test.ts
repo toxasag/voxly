@@ -24,6 +24,12 @@ vi.mock("../tenant/tenant-defaults.js", () => ({
   ensureTenantDefaults: vi.fn().mockResolvedValue({}),
 }));
 
+vi.mock("../modules/crm/enrichment/crm-enrichment.service.js", () => ({
+  CrmEnrichmentService: vi.fn().mockImplementation(() => ({
+    lookupClientByPhone: vi.fn().mockResolvedValue(null),
+  })),
+}));
+
 describe("RepairsService Client & Deal Integration", () => {
   let service: RepairsService;
   const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -253,8 +259,8 @@ describe("RepairsService Client & Deal Integration", () => {
     const contactId = "44444444-4444-4444-4444-444444444444";
     const companyId = "66666666-6666-6666-6666-666666666666";
 
-    // 1. queryOne for contact
-    mockQueryOne.mockResolvedValueOnce({
+    // 1. tx.queryOne for contact
+    mockTxQueryOne.mockResolvedValueOnce({
       id: contactId,
       first_name: "Иван",
       last_name: "Петров",
@@ -265,8 +271,8 @@ describe("RepairsService Client & Deal Integration", () => {
       company_name: "ООО Вектор",
     });
 
-    // 2. queryOne for company requisites
-    mockQueryOne.mockResolvedValueOnce({
+    // 2. tx.queryOne for company requisites
+    mockTxQueryOne.mockResolvedValueOnce({
       id: companyId,
       name: "ООО Вектор",
       inn: "7701234567",
@@ -276,8 +282,8 @@ describe("RepairsService Client & Deal Integration", () => {
       legal_address: "г. Москва",
     });
 
-    // 3. query for active deals
-    mockQuery.mockResolvedValueOnce([
+    // 3. tx.query for active deals
+    mockTxQuery.mockResolvedValueOnce([
       {
         id: "deal-1",
         title: "Ремонт MacBook",
@@ -310,7 +316,8 @@ describe("RepairsService Client & Deal Integration", () => {
     expect(emptyResult.found).toBe(false);
     expect(emptyResult.activeDeals).toEqual([]);
 
-    mockQueryOne.mockResolvedValueOnce(null);
+    // 1. contacts lookup -> null, 2. repair_orders lookup -> null
+    mockTxQueryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
     const unknownResult = await service.clientLookup(tenantId, { phone: "+79990000000" });
     expect(unknownResult.found).toBe(false);
     expect(unknownResult.client).toBeNull();
@@ -318,29 +325,31 @@ describe("RepairsService Client & Deal Integration", () => {
 
   it("getDictionaries retrieves dictionaries for tenant", async () => {
     mockTxQuery
-      .mockResolvedValueOnce([{ name: "Смартфон" }, { name: "Ноутбук" }])
-      .mockResolvedValueOnce([{ name: "Apple" }, { name: "Samsung" }])
-      .mockResolvedValueOnce([{ name: "iPhone 15" }])
-      .mockResolvedValueOnce([{ name: "Обойма" }, { name: "2 АКБ" }])
-      .mockResolvedValueOnce([{ name: "Не включается" }]);
+      .mockResolvedValueOnce([{ id: "t-1", name: "Смартфон" }, { id: "t-2", name: "Ноутбук" }])
+      .mockResolvedValueOnce([{ id: "b-1", name: "Apple" }, { id: "b-2", name: "Samsung" }])
+      .mockResolvedValueOnce([{ id: "m-1", name: "iPhone 15", brand_id: "b-1", brand_name: "Apple" }])
+      .mockResolvedValueOnce([{ id: "a-1", name: "Обойма" }, { id: "a-2", name: "2 АКБ" }])
+      .mockResolvedValueOnce([{ id: "mf-1", name: "Не включается" }])
+      .mockResolvedValueOnce([{ id: "c-1", name: "Запчасти" }]);
 
     const dicts = await service.getDictionaries(tenantId);
-    expect(dicts.types).toEqual(["Смартфон", "Ноутбук"]);
-    expect(dicts.brands).toEqual(["Apple", "Samsung"]);
-    expect(dicts.models).toEqual(["iPhone 15"]);
-    expect(dicts.accessories).toEqual(["Обойма", "2 АКБ"]);
-    expect(dicts.malfunctions).toEqual(["Не включается"]);
+    expect(dicts.types.map((d) => d.name)).toEqual(["Смартфон", "Ноутбук"]);
+    expect(dicts.brands.map((d) => d.name)).toEqual(["Apple", "Samsung"]);
+    expect(dicts.models.map((d) => d.name)).toEqual(["iPhone 15"]);
+    expect(dicts.accessories.map((d) => d.name)).toEqual(["Обойма", "2 АКБ"]);
+    expect(dicts.malfunctions.map((d) => d.name)).toEqual(["Не включается"]);
+    expect((dicts.categories ?? []).map((d) => d.name)).toEqual(["Запчасти"]);
   });
 
   it("addDictionaryItem inserts new item into correct table", async () => {
-    mockTxQueryOne.mockResolvedValueOnce({
+    mockTxQueryOneOrThrow.mockResolvedValueOnce({
       id: "type-1",
       name: "Планшет",
     });
 
     const item = await service.addDictionaryItem(tenantId, "type", "Планшет");
     expect(item.name).toBe("Планшет");
-    expect(mockTxQueryOne).toHaveBeenCalled();
+    expect(mockTxQueryOneOrThrow).toHaveBeenCalled();
   });
 
   it("searchEquipmentBySerial returns equipment and previous repair history", async () => {

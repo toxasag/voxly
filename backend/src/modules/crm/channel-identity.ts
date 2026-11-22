@@ -73,7 +73,8 @@ export const UNKNOWN_CONTACT_NAME = "Клиент";
 const CONTACT_CHANNEL_BY_SLUG: Readonly<Record<string, ContactChannel>> = {
   telegram: "telegram",
   whatsapp: "whatsapp",
-  max: "rumax",
+  max: "max",
+  rumax: "rumax",
   webchat: "phone",
   phone: "phone",
   email: "email",
@@ -106,12 +107,21 @@ export function contactChannelFor(channel: string): ContactChannel {
  * `123456789`. Он остаётся запасным вариантом только если не похож на
  * идентификатор — тогда это осмысленное имя из другого канала.
  */
+export function isBannedName(name?: string | null): boolean {
+  if (!name) return false;
+  return /^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)(?:\s+.*)?$/i.test(name.trim());
+}
+
 export function contactNameFrom(identity: SenderIdentity): {
   first_name: string;
   last_name: string;
 } {
-  const first = identity.profile?.firstName?.trim() ?? "";
+  let first = identity.profile?.firstName?.trim() ?? "";
   const last = identity.profile?.lastName?.trim() ?? "";
+
+  if (/^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)$/i.test(first)) {
+    first = "";
+  }
 
   if (first !== "" || last !== "") {
     return { first_name: first === "" ? UNKNOWN_CONTACT_NAME : first, last_name: last };
@@ -127,6 +137,11 @@ function nameFromSender(senderName: string): { first_name: string; last_name: st
   // Только цифры (и «@» с цифрами) — это идентификатор канала: у Telegram
   // peerId, у MAX числовой профиль. Именем такое быть не может.
   if (trimmed === "" || /^@?\d+$/.test(trimmed)) return null;
+
+  // Системные имена сервисов и ботов не признаются именем контакта
+  if (/^(?:voxly|getvoxly|voxlybot|system|система|менеджер|manager|клиент\s+max)(?:\s+.*)?$/i.test(trimmed)) {
+    return null;
+  }
 
   // Системные заглушки сайта вида «Посетитель сайта (...)» или «Клиент ...» не режем по пробелу
   if (/^Посетитель\s+сайта/i.test(trimmed) || /^Клиент(?:\s+.*)?$/i.test(trimmed)) {
@@ -320,62 +335,77 @@ export function validatePhoneCandidate(candidate: string): PhoneValidationResult
     return { isValid: false, normalized: null, issue: "too_short", digits };
   }
 
-  if (isFakeOrDummyPhone(digits)) {
-    return { isValid: false, normalized: null, issue: "fake_number", digits };
-  }
-
   // 1. Международный формат с явным знаком плюса (+)
   if (startsWithPlus) {
     // Для РФ и Казахстана (+7) длина номера строго 11 цифр (+7XXXXXXXXXX)
     if (digits.startsWith("7")) {
-      if (digits.length === 11) {
-        return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
-      }
       if (digits.length < 11) {
         return { isValid: false, normalized: null, issue: "too_short", digits };
       }
-      return { isValid: false, normalized: null, issue: "too_long", digits };
+      if (digits.length > 11) {
+        return { isValid: false, normalized: null, issue: "too_long", digits };
+      }
+      if (isFakeOrDummyPhone(digits)) {
+        return { isValid: false, normalized: null, issue: "fake_number", digits };
+      }
+      return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
     }
 
     // Для остальных стран (E.164: от 10 до 15 цифр)
-    if (digits.length >= 10 && digits.length <= 15) {
-      return { isValid: true, normalized: `+${digits}`, digits };
-    }
     if (digits.length < 10) {
       return { isValid: false, normalized: null, issue: "too_short", digits };
     }
-    return { isValid: false, normalized: null, issue: "too_long", digits };
+    if (digits.length > 15) {
+      return { isValid: false, normalized: null, issue: "too_long", digits };
+    }
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
+    return { isValid: true, normalized: `+${digits}`, digits };
   }
 
   // 2. Российские номера без знака плюса, начинающиеся с 7 или 8
   if (digits.startsWith("7") || digits.startsWith("8")) {
-    if (digits.length === 11) {
-      return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
-    }
     if (digits.length < 11) {
       return { isValid: false, normalized: null, issue: "too_short", digits };
     }
-    return { isValid: false, normalized: null, issue: "too_long", digits };
+    if (digits.length > 11) {
+      return { isValid: false, normalized: null, issue: "too_long", digits };
+    }
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
+    return { isValid: true, normalized: `+7${digits.slice(1)}`, digits };
   }
 
   // 3. Российские мобильные без префикса (10 цифр, начинаются строго с 9)
   if (digits.startsWith("9")) {
-    if (digits.length === 10) {
-      return { isValid: true, normalized: `+7${digits}`, digits };
-    }
     if (digits.length < 10) {
       return { isValid: false, normalized: null, issue: "too_short", digits };
     }
-    return { isValid: false, normalized: null, issue: "too_long", digits };
+    if (digits.length > 10) {
+      return { isValid: false, normalized: null, issue: "too_long", digits };
+    }
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
+    return { isValid: true, normalized: `+7${digits}`, digits };
   }
 
   // 4. Российские городские без префикса (10 цифр, начинаются с 3, 4, 8)
   if (digits.length === 10 && /^[348]/.test(digits)) {
+    if (isFakeOrDummyPhone(digits)) {
+      return { isValid: false, normalized: null, issue: "fake_number", digits };
+    }
     return { isValid: true, normalized: `+7${digits}`, digits };
   }
 
   if (digits.length < 10) {
     return { isValid: false, normalized: null, issue: "too_short", digits };
+  }
+
+  if (isFakeOrDummyPhone(digits)) {
+    return { isValid: false, normalized: null, issue: "fake_number", digits };
   }
 
   return { isValid: false, normalized: null, issue: "too_long", digits };
@@ -427,8 +457,10 @@ export function analyzePhoneInText(text?: string | null): PhoneAnalysis {
 
   const onlyDigits = cleaned.replace(/\D/g, "");
 
-  // 1. Если весь текст состоит преимущественно из цифр (до 20 символов) — проверяем целиком
+  // 1. Если весь текст состоит только из цифр и разделителей телефона — проверяем целиком
   if (
+    cleaned.length <= 24 &&
+    /^[\d+\s().-]+$/.test(cleaned) &&
     onlyDigits.length >= 7 &&
     onlyDigits.length <= 16 &&
     (cleaned.startsWith("+") || /^[789]/.test(onlyDigits)) &&
@@ -560,6 +592,14 @@ export function isBotSender(input: {
   isBot?: boolean | null;
   sourceMetadata?: Record<string, unknown> | null;
 }): boolean {
+  // 0. Системный бот уведомлений и авторизации (TELEGRAM_AUTH_BOT_TOKEN / TELEGRAM_AUTH_BOT_USERNAME)
+  const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+  const systemBotUsername = (process.env.TELEGRAM_AUTH_BOT_USERNAME || "GetVoxlybot").trim().toLowerCase().replace(/^@/, "");
+
+  if (systemBotId) {
+    if (input.chatId === systemBotId || input.senderName === systemBotId) return true;
+  }
+
   // 1. Нативный или явно переданный признак бота
   if (input.isBot === true) return true;
   if (input.profile?.isBot === true) return true;
@@ -581,6 +621,7 @@ export function isBotSender(input: {
   for (const rawUsername of usernameCandidates) {
     if (!rawUsername || typeof rawUsername !== "string") continue;
     const clean = rawUsername.trim().replace(/^@/, "");
+    if (clean.toLowerCase() === systemBotUsername) return true;
     // По спецификации Telegram юзернеймы ботов обязаны заканчиваться на 'bot' (например, 'kupmsk_bot', 'myBot')
     if (clean.length >= 3 && /(?:_bot|bot)$/i.test(clean)) {
       return true;
@@ -590,6 +631,7 @@ export function isBotSender(input: {
   // 4. Анализ senderName: если в качестве имени передан юзернейм бота вида @kupmsk_bot или my_bot
   if (input.senderName && typeof input.senderName === "string") {
     const trimmedSender = input.senderName.trim().replace(/^@/, "");
+    if (trimmedSender.toLowerCase() === systemBotUsername) return true;
     if (/^[a-zA-Z0-9_]{3,}(?:_bot|bot)$/i.test(trimmedSender)) {
       return true;
     }

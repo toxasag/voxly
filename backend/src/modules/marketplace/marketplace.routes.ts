@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { invalidateTenantModulesCache } from "../../plugins/auth-cache.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
 import {
   moduleSlugSchema,
@@ -57,7 +58,7 @@ function toIso(value: Date | string | null): string | null {
  */
 async function countUsers(tenantId: string): Promise<number> {
   const row = await queryOne<{ total: string }>(
-    `SELECT count(*)::text AS total FROM users WHERE tenant_id = $1`,
+    `SELECT count(*)::text AS total FROM users WHERE tenant_id = $1 AND deleted_at IS NULL`,
     [tenantId],
   );
   return Number(row?.total ?? 0);
@@ -379,6 +380,8 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
       };
     });
 
+    await invalidateTenantModulesCache(request.tenant_id);
+
     return reply.send({ data: result });
   });
 
@@ -440,6 +443,8 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
 
       return { slug, quantity: updated.quantity };
     });
+
+    await invalidateTenantModulesCache(request.tenant_id);
 
     return reply.send({ data: result });
   });

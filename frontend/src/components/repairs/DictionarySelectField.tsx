@@ -21,12 +21,12 @@ import {
 import { cn } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
-export type DictionaryCategory = "type" | "brand" | "model" | "accessory" | "malfunction";
+export type DictionaryCategory = "type" | "brand" | "model" | "accessory" | "malfunction" | "category";
 
 export interface DictionarySelectFieldProps {
   label?: string;
   required?: boolean;
-  icon: ComponentType<{ className?: string }>;
+  icon?: ComponentType<{ className?: string }>;
   category: DictionaryCategory;
   brandName?: string;
   brandId?: string;
@@ -253,9 +253,11 @@ export function DictionarySelectField({
 
       setEditingId(null);
       setActionError(null);
+      toast.success(`Переименовано: ${trimmed}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Не удалось переименовать";
       setActionError(msg);
+      toast.error(msg);
     }
   };
 
@@ -307,9 +309,11 @@ export function DictionarySelectField({
         )}
       >
         {/* Левая ячейка: Иконка сущности */}
-        <div className="flex w-9 shrink-0 items-center justify-center border-r border-[#e5e5e5] bg-slate-50/50 text-slate-400 rounded-l-[7px]">
-          <Icon className="h-4 w-4" />
-        </div>
+        {Icon && (
+          <div className="flex w-9 shrink-0 items-center justify-center border-r border-[#e5e5e5] bg-slate-50/50 text-slate-400 rounded-l-[7px]">
+            <Icon className="h-4 w-4" />
+          </div>
+        )}
 
         {/* Центральная часть: Селектор/чипы */}
         <div

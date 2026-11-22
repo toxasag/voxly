@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toIso } from "../../../lib/date.utils.js";
 
 export const recordTableIdSchema = z.enum(["contacts", "companies", "deals", "tasks"]);
 
@@ -63,10 +64,6 @@ export interface RecordTableLayoutDTO {
   tableId: RecordTableId;
   layout: RecordTableLayout;
   updatedAt: string;
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 export function toRecordTableLayoutDTO(row: RecordTableLayoutRow): RecordTableLayoutDTO {

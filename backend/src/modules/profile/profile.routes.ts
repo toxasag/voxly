@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { hashToken } from "../../lib/crypto.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { AuthSessionService } from "../auth/auth-session.service.js";
@@ -52,10 +52,6 @@ const verifyLinkBody = z.object({
 const channelParams = z.object({ channel: channelSchema });
 
 /** Тот же алгоритм, что в auth.service: refresh-токены хранятся как SHA-256. */
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
 export default async function profileRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
 

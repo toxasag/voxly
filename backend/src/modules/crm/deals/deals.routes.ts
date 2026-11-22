@@ -4,6 +4,7 @@ import { DealsService } from "./deals.service.js";
 import { DealMessagingService } from "./deal-messaging.service.js";
 import { mediaEnrichmentService } from "../media/media-enrichment.service.js";
 import { messageTranslationService } from "../translation/message-translation.service.js";
+import { ContactsIOService } from "../contacts/contacts-io.service.js";
 import {
   createDealItemSchema,
   createDealMessageSchema,
@@ -19,6 +20,7 @@ import { ensureTenantDefaults } from "../../tenant/tenant-defaults.js";
 import { queryOne } from "../../../db/client.js";
 import { AiService } from "../../ai/ai.service.js";
 import { createDialogueFeedbackSchema } from "../../ai/ai.types.js";
+import { bulkActionSchema } from "../shared/bulk-action.types.js";
 
 const listQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
@@ -104,6 +106,41 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  // Экспорт сделок в CSV / XLSX
+  const exportDealsQuerySchema = z.object({
+    format: z.enum(["csv", "xlsx"]).default("csv"),
+    pipeline_id: z.string().uuid().optional(),
+    search: z.string().max(200).optional(),
+  });
+
+  app.get("/export", { onRequest: canRead }, async (request, reply) => {
+    const { format, pipeline_id, search } = exportDealsQuerySchema.parse(request.query);
+    const contactsIo = new ContactsIOService();
+    const { buffer, filename, contentType } = await contactsIo.exportDeals(request.tenant_id, {
+      format,
+      pipelineId: pipeline_id,
+      search,
+    });
+    return reply
+      .header("Content-Type", contentType)
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
+      .send(buffer);
+  });
+
+  app.post("/export", { onRequest: canRead }, async (request, reply) => {
+    const { format, pipeline_id, search } = exportDealsQuerySchema.parse(request.body ?? {});
+    const contactsIo = new ContactsIOService();
+    const { buffer, filename, contentType } = await contactsIo.exportDeals(request.tenant_id, {
+      format,
+      pipelineId: pipeline_id,
+      search,
+    });
+    return reply
+      .header("Content-Type", contentType)
+      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
+      .send(buffer);
+  });
+
   // ---------------------------------------------------------------------------
   // Stages — визуальный редактор воронки (кнопка «Настроить» на канбане).
   // Зарегистрированы до /:id, иначе Fastify принял бы "pipelines" за id сделки.
@@ -158,7 +195,7 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/:id", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const body = updateDealSchema.parse(request.body);
-    const deal = await service.update(request.tenant_id, id, body);
+    const deal = await service.update(request.tenant_id, id, body, request.authUser.id);
 
     if (deal === null) throw new NotFoundError("Deal not found");
 
@@ -181,6 +218,18 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     if (deal === null) throw new NotFoundError("Deal not found");
 
     return reply.send({ data: deal });
+  });
+
+  app.post("/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
+    const payload = bulkActionSchema.parse(request.body);
+    const result = await service.bulkDelete(request.tenant_id, payload);
+    return reply.send({ data: result });
+  });
+
+  app.post("/bulk-move", { onRequest: canWrite }, async (request, reply) => {
+    const payload = bulkActionSchema.extend({ stage_id: z.string().uuid() }).parse(request.body);
+    const result = await service.bulkMove(request.tenant_id, payload);
+    return reply.send({ data: result });
   });
 
   app.delete("/:id", { onRequest: canWrite }, async (request, reply) => {
@@ -398,7 +447,7 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
   app.post("/:id/items", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const body = createDealItemSchema.parse(request.body);
-    const result = await service.addDealItem(request.tenant_id, id, body);
+    const result = await service.addDealItem(request.tenant_id, id, body, request.authUser.id);
     return reply.status(201).send({ data: result.item, totalBudget: result.totalBudget });
   });
 

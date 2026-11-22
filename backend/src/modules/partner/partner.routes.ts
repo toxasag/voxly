@@ -13,7 +13,7 @@ import {
   parseCookies,
   REFRESH_COOKIE_NAME,
 } from "../auth/auth-cookie.js";
-import { getRedisClient, isRedisAvailable } from "../../infrastructure/redis.js";
+import { deleteKeysByPattern, getRedisClient, isRedisAvailable } from "../../infrastructure/redis.js";
 import { PartnerService } from "./partner.service.js";
 import {
   createPartnerTenantSchema,
@@ -224,9 +224,8 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
     const adminAccessToken =
       (typeof body.admin_access_token === "string" ? body.admin_access_token : undefined) ||
       (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    const impersonatorId =
-      request.impersonator_id ||
-      (typeof body.impersonator_id === "string" ? body.impersonator_id : undefined);
+    // Используем только криптографически проверенный impersonator_id из текущей сессии
+    const impersonatorId = request.impersonator_id;
 
     const authService = new AuthService(app);
     const tokens = await authService.exitImpersonation(
@@ -245,10 +244,7 @@ export const partnerRoutes: FastifyPluginAsync = async (app) => {
     const redis = isRedisAvailable() ? getRedisClient() : null;
     if (redis && impersonatorId) {
       try {
-        const keys = await redis.keys(`partner:switch:${impersonatorId}:*`);
-        if (keys.length > 0) {
-          await redis.del(...keys);
-        }
+        await deleteKeysByPattern(redis, `partner:switch:${impersonatorId}:*`);
       } catch {
         // неблокирующий
       }

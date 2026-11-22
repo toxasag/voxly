@@ -166,7 +166,7 @@ export function Sidebar({
     [workspaces],
   );
 
-  const handleSwitchWorkspace = async (targetSlug: string) => {
+  const handleSwitchWorkspace = async (targetSlug: string, isTargetParent?: boolean) => {
     if (targetSlug === displayTenant.slug) {
       setTenantMenuOpen(false);
       return;
@@ -180,6 +180,7 @@ export function Sidebar({
         user?.name,
         Boolean(user?.is_partner || tenant?.is_partner),
         isPlatformOwner,
+        isTargetParent,
       );
     } catch (err) {
       console.error("Не удалось переключить организацию", err);
@@ -369,7 +370,7 @@ export function Sidebar({
                   <button
                     type="button"
                     disabled={switchingSlug !== null}
-                    onClick={() => handleSwitchWorkspace(parentWorkspace.slug)}
+                    onClick={() => handleSwitchWorkspace(parentWorkspace.slug, true)}
                     className="flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]"
                   >
                     <div className="flex min-w-0 items-center gap-2">

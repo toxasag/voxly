@@ -9,6 +9,20 @@ import { AppError } from "../../plugins/errorHandler.js";
 // авторизации и при успешном сканировании сохраняет аккаунт в channel_accounts.
 // ---------------------------------------------------------------------------
 
+/** Ответ Evolution API: поля зависят от версии, поэтому описаны только используемые. */
+interface EvoJson {
+  messages?: unknown[] | { records?: unknown[] };
+  state?: string;
+  instance?: { state?: string };
+  key?: { id?: string };
+  records?: unknown;
+  base64?: string;
+  mimetype?: string;
+  fileName?: string;
+  data?: { base64?: string; mimetype?: string; fileName?: string };
+  [key: string]: unknown;
+}
+
 export class WhatsappEvolutionService {
   private get baseUrl(): string {
     return getEnv().EVOLUTION_API_URL.replace(/\/$/, "");
@@ -22,7 +36,7 @@ export class WhatsappEvolutionService {
     return Boolean(this.baseUrl);
   }
 
-  private async evoFetch(path: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; json: any }> {
+  private async evoFetch(path: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; json: EvoJson }> {
     const headers = new Headers(options.headers ?? {});
     if (this.apiKey) {
       headers.set("apikey", this.apiKey);
@@ -35,8 +49,9 @@ export class WhatsappEvolutionService {
       const res = await fetch(`${this.baseUrl}${path}`, {
         ...options,
         headers,
+        signal: options.signal ?? AbortSignal.timeout(30_000),
       });
-      const json = await res.json().catch(() => ({}));
+      const json = (await res.json().catch(() => ({}))) as EvoJson;
       return { ok: res.ok, status: res.status, json };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -48,7 +63,13 @@ export class WhatsappEvolutionService {
     }
   }
 
-  private pickQr(data: any): string | null {
+  private pickQr(raw: unknown): string | null {
+    const data = raw as {
+      qrcode?: { base64?: unknown };
+      base64?: unknown;
+      qr?: { base64?: unknown };
+      instance?: { qrcode?: { base64?: unknown } };
+    } | null | undefined;
     const b64 =
       data?.qrcode?.base64 ||
       data?.base64 ||
@@ -395,11 +416,37 @@ export class WhatsappEvolutionService {
     });
     if (!res.ok) return [];
     const rows = Array.isArray(res.json) ? res.json : [];
-    return rows.map((r: any) => ({
+    return rows.map((r: Record<string, unknown>) => ({
       exists: Boolean(r?.exists),
-      jid: r?.jid,
-      number: r?.number,
+      jid: typeof r?.jid === "string" ? r.jid : undefined,
+      number: typeof r?.number === "string" ? r.number : undefined,
     }));
+  }
+
+  /** Запрос публичного профиля WhatsApp (имя, pushName, verifiedName, аватар, статус) */
+  async fetchProfile(
+    instanceName: string,
+    number: string,
+  ): Promise<{ exists: boolean; name?: string; picture?: string | null; isBusiness?: boolean } | null> {
+    const cleanNumber = number.replace(/\D/g, "");
+    const res = await this.evoFetch(`/chat/fetchProfile/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({ number: cleanNumber }),
+    });
+    if (!res.ok || !res.json || typeof res.json !== "object") return null;
+    const data = res.json as Record<string, unknown>;
+    const rawName =
+      (typeof data.name === "string" && data.name.trim()) ||
+      (typeof data.pushName === "string" && data.pushName.trim()) ||
+      (typeof data.verifiedName === "string" && data.verifiedName.trim()) ||
+      (typeof data.notifyName === "string" && data.notifyName.trim()) ||
+      undefined;
+    return {
+      exists: Boolean(data.numberExists),
+      name: rawName,
+      picture: typeof data.picture === "string" ? data.picture : null,
+      isBusiness: Boolean(data.isBusiness),
+    };
   }
 
   /** Настройка webhook в Evolution API */
@@ -468,7 +515,9 @@ export class WhatsappEvolutionService {
     if (!res.ok || !res.json) return [];
     const messages = res.json?.messages;
     if (Array.isArray(messages)) return messages as Array<Record<string, unknown>>;
-    if (Array.isArray(messages?.records)) return messages.records as Array<Record<string, unknown>>;
+    if (messages && !Array.isArray(messages) && Array.isArray(messages.records)) {
+      return messages.records as Array<Record<string, unknown>>;
+    }
     if (Array.isArray(res.json?.records)) return res.json.records as Array<Record<string, unknown>>;
     return [];
   }

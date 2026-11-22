@@ -4,6 +4,7 @@ import argon2 from "argon2";
 import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
 import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
+import { getRedisClient } from "../../infrastructure/redis.js";
 import { activeUserPredicate } from "./auth.service.js";
 import { TelegramService } from "./telegram.service.js";
 import { MaxService } from "../../services/max.service.js";
@@ -72,6 +73,61 @@ export interface VerifiedRecipient {
   max_user_id: string | null;
 }
 
+/** Черновик регистрации, сохраняемый в Redis до возврата пользователя из бота. */
+export interface RegistrationDraft {
+  slug: string;
+  email: string;
+  phone: string;
+  passwordHash: string;
+}
+
+const REG_DRAFT_PREFIX = "reg:draft:";
+const REG_RESUME_PREFIX = "reg:resume:";
+const memoryFallbackStore = new Map<string, { value: string; expiresAt: number }>();
+
+async function kvSet(key: string, value: string, ttlSeconds: number): Promise<void> {
+  const redis = getRedisClient();
+  if (redis !== null) {
+    try {
+      await redis.set(key, value, "EX", ttlSeconds);
+      return;
+    } catch {
+      // Fallback к локальному хранилищу, если Redis временно недоступен.
+    }
+  }
+  memoryFallbackStore.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+}
+
+async function kvGet(key: string): Promise<string | null> {
+  const redis = getRedisClient();
+  if (redis !== null) {
+    try {
+      return await redis.get(key);
+    } catch {
+      // Fallback к локальному хранилищу.
+    }
+  }
+  const entry = memoryFallbackStore.get(key);
+  if (entry === undefined) return null;
+  if (entry.expiresAt < Date.now()) {
+    memoryFallbackStore.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+async function kvDel(key: string): Promise<void> {
+  memoryFallbackStore.delete(key);
+  const redis = getRedisClient();
+  if (redis !== null) {
+    try {
+      await redis.del(key);
+    } catch {
+      // Игнорируем сбой очистки по TTL.
+    }
+  }
+}
+
 /**
  * Исход проверки кода, возвращаемый из транзакции значением.
  *
@@ -110,6 +166,28 @@ class SessionAttemptsExceededError extends AppError {
 /** Только цифры — тот же формат, что использует AuthService. */
 function normalisePhone(phone: string): string {
   return phone.replace(/\D/g, "");
+}
+
+/** Маскирование телефона для безопасного логирования */
+export function maskPhone(phone: string): string {
+  const clean = phone.replace(/\s+/g, "");
+  return clean.length <= 5 ? "***" : `${clean.slice(0, 3)}***${clean.slice(-2)}`;
+}
+
+/** Маскирование email для безопасного логирования */
+export function maskEmail(email: string): string {
+  const parts = email.split("@");
+  if (parts.length !== 2) return "***";
+  const [local, domain] = parts;
+  if (!local || !domain) return "***";
+  const maskedLocal = local.length <= 2 ? `${local[0]}***` : `${local[0]}***${local[local.length - 1]}`;
+  return `${maskedLocal}@${domain}`;
+}
+
+/** Маскирование токена для безопасного логирования */
+export function maskToken(token: string): string {
+  if (token.length <= 6) return "***";
+  return `${token.slice(0, 4)}...${token.slice(-3)}`;
 }
 
 function toDate(value: Date | string): Date {
@@ -204,9 +282,10 @@ export class AuthSessionService {
     recipient: string,
     code: string,
     purpose: AuthPurpose,
+    returnUrl?: string,
   ): Promise<{ delivered: boolean; reason?: string }> {
     if (channel === "telegram") {
-      return this.telegram.sendCode(Number(recipient), code, purpose);
+      return this.telegram.sendCode(Number(recipient), code, purpose, returnUrl);
     }
     return this.max.sendOtpMessage(recipient, code, purpose);
   }
@@ -226,6 +305,9 @@ export class AuthSessionService {
     email?: string;
     /** Обязателен для `link`: владелец берётся из сессии, а не из тела запроса. */
     userId?: string;
+    /** Данные черновика для восстановления при возврате из бота по ?token=... */
+    slug?: string;
+    passwordHash?: string;
   }): Promise<RequestCodeResult> {
     const env = getEnv();
     const expiresAt = new Date(Date.now() + env.OTP_TTL_MINUTES * 60_000);
@@ -410,6 +492,34 @@ export class AuthSessionService {
       }
     }
 
+    if (
+      purpose === "register" &&
+      input.slug !== undefined &&
+      input.passwordHash !== undefined &&
+      input.email !== undefined
+    ) {
+      const draft: RegistrationDraft = {
+        slug: input.slug.trim().toLowerCase(),
+        email: input.email.trim().toLowerCase(),
+        phone: (input.phone ?? phone).trim(),
+        passwordHash: input.passwordHash,
+      };
+      await kvSet(`${REG_DRAFT_PREFIX}${session.id}`, JSON.stringify(draft), env.OTP_TTL_MINUTES * 60);
+    }
+
+    this.app.log.info(
+      {
+        purpose,
+        channel,
+        phone: maskPhone(phone),
+        email: input.email ? maskEmail(input.email) : undefined,
+        sessionId: session.id,
+        delivered,
+        hasDeepLink: deepLinkToken !== null,
+      },
+      "AuthSessionService.requestCode: session created",
+    );
+
     return {
       session_id: session.id,
       channel,
@@ -426,20 +536,35 @@ export class AuthSessionService {
    */
   async status(
     sessionId: string,
-  ): Promise<{ delivered: boolean; verified: boolean; expired: boolean }> {
+  ): Promise<{ delivered: boolean; verified: boolean; expired: boolean; consumed: boolean }> {
     const row = await queryOne<{
       delivered_at: Date | string | null;
       verified_at: Date | string | null;
+      consumed_at: Date | string | null;
       expires_at: Date | string;
-    }>(`SELECT delivered_at, verified_at, expires_at FROM auth_sessions WHERE id = $1`, [sessionId]);
+    }>(
+      `SELECT delivered_at, verified_at, consumed_at, expires_at FROM auth_sessions WHERE id = $1`,
+      [sessionId],
+    );
 
     if (row === null) throw new UnauthorizedError("Session not found");
 
-    return {
+    const result = {
       delivered: row.delivered_at !== null,
       verified: row.verified_at !== null,
       expired: toDate(row.expires_at).getTime() < Date.now(),
+      consumed: row.consumed_at !== null,
     };
+
+    this.app.log.debug(
+      {
+        sessionId,
+        ...result,
+      },
+      "AuthSessionService.status: session checked",
+    );
+
+    return result;
   }
 
   /**
@@ -487,9 +612,12 @@ export class AuthSessionService {
 
       const column = channel === "telegram" ? "telegram_chat_id" : "max_user_id";
 
+      // При переходе по уникальному deep-link токену и запуске бота сессия
+      // автоматически считается верифицированной: пользователь доказал владение
+      // ботом. Это позволяет реализовать бесшовную авторизацию без ручного ввода цифр.
       await tx.query(
         `UPDATE auth_sessions
-         SET ${column} = $2, code_hash = $3, delivered_at = now(), deep_link_token = NULL
+         SET ${column} = $2, code_hash = $3, delivered_at = now(), verified_at = now(), deep_link_token = NULL
          WHERE id = $1`,
         [row.id, channel === "telegram" ? Number(recipient) : recipient, codeHash],
       );
@@ -499,38 +627,57 @@ export class AuthSessionService {
 
     if (session === null) return { bound: false };
 
-    const result = await this.deliver(channel, recipient, code, session.purpose);
+    let resumeToken: string | null = null;
+    let returnUrl: string | undefined;
+
+    if (session.purpose === "register") {
+      const rawDraft = await kvGet(`${REG_DRAFT_PREFIX}${session.id}`);
+      if (rawDraft !== null) {
+        resumeToken = randomBytes(24).toString("base64url");
+        const ttlSeconds = Math.max(
+          60,
+          Math.ceil((toDate(session.expires_at).getTime() - Date.now()) / 1000),
+        );
+        await kvSet(`${REG_RESUME_PREFIX}${resumeToken}`, session.id, ttlSeconds);
+        const baseUrl = (process.env.PUBLIC_WEB_URL || "https://getvoxly.ru").replace(/\/$/, "");
+        returnUrl = `${baseUrl}/register?token=${resumeToken}`;
+      }
+    }
+
+    const result = await this.deliver(channel, recipient, code, session.purpose, returnUrl);
 
     if (!result.delivered) {
+      if (resumeToken !== null) {
+        await kvDel(`${REG_RESUME_PREFIX}${resumeToken}`);
+      }
+
       this.app.log.error(
-        { channel, recipient, reason: result.reason },
+        { channel, recipient: maskPhone(recipient), reason: result.reason },
         "Code delivery failed right after /start",
       );
 
-      // Полный откат шага привязки, а не только `delivered_at = NULL`.
-      //
-      // Прежняя версия оставляла `code_hash` заполненным при уже погашенном
-      // deep-link токене. Последствия были двойные: `verifyCode` видел
-      // непустой хеш, поэтому вместо честного `CODE_NOT_DELIVERED` списывал
-      // попытки за код, которого пользователь не получал (пять таких попыток
-      // гасили сессию целиком), а повторное нажатие «Start» по той же ссылке
-      // уже ничего не находило — токен был снят.
-      //
-      // Токен возвращается тот же самый, а не новый: ссылка, показанная в
-      // браузере, должна продолжать работать. Значение свободно — строка
-      // единственная, кто им владел, а частичный уникальный индекс проверяет
-      // только не-NULL значения.
       const column = channel === "telegram" ? "telegram_chat_id" : "max_user_id";
 
       await query(
         `UPDATE auth_sessions
-         SET ${column} = NULL, code_hash = NULL, delivered_at = NULL, deep_link_token = $2
+         SET ${column} = NULL, code_hash = NULL, delivered_at = NULL, verified_at = NULL, deep_link_token = $2
          WHERE id = $1`,
         [session.id, input.token],
       );
 
       return { bound: false };
     }
+
+    this.app.log.info(
+      {
+        channel,
+        recipient: maskPhone(recipient),
+        sessionId: session.id,
+        purpose: session.purpose,
+        hasReturnToken: resumeToken !== null,
+      },
+      "AuthSessionService.bindRecipient: successfully verified via bot /start",
+    );
 
     // Адресат СОЗНАТЕЛЬНО не записывается в `users` на этом шаге.
     //
@@ -615,7 +762,7 @@ export class AuthSessionService {
                  tenant_id, channel_type, destination, extra_meta, is_active, is_verified
                )
                VALUES ($1, 'telegram', $2, $3, true, true)
-               ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+               ON CONFLICT (tenant_id, channel_type, destination) WHERE channel_type IN ('email', 'telegram', 'whatsapp') DO UPDATE
                SET is_active = true, is_verified = true, updated_at = now()`,
               [
                 userRow.tenant_id,
@@ -762,6 +909,12 @@ export class AuthSessionService {
         return { kind: "expired" };
       }
 
+      // Бесшовная авторизация: если сессия уже верифицирована (например, через запуск бота по deep-link),
+      // повторная проверка кода не требуется и сессия возвращается подтверждённой.
+      if (row.verified_at !== null) {
+        return { kind: "ok", row };
+      }
+
       if (!(await argon2.verify(row.code_hash, code))) {
         await tx.query(`UPDATE auth_sessions SET attempts = attempts + 1 WHERE id = $1`, [row.id]);
         return { kind: "wrong_code" };
@@ -771,6 +924,11 @@ export class AuthSessionService {
 
       return { kind: "ok", row: { ...row, verified_at: new Date() } };
     });
+
+    this.app.log.info(
+      { sessionId, outcome: outcome.kind },
+      "AuthSessionService.verifyCode: outcome",
+    );
 
     switch (outcome.kind) {
       case "ok":
@@ -857,6 +1015,11 @@ export class AuthSessionService {
     }
 
     await tx.query(`UPDATE auth_sessions SET consumed_at = now() WHERE id = $1`, [row.id]);
+
+    this.app.log.info(
+      { sessionId: input.sessionId, purpose: input.purpose },
+      "AuthSessionService.consumeVerifiedIn: session successfully consumed",
+    );
   }
 
   /**
@@ -888,5 +1051,107 @@ export class AuthSessionService {
       telegram_chat_id: row.telegram_chat_id === null ? null : Number(row.telegram_chat_id),
       max_user_id: row.max_user_id,
     };
+  }
+
+  /**
+   * Загружает подтверждённый контекст регистрации по одноразовому токену
+   * возврата из кнопки бота (`/register?token=...`).
+   */
+  async getResumeRegistrationContext(token: string): Promise<{
+    sessionId: string;
+    draft: RegistrationDraft;
+    recipient: VerifiedRecipient;
+  }> {
+    const sessionId = await kvGet(`${REG_RESUME_PREFIX}${token}`);
+    if (sessionId === null) {
+      throw new UnauthorizedError("Ссылка для возврата устарела или уже использована");
+    }
+
+    const row = await queryOne<{
+      id: string;
+      purpose: AuthPurpose;
+      telegram_chat_id: string | null;
+      max_user_id: string | null;
+      verified_at: Date | string | null;
+      consumed_at: Date | string | null;
+      expires_at: Date | string;
+    }>(
+      `SELECT id, purpose, telegram_chat_id::text, max_user_id, verified_at, consumed_at, expires_at
+       FROM auth_sessions WHERE id = $1`,
+      [sessionId],
+    );
+
+    if (row === null || row.purpose !== "register" || row.verified_at === null) {
+      await kvDel(`${REG_RESUME_PREFIX}${token}`);
+      throw new UnauthorizedError("Сессия подтверждения не найдена");
+    }
+
+    if (row.consumed_at !== null) {
+      await kvDel(`${REG_RESUME_PREFIX}${token}`);
+      await kvDel(`${REG_DRAFT_PREFIX}${sessionId}`);
+      throw new AppError(
+        409,
+        "SESSION_ALREADY_COMPLETED",
+        "Регистрация по этой ссылке уже завершена. Войдите в личный кабинет.",
+      );
+    }
+
+    if (toDate(row.expires_at).getTime() < Date.now()) {
+      await kvDel(`${REG_RESUME_PREFIX}${token}`);
+      await kvDel(`${REG_DRAFT_PREFIX}${sessionId}`);
+      throw new UnauthorizedError("Срок действия ссылки регистрации истёк. Запросите код заново.");
+    }
+
+    const rawDraft = await kvGet(`${REG_DRAFT_PREFIX}${sessionId}`);
+    if (rawDraft === null) {
+      await kvDel(`${REG_RESUME_PREFIX}${token}`);
+      throw new UnauthorizedError("Данные формы истекли. Заполните регистрацию заново.");
+    }
+
+    let draft: RegistrationDraft;
+    try {
+      draft = JSON.parse(rawDraft) as RegistrationDraft;
+    } catch {
+      await kvDel(`${REG_RESUME_PREFIX}${token}`);
+      await kvDel(`${REG_DRAFT_PREFIX}${sessionId}`);
+      throw new UnauthorizedError("Повреждённый черновик регистрации");
+    }
+
+    return {
+      sessionId,
+      draft,
+      recipient: {
+        telegram_chat_id: row.telegram_chat_id === null ? null : Number(row.telegram_chat_id),
+        max_user_id: row.max_user_id,
+      },
+    };
+  }
+
+  /** Несекретные поля черновика для предзаполнения формы при конфликте полей. */
+  async getPublicRegistrationDraft(token: string): Promise<{
+    session_id: string;
+    slug: string;
+    email: string;
+    phone: string;
+  }> {
+    const ctx = await this.getResumeRegistrationContext(token);
+    return {
+      session_id: ctx.sessionId,
+      slug: ctx.draft.slug,
+      email: ctx.draft.email,
+      phone: ctx.draft.phone,
+    };
+  }
+
+  /** Удаляет временные ключи Redis после успешного создания компании. */
+  async deleteRegistrationDraft(sessionId: string): Promise<void> {
+    await kvDel(`${REG_DRAFT_PREFIX}${sessionId}`);
+  }
+
+  async finalizeResumeRegistration(token: string, sessionId: string): Promise<void> {
+    await Promise.all([
+      kvDel(`${REG_RESUME_PREFIX}${token}`),
+      kvDel(`${REG_DRAFT_PREFIX}${sessionId}`),
+    ]);
   }
 }

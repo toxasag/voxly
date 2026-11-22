@@ -80,7 +80,8 @@ export class KnowledgeBaseQueueService {
             type: "exponential",
             delay: 2000,
           },
-          removeOnComplete: true,
+          removeOnComplete: { count: 1000, age: 86400 },
+          removeOnFail: { count: 500, age: 86400 },
         },
       });
       registerBullQueue(KB_QUEUE_NAME, this.bullQueue as Queue<unknown>);

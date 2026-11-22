@@ -16,14 +16,18 @@ declare module "fastify" {
   interface FastifyInstance {
     /** Hook factory: 403 unless the caller holds `permission`. */
     requirePermission: (permission: Permission) => onRequestAsyncHookHandler;
+    /** Hook factory: 403 unless the caller holds at least one permission from `permissions`. */
+    requireAnyPermission: (permissions: readonly Permission[]) => onRequestAsyncHookHandler;
     /** Hook factory: 403 unless `slug` is installed for the tenant. */
     requireModule: (slug: ModuleSlug) => onRequestAsyncHookHandler;
+    /** Hook factory: 403 unless at least one module from `slugs` is installed for the tenant. */
+    requireAnyModule: (slugs: readonly ModuleSlug[]) => onRequestAsyncHookHandler;
     /**
      * Hook factory: как `requireModule`, но слаг берётся из параметра маршрута.
      * Нужен группам вида `/channels/:channel`, где модуль определяется URL.
      */
     requireModuleFromParam: (paramName: string) => onRequestAsyncHookHandler;
-    /** Hook factory: 403 unless `slug` is installed for the tenant. */
+    /** Hook factory: 403 unless the caller matches one of `roles`. */
     requireRole: (roles: Role[]) => onRequestAsyncHookHandler;
     /**
      * Hook factory: 403 unless the caller holds the global platform role.
@@ -65,6 +69,18 @@ function assertAuthenticated(request: FastifyRequest): void {
   }
 }
 
+/**
+ * Императивная проверка права внутри хендлера (когда нужное право зависит от
+ * параметров запроса, например `target_type` в заметках и таймлайне).
+ * `tenant:admin` трактуется как надмножество, как и в `requirePermission`.
+ */
+export function assertPermission(request: FastifyRequest, permission: Permission): void {
+  assertAuthenticated(request);
+  if (!request.permissions.has(permission) && !request.permissions.has("tenant:admin")) {
+    throw new PermissionDeniedError(`Missing required permission: ${permission}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -82,14 +98,24 @@ export const authorizePlugin: FastifyPluginAsync = fp(
   async (fastify) => {
     fastify.decorate("requirePermission", (permission: Permission): onRequestAsyncHookHandler => {
       return async (request: FastifyRequest): Promise<void> => {
+        assertPermission(request, permission);
+      };
+    });
+
+    fastify.decorate("requireAnyPermission", (permissions: readonly Permission[]): onRequestAsyncHookHandler => {
+      return async (request: FastifyRequest): Promise<void> => {
         assertAuthenticated(request);
 
-        // tenant:admin is a superset of every tenant-scoped permission.
-        if (request.permissions.has(permission) || request.permissions.has("tenant:admin")) {
+        if (
+          request.permissions.has("tenant:admin") ||
+          permissions.some((permission) => request.permissions.has(permission))
+        ) {
           return;
         }
 
-        throw new PermissionDeniedError(`Missing required permission: ${permission}`);
+        throw new PermissionDeniedError(
+          `Missing required permission: one of ${permissions.join(", ")}`,
+        );
       };
     });
 
@@ -99,6 +125,16 @@ export const authorizePlugin: FastifyPluginAsync = fp(
 
         if (!request.installed_modules.includes(slug)) {
           throw new ModuleNotInstalledError(slug);
+        }
+      };
+    });
+
+    fastify.decorate("requireAnyModule", (slugs: readonly ModuleSlug[]): onRequestAsyncHookHandler => {
+      return async (request: FastifyRequest): Promise<void> => {
+        assertAuthenticated(request);
+
+        if (!slugs.some((slug) => request.installed_modules.includes(slug))) {
+          throw new ModuleNotInstalledError(slugs[0] ?? "unknown");
         }
       };
     });

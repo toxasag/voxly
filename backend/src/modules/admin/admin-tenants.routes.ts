@@ -6,6 +6,7 @@ import { query, queryOne, transaction } from "../../db/client.js";
 import { updateTenantSchema } from "./admin.types.js";
 import { AppError, NotFoundError, PermissionDeniedError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { invalidateTenantAuthCache } from "../../plugins/auth-cache.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { getEnv } from "../../config/env.js";
 import { AuthService } from "../auth/auth.service.js";
@@ -337,6 +338,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           [tenantId],
         );
       }
+      await invalidateTenantAuthCache(tenantId);
     }
 
     await query(
@@ -555,6 +557,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           evoHeaders.apikey = getEnv().EVOLUTION_API_KEY!;
         }
         const evoRes = await fetch(`${getEnv().EVOLUTION_API_URL.replace(/\/$/, "")}/instance/fetchInstances`, {
+          signal: AbortSignal.timeout(10_000),
           headers: evoHeaders,
         });
         if (evoRes.ok) {
@@ -655,6 +658,8 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       await tx.query("DELETE FROM users WHERE tenant_id = $1", [tenantId]);
       await tx.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
     });
+
+    await invalidateTenantAuthCache(tenantId);
 
     request.log.info({ tenantId, tenantName: tenant.name }, "Tenant completely deleted by platform owner");
 

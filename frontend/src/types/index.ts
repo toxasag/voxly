@@ -17,7 +17,13 @@ export type Permission =
   | "ai_bots:read"
   | "ai_bots:configure"
   | "tenant:admin"
-  | "billing:manage";
+  | "billing:manage"
+  | "billing:view"
+  | "stories:read"
+  | "stories:write"
+  | "stories:publish"
+  | "chat:read"
+  | "chat:write";
 
 export type Role = "owner" | "admin" | "partner" | "manager" | "technician" | "viewer";
 
@@ -98,7 +104,7 @@ export interface Tenant {
 // CRM Domain Types
 // ---------------------------------------------------------------------------
 
-export type ContactChannel = "telegram" | "whatsapp" | "rumax" | "phone" | "email";
+export type ContactChannel = "telegram" | "whatsapp" | "max" | "rumax" | "phone" | "email";
 
 export interface ContactCustomFields {
   [key: string]: string | number;

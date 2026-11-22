@@ -53,7 +53,7 @@ const categoryParamSchema = z.object({
 
 const dictionaryItemParamsSchema = z.object({
   category: z.string().min(1).max(50),
-  id: z.string().uuid("id must be a UUID"),
+  id: z.string().min(1).max(150),
 });
 
 const serialQuerySchema = z.object({
@@ -125,6 +125,12 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
   app.get("/dictionaries", { onRequest: canRead }, async (request, reply) => {
     const dictionaries = await service.getDictionaries(request.tenant_id);
     return reply.send({ data: dictionaries });
+  });
+
+  // GET /repairs/masters — retrieve active technicians and masters for the tenant
+  app.get("/masters", { onRequest: canRead }, async (request, reply) => {
+    const masters = await service.listMasters(request.tenant_id);
+    return reply.send({ data: masters });
   });
 
   // GET /repairs/dictionaries/brands — retrieve brands list

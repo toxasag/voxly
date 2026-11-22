@@ -1,4 +1,5 @@
 import { getEnv } from "../../config/env.js";
+import { escapeTelegramHtml } from "../../lib/html.utils.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { CODE_PURPOSE_LABEL, codeTtlSentence, type CodePurpose } from "../../services/bot-messages.js";
 
@@ -41,12 +42,8 @@ export class TelegramUnavailableError extends AppError {
 }
 
 /** Экранирование под parse_mode=HTML: код и логин подставляются в сообщение. */
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
+export { escapeTelegramHtml as escapeHtml } from "../../lib/html.utils.js";
+const escapeHtml = escapeTelegramHtml;
 
 export class TelegramService {
   private readonly token: string | undefined;
@@ -110,22 +107,47 @@ export class TelegramService {
   }
 
   /**
-   * Отправляет код в чат.
+   * Отправляет код в чат с инлайн-кнопкой быстрого возврата на веб-портал.
    *
    * Возвращает результат, а не бросает исключение при отказе Telegram: причина
    * (пользователь заблокировал бота, удалил чат) не должна превращаться в 500 —
    * вызывающий код показывает пользователю ссылку на бота.
    */
-  async sendCode(chatId: number, code: string, purpose: CodePurpose): Promise<TelegramSendResult> {
+  async sendCode(
+    chatId: number,
+    code: string,
+    purpose: CodePurpose,
+    returnUrl?: string,
+  ): Promise<TelegramSendResult> {
     const text =
       `<b>GETVOXLY</b>\n\nКод для ${CODE_PURPOSE_LABEL[purpose]}: <code>${escapeHtml(code)}</code>\n\n` +
       `${codeTtlSentence()} Если вы не запрашивали код — просто игнорируйте это сообщение.`;
+
+    const buttonConfig: Record<CodePurpose, { text: string; path: string }> = {
+      register: { text: "Вернуться к регистрации", path: "/register" },
+      login: { text: "Вернуться ко входу", path: "/login" },
+      link: { text: "Вернуться в настройки", path: "/settings/profile" },
+    };
+
+    const target = buttonConfig[purpose] ?? { text: "Вернуться на сайт", path: "/register" };
+    const baseUrl = process.env.PUBLIC_WEB_URL || "https://getvoxly.ru";
+    const targetUrl = returnUrl ?? `${baseUrl.replace(/\/$/, "")}${target.path}`;
 
     const res = await this.call("sendMessage", {
       chat_id: chatId,
       text,
       parse_mode: "HTML",
       disable_notification: false,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: target.text,
+              url: targetUrl,
+            },
+          ],
+        ],
+      },
     });
 
     return res.ok ? { delivered: true } : { delivered: false, reason: res.description };
@@ -137,7 +159,11 @@ export class TelegramService {
   async sendMessage(
     chatId: number | string,
     text: string,
-    options?: { parseMode?: "HTML" | "MarkdownV2"; disablePreview?: boolean },
+    options?: {
+      parseMode?: "HTML" | "MarkdownV2";
+      disablePreview?: boolean;
+      replyMarkup?: unknown;
+    },
   ): Promise<TelegramSendResult> {
     const res = await this.call("sendMessage", {
       chat_id: typeof chatId === "string" ? Number(chatId) : chatId,
@@ -145,6 +171,7 @@ export class TelegramService {
       parse_mode: options?.parseMode ?? "HTML",
       disable_notification: false,
       disable_web_page_preview: options?.disablePreview ?? true,
+      ...(options?.replyMarkup !== undefined && { reply_markup: options.replyMarkup }),
     });
 
     return res.ok ? { delivered: true } : { delivered: false, reason: res.description };
@@ -152,22 +179,44 @@ export class TelegramService {
 
   /** Приветствие в ответ на /start без токена привязки. */
   async sendGreeting(chatId: number): Promise<void> {
+    const baseUrl = process.env.PUBLIC_WEB_URL || "https://getvoxly.ru";
     await this.call("sendMessage", {
       chat_id: chatId,
       text:
         "<b>GETVOXLY</b>\n\nЭтот бот отправляет коды подтверждения для входа и регистрации.\n\n" +
         "Начните регистрацию на сайте и нажмите «Получить код» — я пришлю код сюда.",
       parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Перейти на сайт GETVOXLY",
+              url: baseUrl,
+            },
+          ],
+        ],
+      },
     });
   }
 
   /** Сообщение о просроченной или неизвестной ссылке привязки. */
   async sendLinkExpired(chatId: number): Promise<void> {
+    const baseUrl = process.env.PUBLIC_WEB_URL || "https://getvoxly.ru";
     await this.call("sendMessage", {
       chat_id: chatId,
       text:
         "Ссылка устарела или уже использована. Вернитесь на сайт и нажмите «Получить код» ещё раз.",
       parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Вернуться на сайт",
+              url: `${baseUrl.replace(/\/$/, "")}/register`,
+            },
+          ],
+        ],
+      },
     });
   }
 

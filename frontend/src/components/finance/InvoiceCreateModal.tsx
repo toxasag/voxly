@@ -3,11 +3,20 @@
 import { useCallback, useEffect } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Receipt, Plus, Trash2, Loader2 } from "lucide-react";
+import { Receipt, Plus, Trash2, Loader2, Building2 } from "lucide-react";
 import { createInvoiceSchema, type CreateInvoicePayload } from "@/schemas/invoice.schema";
 import { useCompanies } from "@/lib/api/use-companies";
+import { useFinanceOrganizations, type VatMode } from "@/lib/api/use-invoices";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+
+const VAT_RATES: { rate: number; mode: VatMode; label: string }[] = [
+  { rate: 0, mode: "none", label: "Без НДС" },
+  { rate: 5, mode: "included_5", label: "5%" },
+  { rate: 7, mode: "included_7", label: "7%" },
+  { rate: 10, mode: "included_10", label: "10%" },
+  { rate: 20, mode: "included_20", label: "20%" },
+];
 
 interface InvoiceCreateModalProps {
   open: boolean;
@@ -21,15 +30,22 @@ export type PrefilledInvoicePayload = CreateInvoicePayload;
 export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: InvoiceCreateModalProps) {
   const companiesQuery = useCompanies({ limit: 100 });
   const companies = companiesQuery.data?.items ?? [];
+  const { data: organizations = [] } = useFinanceOrganizations();
+  const defaultOrg = organizations.find((o) => o.isDefault) ?? organizations[0];
 
   const form = useForm<CreateInvoicePayload>({
     resolver: zodResolver(createInvoiceSchema),
     defaultValues: {
+      issuer_organization_id: "",
       company_id: "",
+      company_name: "",
+      company_inn: "",
+      company_address: "",
       contact_name: "",
       contact_phone: "",
       due_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16),
-      vat_rate: 20,
+      vat_mode: "none",
+      vat_rate: 0,
       notes: "",
       line_items: [],
     },
@@ -41,18 +57,29 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
   useEffect(() => {
     if (open) {
       form.reset({
+        issuer_organization_id: defaultOrg?.id ?? "",
         company_id: "",
+        company_name: "",
+        company_inn: "",
+        company_address: "",
         contact_name: "",
         contact_phone: "",
         due_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16),
-        vat_rate: 20,
+        vat_mode: defaultOrg?.vatMode ?? "none",
+        vat_rate: defaultOrg?.vatRate ?? 0,
         notes: "",
         line_items: prefilled
-          ? prefilled.map((p) => ({ description: p.description, quantity: 1, unit_price: p.unit_price }))
+          ? prefilled.map((p) => ({
+              description: p.description,
+              quantity: 1,
+              unit_price: p.unit_price,
+              source: p.source,
+              source_label: p.source_label,
+            }))
           : [],
       });
     }
-  }, [open, form, prefilled]);
+  }, [open, form, prefilled, defaultOrg?.id, defaultOrg?.vatMode, defaultOrg?.vatRate]);
 
   const handleSubmit = useCallback(
     (v: CreateInvoicePayload) => {
@@ -68,8 +95,8 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
   const lineItems = form.watch("line_items");
   const vatRate = form.watch("vat_rate");
   const subtotal = lineItems.reduce((s, li) => s + li.unit_price * li.quantity, 0);
-  const vatAmount = vatRate > 0 ? Math.round(subtotal * (vatRate / 100)) : 0;
-  const grandTotal = subtotal + vatAmount;
+  const vatAmount = vatRate > 0 ? Math.round(((subtotal * vatRate) / (100 + vatRate)) * 100) / 100 : 0;
+  const grandTotal = subtotal;
 
   const fmtAmt = (v: number) =>
     new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(v);
@@ -93,6 +120,34 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
       <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
         <form onSubmit={form.handleSubmit(handleSubmit)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {organizations.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                  <Building2 className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  Организация-поставщик (от кого счёт)
+                </label>
+                <select
+                  value={form.watch("issuer_organization_id") ?? ""}
+                  onChange={(e) => {
+                    const orgId = e.target.value;
+                    form.setValue("issuer_organization_id", orgId, { shouldValidate: true });
+                    const picked = organizations.find((o) => o.id === orgId);
+                    if (picked) {
+                      form.setValue("vat_mode", picked.vatMode, { shouldValidate: true });
+                      form.setValue("vat_rate", picked.vatRate, { shouldValidate: true });
+                    }
+                  }}
+                  className="w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                >
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}{org.inn ? ` (ИНН ${org.inn})` : ""}{org.isDefault ? " — основная" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <label className="block text-xs font-medium text-slate-700">Компания-плательщик *</label>
               <select
@@ -156,21 +211,24 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-700">НДС</label>
-                <div className="flex gap-2">
-                  {[0, 10, 20].map((r) => (
+                <label className="text-xs font-medium text-slate-700">НДС (в т.ч.)</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {VAT_RATES.map((opt) => (
                     <button
-                      key={r}
+                      key={opt.mode}
                       type="button"
-                      onClick={() => form.setValue("vat_rate", r, { shouldValidate: true })}
+                      onClick={() => {
+                        form.setValue("vat_mode", opt.mode, { shouldValidate: true });
+                        form.setValue("vat_rate", opt.rate, { shouldValidate: true });
+                      }}
                       className={cn(
-                        "flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors cursor-pointer",
-                        vatRate === r
+                        "flex-1 min-w-[54px] rounded-lg border px-2 py-2 text-xs font-medium transition-colors cursor-pointer",
+                        vatRate === opt.rate
                           ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                           : "border-[#e5e5e5] bg-white text-slate-700 hover:bg-slate-50",
                       )}
                     >
-                      {r === 0 ? "0%" : `${r}%`}
+                      {opt.label}
                     </button>
                   ))}
                 </div>

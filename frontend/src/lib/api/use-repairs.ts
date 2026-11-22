@@ -2,22 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
 import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import type { RepairStatus, RepairPriority, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
 
 // ---------------------------------------------------------------------------
 // DTOs — mirror backend/src/modules/repairs/repairs.types.ts.
 // ---------------------------------------------------------------------------
 
-export type RepairStatus =
-  | "intake"
-  | "waiting_parts"
-  | "ready"
-  | "issued"
-  | "diagnostics"
-  | "approval"
-  | "in_progress"
-  | "rejected";
-export type RepairPriority = "low" | "normal" | "high" | "urgent";
-export type RepairPaymentStatus = "unpaid" | "invoiced" | "paid";
+export type { RepairStatus, RepairPriority, RepairPaymentStatus };
 
 export interface EquipmentDTO {
   type: string;
@@ -48,6 +39,15 @@ export interface RepairWorkDTO {
   createdAt: string;
 }
 
+export interface RepairPartBatchAllocationDTO {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
 export interface RepairPartDTO {
   id: string;
   warehouseItemId?: string | null;
@@ -60,6 +60,11 @@ export interface RepairPartDTO {
   retailTotal: number;
   costTotal: number;
   margin: number;
+  markupPercent?: number;
+  marginPercent?: number;
+  consumedAt?: string | null;
+  costSource?: string;
+  batchAllocations?: RepairPartBatchAllocationDTO[];
   createdAt: string;
 }
 
@@ -119,6 +124,18 @@ export interface ClientMessengerSourceDTO {
   isVerified?: boolean;
 }
 
+export interface ExistingContactDTO {
+  contactId: string | null;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
+  repairsCount: number;
+  activeDealsCount: number;
+  matchedBy?: "phone" | "name" | null;
+}
+
 export interface ClientLookupResultDTO {
   found: boolean;
   client: {
@@ -142,9 +159,13 @@ export interface ClientLookupResultDTO {
   } | null;
   activeDeals: ClientLookupDealDTO[];
   suggestedName?: string | null;
+  suggestedSource?: "telegram" | "whatsapp" | "max" | "crm" | null;
   sources?: ClientMessengerSourceDTO[];
   channelsChecked?: string[];
   messengerLookupStatus?: "idle" | "searching" | "found" | "not_found";
+  repairsCount?: number;
+  existsInCrm?: boolean;
+  existingContact?: ExistingContactDTO | null;
 }
 
 export interface AdditionalContact {
@@ -166,6 +187,7 @@ export interface ServiceDictionariesDTO {
   models: DictionaryItemDTO[];
   accessories: DictionaryItemDTO[];
   malfunctions: DictionaryItemDTO[];
+  categories?: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {
@@ -604,6 +626,25 @@ export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, 
   });
 }
 
+export interface RepairMasterDTO {
+  id: string;
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+}
+
+export function useRepairMasters(): UseQueryResult<RepairMasterDTO[], ApiClientError> {
+  return useQuery<RepairMasterDTO[], ApiClientError>({
+    queryKey: [...repairKeys.all, "masters"],
+    queryFn: async () => {
+      const res = await apiClient.get<RepairMasterDTO[]>(`${BASE_PATH}/masters`);
+      return res.data;
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useBrands(): UseQueryResult<DictionaryItemDTO[], ApiClientError> {
   return useQuery<DictionaryItemDTO[], ApiClientError>({
     queryKey: dictionaryKeys.brands(),
@@ -798,6 +839,8 @@ export function useAddRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
     },
   });
 }
@@ -819,6 +862,11 @@ export function useRenameRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "items"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "models"] });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
     },
   });
 }
@@ -838,6 +886,11 @@ export function useDeleteRepairDictionaryItem(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
       void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "categories"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "items"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "models"] });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
     },
   });
 }

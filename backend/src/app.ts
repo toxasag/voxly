@@ -12,6 +12,7 @@ import multipart from "@fastify/multipart";
 import { errorHandler } from "./plugins/errorHandler.js";
 import { authenticatePlugin } from "./plugins/authenticate.js";
 import { authorizePlugin } from "./plugins/authorize.js";
+import { getRedisClient } from "./infrastructure/redis.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import crmRoutes from "./modules/crm/crm.routes.js";
 import repairsRoutes from "./modules/repairs/repairs.routes.js";
@@ -58,6 +59,7 @@ import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import { getRedisHealth } from "./infrastructure/redis.js";
 import { getBullQueueMetrics } from "./infrastructure/queue-metrics.js";
+import { extensionToMime } from "./lib/mime.utils.js";
 import releaseManifest from "./release-manifest.json" with { type: "json" };
 import fastify from "fastify";
 
@@ -79,6 +81,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const app = fastify({
     trustProxy: true,
+    routerOptions: {
+      maxParamLength: 5000,
+    },
     bodyLimit: 15 * 1024 * 1024,
     logger: {
       level: env.NODE_ENV === "production" ? "info" : "debug",
@@ -138,10 +143,19 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(sensible);
 
+  const rateLimitRedis = env.NODE_ENV !== "test" ? getRedisClient() : null;
+
   await app.register(rateLimit, {
     max: 600,
     timeWindow: "1 minute",
     keyGenerator: (request) => request.ip,
+    ...(rateLimitRedis
+      ? {
+          redis: rateLimitRedis,
+          skipOnError: true,
+          nameSpace: "getvoxly:rl:",
+        }
+      : {}),
     /**
      * Bot webhooks are exempt from the shared per-IP limit: both platforms retry
      * a throttled delivery, and a burst of updates would otherwise be dropped,
@@ -262,6 +276,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dictionariesRoutes, { prefix: "/api/dictionaries" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
   await app.register(warehouseRoutes, { prefix: "/api/v1/warehouse" });
+  await app.register(warehouseRoutes, { prefix: "/api/warehouse" });
+  await app.register(warehouseRoutes, { prefix: "/warehouse" });
   await app.register(servicesRoutes, { prefix: "/api/v1/services" });
   await app.register(servicesRoutes, { prefix: "/api/services" });
   await app.register(printTemplatesRoutes, { prefix: "/api/v1/print-templates" });
@@ -356,7 +372,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
     // Fallback: проксирование из frontend контейнера по внутренней сети
     try {
-      const upstream = await fetch(`http://frontend:3000/mascots/${encodeURIComponent(safeFilename)}`);
+      const upstream = await fetch(`http://frontend:3000/mascots/${encodeURIComponent(safeFilename)}`, {
+        signal: AbortSignal.timeout(5_000),
+      });
       if (upstream.ok) {
         const buffer = Buffer.from(await upstream.arrayBuffer());
         const cType = upstream.headers.get("content-type") || "image/webp";
@@ -388,7 +406,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       }
     }
     try {
-      const upstream = await fetch("http://frontend:3000/miroslava.png");
+      const upstream = await fetch("http://frontend:3000/miroslava.png", { signal: AbortSignal.timeout(5_000) });
       if (upstream.ok) {
         const buffer = Buffer.from(await upstream.arrayBuffer());
         return reply
@@ -401,31 +419,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch {}
     return reply.status(404).send({ error: "Avatar not found" });
   });
-
-  const mimeMap: Record<string, string> = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-    ".svg": "image/svg+xml",
-    ".ico": "image/x-icon",
-    ".mp3": "audio/mpeg",
-    ".ogg": "audio/ogg",
-    ".opus": "audio/ogg",
-    ".m4a": "audio/mp4",
-    ".wav": "audio/wav",
-    ".mp4": "video/mp4",
-    ".mov": "video/quicktime",
-    ".webm": "video/webm",
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".doc": "application/msword",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".xls": "application/vnd.ms-excel",
-    ".txt": "text/plain",
-    ".zip": "application/zip",
-  };
 
   function streamFileWithRange(
     filePath: string,
@@ -488,21 +481,59 @@ export async function buildApp(): Promise<FastifyInstance> {
       .send();
   });
 
+  async function resolveSafeUploadPath(
+    rawFilename: string,
+  ): Promise<{ safeFilename: string; filePath: string } | null> {
+    const uploadsDir = path.resolve(process.cwd(), "uploads");
+    const candidates: string[] = [path.basename(rawFilename)];
+    try {
+      const decoded = decodeURIComponent(rawFilename);
+      const decodedBase = path.basename(decoded);
+      if (decodedBase && !candidates.includes(decodedBase)) {
+        candidates.push(decodedBase);
+      }
+    } catch {
+      // ignore malformed URI encoding
+    }
+
+    for (const candidate of candidates) {
+      if (!candidate || candidate === "." || candidate === ".." || candidate.includes("\0")) {
+        continue;
+      }
+      const resolved = path.resolve(uploadsDir, candidate);
+      if (!resolved.startsWith(`${uploadsDir}${path.sep}`)) {
+        continue;
+      }
+      try {
+        await fs.access(resolved);
+        return { safeFilename: candidate, filePath: resolved };
+      } catch {
+        // try next candidate
+      }
+    }
+
+    return null;
+  }
+
   // Эндпоинт отдачи загруженных файлов (/uploads/:filename).
-  // Публичные ассеты (аватары, логотипы, маркер _public_, изображения) отдаются
-  // без авторизации с открытыми CORS/CORP заголовками для виджетов на клиентских сайтах.
-  // Конфиденциальные документы (PDF, XLSX, DOCX) требуют валидный JWT и проверку арендатора.
+  // Публичные ассеты (аватары, логотипы, явно помеченные _public_ файлы виджета)
+  // отдаются без авторизации с открытыми CORS/CORP заголовками для виджетов.
+  // Все остальные файлы (включая приватные фото из WhatsApp/Telegram/MAX и документы)
+  // требуют валидный JWT (cookie getvoxly_auth_token / Bearer / ?token=) и проверку арендатора.
   app.get("/uploads/:filename", async (request, reply) => {
     const { filename } = request.params as { filename: string };
-    const safeFilename = path.basename(filename);
+    const resolvedUpload = await resolveSafeUploadPath(filename);
+    if (!resolvedUpload) {
+      return reply.status(404).send({ error: "File not found" });
+    }
+    const { safeFilename, filePath } = resolvedUpload;
     const ext = path.extname(safeFilename).toLowerCase();
-    const contentType = mimeMap[ext] ?? "application/octet-stream";
+    const contentType = extensionToMime(ext);
 
     const isPublicAsset =
       safeFilename.includes("_avatar_") ||
       safeFilename.includes("_logo_") ||
-      safeFilename.includes("_public_") ||
-      contentType.startsWith("image/");
+      safeFilename.includes("_public_");
 
     let isAuthorized = isPublicAsset;
     let hasToken = false;
@@ -540,8 +571,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (!isAuthorized) {
       return reply.status(hasToken ? 404 : 401).send({ error: hasToken ? "File not found" : "Unauthorized" });
     }
-
-    const filePath = path.join(process.cwd(), "uploads", safeFilename);
 
     try {
       const stat = await fs.stat(filePath);
@@ -601,14 +630,15 @@ export async function buildApp(): Promise<FastifyInstance> {
           return reply.redirect(message.attachment, 302);
         }
 
-        const safeFilename = path.basename(message.attachment.split("?")[0] || "");
-        const filePath = path.join(process.cwd(), "uploads", safeFilename);
+        const resolvedAtt = await resolveSafeUploadPath(message.attachment.split("?")[0] || "");
 
         try {
+          if (resolvedAtt === null) throw new Error("attachment not found");
+          const { safeFilename, filePath } = resolvedAtt;
           const stat = await fs.stat(filePath);
           if (stat.isFile()) {
             const ext = path.extname(safeFilename).toLowerCase();
-            const contentType = message.attachment_type || mimeMap[ext] || "application/octet-stream";
+            const contentType = message.attachment_type || extensionToMime(ext);
             const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
             const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
             const disposition = isInline
@@ -669,7 +699,7 @@ export async function buildApp(): Promise<FastifyInstance> {
               if (downloaded.ok && downloaded.buffer) {
                 const cleanName = matchingAttach.fileName || expectedFileName || "file.bin";
                 const ext = path.extname(cleanName).toLowerCase();
-                const realMime = downloaded.mimeType || mimeMap[ext] || "application/octet-stream";
+                const realMime = downloaded.mimeType || extensionToMime(ext);
 
                 const mediaService = new ChatMediaService();
                 const stored = await mediaService.storeBuffer({

@@ -270,3 +270,22 @@ export function useChannelAccountCustomLinks(
     enabled: Boolean(accountId),
   });
 }
+
+export interface ActiveChannelDTO {
+  id: string;
+  channel: string;
+  label: string;
+  external_id: string;
+  status: string;
+}
+
+export function useActiveChannels(): UseQueryResult<ActiveChannelDTO[], ApiClientError> {
+  return useQuery({
+    queryKey: ["channels", "active"],
+    queryFn: async () => {
+      const res = await apiClient.get<ActiveChannelDTO[]>(`${BASE_PATH}/active`);
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}

@@ -1,6 +1,7 @@
 export type RepairStatus =
   | "intake"
   | "waiting_parts"
+  | "parts_order"
   | "ready"
   | "issued"
   | "diagnostics"
@@ -38,6 +39,7 @@ export interface EquipmentInfo {
   model: string;
   serial_number: string;
   package_contents: string;
+  package_contents_items?: string[];
   appearance: string;
 }
 
@@ -59,6 +61,15 @@ export interface WorkItem {
   cost: number;
 }
 
+export interface PartBatchAllocation {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
 export interface PartItem {
   id: string;
   warehouse_item_id?: string | null;
@@ -68,6 +79,9 @@ export interface PartItem {
   quantity: number;
   retail_price: number;
   cost_price: number;
+  consumed_at?: string | null;
+  cost_source?: string;
+  batch_allocations?: PartBatchAllocation[];
 }
 
 export interface RepairTicket {
@@ -147,26 +161,10 @@ export interface RepairTotals {
 
 export type RepairFilterStatus = RepairStatus | "all";
 
-export const EQUIPMENT_TYPES = [
-  "Смартфон",
-  "Планшет",
-  "Ноутбук",
-  "Компьютер (ПК)",
-  "Монитор",
-  "Принтер / МФУ",
-  "Серверное оборудование",
-  "Фото/видеокамера",
-  "Смарт-часы",
-  "Беспроводные наушники",
-  "Игровая приставка",
-  "Другое",
-] as const;
-
-export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
-
 const STATUS_LABELS: Record<RepairStatus, string> = {
   intake: "Принят",
   waiting_parts: "Заказ запчастей",
+  parts_order: "Заказ запчастей",
   ready: "Готов",
   issued: "Выдан",
   diagnostics: "Диагностика",
@@ -178,6 +176,7 @@ const STATUS_LABELS: Record<RepairStatus, string> = {
 const STATUS_COLORS: Record<RepairStatus, string> = {
   intake: "bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd]", // Голубой (скриншот 1)
   waiting_parts: "bg-[#fef3c7] text-[#92400e] border-[#fde68a]", // Янтарный
+  parts_order: "bg-[#fef3c7] text-[#92400e] border-[#fde68a]", // Янтарный
   ready: "bg-[#dcfce7] text-[#15803d] border-[#bbf7d0]", // Изумрудно-зеленый
   issued: "bg-[#f0fdf4] text-[#166534] border-[#bbf7d0]", // Зеленый (скриншот 1)
   diagnostics: "bg-sky-50 text-sky-700 border-sky-200",

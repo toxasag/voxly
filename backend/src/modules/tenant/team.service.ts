@@ -1,5 +1,8 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { hashToken } from "../../lib/crypto.utils.js";
+import { toDate, toIso, toIsoOrNull } from "../../lib/date.utils.js";
 import { query, queryOne, transaction } from "../../db/client.js";
+import { invalidateAuthUserCache } from "../../plugins/auth-cache.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
 import { ASSIGNABLE_ROLES, ALL_PERMISSIONS, ROLE_LABELS, ROLE_PERMISSIONS, toPermissions } from "../../config/permissions.js";
@@ -112,22 +115,6 @@ class SeatLimitError extends AppError {
   constructor(message: string) {
     super(409, "SEAT_LIMIT_CONFIRMATION_REQUIRED", message);
   }
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
-}
-
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
-}
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
 }
 
 function buildInviteUrl(token: string): string {
@@ -568,6 +555,7 @@ export class TeamService {
     );
 
     if (updated === null) throw new NotFoundError("Сотрудник не найден");
+    await invalidateAuthUserCache(input.tenantId, input.userId);
     return toMemberDTO(updated, owner, input.actorId);
   }
 
@@ -606,6 +594,8 @@ export class TeamService {
       );
     });
 
+    await invalidateAuthUserCache(input.tenantId, input.userId);
+
     return { seats: await this.seatUsage(input.tenantId) };
   }
 
@@ -623,6 +613,8 @@ export class TeamService {
     );
 
     if (revoked === null) throw new NotFoundError("Приглашение не найдено или уже принято");
+
+    await invalidateAuthUserCache(input.tenantId, input.userId);
 
     return { seats: await this.seatUsage(input.tenantId) };
   }

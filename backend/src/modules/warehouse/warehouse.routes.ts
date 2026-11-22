@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { warehouseService } from "./warehouse.service.js";
 import {
@@ -12,16 +13,25 @@ import {
   importValidateSchema,
   intakeBatchSchema,
   paySupplierOrderSchema,
+  receiptSupplierOrderSchema,
   updatePurchaseRequestSchema,
+  updateSupplierOrderSchema,
   updateWarehouseItemSchema,
   updateWarehouseSettingsSchema,
+  warehousePaginationQuerySchema,
 } from "./warehouse.types.js";
 
 export async function warehouseRoutes(app: FastifyInstance) {
   await app.register(authenticatePlugin);
 
+  const moduleGuard = app.requireAnyModule(["products_services", "service_center"]);
+  const canRead = [moduleGuard, app.requireAnyPermission(["deals:read", "service_center:read"])];
+  const canWrite = [moduleGuard, app.requireAnyPermission(["deals:write", "service_center:write"])];
+  const canPay = [moduleGuard, app.requireAnyPermission(["finance:write", "tenant:admin"])];
+  const canAdmin = [moduleGuard, app.requirePermission("tenant:admin")];
+
   // Экспорт номенклатуры (XLSX / CSV)
-  app.post("/export", async (request, reply) => {
+  app.post("/export", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const body = exportWarehouseItemsSchema.parse(request.body ?? {});
     const { buffer, filename, contentType } = await warehouseService.exportItems(tenant_id, body);
@@ -32,7 +42,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Парсинг загруженного файла импорта (XLSX / CSV)
-  app.post("/import/parse", async (request, reply) => {
+  app.post("/import/parse", { onRequest: canWrite }, async (request, reply) => {
     if (request.isMultipart()) {
       const file = await request.file({ limits: { fileSize: 20 * 1024 * 1024 } });
       if (!file) {
@@ -67,7 +77,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Валидация колонок и поиск дубликатов
-  app.post("/import/validate", async (request, reply) => {
+  app.post("/import/validate", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = importValidateSchema.parse(request.body);
     const result = await warehouseService.validateImport(tenant_id, body);
@@ -75,7 +85,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Выполнение импорта с учетом стратегий коллизий
-  app.post("/import/commit", async (request, reply) => {
+  app.post("/import/commit", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = importCommitSchema.parse(request.body);
     const result = await warehouseService.commitImport(tenant_id, body);
@@ -83,7 +93,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Массовое редактирование позиций
-  app.post("/items/bulk-update", async (request, reply) => {
+  app.post("/items/bulk-update", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = bulkUpdateWarehouseItemsSchema.parse(request.body);
     const result = await warehouseService.bulkUpdateItems(tenant_id, body);
@@ -91,7 +101,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Массовое удаление позиций
-  app.post("/items/bulk-delete", async (request, reply) => {
+  app.post("/items/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = bulkDeleteWarehouseItemsSchema.parse(request.body);
     const result = await warehouseService.bulkDeleteItems(tenant_id, body);
@@ -99,37 +109,66 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Настройки склада (продажа в минус и политики остатков)
-  app.get("/settings", async (request, reply) => {
+  app.get("/settings", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const settings = await warehouseService.getSettings(tenant_id);
     return reply.send({ data: settings });
   });
 
-  app.patch("/settings", async (request, reply) => {
+  app.patch("/settings", { onRequest: canAdmin }, async (request, reply) => {
     const { tenant_id } = request;
     const body = updateWarehouseSettingsSchema.parse(request.body);
     const updated = await warehouseService.updateSettings(tenant_id, body);
     return reply.send({ data: updated });
   });
 
-  // Список деталей с остатками
-  app.get("/items", async (request, reply) => {
+  // Список деталей с остатками (корень)
+  app.get("/", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { search } = request.query as { search?: string };
-    const items = await warehouseService.listItems(tenant_id, search);
-    return reply.send({ data: items });
+    const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const result = await warehouseService.listItems(tenant_id, query.search, {
+      page: query.page,
+      limit: query.limit,
+      all: query.all,
+    });
+    return reply.send(result);
+  });
+
+  // Список деталей с остатками
+  app.get("/items", { onRequest: canRead }, async (request, reply) => {
+    const { tenant_id } = request;
+    const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const result = await warehouseService.listItems(tenant_id, query.search, {
+      page: query.page,
+      limit: query.limit,
+      all: query.all,
+      category: query.category,
+      brand: query.brand,
+    });
+    return reply.send(result);
+  });
+
+  // Получение одной позиции
+  app.get("/items/:id", { onRequest: canRead }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const item = await warehouseService.getItem(tenant_id, id);
+    if (!item) {
+      return reply.status(404).send({ error: "Item not found" });
+    }
+    return reply.send({ data: item, ...item });
   });
 
   // Создание номенклатуры
-  app.post("/items", async (request, reply) => {
+  app.post("/items", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = createWarehouseItemSchema.parse(request.body);
     const item = await warehouseService.createItem(tenant_id, body);
-    return reply.status(201).send({ data: item });
+    return reply.status(201).send({ data: item, ...item });
   });
 
   // Обновление номенклатуры
-  app.patch("/items/:id", async (request, reply) => {
+  app.patch("/items/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const body = updateWarehouseItemSchema.parse(request.body);
@@ -137,19 +176,140 @@ export async function warehouseRoutes(app: FastifyInstance) {
     if (!updated) {
       return reply.status(404).send({ error: "Item not found" });
     }
-    return reply.send({ data: updated });
+    return reply.send({ data: updated, ...updated });
   });
 
   // Удаление номенклатуры
-  app.delete("/items/:id", async (request, reply) => {
+  app.delete("/items/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const ok = await warehouseService.deleteItem(tenant_id, id);
     return reply.send({ success: ok });
   });
 
+  // Справочник категорий склада
+  app.get("/categories", { onRequest: canRead }, async (request, reply) => {
+    const { tenant_id } = request;
+    const categories = await warehouseService.listCategories(tenant_id);
+    return reply.send({ data: categories });
+  });
+
+  app.post("/categories", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const body = z.object({ name: z.string().min(1).max(100) }).parse(request.body);
+    const category = await warehouseService.createCategory(tenant_id, body.name.trim());
+    return reply.status(201).send({ data: category });
+  });
+
+  // Справочник брендов склада
+  app.get("/brands", { onRequest: canRead }, async (request, reply) => {
+    const { tenant_id } = request;
+    const brands = await warehouseService.listBrands(tenant_id);
+    return reply.send({ data: brands });
+  });
+
+  app.post("/brands", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const body = z.object({ name: z.string().min(1).max(100) }).parse(request.body);
+    const brand = await warehouseService.createBrand(tenant_id, body.name.trim());
+    return reply.status(201).send({ data: brand });
+  });
+
+  // Справочник моделей склада
+  app.get("/models", { onRequest: canRead }, async (request, reply) => {
+    const { tenant_id } = request;
+    const q = request.query as { brand_id?: string; brand?: string };
+    const models = await warehouseService.listModels(tenant_id, q.brand_id, q.brand);
+    return reply.send({ data: models });
+  });
+
+  app.post("/models", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const body = z.object({
+      name: z.string().min(1).max(200),
+      brand_id: z.string().uuid().optional(),
+      brand_name: z.string().max(200).optional(),
+    }).parse(request.body);
+    const model = await warehouseService.createModel(tenant_id, body);
+    return reply.status(201).send({ data: model });
+  });
+
+  app.patch("/models/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = z.object({ name: z.string().min(1).max(200) }).parse(request.body);
+    const updated = await warehouseService.renameModel(tenant_id, id, body.name);
+    return reply.send({ data: updated });
+  });
+
+  app.delete("/models/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const result = await warehouseService.deleteModel(tenant_id, id);
+    return reply.send({ data: result });
+  });
+
+  // Получение одной позиции (прямой алиас /:id)
+  app.get("/:id", { onRequest: canRead }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const reserved = [
+      "settings",
+      "batches",
+      "movements",
+      "purchases",
+      "purchase-requests",
+      "supplier-orders",
+      "export",
+      "import",
+      "intake",
+      "items",
+      "categories",
+      "brands",
+      "models",
+    ];
+    if (reserved.includes(id)) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    const item = await warehouseService.getItem(tenant_id, id);
+    if (!item) {
+      return reply.status(404).send({ error: "Item not found" });
+    }
+    return reply.send({ data: item, ...item });
+  });
+
+  // Обновление позиции (прямой алиас /:id)
+  app.patch("/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const reserved = [
+      "settings",
+      "batches",
+      "movements",
+      "purchases",
+      "purchase-requests",
+      "supplier-orders",
+      "export",
+      "import",
+      "intake",
+      "items",
+      "categories",
+      "brands",
+      "models",
+    ];
+    if (reserved.includes(id)) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    const body = updateWarehouseItemSchema.parse(request.body);
+    const updated = await warehouseService.updateItem(tenant_id, id, body);
+    if (!updated) {
+      return reply.status(404).send({ error: "Item not found" });
+    }
+    return reply.send({ data: updated, ...updated });
+  });
+
   // Оприходование партии
-  app.post("/intake", async (request, reply) => {
+  app.post("/intake", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const userId = request.authUser?.id ?? null;
     const body = intakeBatchSchema.parse(request.body);
@@ -158,7 +318,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Список партий
-  app.get("/batches", async (request, reply) => {
+  app.get("/batches", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { item_id } = request.query as { item_id?: string };
     const batches = await warehouseService.listBatches(tenant_id, item_id);
@@ -166,7 +326,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Журнал движений
-  app.get("/movements", async (request, reply) => {
+  app.get("/movements", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { limit } = request.query as { limit?: string };
     const movements = await warehouseService.listMovements(tenant_id, limit ? parseInt(limit, 10) : 100);
@@ -174,15 +334,19 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Список заявок на закупку (индивидуальные строки)
-  app.get("/purchases", async (request, reply) => {
+  app.get("/purchases", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { status, repair_order_id } = request.query as { status?: string; repair_order_id?: string };
-    const list = await warehouseService.listPurchaseRequests(tenant_id, status, repair_order_id);
+    const { status, repair_order_id, deal_id } = request.query as {
+      status?: string;
+      repair_order_id?: string;
+      deal_id?: string;
+    };
+    const list = await warehouseService.listPurchaseRequests(tenant_id, status, repair_order_id, deal_id);
     return reply.send({ data: list });
   });
 
   // Агрегированные заявки на закупку (сводка по номенклатуре с перечнем номеров заказ-нарядов)
-  app.get("/purchase-requests", async (request, reply) => {
+  app.get("/purchase-requests", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { status } = request.query as { status?: string };
     const list = await warehouseService.listAggregatedPurchaseRequests(tenant_id, status);
@@ -190,7 +354,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   });
 
   // Создание заявки на закупку
-  app.post("/purchases", async (request, reply) => {
+  app.post("/purchases", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const userId = request.authUser?.id ?? null;
     const body = createPurchaseRequestSchema.parse(request.body);
@@ -198,8 +362,8 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.status(201).send({ data: created });
   });
 
-  // Обновление статуса заявки
-  app.patch("/purchases/:id", async (request, reply) => {
+  // Обновление заявки на закупку
+  app.patch("/purchases/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const body = updatePurchaseRequestSchema.parse(request.body);
@@ -210,18 +374,29 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: updated });
   });
 
+  // Удаление заявки на закупку
+  app.delete("/purchases/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const deleted = await warehouseService.deletePurchaseRequest(tenant_id, id);
+    if (!deleted) {
+      return reply.status(404).send({ error: "Purchase request not found" });
+    }
+    return reply.send({ data: { deleted: true, id } });
+  });
+
   // -------------------------------------------------------------------------
   // Заказы поставщикам (Supplier Orders)
   // -------------------------------------------------------------------------
 
-  app.get("/supplier-orders", async (request, reply) => {
+  app.get("/supplier-orders", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { status } = request.query as { status?: string };
     const list = await warehouseService.listSupplierOrders(tenant_id, status);
     return reply.send({ data: list });
   });
 
-  app.post("/supplier-orders", async (request, reply) => {
+  app.post("/supplier-orders", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const userId = request.authUser?.id ?? null;
     const body = createSupplierOrderSchema.parse(request.body);
@@ -229,7 +404,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.status(201).send({ data: created });
   });
 
-  app.get("/supplier-orders/:id", async (request, reply) => {
+  app.get("/supplier-orders/:id", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const order = await warehouseService.getSupplierOrder(tenant_id, id);
@@ -239,7 +414,22 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: order });
   });
 
-  app.post("/supplier-orders/:id/pay", async (request, reply) => {
+  app.patch("/supplier-orders/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = updateSupplierOrderSchema.parse(request.body);
+    const updated = await warehouseService.updateSupplierOrder(tenant_id, id, body);
+    return reply.send({ data: updated });
+  });
+
+  app.delete("/supplier-orders/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    await warehouseService.deleteSupplierOrder(tenant_id, id);
+    return reply.send({ success: true });
+  });
+
+  app.post("/supplier-orders/:id/pay", { onRequest: canPay }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const userId = request.authUser?.id ?? null;
@@ -252,11 +442,12 @@ export async function warehouseRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post("/supplier-orders/:id/create-receipt", async (request, reply) => {
+  app.post("/supplier-orders/:id/create-receipt", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const userId = request.authUser?.id ?? null;
-    const res = await warehouseService.createReceiptFromSupplierOrder(tenant_id, id, userId);
+    const body = receiptSupplierOrderSchema.parse(request.body ?? {});
+    const res = await warehouseService.createReceiptFromSupplierOrder(tenant_id, id, userId, body);
     return reply.send({ data: res });
   });
 }

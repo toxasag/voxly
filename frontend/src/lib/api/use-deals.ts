@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
-import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+import { apiClient, triggerBrowserDownload, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
 
 export type DealMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot" | "system";
 export type DealMessageDirection = "inbound" | "outbound" | "neutral";
@@ -38,6 +38,13 @@ export interface DealDTO {
   contactEmail?: string | null;
   contactJobTitle?: string | null;
   contactIsPersonal?: boolean;
+  contactSocials?: Array<{ kind: string; value: string }>;
+  contactChannel?: string | null;
+  contactTelegramUsername?: string | null;
+  contactWhatsapp?: string | null;
+  sourceWidgetId?: string | null;
+  sourceChannel?: string | null;
+  sourceChannelLabel?: string | null;
   ownerName: string | null;
   latestNote?: string | null;
   tasksCount?: number;
@@ -57,8 +64,8 @@ export interface DealMessageDTO { id: string; dealId: string; channelAccountId: 
 export interface DealsParams { pipelineId?: string; stageId?: string; status?: "active" | "won" | "lost" | "all"; search?: string; contactId?: string; companyId?: string; limit?: number; offset?: number; }
 export interface DealsResult { items: DealDTO[]; total: number; limit: number; offset: number; }
 export interface SendDealMessagePayload { content: string; channel: string; source?: DealMessageSource; direction?: DealMessageDirection; attachment?: string; attachment_type?: string; }
-export interface CreateDealPayload { title: string; description?: string; budget: number; currency?: string; pipeline_id: string; stage_id: string; contact_id?: string; company_id?: string; owner_id?: string; close_date?: string; custom_fields?: Record<string, unknown>; }
-export interface UpdateDealPayload { title?: string; description?: string; budget?: number; currency?: string; stage_id?: string; contact_id?: string; company_id?: string; owner_id?: string; close_date?: string; position?: number; custom_fields?: Record<string, unknown>; }
+export interface CreateDealPayload { title: string; description?: string; budget: number; currency?: string; pipeline_id: string; stage_id: string; contact_id?: string; company_id?: string; owner_id?: string; source_widget_id?: string; close_date?: string; custom_fields?: Record<string, unknown>; }
+export interface UpdateDealPayload { title?: string; description?: string; budget?: number; currency?: string; stage_id?: string; contact_id?: string; company_id?: string; owner_id?: string; source_widget_id?: string; close_date?: string; position?: number; custom_fields?: Record<string, unknown>; created_at?: string; }
 
 const BASE = "/api/v1/crm/deals";
 export const dealKeys = { all: ["deals"] as const, list: (p: DealsParams) => ["deals", "list", p] as const, detail: (id: string) => ["deals", "detail", id] as const, pipelines: ["deals", "pipelines"] as const, kanban: (id: string) => ["deals", "kanban", id] as const, timeline: (id: string) => ["deals", "timeline", id] as const };
@@ -242,6 +249,47 @@ export function useDeleteDeal(): UseMutationResult<null, ApiClientError, string>
   });
 }
 
+export interface BulkActionPayload {
+  mode: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+}
+
+export function useBulkDeleteDeals(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
+export function useBulkMoveDeals(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload & { stage_id: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-move`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+    },
+  });
+}
+
 export function useMarkDealPersonal(): UseMutationResult<
   { dealId: string; contactId: string | null; stageId: string },
   ApiClientError,
@@ -288,6 +336,15 @@ export function useUnmarkDealPersonal(): UseMutationResult<
 // Deal Items (Услуги/Товары в сделке)
 // ---------------------------------------------------------------------------
 
+export interface DealItemBatchAllocationDTO {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
 export interface DealItemDTO {
   id: string;
   dealId: string;
@@ -297,6 +354,14 @@ export interface DealItemDTO {
   description: string;
   sku: string;
   price: number;
+  costPrice?: number;
+  costSource?: "manual" | "estimated_fifo" | "fifo_batch" | "negative_stock" | "pending_purchase";
+  consumedAt?: string | null;
+  batchAllocations?: DealItemBatchAllocationDTO[];
+  markupPercent?: number;
+  marginPercent?: number;
+  purchaseRequestId?: string | null;
+  purchaseRequestStatus?: string | null;
   quantity: number;
   unit: string;
   discountPercent: number;
@@ -314,11 +379,13 @@ export interface CreateDealItemPayload {
   description?: string;
   sku?: string;
   price?: number;
+  cost_price?: number;
   quantity?: number;
   unit?: string;
   discount_percent?: number;
   discount_amount?: number;
   sort_order?: number;
+  add_to_purchase_request?: boolean;
 }
 
 export interface UpdateDealItemPayload {
@@ -326,6 +393,7 @@ export interface UpdateDealItemPayload {
   description?: string;
   sku?: string;
   price?: number;
+  cost_price?: number;
   quantity?: number;
   unit?: string;
   discount_percent?: number;
@@ -361,6 +429,8 @@ export function useAddDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
   });
 }
@@ -376,6 +446,8 @@ export function useUpdateDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
   });
 }
@@ -393,6 +465,37 @@ export function useDeleteDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Экспорт сделок (CSV / XLSX)
+// ---------------------------------------------------------------------------
+
+export interface ExportDealsPayload {
+  format?: "csv" | "xlsx";
+  pipelineId?: string;
+  search?: string;
+}
+
+export async function downloadDealsExport(payload: ExportDealsPayload = {}): Promise<void> {
+  const { blob, filename } = await apiClient.downloadBlob("/api/v1/deals/export", {
+    method: "POST",
+    body: {
+      format: payload.format || "csv",
+      pipeline_id: payload.pipelineId,
+      search: payload.search,
+    },
+  });
+  const fallback = payload.format === "xlsx" ? "deals.xlsx" : "deals.csv";
+  triggerBrowserDownload(blob, filename ?? fallback);
+}
+
+export function useExportDeals() {
+  return useMutation({
+    mutationFn: (payload: ExportDealsPayload = {}) => downloadDealsExport(payload),
   });
 }

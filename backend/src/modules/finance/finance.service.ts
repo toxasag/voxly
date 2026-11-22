@@ -381,7 +381,176 @@ export class FinanceService {
       };
     });
   }
- async pnl(tenantId:string,from:string,to:string):Promise<PnlDTO>{const rows=await query<{direction:"income"|"expense";category_name:string;amount:string}>(`SELECT direction,category_name,SUM(amount)::text amount FROM transactions WHERE tenant_id=$1 AND deleted_at IS NULL AND occurred_at >= $2 AND occurred_at <= $3 GROUP BY direction,category_name`,[tenantId,from,to]);const incomeRows=rows.filter(r=>r.direction==="income"), expenseRows=rows.filter(r=>r.direction==="expense");const income=incomeRows.reduce((s,r)=>s+Number(r.amount),0),expenses=expenseRows.reduce((s,r)=>s+Number(r.amount),0);const map=(items:typeof rows,total:number)=>items.map(r=>({categoryName:r.category_name,amount:Number(r.amount),percentage:total===0?0:Math.round(Number(r.amount)/total*1000)/10}));return {from,to,income,expenses,netProfit:income-expenses,incomeByCategory:map(incomeRows,income),expensesByCategory:map(expenseRows,expenses)};}
+  async pnl(tenantId: string, from: string, to: string): Promise<PnlDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{ direction: "income" | "expense"; category_name: string; amount: string }>(
+        `SELECT direction, category_name, SUM(amount)::text AS amount
+         FROM transactions
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND occurred_at >= $2 AND occurred_at <= $3
+         GROUP BY direction, category_name`,
+        [tenantId, from, to],
+      );
+      const incomeRows = rows.filter((r) => r.direction === "income");
+      const expenseRows = rows.filter((r) => r.direction === "expense");
+      const income = incomeRows.reduce((s, r) => s + Number(r.amount), 0);
+      const expenses = expenseRows.reduce((s, r) => s + Number(r.amount), 0);
+      const map = (items: typeof rows, total: number) =>
+        items.map((r) => ({
+          categoryName: r.category_name,
+          amount: Number(r.amount),
+          percentage: total === 0 ? 0 : Math.round((Number(r.amount) / total) * 1000) / 10,
+        }));
+
+      // Партионная себестоимость списания (FIFO COGS) за период
+      const cogsTotals = await tx.queryOne<{ parts_cogs: string; write_offs_count: string }>(
+        `SELECT
+           COALESCE(SUM(m.quantity * m.cost_price), 0)::numeric(14,2)::text AS parts_cogs,
+           COUNT(*)::text AS write_offs_count
+         FROM warehouse_movements m
+         WHERE m.tenant_id = $1
+           AND m.type = 'write_off'
+           AND m.created_at >= $2
+           AND m.created_at <= $3`,
+        [tenantId, from, to],
+      );
+
+      // Выручка по запчастям (наряды СЦ) и прямым продажам товаров (сделки CRM) за период
+      const repairPartsRevRow = await tx.queryOne<{ parts_revenue: string }>(
+        `SELECT COALESCE(SUM(rp.quantity * rp.retail_price), 0)::numeric(14,2)::text AS parts_revenue
+         FROM repair_parts rp
+         JOIN repair_orders ro ON ro.id = rp.repair_order_id AND ro.tenant_id = rp.tenant_id
+         WHERE rp.tenant_id = $1
+           AND ro.deleted_at IS NULL
+           AND (
+             (rp.consumed_at IS NOT NULL AND rp.consumed_at >= $2 AND rp.consumed_at <= $3)
+             OR (rp.consumed_at IS NULL AND ro.status = 'issued' AND ro.delivered_at >= $2 AND ro.delivered_at <= $3)
+           )`,
+        [tenantId, from, to],
+      );
+
+      const dealProductsRevRow = await tx.queryOne<{ deal_products_revenue: string }>(
+        `SELECT COALESCE(SUM(di.total_amount), 0)::numeric(14,2)::text AS deal_products_revenue
+         FROM deal_items di
+         JOIN deals d ON d.id = di.deal_id AND d.tenant_id = di.tenant_id
+         JOIN stages s ON s.id = d.stage_id
+         WHERE di.tenant_id = $1
+           AND di.item_type = 'product'
+           AND d.deleted_at IS NULL
+           AND (
+             (di.consumed_at IS NOT NULL AND di.consumed_at >= $2 AND di.consumed_at <= $3)
+             OR (di.consumed_at IS NULL AND s.is_won = true AND d.closed_at >= $2 AND d.closed_at <= $3)
+           )`,
+        [tenantId, from, to],
+      );
+
+      const worksRevRow = await tx.queryOne<{ works_revenue: string }>(
+        `SELECT COALESCE(SUM(rw.cost), 0)::numeric(14,2)::text AS works_revenue
+         FROM repair_works rw
+         JOIN repair_orders ro ON ro.id = rw.repair_order_id AND ro.tenant_id = rw.tenant_id
+         WHERE rw.tenant_id = $1
+           AND ro.deleted_at IS NULL
+           AND ro.status = 'issued'
+           AND ro.delivered_at >= $2
+           AND ro.delivered_at <= $3`,
+        [tenantId, from, to],
+      );
+
+      const stockValRow = await tx.queryOne<{ stock_valuation: string }>(
+        `SELECT COALESCE(SUM(b.remaining_quantity * b.purchase_price), 0)::numeric(14,2)::text AS stock_valuation
+         FROM warehouse_batches b
+         JOIN warehouse_items wi ON wi.id = b.item_id AND wi.tenant_id = b.tenant_id AND wi.deleted_at IS NULL
+         WHERE b.tenant_id = $1 AND b.remaining_quantity > 0`,
+        [tenantId],
+      );
+
+      const breakdownRows = await tx.query<{
+        movement_id: string;
+        item_name: string;
+        batch_number: string | null;
+        supplier_name: string | null;
+        ticket_number: string | null;
+        deal_id: string | null;
+        deal_title: string | null;
+        quantity: string;
+        unit_cost: string;
+        total_cost: string;
+        occurred_at: Date | string;
+      }>(
+        `SELECT m.id AS movement_id,
+                COALESCE(wi.name, m.description) AS item_name,
+                b.batch_number,
+                b.supplier_name,
+                ro.ticket_number,
+                m.deal_id,
+                d.title AS deal_title,
+                m.quantity::text AS quantity,
+                m.cost_price::text AS unit_cost,
+                (m.quantity * m.cost_price)::numeric(14,2)::text AS total_cost,
+                m.created_at AS occurred_at
+         FROM warehouse_movements m
+         LEFT JOIN warehouse_items wi ON wi.id = m.item_id AND wi.tenant_id = m.tenant_id
+         LEFT JOIN warehouse_batches b ON b.id = m.batch_id AND b.tenant_id = m.tenant_id
+         LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+         LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+         WHERE m.tenant_id = $1
+           AND m.type = 'write_off'
+           AND m.created_at >= $2
+           AND m.created_at <= $3
+         ORDER BY m.created_at DESC
+         LIMIT 50`,
+        [tenantId, from, to],
+      );
+
+      const partsCogs = Math.round(Number(cogsTotals?.parts_cogs ?? 0) * 100) / 100;
+      const repairPartsRevenue = Math.round(Number(repairPartsRevRow?.parts_revenue ?? 0) * 100) / 100;
+      const dealProductsRevenue = Math.round(Number(dealProductsRevRow?.deal_products_revenue ?? 0) * 100) / 100;
+      const partsRevenue = Math.round((repairPartsRevenue + dealProductsRevenue) * 100) / 100;
+      const worksRevenue = Math.round(Number(worksRevRow?.works_revenue ?? 0) * 100) / 100;
+      const partsGrossProfit = Math.round((partsRevenue - partsCogs) * 100) / 100;
+      const partsMarkupPercent =
+        partsCogs > 0 ? Math.round((partsGrossProfit / partsCogs) * 1000) / 10 : 0;
+      const partsMarginPercent =
+        partsRevenue > 0 ? Math.round((partsGrossProfit / partsRevenue) * 1000) / 10 : 0;
+      const accrualGrossProfit = Math.round((partsRevenue + worksRevenue - partsCogs) * 100) / 100;
+      const stockValuation = Math.round(Number(stockValRow?.stock_valuation ?? 0) * 100) / 100;
+
+      return {
+        from,
+        to,
+        income,
+        expenses,
+        netProfit: income - expenses,
+        incomeByCategory: map(incomeRows, income),
+        expensesByCategory: map(expenseRows, expenses),
+        cogs: {
+          partsRevenue,
+          repairPartsRevenue,
+          dealProductsRevenue,
+          worksRevenue,
+          partsCogs,
+          partsGrossProfit,
+          partsMarkupPercent,
+          partsMarginPercent,
+          accrualGrossProfit,
+          stockValuation,
+          writeOffsCount: Number(cogsTotals?.write_offs_count ?? 0),
+          breakdown: breakdownRows.map((b) => ({
+            movementId: b.movement_id,
+            itemName: b.item_name,
+            batchNumber: b.batch_number ?? "",
+            supplierName: b.supplier_name ?? "",
+            ticketNumber: b.ticket_number ?? null,
+            dealId: b.deal_id ?? null,
+            dealTitle: b.deal_title ?? null,
+            quantity: Number(b.quantity),
+            unitCost: Number(b.unit_cost),
+            totalCost: Number(b.total_cost),
+            occurredAt: iso(b.occurred_at),
+          })),
+        },
+      };
+    });
+  }
  async recordRepairOrderPayment(tenantId:string,repairOrderId:string,ticketNumber:string,customerName:string,worksAmount:number,partsAmount:number,accountId?:string):Promise<void>{
   const total=worksAmount+partsAmount;
   if(total<=0)return;
@@ -424,18 +593,33 @@ export class FinanceService {
     tenantId: string,
     _user: string,
     payload: BatchPaymentPayload,
-  ): Promise<{ success: boolean; totalPaid: number; count: number }> {
+  ): Promise<{ success: boolean; totalPaid: number; count: number; transactionsCount: number }> {
     return withTenant(tenantId, async (tx) => {
       const account = await this.account(tx, tenantId, payload.cash_account_id);
 
-      let categoryName = "Оплата по наряд-заказу";
-      if (payload.category_id) {
-        const cat = await tx.queryOne<{ name: string }>(
-          `SELECT name FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
-          [tenantId, payload.category_id],
-        );
-        if (cat) categoryName = cat.name;
-      }
+      const resolveCategory = async (
+        catId: string | undefined,
+        fallbackName: string,
+      ): Promise<{ id: string | null; name: string }> => {
+        if (catId && catId.trim().length > 0) {
+          const cat = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT id, name FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, catId],
+          );
+          if (cat) return { id: cat.id, name: cat.name };
+        }
+        return { id: null, name: fallbackName };
+      };
+
+      const defaultCat = await resolveCategory(payload.category_id, "Оплата по наряд-заказу");
+      const worksCat = payload.works_category_id
+        ? await resolveCategory(payload.works_category_id, "Оплата выполненных работ")
+        : defaultCat;
+      const partsCat = payload.parts_category_id
+        ? await resolveCategory(payload.parts_category_id, "Продажа запчастей")
+        : defaultCat;
+
+      const splitMode = payload.split_works_and_parts !== false;
 
       const orders = await tx.query<{
         id: string;
@@ -457,6 +641,43 @@ export class FinanceService {
       }
 
       let totalPaid = 0;
+      let transactionsCount = 0;
+      const userNote = payload.description?.trim() ?? "";
+
+      const insertIncomeTx = async (
+        amount: number,
+        cat: { id: string | null; name: string },
+        desc: string,
+        order: { id: string; deal_id: string | null; customer_name: string },
+      ): Promise<void> => {
+        if (amount <= 0) return;
+        totalPaid += amount;
+        transactionsCount += 1;
+        await tx.query(
+          `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, counterparty_name, deal_id, repair_order_id)
+           VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10)`,
+          [
+            tenantId,
+            account.id,
+            cat.id,
+            cat.name,
+            amount,
+            account.currency,
+            desc,
+            order.customer_name || "",
+            order.deal_id,
+            order.id,
+          ],
+        );
+      };
+
+      const orderCalcs: {
+        order: (typeof orders)[number];
+        worksTotal: number;
+        partsTotal: number;
+        fallbackAmount: number;
+      }[] = [];
+      const zeroOrders: string[] = [];
 
       for (const order of orders) {
         const worksTotalRow = await tx.queryOne<{ total: string }>(
@@ -468,30 +689,48 @@ export class FinanceService {
           [tenantId, order.id],
         );
 
-        let amount = Number(worksTotalRow?.total ?? 0) + Number(partsTotalRow?.total ?? 0);
-        if (amount <= 0) {
-          amount = Number(order.final_cost ?? order.estimated_cost ?? 0);
-        }
+        const worksTotal = Math.round(Number(worksTotalRow?.total ?? 0) * 100) / 100;
+        const partsTotal = Math.round(Number(partsTotalRow?.total ?? 0) * 100) / 100;
+        const fallbackAmount =
+          worksTotal + partsTotal > 0
+            ? 0
+            : Math.round(Number(order.final_cost ?? order.estimated_cost ?? 0) * 100) / 100;
 
-        if (amount > 0) {
-          totalPaid += amount;
-          const desc = payload.description || `Оплата по акту ${order.ticket_number}`;
-          await tx.query(
-            `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, counterparty_name, deal_id, repair_order_id)
-             VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10)`,
-            [
-              tenantId,
-              account.id,
-              payload.category_id || null,
-              categoryName,
-              amount,
-              account.currency,
-              desc,
-              order.customer_name || "",
-              order.deal_id,
-              order.id,
-            ],
-          );
+        if (worksTotal + partsTotal + fallbackAmount <= 0) {
+          zeroOrders.push(order.ticket_number);
+        } else {
+          orderCalcs.push({ order, worksTotal, partsTotal, fallbackAmount });
+        }
+      }
+
+      if (zeroOrders.length > 0) {
+        throw new ValidationError(
+          `Нельзя принять оплату по актам без указанной стоимости (0 ₽): ${zeroOrders.join(", ")}`,
+        );
+      }
+
+      for (const { order, worksTotal, partsTotal, fallbackAmount } of orderCalcs) {
+        if (splitMode && worksTotal > 0 && partsTotal > 0) {
+          const worksDesc = userNote
+            ? `${userNote} — работы (${order.ticket_number})`
+            : `Оплата работ по акту ${order.ticket_number}`;
+          const partsDesc = userNote
+            ? `${userNote} — запчасти (${order.ticket_number})`
+            : `Оплата запчастей по акту ${order.ticket_number}`;
+          await insertIncomeTx(worksTotal, worksCat, worksDesc, order);
+          await insertIncomeTx(partsTotal, partsCat, partsDesc, order);
+        } else if (worksTotal > 0 || partsTotal > 0) {
+          const amount = Math.round((worksTotal + partsTotal) * 100) / 100;
+          const cat = splitMode
+            ? worksTotal > 0
+              ? worksCat
+              : partsCat
+            : defaultCat;
+          const desc = userNote || `Оплата по акту ${order.ticket_number}`;
+          await insertIncomeTx(amount, cat, desc, order);
+        } else if (fallbackAmount > 0) {
+          const desc = userNote || `Оплата по акту ${order.ticket_number}`;
+          await insertIncomeTx(fallbackAmount, worksCat, desc, order);
         }
 
         await tx.query(
@@ -507,7 +746,7 @@ export class FinanceService {
         );
       }
 
-      return { success: true, totalPaid, count: orders.length };
+      return { success: true, totalPaid, count: orders.length, transactionsCount };
     });
   }
 

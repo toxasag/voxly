@@ -319,6 +319,8 @@ const CREDENTIAL_PATHS: ReadonlySet<string> = new Set([
   "/auth/otp/send",
   "/auth/otp/verify",
   "/auth/register",
+  "/auth/register/complete",
+  "/auth/register/draft",
   "/auth/code/request",
   "/auth/code/status",
   // Восстановление пароля выполняется без сессии: отказ здесь окончателен, и
@@ -364,6 +366,11 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/** Повтор безопасен только для запросов, не меняющих данные: иначе POST/PATCH/DELETE дублировались бы. */
+function isIdempotentMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD";
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -389,7 +396,11 @@ async function request<T>(
       ...(options.signal !== undefined && { signal: options.signal }),
     });
   } catch (networkErr) {
-    if (options.retrying !== true && (!options.signal || !options.signal.aborted)) {
+    if (
+      options.retrying !== true &&
+      isIdempotentMethod(method) &&
+      (!options.signal || !options.signal.aborted)
+    ) {
       // Кратковременный сетевой сбой или перезапуск контейнера бэкенда: одна повторная попытка
       await new Promise((r) => setTimeout(r, 700));
       return request<T>(method, path, body, { ...options, retrying: true });
@@ -405,7 +416,11 @@ async function request<T>(
   }
 
   // При получении 502/503/504 (перезапуск бэкенда за прокси) — пробуем повторить запрос один раз
-  if ((res.status === 502 || res.status === 503 || res.status === 504) && options.retrying !== true) {
+  if (
+    (res.status === 502 || res.status === 503 || res.status === 504) &&
+    options.retrying !== true &&
+    isIdempotentMethod(method)
+  ) {
     await new Promise((r) => setTimeout(r, 800));
     return request<T>(method, path, body, { ...options, retrying: true });
   }
@@ -473,7 +488,72 @@ async function request<T>(
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Скачивание бинарного ответа (PDF, XLSX) с тем же адресом API, Bearer-токеном
+ * и однократным обновлением токена при 401, что и у JSON-запросов.
+ */
+async function fetchBlob(
+  path: string,
+  options: RequestOptions & { method?: "GET" | "POST"; body?: unknown } = {},
+): Promise<{ blob: Blob; filename: string | null }> {
+  const token = readAccessToken();
+  const headers: Record<string, string> = {};
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (token !== null) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(buildUrl(path, options.query), {
+    method: options.method ?? "GET",
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    credentials: "include",
+    ...(options.signal !== undefined && { signal: options.signal }),
+  });
+
+  if (res.status === 401 && options.retrying !== true && !isCredentialPath(path)) {
+    const refreshed = await refreshAccessToken(token).catch(() => null);
+    if (refreshed !== null) {
+      return fetchBlob(path, { ...options, retrying: true });
+    }
+  }
+
+  if (!res.ok) {
+    const parsed: unknown = await res.json().catch(() => null);
+    throw new ApiClientError(res.status, extractApiErrorBody(parsed, res.statusText));
+  }
+
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const plain = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  let filename: string | null = null;
+  try {
+    filename = encoded !== undefined ? decodeURIComponent(encoded) : (plain ?? null);
+  } catch {
+    filename = plain ?? null;
+  }
+
+  return { blob: await res.blob(), filename };
+}
+
+/** Инициирует скачивание Blob-файла в браузере и освобождает object URL. */
+export function triggerBrowserDownload(blob: Blob, filename: string): void {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
 export const apiClient = {
+  downloadBlob(
+    path: string,
+    options?: RequestOptions & { method?: "GET" | "POST"; body?: unknown },
+  ): Promise<{ blob: Blob; filename: string | null }> {
+    return fetchBlob(path, options);
+  },
+
   get<T>(path: string, options?: RequestOptions): Promise<ApiResponse<T>> {
     return request<T>("GET", path, undefined, options);
   },
@@ -498,3 +578,19 @@ export const apiClient = {
     return request<T>("DELETE", path, undefined, options);
   },
 };
+
+/**
+ * Извлекает человекочитаемое сообщение об ошибке из ApiClientError / Error / unknown.
+ */
+export function getApiErrorMessage(err: unknown, fallback = "Произошла ошибка"): string {
+  if (err instanceof ApiClientError && err.message) {
+    return err.message;
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  if (typeof err === "string" && err.trim().length > 0) {
+    return err;
+  }
+  return fallback;
+}

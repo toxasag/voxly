@@ -149,6 +149,28 @@ export function formatSocialDisplay(kind: SocialKind, value: string): FormattedS
     };
   }
 
+  if (kind === "max") {
+    const trimmed = value.trim();
+    const digitsOnly = trimmed.replace(/\D/g, "");
+    if (digitsOnly.length >= 11) {
+      const formatted = trimmed.startsWith("+") ? trimmed : `+${digitsOnly}`;
+      return {
+        displayText: formatted,
+        copyValue: formatted,
+        isNumericId: false,
+        tooltip: undefined,
+        href: asUrl(value) ?? `tel:${formatted}`,
+      };
+    }
+    return {
+      displayText: trimmed.startsWith("@") ? trimmed : (/^\d+$/.test(trimmed) ? `ID: ${trimmed}` : trimmed),
+      copyValue: trimmed,
+      isNumericId: /^\d+$/.test(trimmed),
+      tooltip: undefined,
+      href: asUrl(value),
+    };
+  }
+
   return {
     displayText: value,
     copyValue: value,
@@ -173,7 +195,7 @@ export const SOCIAL_DEFINITIONS: readonly SocialDefinition[] = [
   },
   {
     kind: "max",
-    label: "MAX",
+    label: "Макс",
     placeholder: "@username или номер",
     href: (value) => asUrl(value),
   },
@@ -259,13 +281,9 @@ export function isDisplayableSocial(
   if (/^(ym_|ya_|ga_|dfp_|usr_|site_|tmr_|v_)/i.test(val)) return false;
   if (social.kind === "other" && /^\d{10,25}$/.test(val)) return false;
 
-  // Технический ID MAX (например, 461879064, max://...):
   if (social.kind === "max") {
     if (val.startsWith("max://")) return false;
-    // Числовые ID чатов/пользователей — это 1-10 цифр без плюса. Телефон в России начинается с + или имеет 11+ цифр.
-    if (/^\d{1,10}$/.test(val)) return false;
-    // Если это id с плюсом вроде +461879064 (менее 11 цифр):
-    if (/^\+\d{1,10}$/.test(val)) return false;
+    return true;
   }
 
   return true;

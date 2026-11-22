@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Search,
   Plus,
@@ -9,6 +11,9 @@ import {
   Handshake,
   Wrench,
   Bot,
+  Building2,
+  ArrowUpRight,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -19,6 +24,8 @@ import type { ModuleSlug } from "@/types";
 import { useTheme } from "@/lib/hooks/use-theme";
 import { CommandMenu } from "@/components/shared/CommandMenu";
 import { NotificationDropdown } from "@/components/layout/NotificationDropdown";
+import { UserNavDropdown } from "@/components/layout/UserNavDropdown";
+import { useWorkspaces, switchWorkspace } from "@/lib/api/use-workspaces";
 import { Logo } from "@/components/brand";
 
 interface QuickAction {
@@ -40,13 +47,57 @@ const QUICK_ACTIONS: QuickAction[] = [
 ];
 
 export function Header() {
-  const { tenant } = useAuth();
-  const displayTenant = tenant ?? { tenantName: "", plan: "", installedModules: [] };
+  const pathname = usePathname();
+  const { user, tenant, impersonator } = useAuth();
+  const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", is_partner: false, installedModules: [] };
+  const { data: workspacesData } = useWorkspaces();
   const { theme, toggleTheme } = useTheme();
   const [quickActionOpen, setQuickActionOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [isReturning, setIsReturning] = useState(false);
 
   const quickActionRef = useRef<HTMLDivElement>(null);
+
+  const parentWorkspace = useMemo(
+    () => workspacesData?.find((ws) => ws.is_parent) ?? null,
+    [workspacesData],
+  );
+
+  const isPlatformOwner = user?.platform_role === "platform_owner";
+  const isPartner =
+    Boolean(user?.is_partner) ||
+    Boolean(tenant?.is_partner) ||
+    Boolean(displayTenant.is_partner) ||
+    user?.role === "partner" ||
+    isPlatformOwner ||
+    Boolean(impersonator?.is_partner);
+
+  const isPrivilegedUser =
+    isPlatformOwner ||
+    isPartner ||
+    user?.role === "owner" ||
+    user?.role === "admin" ||
+    user?.role === "manager" ||
+    Boolean(impersonator);
+
+  const handleReturnToPartner = async () => {
+    if (!parentWorkspace || isReturning) return;
+    setIsReturning(true);
+    try {
+      await switchWorkspace(
+        parentWorkspace.slug,
+        displayTenant.slug || "",
+        user?.email,
+        user?.name,
+        isPartner,
+        isPlatformOwner,
+        true,
+      );
+    } catch (err) {
+      console.error("Не удалось вернуться в кабинет партнёра:", err);
+      setIsReturning(false);
+    }
+  };
 
   const visibleActions = QUICK_ACTIONS.filter((action) => {
     if (!action.moduleSlug) return true;
@@ -54,6 +105,9 @@ export function Header() {
   });
 
   useClickOutside(quickActionRef, () => setQuickActionOpen(false), quickActionOpen);
+
+  const isPartnerPortal = Boolean(displayTenant.is_partner || tenant?.is_partner);
+  const isPartnerRoute = pathname?.startsWith("/partner");
 
   return (
     <>
@@ -82,6 +136,48 @@ export function Header() {
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5 ml-auto">
+          {/* CRM RETURN BRIDGE: Прямая кнопка возврата в кабинет партнёра (десктоп и мобильный) */}
+          {parentWorkspace && isPrivilegedUser && (
+            <button
+              type="button"
+              onClick={handleReturnToPartner}
+              disabled={isReturning}
+              className="flex h-7 items-center gap-1.5 rounded-lg border border-[#4a38f5]/25 bg-[#4a38f5]/10 px-2.5 text-[12px] font-semibold text-[#4a38f5] shadow-2xs transition-colors hover:bg-[#4a38f5]/15 focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/30 cursor-pointer"
+              title={`Вернуться в кабинет партнёра (${parentWorkspace.name})`}
+            >
+              {isReturning ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Building2 className="h-3.5 w-3.5 text-[#4a38f5]" />
+              )}
+              <span className="hidden sm:inline">Кабинет партнёра</span>
+              <ArrowUpRight className="h-3 w-3 text-[#4a38f5]/70" />
+            </button>
+          )}
+
+          {/* Быстрый переключатель между партнерским кабинетом и CRM-панелью для партнера */}
+          {isPartnerPortal && !parentWorkspace && (
+            isPartnerRoute ? (
+              <Link
+                href="/crm/deals"
+                className="flex h-7 items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 text-[12px] font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#f7f7f7]"
+                title="Перейти в панель CRM (Сделки)"
+              >
+                <Handshake className="h-3.5 w-3.5 text-[#666666]" />
+                <span className="hidden sm:inline">В CRM</span>
+              </Link>
+            ) : (
+              <Link
+                href="/partner"
+                className="flex h-7 items-center gap-1.5 rounded-lg border border-[#4a38f5]/25 bg-[#4a38f5]/10 px-2.5 text-[12px] font-medium text-[#4a38f5] shadow-2xs transition-colors hover:bg-[#4a38f5]/15"
+                title="Перейти в кабинет партнёра"
+              >
+                <Building2 className="h-3.5 w-3.5 text-[#4a38f5]" />
+                <span className="hidden sm:inline">Кабинет партнёра</span>
+              </Link>
+            )
+          )}
+
           {/* Quick Create Button */}
           <div className="relative" ref={quickActionRef}>
             <button
@@ -125,6 +221,9 @@ export function Header() {
           >
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
+
+          {/* User Profile & Navigation Bridge Dropdown */}
+          <UserNavDropdown />
         </div>
       </header>
 

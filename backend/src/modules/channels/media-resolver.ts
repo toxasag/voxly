@@ -1,5 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { extensionToMime } from "../../lib/mime.utils.js";
+
+export { extensionToMime };
+
+/** Верхняя граница вложения, скачиваемого по внешнему URL: защита от исчерпания памяти. */
+const MAX_REMOTE_MEDIA_BYTES = 50 * 1024 * 1024;
 
 export interface ResolvedOutboundMedia {
   buffer: Buffer;
@@ -49,49 +55,6 @@ export function classifyMediaType(
   }
 
   return "document";
-}
-
-/**
- * Сопоставляет расширение файла со стандартным MIME-типом.
- */
-export function extensionToMime(ext: string): string {
-  const cleanExt = ext.toLowerCase().replace(/^\./, "");
-  switch (cleanExt) {
-    case "pdf":
-      return "application/pdf";
-    case "docx":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case "doc":
-      return "application/msword";
-    case "xlsx":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    case "xls":
-      return "application/vnd.ms-excel";
-    case "txt":
-      return "text/plain";
-    case "png":
-      return "image/png";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "webp":
-      return "image/webp";
-    case "gif":
-      return "image/gif";
-    case "mp4":
-      return "video/mp4";
-    case "mov":
-      return "video/quicktime";
-    case "mp3":
-      return "audio/mpeg";
-    case "ogg":
-    case "opus":
-      return "audio/ogg";
-    case "m4a":
-      return "audio/mp4";
-    default:
-      return "application/octet-stream";
-  }
 }
 
 /**
@@ -148,8 +111,8 @@ export async function resolveOutboundMedia(
 
     // 1. Попытка чтения с локального диска (папка uploads)
     const uploadsDir = path.resolve(process.cwd(), "uploads");
-    const safeBase = path.basename(attachment.split("?")[0] || "");
-    const localCandidate = path.join(uploadsDir, safeBase);
+    let safeBase = path.basename(attachment.split("?")[0] || "");
+    let localCandidate = path.join(uploadsDir, safeBase);
 
     try {
       const stat = await fs.stat(localCandidate);
@@ -157,14 +120,25 @@ export async function resolveOutboundMedia(
         buffer = await fs.readFile(localCandidate);
       }
     } catch {
-      // Файл не найден по прямому пути в uploads, проверяем дальше
+      try {
+        const decoded = decodeURIComponent(safeBase);
+        if (decoded !== safeBase) {
+          const decodedCandidate = path.join(uploadsDir, decoded);
+          const stat = await fs.stat(decodedCandidate);
+          if (stat.isFile()) {
+            buffer = await fs.readFile(decodedCandidate);
+            safeBase = decoded;
+          }
+        }
+      } catch {}
     }
 
     // 2. Если файл не найден локально, но передан URL (http/https)
     if (!buffer && (attachment.startsWith("http://") || attachment.startsWith("https://"))) {
       try {
-        const res = await fetch(attachment);
-        if (res.ok) {
+        const res = await fetch(attachment, { signal: AbortSignal.timeout(20_000) });
+        const declaredSize = Number(res.headers.get("content-length") ?? 0);
+        if (res.ok && declaredSize <= MAX_REMOTE_MEDIA_BYTES) {
           const ab = await res.arrayBuffer();
           buffer = Buffer.from(ab);
         }

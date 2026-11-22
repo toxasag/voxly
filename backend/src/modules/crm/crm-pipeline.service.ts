@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../lib/string.utils.js";
 import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
 import { DealsService, notifyDealStageChanged } from "./deals/deals.service.js";
 import { ContactsService } from "./contacts/contacts.service.js";
@@ -10,6 +11,7 @@ import {
   extractPhoneNumber,
   extractEmailAddress,
   isBotSender,
+  isBannedName,
   UNKNOWN_CONTACT_NAME,
   type ChannelProfile,
 } from "./channel-identity.js";
@@ -57,6 +59,8 @@ export interface InboundMessageInput {
   senderTelegramUsername?: string;
   senderUsername?: string;
   isBot?: boolean;
+  peerUserId?: string;
+  chatThreadId?: string;
   attachment?: string | null;
   attachmentType?: string | null;
   deliveryStatus?: "neutral" | "pending" | "sent" | "failed" | "received";
@@ -95,6 +99,8 @@ interface ExistingContact {
   socials?: unknown;
   is_personal?: boolean | null;
   custom_fields?: Record<string, unknown> | null;
+  messenger_id?: string | null;
+  messenger_name?: string | null;
 }
 
 export interface CrmPipelineResult {
@@ -106,7 +112,7 @@ export interface CrmPipelineResult {
   isBot?: boolean;
 }
 
-const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, telegram_username, socials, is_personal, custom_fields";
+const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, telegram_username, socials, is_personal, custom_fields, messenger_id, messenger_name";
 
 const DEFAULT_STAGES: ReadonlyArray<{
   name: string;
@@ -124,11 +130,6 @@ const DEFAULT_STAGES: ReadonlyArray<{
   { name: "Успешно реализовано", isWon: true, isLost: false, isSystem: true, color: "emerald" },
   { name: "Закрыто и не реализовано", isWon: false, isLost: true, isSystem: true, color: "rose" },
 ];
-
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
-  return value;
-}
 
 interface PipelineLogger {
   info: (obj: object, message: string) => void;
@@ -254,6 +255,25 @@ export class CrmPipelineService {
       }
     }
 
+    // Защита CRM-воронки: запрет автогенерации контактов и сделок для внутренних уведомлений CRM
+    if (
+      rawText.startsWith("Новая заявка:") ||
+      (rawText.includes("Этап: Новый лид") && rawText.includes("Суть обращения:")) ||
+      rawText.includes("Открыть сделку в CRM")
+    ) {
+      this.log.info(
+        { tenantId: input.tenantId, channel: input.channel, chatId: input.chatId },
+        "Skipping lead/contact creation: internal CRM notification message",
+      );
+      return {
+        contactId: "",
+        dealId: "",
+        isNewContact: false,
+        isNewDeal: false,
+        isBot: true,
+      };
+    }
+
     const extractedPhone = extractPhoneNumber(rawText);
     const validatedSenderPhone = baseInput.senderPhone ? extractPhoneNumber(baseInput.senderPhone) : null;
     const effectiveSenderPhone = validatedSenderPhone || extractedPhone || undefined;
@@ -349,12 +369,28 @@ export class CrmPipelineService {
         contactId = contact.id;
 
         // Обогащение существующего контакта (enrichment):
-        // 1. Привязываем telegram_chat_id, если его ещё не было
-        if (input.senderTelegramChatId && !contact.telegram_chat_id) {
+        // 1. Привязываем telegram_chat_id, если его ещё не было, отправитель верифицирован и НЕ является ботом
+        const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+        const isSenderBot =
+          isBotSender(input) ||
+          (systemBotId !== undefined && input.senderTelegramChatId === systemBotId);
+
+        // Привязывать telegram_chat_id к СУЩЕСТВУЮЩЕМУ контакту разрешено ТОЛЬКО если:
+        // - Отправитель НЕ является ботом
+        // - Сообщение получено напрямую из канала Telegram
+        // - Отправитель верифицирован (совпадает проверенный телефон контакта или telegram_username)
+        const isVerifiedTelegramSender =
+          input.channel === "telegram" &&
+          (Boolean(validatedSenderPhone && contact.phone && validatedSenderPhone === extractPhoneNumber(contact.phone)) ||
+           Boolean(input.senderTelegramUsername && contact.telegram_username && input.senderTelegramUsername.replace(/^@/, "").toLowerCase() === contact.telegram_username.replace(/^@/, "").toLowerCase()) ||
+           (!contact.phone && !contact.telegram_chat_id));
+
+        if (input.senderTelegramChatId && !contact.telegram_chat_id && !isSenderBot && isVerifiedTelegramSender) {
           await tx.query(
             `UPDATE contacts SET telegram_chat_id = $1 WHERE id = $2 AND telegram_chat_id IS NULL`,
             [Number(input.senderTelegramChatId), contact.id],
           );
+          contact.telegram_chat_id = input.senderTelegramChatId;
         }
 
         // 1.1. Привязываем телефон, если он появился
@@ -403,19 +439,39 @@ export class CrmPipelineService {
           }
         }
 
-        // 1.5. Привязываем max_chat_id для MAX, если его ещё не было
-        if (input.channel === "max" && input.chatId) {
+        // 1.5. Привязываем max_chat_id, messenger_id и messenger_name для MAX
+        if (input.channel === "max" && (input.chatId || input.chatThreadId)) {
+          const effectiveMaxChatId = input.chatId || input.chatThreadId;
+          const maxUserId = input.peerUserId ?? null;
           await tx.query(
             `UPDATE contacts
-             SET custom_fields = jsonb_set(
-               COALESCE(custom_fields, '{}'::jsonb),
-               '{max_chat_id}',
-               to_jsonb($1::text),
-               true
-             )
-             WHERE id = $2 AND tenant_id = $3
-               AND (custom_fields->>'max_chat_id' IS NULL OR custom_fields->>'max_chat_id' = '')`,
-            [input.chatId, contact.id, input.tenantId],
+             SET messenger_id = COALESCE(messenger_id, $1),
+                 messenger_name = COALESCE(messenger_name, 'Макс'),
+                 custom_fields = jsonb_set(
+                   jsonb_set(
+                     COALESCE(custom_fields, '{}'::jsonb),
+                     '{max_chat_id}',
+                     to_jsonb($1::text),
+                     true
+                   ),
+                   '{max_user_id}',
+                   CASE WHEN $4::text IS NOT NULL THEN to_jsonb($4::text) ELSE COALESCE(custom_fields->'max_user_id', 'null'::jsonb) END,
+                   true
+                 ),
+                 socials = CASE 
+                   WHEN NOT (COALESCE(socials, '[]'::jsonb) @> $5::jsonb)
+                   THEN (COALESCE(socials, '[]'::jsonb) || $5::jsonb)
+                   ELSE socials
+                 END,
+                 updated_at = now()
+             WHERE id = $2 AND tenant_id = $3`,
+            [
+              effectiveMaxChatId ?? null,
+              contact.id,
+              input.tenantId,
+              maxUserId ?? null,
+              JSON.stringify([{ kind: "max", value: effectiveMaxChatId }]),
+            ],
           );
         }
 
@@ -590,7 +646,7 @@ export class CrmPipelineService {
           },
         });
 
-        const shouldUpdateContact = identity && (
+        const shouldUpdateContact = identity && !isBannedName(identity.firstName) && !isBannedName(identity.lastName) && (
           isCurrentPlaceholder ||
           identity.source === "message_body" ||
           identity.source === "email_signature" ||
@@ -605,7 +661,11 @@ export class CrmPipelineService {
           contact.first_name = identity.firstName;
           contact.last_name = identity.lastName || "";
           displayName = `${identity.firstName} ${identity.lastName || ""}`.trim();
-        } else if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
+        } else if (
+          contact.first_name === UNKNOWN_CONTACT_NAME &&
+          newName.first_name !== UNKNOWN_CONTACT_NAME &&
+          !isBannedName(newName.first_name)
+        ) {
           await tx.query(
             `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
             [newName.first_name, newName.last_name, contact.id, input.tenantId],
@@ -616,8 +676,10 @@ export class CrmPipelineService {
         }
       } else {
         const customFields: Record<string, unknown> = {};
-        if (input.channel === "max" && input.chatId) {
-          customFields.max_chat_id = input.chatId;
+        if (input.channel === "max") {
+          const effectiveChatId = input.chatId || input.chatThreadId;
+          if (effectiveChatId) customFields.max_chat_id = effectiveChatId;
+          if (input.peerUserId) customFields.max_user_id = input.peerUserId;
         }
         const siteVisitorId =
           input.visitorId ||
@@ -661,10 +723,24 @@ export class CrmPipelineService {
             lastName: initialName.last_name,
           },
         });
-        const finalFirstName = resolvedIdentity?.firstName || initialName.first_name;
-        const finalLastName = resolvedIdentity?.lastName !== undefined ? resolvedIdentity.lastName : initialName.last_name;
+        let finalFirstName = resolvedIdentity?.firstName || initialName.first_name;
+        let finalLastName = resolvedIdentity?.lastName !== undefined ? resolvedIdentity.lastName : initialName.last_name;
+        if (isBannedName(finalFirstName)) {
+          finalFirstName = UNKNOWN_CONTACT_NAME;
+        }
+        if (isBannedName(finalLastName)) {
+          finalLastName = "";
+        }
         if (finalFirstName !== initialName.first_name || (finalLastName && finalLastName !== initialName.last_name)) {
           displayName = `${finalFirstName} ${finalLastName || ""}`.trim();
+        }
+
+        const socialsList = contactSocialsFrom(input);
+        if (input.channel === "max") {
+          const maxIdVal = input.chatId || input.chatThreadId;
+          if (maxIdVal && !socialsList.some((s) => s.kind === "max")) {
+            socialsList.push({ kind: "max", value: maxIdVal });
+          }
         }
 
         // Компания не подставляется заглушкой «Не указана»: у входящего лида её
@@ -674,16 +750,19 @@ export class CrmPipelineService {
           last_name: finalLastName,
           phones: contactPhonesFrom(input),
           email: input.senderEmail ? input.senderEmail.trim() : undefined,
-          socials: contactSocialsFrom(input),
+          socials: socialsList,
           telegram_chat_id: input.senderTelegramChatId ?? undefined,
           channel: contactChannelFor(input.channel),
+          messenger_id: input.channel === "max" ? (input.chatId || input.chatThreadId) : undefined,
+          messenger_name: input.channel === "max" ? "Макс" : undefined,
           notes: `Автоматически создан из ${this.channelLabel(input.channel)}`,
           custom_fields: customFields,
           source_metadata: input.sourceMetadata,
         });
       }
 
-      const activeDeal = await this.findActiveDeal(tx, input.tenantId, contactId);
+      const effectiveThreadId = input.chatThreadId || (input.channel === "max" ? input.chatId : undefined);
+      const activeDeal = await this.findActiveDeal(tx, input.tenantId, contactId, effectiveThreadId);
 
       let dealId: string;
       let isNewDeal = false;
@@ -736,6 +815,17 @@ export class CrmPipelineService {
 
       if (activeDeal !== null) {
         dealId = activeDeal.id;
+
+        if (effectiveThreadId) {
+          await tx.query(
+            `UPDATE deals
+             SET chat_thread_id = COALESCE(chat_thread_id, $1),
+                 status = COALESCE(status, 'active'),
+                 updated_at = now()
+             WHERE id = $2 AND tenant_id = $3`,
+            [effectiveThreadId, activeDeal.id, input.tenantId],
+          );
+        }
 
         if (Object.keys(dealCustomFields).length > 0) {
           await tx.query(
@@ -950,6 +1040,8 @@ export class CrmPipelineService {
             // не находится, и каждое следующее сообщение клиента создавало
             // новую — канал плодил дубли.
             contact_id: contactId,
+            chat_thread_id: effectiveThreadId,
+            status: "active",
             source_widget_id: input.channel === "webchat" && input.channelAccountId ? input.channelAccountId : undefined,
             custom_fields: dealCustomFields,
             source_metadata: input.sourceMetadata,
@@ -986,8 +1078,8 @@ export class CrmPipelineService {
           const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
           const insertedMsg = await tx.queryOne<{ id: string }>(
             `INSERT INTO deal_messages
-               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
              RETURNING id`,
             [
               input.tenantId,
@@ -1001,6 +1093,7 @@ export class CrmPipelineService {
               deliveryStatus,
               input.attachment ?? null,
               input.attachmentType ?? null,
+              JSON.stringify(input.sourceMetadata ?? {}),
             ],
           );
           if (insertedMsg?.id) {
@@ -1223,6 +1316,50 @@ export class CrmPipelineService {
     attachment?: string | null;
     attachmentType?: string | null;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
+    // Fallback через bridge для MAX выполняется вне открытой транзакции БД:
+    // внешний HTTP-запрос никогда не удерживает коннект пула PostgreSQL.
+    let maxFallbackDialog: { phone: string; userId?: string } | null = null;
+    if (input.channel === "max" && input.channelAccountId && !input.senderPhone) {
+      const existingByMax = await queryOne<{ id: string }>(
+        `SELECT id FROM contacts
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+           AND (
+             custom_fields->>'max_chat_id' = $2
+             OR ($3::text IS NOT NULL AND custom_fields->>'max_user_id' = $3)
+             OR socials @> $4::jsonb
+             OR ($3::text IS NOT NULL AND socials @> $5::jsonb)
+           )
+         LIMIT 1`,
+        [
+          input.tenantId,
+          input.chatId,
+          input.peerUserId ?? null,
+          JSON.stringify([{ kind: "max", value: input.chatId }]),
+          JSON.stringify([{ kind: "max", value: input.peerUserId ?? "" }]),
+        ],
+      );
+      if (!existingByMax) {
+        try {
+          const bridge = new MaxBridgeService();
+          const dialogsResp = await bridge.getPrivateDialogs({
+            botId: input.channelAccountId,
+            dialogLimit: 30,
+            messageLimit: 1,
+          });
+          if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
+            const foundDialog = dialogsResp.dialogs.find(
+              (d) => d.chatId === input.chatId || (input.peerUserId && d.userId === input.peerUserId),
+            );
+            if (foundDialog?.phone) {
+              maxFallbackDialog = { phone: foundDialog.phone, userId: foundDialog.userId };
+            }
+          }
+        } catch {
+          // best-effort lookup
+        }
+      }
+    }
+
     return transaction(async (tx) => {
       let contact = await this.findContact(tx, input.tenantId, {
         tenantId: input.tenantId,
@@ -1261,40 +1398,23 @@ export class CrmPipelineService {
         );
       }
 
-      // Fallback через bridge для MAX: если телефон не пришел в вебхуке, берем его из диалогов моста
-      if (!contact && input.channel === "max" && input.channelAccountId) {
-        try {
-          const bridge = new MaxBridgeService();
-          const dialogsResp = await bridge.getPrivateDialogs({
-            botId: input.channelAccountId,
-            dialogLimit: 30,
-            messageLimit: 1,
-          });
-          if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
-            const foundDialog = dialogsResp.dialogs.find(
-              (d) => d.chatId === input.chatId || (input.peerUserId && d.userId === input.peerUserId),
-            );
-            if (foundDialog?.phone) {
-              contact = await this.findContactByPhone(tx, input.tenantId, foundDialog.phone);
-              if (contact) {
-                await tx.query(
-                  `UPDATE contacts
-                   SET custom_fields = jsonb_set(
-                     jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
-                     '{max_user_id}', to_jsonb($2::text), true
-                   )
-                   WHERE id = $3 AND tenant_id = $4`,
-                  [input.chatId, foundDialog.userId || input.peerUserId || "", contact.id, input.tenantId],
-                );
-              }
-            }
-          }
-        } catch {
-          // best-effort lookup
+      // Применяем предварительно найденный вне транзакции телефон из MAX bridge
+      if (!contact && maxFallbackDialog) {
+        contact = await this.findContactByPhone(tx, input.tenantId, maxFallbackDialog.phone);
+        if (contact) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(
+               jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
+               '{max_user_id}', to_jsonb($2::text), true
+             )
+             WHERE id = $3 AND tenant_id = $4`,
+            [input.chatId, maxFallbackDialog.userId || input.peerUserId || "", contact.id, input.tenantId],
+          );
         }
       }
 
-      if (contact === null) {
+      if (!contact) {
         return { dealId: null, messageId: null, pausedUntil: null };
       }
 
@@ -1410,6 +1530,55 @@ export class CrmPipelineService {
     tenantId: string,
     input: InboundMessageInput,
   ): Promise<ExistingContact | null> {
+    // Дедупликация и сопоставление контакта для MAX (по chat_id, peerUserId, chatThreadId, messenger_id, socials)
+    if (input.channel === "max" || input.peerUserId || input.chatThreadId) {
+      const maxIds: string[] = [];
+      if (input.chatId) maxIds.push(input.chatId.trim());
+      if (input.chatThreadId && !maxIds.includes(input.chatThreadId.trim())) maxIds.push(input.chatThreadId.trim());
+      if (input.peerUserId && !maxIds.includes(input.peerUserId.trim())) maxIds.push(input.peerUserId.trim());
+
+      for (const maxId of maxIds) {
+        if (!maxId) continue;
+        const byMax = await tx.queryOne<ExistingContact>(
+          `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
+           WHERE tenant_id = $1
+             AND deleted_at IS NULL
+             AND (
+               custom_fields->>'max_chat_id' = $2
+               OR custom_fields->>'max_user_id' = $2
+               OR messenger_id = $2
+               OR socials @> $3::jsonb
+             )
+           LIMIT 1`,
+          [tenantId, maxId, JSON.stringify([{ kind: "max", value: maxId }])],
+        );
+        if (byMax !== null) return byMax;
+      }
+
+      // Если контакт еще не найден, но канал MAX — пробуем через MaxBridgeService получить телефон из истории диалогов
+      if (input.channel === "max" && input.channelAccountId) {
+        try {
+          const bridge = new MaxBridgeService();
+          const dialogsResp = await bridge.getPrivateDialogs({
+            botId: input.channelAccountId,
+            dialogLimit: 20,
+            messageLimit: 10,
+          });
+          if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
+            const foundDialog = dialogsResp.dialogs.find(
+              (d) => (input.chatId && d.chatId === input.chatId) || (input.peerUserId && d.userId === input.peerUserId),
+            );
+            if (foundDialog && foundDialog.phone) {
+              const byDialogPhone = await this.findContactByPhone(tx, tenantId, foundDialog.phone);
+              if (byDialogPhone !== null) return byDialogPhone;
+            }
+          }
+        } catch {
+          // Игнорируем временные сетевые ошибки бриджа
+        }
+      }
+    }
+
     if (input.senderTelegramChatId !== undefined && input.senderTelegramChatId.length > 0) {
       const byChatId = await tx.queryOne<ExistingContact>(
         `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
@@ -1656,7 +1825,9 @@ export class CrmPipelineService {
     tx: TransactionClient,
     tenantId: string,
     contactId: string,
+    chatThreadId?: string,
   ): Promise<{ id: string } | null> {
+    const threadId = chatThreadId?.trim() || null;
     const row = await tx.queryOne<{
       id: string;
       stage_name: string;
@@ -1668,13 +1839,16 @@ export class CrmPipelineService {
        FROM deals d
        JOIN stages s ON s.id = d.stage_id
        WHERE d.tenant_id = $1
-         AND d.contact_id = $2
+         AND (
+           ($3::text IS NOT NULL AND d.chat_thread_id = $3)
+           OR (d.contact_id = $2 AND (d.status IS NULL OR d.status != 'duplicate'))
+         )
          AND d.deleted_at IS NULL
          AND s.is_won = false
          AND s.is_lost = false
-       ORDER BY d.created_at DESC
+       ORDER BY (CASE WHEN $3::text IS NOT NULL AND d.chat_thread_id = $3 THEN 0 ELSE 1 END), d.created_at DESC
        LIMIT 1`,
-      [tenantId, contactId],
+      [tenantId, contactId, threadId],
     );
 
     if (row && row.is_stale_first_contact) {

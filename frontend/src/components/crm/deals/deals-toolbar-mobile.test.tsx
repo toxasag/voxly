@@ -179,7 +179,8 @@ describe("Скрытое остаётся доступным в меню", () =>
     renderToolbar();
     await openMoreMenu();
 
-    expect(screen.getByRole("menuitem", { name: /Экспорт/ })).toBeDefined();
+    expect(screen.getByRole("menuitem", { name: /Экспорт в Excel/ })).toBeDefined();
+    expect(screen.getByRole("menuitem", { name: /Экспорт в CSV/ })).toBeDefined();
     expect(screen.getByRole("menuitem", { name: /Поиск дублей/ })).toBeDefined();
     expect(screen.getByText("Сортировка")).toBeDefined();
   });

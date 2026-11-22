@@ -3,30 +3,60 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 import { RepairIntakeModal } from "./RepairIntakeModal";
 
+const MOCK_USER = {
+  id: "master-1",
+  name: "Мастер Иван",
+  email: "ivan@example.com",
+  role: "technician",
+  permissions: new Set(["service_center:write"]),
+};
+
+const MOCK_TEAM_RESULT = {
+  data: {
+    members: [
+      { id: "master-1", fullName: "Мастер Иван", role: "technician", status: "active" },
+    ],
+  },
+  isLoading: false,
+};
+
+const MOCK_MASTERS_RESULT = {
+  data: [{ id: "master-1", fullName: "Мастер Иван", role: "technician" }],
+  isLoading: false,
+};
+
+const MOCK_DICTIONARIES_RESULT = {
+  data: {
+    types: ["Смартфон", "Ноутбук"],
+    brands: ["Apple", "Samsung"],
+    models: ["iPhone 15 Pro", "Galaxy S24"],
+    accessories: ["Обойма", "2 АКБ", "Кейс"],
+    malfunctions: ["Не включается", "Разбит экран", "Не стреляет"],
+  },
+  isLoading: false,
+};
+
+const MOCK_EMPTY_LOOKUP = {
+  data: undefined,
+  isLoading: false,
+  isFetching: false,
+};
+
 vi.mock("@/lib/auth/use-auth", () => ({
-  useCurrentUser: () => ({
-    id: "master-1",
-    name: "Мастер Иван",
-    email: "ivan@example.com",
-    role: "technician",
-    permissions: new Set(["service_center:write"]),
-  }),
+  useCurrentUser: () => MOCK_USER,
 }));
 
 vi.mock("@/lib/api/use-team", () => ({
-  useTeamMembers: () => ({
-    data: {
-      members: [
-        { id: "master-1", fullName: "Мастер Иван", role: "technician" },
-      ],
-    },
-    isLoading: false,
-  }),
+  useTeamMembers: () => MOCK_TEAM_RESULT,
 }));
 
 vi.mock("@/lib/api/use-deals", () => ({
   useDeals: () => ({
     data: { items: [], total: 0 },
+    isLoading: false,
+  }),
+  useDeal: () => ({
+    data: undefined,
     isLoading: false,
   }),
   useCreateDeal: () => ({
@@ -77,22 +107,18 @@ vi.mock("@/lib/api/use-repairs", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
-    useRepairClientLookup: () => ({
-      data: undefined,
-      isLoading: false,
-      isFetching: false,
-    }),
-    useRepairDictionaries: () => ({
-      data: {
-        types: ["Смартфон", "Ноутбук"],
-        brands: ["Apple", "Samsung"],
-        models: ["iPhone 15 Pro", "Galaxy S24"],
-        accessories: ["Обойма", "2 АКБ", "Кейс"],
-        malfunctions: ["Не включается", "Разбит экран", "Не стреляет"],
-      },
-      isLoading: false,
-    }),
+    useRepairClientLookup: () => MOCK_EMPTY_LOOKUP,
+    useCompanyInnLookup: () => MOCK_EMPTY_LOOKUP,
+    useRepairDictionaries: () => MOCK_DICTIONARIES_RESULT,
     useAddRepairDictionaryItem: () => ({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    }),
+    useRenameRepairDictionaryItem: () => ({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    }),
+    useDeleteRepairDictionaryItem: () => ({
       mutateAsync: vi.fn(),
       isPending: false,
     }),
@@ -100,6 +126,7 @@ vi.mock("@/lib/api/use-repairs", async (importOriginal) => {
       data: undefined,
       isFetching: false,
     }),
+    useRepairMasters: () => MOCK_MASTERS_RESULT,
   };
 });
 
@@ -140,8 +167,6 @@ describe("RepairIntakeModal Component", () => {
     expect(screen.getByText("Модель")).toBeDefined();
     expect(screen.getByText("Комплектация")).toBeDefined();
     expect(screen.getByText("Заявленные неисправности")).toBeDefined();
-
-    // Внешний вид должен быть полностью удален из интерфейса
-    expect(screen.queryByText("Внешний вид")).toBeNull();
+    expect(screen.getByText("Внешний вид")).toBeDefined();
   });
 });

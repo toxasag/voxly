@@ -27,7 +27,17 @@ export default async function botAliasRoutes(app: FastifyInstance): Promise<void
   const service = new AiService();
 
   // Публичный или опционально-аутентифицированный эндпоинт генерации промпта
-  app.post("/generate-prompt", async (request, reply) => {
+  app.post(
+    "/generate-prompt",
+    {
+      config: {
+        rateLimit: {
+          max: 15,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
     let tenantId: string | undefined = request.tenant_id;
     if (!tenantId) {
       let token: string | undefined;

@@ -20,11 +20,15 @@ import {
   Mail,
   MapPin,
   Maximize2,
+  MessageCircle,
   MoreHorizontal,
   Pencil,
   Phone,
   Plus,
   RotateCcw,
+  Send,
+  Truck,
+  UserCheck,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -82,9 +86,13 @@ export function DrawerCreateContact({
   const effectiveDealTitle = rawDealTitle ?? deal?.title ?? "";
   const [tab, setTab] = useState("home");
   const [name, setName] = useState("");
+  const [contactType, setContactType] = useState<"customer" | "vendor">("customer");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [maxAccount, setMaxAccount] = useState("");
+  const [telegram, setTelegram] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [companyName, setCompanyName] = useState(deal?.companyName ?? "");
   const [companyId, setCompanyId] = useState(deal?.companyId ?? "");
   const [jobTitle, setJobTitle] = useState("");
@@ -133,16 +141,31 @@ export function DrawerCreateContact({
     const firstName = parts[0] || "Новый контакт";
     const lastName = parts.slice(1).join(" ") || "";
 
+    const socialsList: Array<{ kind: "max" | "telegram" | "whatsapp"; value: string }> = [];
+    const cleanMax = maxAccount.trim() || phone.trim();
+    if (cleanMax) {
+      socialsList.push({ kind: "max", value: cleanMax });
+    }
+    if (telegram.trim()) {
+      socialsList.push({ kind: "telegram", value: telegram.trim() });
+    }
+    const cleanWa = whatsapp.trim() || phone.trim();
+    if (cleanWa) {
+      socialsList.push({ kind: "whatsapp", value: cleanWa });
+    }
+
     createContact.mutate(
       {
         first_name: firstName,
         last_name: lastName,
+        contact_type: contactType,
         email: email.trim() || undefined,
         phones: phone.trim() ? [{ number: phone.trim(), calling_code: "+7", country_code: "RU" }] : undefined,
+        socials: socialsList.length > 0 ? socialsList : undefined,
         company_name: companyName.trim() || undefined,
         company_id: companyId || undefined,
         job_title: jobTitle.trim() || undefined,
-        channel: "phone",
+        channel: cleanMax ? "max" : "phone",
         linkedin_link: linkedin.trim() || undefined,
         city: city.trim() || undefined,
         address: address.trim() || undefined,
@@ -360,6 +383,36 @@ export function DrawerCreateContact({
           </button>
           {generalOpen && (
             <div className="space-y-0.5 py-0.5">
+              <FieldRow icon={contactType === "vendor" ? Truck : UserCheck} label="Тип контакта">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setContactType("customer")}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-[4px] px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer",
+                      contactType === "customer"
+                        ? "bg-[#dcfce7] text-[#15803d]"
+                        : "bg-[#f5f5f5] text-[#666666] hover:bg-[#ebebeb]",
+                    )}
+                  >
+                    <UserCheck className="h-3 w-3" />
+                    <span>Клиент</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setContactType("vendor")}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-[4px] px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer",
+                      contactType === "vendor"
+                        ? "bg-[#fef9c3] text-[#a16207]"
+                        : "bg-[#f5f5f5] text-[#666666] hover:bg-[#ebebeb]",
+                    )}
+                  >
+                    <Truck className="h-3 w-3" />
+                    <span>Поставщик</span>
+                  </button>
+                </div>
+              </FieldRow>
               <FieldRow icon={Mail} label="Электронные...">
                 <input
                   type="email"
@@ -413,6 +466,33 @@ export function DrawerCreateContact({
           </button>
           {socialOpen && (
             <div className="space-y-0.5 py-0.5">
+              <FieldRow icon={MessageCircle} label="MAX">
+                <input
+                  type="text"
+                  placeholder={phone.trim() ? phone.trim() : "@username или номер"}
+                  value={maxAccount}
+                  onChange={(e) => setMaxAccount(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={Send} label="Telegram">
+                <input
+                  type="text"
+                  placeholder="@username или ID"
+                  value={telegram}
+                  onChange={(e) => setTelegram(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+              <FieldRow icon={Phone} label="WhatsApp">
+                <input
+                  type="text"
+                  placeholder={phone.trim() ? phone.trim() : "+7 999 123 45 67"}
+                  value={whatsapp}
+                  onChange={(e) => setWhatsapp(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
               <FieldRow icon={Linkedin} label="LinkedIn">
                 <input
                   type="text"

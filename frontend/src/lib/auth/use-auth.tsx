@@ -135,6 +135,7 @@ export interface CodeStatus {
   delivered: boolean;
   verified: boolean;
   expired: boolean;
+  consumed?: boolean;
 }
 
 /**
@@ -152,12 +153,16 @@ interface AuthContextValue extends AuthState {
   loginWithOtp: (phone: string, code: string) => Promise<SignedInSession>;
   /** Creates the tenant + owner and signs in; resolves with the new slug. */
   register: (input: RegisterInput) => Promise<SignedInSession>;
+  /** Completes bot-verified registration via one-time return token. */
+  completeBotRegistration: (input: { token: string; slug?: string }) => Promise<SignedInSession>;
   /** Requests a confirmation code through the Telegram bot. */
   requestCode: (input: {
     purpose: "register" | "login";
     channel: AuthChannel;
     phone: string;
     email?: string;
+    slug?: string;
+    password?: string;
   }) => Promise<RequestCodeResult>;
   /** Polls delivery state: the code arrives once the user presses Start. */
   codeStatus: (sessionId: string) => Promise<CodeStatus>;
@@ -496,12 +501,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession],
   );
 
+  const completeBotRegistration = useCallback(
+    async (input: { token: string; slug?: string }): Promise<SignedInSession> => {
+      const res = await apiClient.post<AuthTokensDTO>("/auth/register/complete", input, {
+        retrying: true,
+      });
+      applySession(res.data);
+      return { slug: res.data.tenant.slug ?? "" };
+    },
+    [applySession],
+  );
+
   const requestCode = useCallback(
     async (input: {
       purpose: "register" | "login";
       channel: AuthChannel;
       phone: string;
       email?: string;
+      slug?: string;
+      password?: string;
     }): Promise<RequestCodeResult> => {
       const res = await apiClient.post<RequestCodeResult>("/auth/code/request", input, {
         retrying: true,
@@ -592,6 +610,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sendOtp,
       loginWithOtp,
       register,
+      completeBotRegistration,
       requestCode,
       codeStatus,
       loginWithCode,
@@ -606,6 +625,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sendOtp,
       loginWithOtp,
       register,
+      completeBotRegistration,
       requestCode,
       codeStatus,
       loginWithCode,

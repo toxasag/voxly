@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../../lib/string.utils.js";
 import type {
   CreateDealItemPayload,
   CreateDealMessagePayload,
@@ -7,6 +8,8 @@ import type {
   DealContactSummaryDTO,
   DealContactTimelineItemDTO,
   DealDTO,
+  DealItemBatchAllocationDTO,
+  DealItemCostSource,
   DealItemDTO,
   DealItemRow,
   DealMessageDTO,
@@ -24,18 +27,20 @@ import type {
 } from "./deals.types.js";
 import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
-import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
+import { NotFoundError, ValidationError, UnprocessableEntityError } from "../../../plugins/errorHandler.js";
 import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
 import { messageTranslationService } from "../translation/message-translation.service.js";
 import { chatEventBus } from "../chat/chat-events.js";
+import { warehouseService } from "../../warehouse/warehouse.service.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
   budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
-  closed_at, lead_notified_at, created_at, updated_at
+  closed_at, lead_notified_at, created_at, updated_at, chat_thread_id, status
 `;
 
 /**
@@ -49,6 +54,7 @@ const DEAL_COLUMNS_WITH_LABELS = `
   d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.source_widget_id, d.title,
   d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
+  d.chat_thread_id, d.status,
   co.name AS company_name,
   co.phone AS company_phone,
   co.email AS company_email,
@@ -60,6 +66,12 @@ const DEAL_COLUMNS_WITH_LABELS = `
   ct.email AS contact_email,
   ct.job_title AS contact_job_title,
   ct.is_personal AS contact_is_personal,
+  ct.socials AS contact_socials,
+  ct.channel AS contact_channel,
+  ct.telegram_username AS contact_telegram_username,
+  ct.whatsapp AS contact_whatsapp,
+  ca.channel AS source_channel,
+  ca.label AS source_channel_label,
   ow.name AS owner_name,
   ln.body AS latest_note_body,
   COALESCE(tk.total_tasks_count, 0) AS tasks_count,
@@ -83,6 +95,8 @@ const DEAL_LABEL_JOINS = `
     ON co.id = d.company_id AND co.tenant_id = d.tenant_id AND co.deleted_at IS NULL
   LEFT JOIN contacts ct
     ON ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
+  LEFT JOIN channel_accounts ca
+    ON ca.id = d.source_widget_id AND ca.tenant_id = d.tenant_id AND ca.deleted_at IS NULL
   LEFT JOIN users ow
     ON ow.id = d.owner_id AND ow.tenant_id = d.tenant_id AND ow.deleted_at IS NULL
   LEFT JOIN LATERAL (
@@ -169,11 +183,6 @@ export function notifyDealWon(payload: { tenantId: string; dealId: string }): vo
 }
 
 /** Treats "" from form payloads as "no value". */
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
-  return value;
-}
-
 export interface ListDealsOptions {
   pipelineId?: string;
   stageId?: string;
@@ -310,7 +319,12 @@ export class DealsService {
    * Kanban projection: every stage of the pipeline with its deals, count and
    * budget total. Empty stages are returned so the board renders all columns.
    */
-  async kanban(tenantId: string, pipelineId: string): Promise<KanbanColumn[]> {
+  async kanban(
+    tenantId: string,
+    pipelineId: string,
+    options?: { maxDeals?: number },
+  ): Promise<KanbanColumn[]> {
+    const maxDeals = Math.min(Math.max(options?.maxDeals ?? 2000, 1), 5000);
     const stages = await query<StageRow>(
       `SELECT s.id, s.pipeline_id, s.name, s.sort_order, s.is_won, s.is_lost, s.is_system, s.color
        FROM stages s
@@ -326,13 +340,15 @@ export class DealsService {
 
     // Порядок внутри колонки: сначала position (ручное перетаскивание), затем
     // дата — у сделок, созданных до появления поля, position одинаковый.
+    // Защитный LIMIT исключает OOM на сверхкрупных воронках.
     const rows = await query<DealRow>(
       `SELECT ${DEAL_COLUMNS_WITH_LABELS}
        FROM deals d
        ${DEAL_LABEL_JOINS}
        WHERE d.tenant_id = $1 AND d.pipeline_id = $2 AND d.deleted_at IS NULL
-       ORDER BY d.position ASC, d.created_at DESC`,
-      [tenantId, pipelineId],
+       ORDER BY d.position ASC, d.created_at DESC
+       LIMIT $3`,
+      [tenantId, pipelineId, maxDeals],
     );
 
     const grouped = new Map<string, DealDTO[]>();
@@ -411,11 +427,57 @@ export class DealsService {
         [tenantId, payload.stage_id],
       );
 
+      // Валидация контакта: проверка принадлежности и запрет создания сделок с поставщиками
+      const contactId = nullIfBlank(payload.contact_id);
+      let contactInfo: { channel: string; socials: Array<{ kind: string }> } | null = null;
+      if (contactId) {
+        const contact = await tx.queryOne<{ id: string; contact_type: string; channel: string; socials: Array<{ kind: string }> }>(
+          `SELECT id, contact_type, channel, socials FROM contacts
+           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+          [contactId, tenantId],
+        );
+        if (contact === null) {
+          throw new ValidationError("contact_id does not belong to this tenant", {
+            contact_id: ["Unknown contact"],
+          });
+        }
+        if (contact.contact_type === "vendor") {
+          throw new UnprocessableEntityError("Нельзя создать сделку с поставщиком", {
+            contact_id: ["Сделка не может быть создана с контактом в статусе 'Поставщик'"],
+          });
+        }
+        contactInfo = contact;
+      }
+
+      // Разрешение источника/канала коммуникации (source_widget_id)
+      let resolvedSourceWidgetId = nullIfBlank(payload.source_widget_id);
+      if (!resolvedSourceWidgetId && contactInfo) {
+        const preferredChannel = contactInfo.socials?.find((s) => s.kind === "max")
+          ? "max"
+          : contactInfo.channel !== "phone"
+            ? contactInfo.channel
+            : null;
+        if (preferredChannel) {
+          const acc = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL LIMIT 1`,
+            [tenantId, preferredChannel],
+          );
+          if (acc) resolvedSourceWidgetId = acc.id;
+        }
+      }
+      if (!resolvedSourceWidgetId) {
+        const defAcc = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM channel_accounts WHERE tenant_id = $1 AND channel IN ('max', 'telegram', 'whatsapp') AND status = 'connected' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        if (defAcc) resolvedSourceWidgetId = defAcc.id;
+      }
+
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id, chat_thread_id, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -435,7 +497,9 @@ export class DealsService {
           nullIfBlank(payload.owner_id) ?? createdBy,
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
-          nullIfBlank(payload.source_widget_id),
+          resolvedSourceWidgetId,
+          payload.chat_thread_id ?? null,
+          payload.status ?? "active",
         ],
       );
 
@@ -452,6 +516,7 @@ export class DealsService {
     tenantId: string,
     id: string,
     payload: UpdateDealPayload,
+    updatedBy?: string | null,
   ): Promise<DealDTO | null> {
     // Каждая переданная ссылка проверяется на принадлежность арендатору.
     //
@@ -482,6 +547,8 @@ export class DealsService {
     if (payload.owner_id !== undefined) push("owner_id", nullIfBlank(payload.owner_id));
     if (payload.close_date !== undefined) push("close_date", nullIfBlank(payload.close_date));
     if (payload.position !== undefined) push("position", payload.position);
+    if (payload.chat_thread_id !== undefined) push("chat_thread_id", nullIfBlank(payload.chat_thread_id));
+    if (payload.status !== undefined) push("status", payload.status);
 
     if (payload.custom_fields !== undefined) {
       params.push(JSON.stringify(payload.custom_fields));
@@ -491,6 +558,13 @@ export class DealsService {
     if (payload.closed_at !== undefined) {
       const closedAt = nullIfBlank(payload.closed_at);
       push("closed_at", closedAt === null ? null : new Date(closedAt).toISOString());
+    }
+
+    if (payload.created_at !== undefined) {
+      const createdAt = nullIfBlank(payload.created_at);
+      if (createdAt) {
+        push("created_at", new Date(createdAt).toISOString());
+      }
     }
 
     if (assignments.length === 0) {
@@ -505,6 +579,25 @@ export class DealsService {
     );
 
     if (row === null) return null;
+
+    // Если стадия сменилась на won через PATCH /deals/:id — выполняем FIFO-списание и автозаявки
+    if (payload.stage_id !== undefined) {
+      const targetStage = await queryOne<{ is_won: boolean }>(
+        `SELECT is_won FROM stages WHERE id = $1`,
+        [payload.stage_id],
+      );
+      if (targetStage?.is_won) {
+        await withTenant(tenantId, async (tx) => {
+          if (payload.closed_at === undefined) {
+            await tx.query(
+              `UPDATE deals SET closed_at = COALESCE(closed_at, now()) WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, id],
+            );
+          }
+          await warehouseService.consumeDealItemsInTx(tx, tenantId, id, updatedBy ?? null);
+        });
+      }
+    }
 
     // Перечитываем через get: RETURNING не отдаёт подписи связей (они приходят
     // JOIN'ами), и ответ на inline-правку обнулял бы чипы в таблице.
@@ -529,8 +622,8 @@ export class DealsService {
   ): Promise<void> {
     const contactId = nullIfBlank(payload.contact_id);
     if (contactId !== null) {
-      const contact = await queryOne<{ id: string }>(
-        `SELECT id FROM contacts
+      const contact = await queryOne<{ id: string; contact_type: string }>(
+        `SELECT id, contact_type FROM contacts
          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [contactId, tenantId],
       );
@@ -538,6 +631,12 @@ export class DealsService {
       if (contact === null) {
         throw new ValidationError("contact_id does not belong to this tenant", {
           contact_id: ["Unknown contact"],
+        });
+      }
+
+      if (contact.contact_type === "vendor") {
+        throw new UnprocessableEntityError("Нельзя связать сделку с поставщиком", {
+          contact_id: ["Сделка не может быть создана или связана с контактом в статусе 'Поставщик'"],
         });
       }
     }
@@ -659,6 +758,8 @@ export class DealsService {
         }
 
         if (stage.is_won) {
+          // Атомарное FIFO-списание товаров сделки со склада + автозаявки при дефиците
+          await warehouseService.consumeDealItemsInTx(tx, tenantId, id, changedBy);
           for (const handler of dealWonHandlers) {
             Promise.resolve(handler({ tenantId, dealId: id })).catch(() => undefined);
           }
@@ -726,17 +827,135 @@ export class DealsService {
     return row !== null;
   }
 
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.stage_id === "string" && filters.stage_id.trim().length > 0) {
+      params.push(filters.stage_id.trim());
+      conditions.push(`d.stage_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
+  }
+
+  async bulkMove(
+    tenantId: string,
+    payload: BulkActionPayload & { stage_id: string },
+  ): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE deals
+         SET stage_id = $3, updated_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids, payload.stage_id],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId, payload.stage_id];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
+      params.push(filters.pipeline_id.trim());
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder})`,
+      );
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE deals d
+       SET stage_id = $2, updated_at = now()
+       WHERE ${where}
+       RETURNING d.id`,
+      params,
+    );
+
+    return { count: rows.length };
+  }
+
   // -------------------------------------------------------------------------
   // Timeline
   // -------------------------------------------------------------------------
 
-  async listMessages(tenantId: string, dealId: string): Promise<DealMessageDTO[]> {
+  async listMessages(
+    tenantId: string,
+    dealId: string,
+    options?: { limit?: number },
+  ): Promise<DealMessageDTO[]> {
+    const limit = Math.min(Math.max(options?.limit ?? 500, 1), 2000);
+    // Берём последние `limit` сообщений по времени и возвращаем в хронологическом порядке (ASC),
+    // чтобы длинные чаты на тысячи сообщений не создавали OOM и не тормозили карточку сделки.
     const rows = await query<DealMessageRow>(
-      `SELECT ${MESSAGE_COLUMNS}
-       FROM deal_messages
-       WHERE tenant_id = $1 AND deal_id = $2
+      `SELECT *
+       FROM (
+         SELECT ${MESSAGE_COLUMNS}
+         FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+         ORDER BY created_at DESC
+         LIMIT $3
+       ) AS recent_messages
        ORDER BY created_at ASC`,
-      [tenantId, dealId],
+      [tenantId, dealId, limit],
     );
 
     return rows.map(toDealMessageDTO);
@@ -1505,7 +1724,8 @@ export class DealsService {
   ): Promise<{ items: DealItemDTO[]; totalBudget: number }> {
     return withTenant(tenantId, async (tx) => {
       const rows = await tx.query<DealItemRow>(
-        `SELECT id, tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+        `SELECT id, tenant_id, deal_id, item_type, item_id, name, description, sku, price,
+                cost_price, cost_source, consumed_at, quantity,
                 unit, discount_percent, discount_amount, total_amount, sort_order, created_at, updated_at
          FROM deal_items
          WHERE tenant_id = $1 AND deal_id = $2
@@ -1513,7 +1733,61 @@ export class DealsService {
         [tenantId, dealId],
       );
 
-      const items = rows.map(toDealItemDTO);
+      // Подтягиваем партионные аллокации FIFO по позициям сделки
+      const allocRows = await tx.query<{
+        deal_item_id: string;
+        batch_id: string | null;
+        batch_number: string | null;
+        supplier_name: string | null;
+        quantity: string | number;
+        unit_cost: string | number;
+        total_cost: string | number;
+      }>(
+        `SELECT a.deal_item_id, a.batch_id, b.batch_number, b.supplier_name,
+                a.quantity, a.unit_cost, a.total_cost
+         FROM deal_item_batch_allocations a
+         LEFT JOIN warehouse_batches b ON b.id = a.batch_id AND b.tenant_id = a.tenant_id
+         WHERE a.tenant_id = $1 AND a.deal_id = $2
+         ORDER BY a.created_at ASC`,
+        [tenantId, dealId],
+      );
+
+      const allocMap = new Map<string, DealItemBatchAllocationDTO[]>();
+      for (const a of allocRows) {
+        const list = allocMap.get(a.deal_item_id) ?? [];
+        list.push({
+          batchId: a.batch_id,
+          batchNumber: a.batch_number ?? "",
+          supplierName: a.supplier_name ?? "",
+          quantity: Number(a.quantity),
+          unitCost: Number(a.unit_cost),
+          totalCost: Number(a.total_cost),
+        });
+        allocMap.set(a.deal_item_id, list);
+      }
+
+      // Подтягиваем связанные заявки на закупку по позициям сделки
+      const prRows = await tx.query<{
+        id: string;
+        deal_item_id: string;
+        status: string;
+      }>(
+        `SELECT id, deal_item_id, status
+         FROM purchase_requests
+         WHERE tenant_id = $1 AND deal_id = $2 AND deal_item_id IS NOT NULL
+         ORDER BY created_at DESC`,
+        [tenantId, dealId],
+      );
+      const prMap = new Map<string, { id: string; status: string }>();
+      for (const pr of prRows) {
+        if (!prMap.has(pr.deal_item_id)) {
+          prMap.set(pr.deal_item_id, { id: pr.id, status: pr.status });
+        }
+      }
+
+      const items = rows.map((r) =>
+        toDealItemDTO(r, allocMap.get(r.id), prMap.get(r.id) ?? null),
+      );
 
       // Also fetch works from linked repair orders
       const repairWorks = await tx.query<{
@@ -1547,6 +1821,7 @@ export class DealsService {
           description: `Работа по наряду ${rw.ticket_number}`,
           sku: "",
           price: unitPrice,
+          costPrice: 0,
           quantity: qty,
           unit: "усл",
           discountPercent: 0,
@@ -1590,6 +1865,7 @@ export class DealsService {
           description: `Запчасть по наряду ${rp.ticket_number}`,
           sku: rp.article ?? "",
           price: retail,
+          costPrice: Number(rp.cost_price ?? 0),
           quantity: qty,
           unit: "шт",
           discountPercent: 0,
@@ -1610,10 +1886,11 @@ export class DealsService {
     tenantId: string,
     dealId: string,
     payload: CreateDealItemPayload,
+    userId?: string | null,
   ): Promise<{ item: DealItemDTO; totalBudget: number }> {
     return withTenant(tenantId, async (tx) => {
-      const deal = await tx.queryOne<{ id: string }>(
-        `SELECT id FROM deals WHERE tenant_id = $1 AND id = $2`,
+      const deal = await tx.queryOne<{ id: string; title: string }>(
+        `SELECT id, title FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         [tenantId, dealId],
       );
       if (!deal) throw new NotFoundError("Сделка не найдена");
@@ -1624,12 +1901,24 @@ export class DealsService {
       const discountAmount = Number(payload.discount_amount ?? 0);
       const totalAmount = calculateItemTotal(price, quantity, discountPercent, discountAmount);
 
+      let costPrice = payload.cost_price !== undefined ? Number(payload.cost_price) : 0;
+      let costSource: DealItemCostSource = "manual";
+
+      if (payload.item_type === "product" && payload.item_id) {
+        const fifoEst = await warehouseService.estimateFifoUnitCost(tx, tenantId, payload.item_id, quantity);
+        if (payload.cost_price === undefined) {
+          costPrice = fifoEst.unitCost;
+        }
+        costSource = fifoEst.hasBatches ? "estimated_fifo" : "manual";
+      }
+
       const row = await tx.queryOneOrThrow<DealItemRow>(
         `INSERT INTO deal_items
-           (tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+           (tenant_id, deal_id, item_type, item_id, name, description, sku, price, cost_price, cost_source, quantity,
             unit, discount_percent, discount_amount, total_amount, sort_order, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
-         RETURNING id, tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
+         RETURNING id, tenant_id, deal_id, item_type, item_id, name, description, sku, price,
+                   cost_price, cost_source, consumed_at, quantity,
                    unit, discount_percent, discount_amount, total_amount, sort_order, created_at, updated_at`,
         [
           tenantId,
@@ -1640,6 +1929,8 @@ export class DealsService {
           payload.description?.trim() ?? "",
           payload.sku?.trim() ?? "",
           price,
+          costPrice,
+          costSource,
           quantity,
           payload.unit?.trim() ?? "шт",
           discountPercent,
@@ -1648,6 +1939,46 @@ export class DealsService {
           payload.sort_order ?? 0,
         ],
       );
+
+      let createdPurchaseReq: { id: string; status: string } | null = null;
+      if (payload.item_type === "product" && payload.add_to_purchase_request) {
+        let reqQty = quantity;
+        if (payload.item_id) {
+          const stockRow = await tx.queryOne<{ available: string }>(
+            `SELECT (
+               COALESCE((SELECT SUM(b.remaining_quantity) FROM warehouse_batches b WHERE b.tenant_id = $1 AND b.item_id = $2), 0)
+               - COALESCE((SELECT SUM(r.quantity) FROM warehouse_reservations r WHERE r.tenant_id = $1 AND r.item_id = $2 AND r.status = 'reserved'), 0)
+             )::numeric(10,2)::text AS available`,
+            [tenantId, payload.item_id],
+          );
+          const avail = Math.max(0, Number(stockRow?.available ?? 0));
+          const shortage = Math.round((quantity - avail) * 100) / 100;
+          if (shortage > 0) {
+            reqQty = shortage;
+          }
+        }
+
+        const pr = await tx.queryOneOrThrow<{ id: string; status: string }>(
+          `INSERT INTO purchase_requests
+             (tenant_id, deal_id, deal_item_id, item_id, item_name, sku, quantity, unit, estimated_price, status, comment, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11)
+           RETURNING id, status`,
+          [
+            tenantId,
+            dealId,
+            row.id,
+            payload.item_id ?? null,
+            payload.name.trim(),
+            payload.sku?.trim() ?? "",
+            reqQty,
+            payload.unit?.trim() ?? "шт",
+            costPrice,
+            `Заявка из сделки «${deal.title}»`,
+            userId ?? null,
+          ],
+        );
+        createdPurchaseReq = pr;
+      }
 
       // Recalculate deal budget
       const budgetRow = await tx.queryOne<{ total: string }>(
@@ -1661,7 +1992,7 @@ export class DealsService {
         [tenantId, dealId, totalBudget],
       );
 
-      return { item: toDealItemDTO(row), totalBudget };
+      return { item: toDealItemDTO(row, undefined, createdPurchaseReq), totalBudget };
     });
   }
 
@@ -1687,6 +2018,21 @@ export class DealsService {
       const discountAmount = payload.discount_amount !== undefined ? Number(payload.discount_amount) : Number(existing.discount_amount);
       const totalAmount = calculateItemTotal(price, quantity, discountPercent, discountAmount);
 
+      let costPrice =
+        payload.cost_price !== undefined ? Number(payload.cost_price) : Number(existing.cost_price ?? 0);
+      if (
+        payload.cost_price === undefined &&
+        payload.quantity !== undefined &&
+        existing.item_type === "product" &&
+        existing.item_id &&
+        !existing.consumed_at
+      ) {
+        const fifoEst = await warehouseService.estimateFifoUnitCost(tx, tenantId, existing.item_id, quantity);
+        if (fifoEst.hasBatches) {
+          costPrice = fifoEst.unitCost;
+        }
+      }
+
       const name = payload.name !== undefined ? payload.name.trim() : existing.name;
       const description = payload.description !== undefined ? payload.description.trim() : (existing.description ?? "");
       const sku = payload.sku !== undefined ? payload.sku.trim() : (existing.sku ?? "");
@@ -1695,11 +2041,12 @@ export class DealsService {
 
       const row = await tx.queryOneOrThrow<DealItemRow>(
         `UPDATE deal_items
-         SET name = $4, description = $5, sku = $6, price = $7, quantity = $8,
-             unit = $9, discount_percent = $10, discount_amount = $11, total_amount = $12,
-             sort_order = $13, updated_at = now()
+         SET name = $4, description = $5, sku = $6, price = $7, cost_price = $8, quantity = $9,
+             unit = $10, discount_percent = $11, discount_amount = $12, total_amount = $13,
+             sort_order = $14, updated_at = now()
          WHERE tenant_id = $1 AND deal_id = $2 AND id = $3
-         RETURNING id, tenant_id, deal_id, item_type, item_id, name, description, sku, price, quantity,
+         RETURNING id, tenant_id, deal_id, item_type, item_id, name, description, sku, price,
+                   cost_price, cost_source, consumed_at, quantity,
                    unit, discount_percent, discount_amount, total_amount, sort_order, created_at, updated_at`,
         [
           tenantId,
@@ -1709,6 +2056,7 @@ export class DealsService {
           description,
           sku,
           price,
+          costPrice,
           quantity,
           unit,
           discountPercent,
@@ -1765,7 +2113,23 @@ export class DealsService {
   }
 }
 
-function toDealItemDTO(r: DealItemRow): DealItemDTO {
+function toDealItemDTO(
+  r: DealItemRow,
+  batchAllocations?: DealItemBatchAllocationDTO[],
+  purchaseRequest?: { id: string; status: string } | null,
+): DealItemDTO {
+  const qty = Number(r.quantity ?? 1);
+  const totalAmount = Number(r.total_amount ?? 0);
+  const costPrice = Number(r.cost_price ?? 0);
+  const totalCost = Math.round(costPrice * qty * 100) / 100;
+  const grossProfit = totalAmount - totalCost;
+  const markupPercent =
+    totalCost > 0 ? Math.round((grossProfit / totalCost) * 1000) / 10 : undefined;
+  const marginPercent =
+    totalAmount > 0 && costPrice > 0
+      ? Math.round((grossProfit / totalAmount) * 1000) / 10
+      : undefined;
+
   return {
     id: r.id,
     dealId: r.deal_id,
@@ -1775,11 +2139,23 @@ function toDealItemDTO(r: DealItemRow): DealItemDTO {
     description: r.description ?? "",
     sku: r.sku ?? "",
     price: Number(r.price ?? 0),
-    quantity: Number(r.quantity ?? 1),
+    costPrice,
+    costSource: (r.cost_source as DealItemCostSource | undefined) ?? "manual",
+    consumedAt: r.consumed_at
+      ? r.consumed_at instanceof Date
+        ? r.consumed_at.toISOString()
+        : String(r.consumed_at)
+      : null,
+    batchAllocations: batchAllocations && batchAllocations.length > 0 ? batchAllocations : undefined,
+    markupPercent,
+    marginPercent,
+    purchaseRequestId: purchaseRequest?.id ?? null,
+    purchaseRequestStatus: purchaseRequest?.status ?? null,
+    quantity: qty,
     unit: r.unit ?? "шт",
     discountPercent: Number(r.discount_percent ?? 0),
     discountAmount: Number(r.discount_amount ?? 0),
-    totalAmount: Number(r.total_amount ?? 0),
+    totalAmount,
     sortOrder: Number(r.sort_order ?? 0),
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
     updatedAt: r.updated_at

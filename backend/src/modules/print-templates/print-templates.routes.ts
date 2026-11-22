@@ -10,8 +10,13 @@ import {
 export async function printTemplatesRoutes(app: FastifyInstance) {
   await app.register(authenticatePlugin);
 
+  const moduleGuard = app.requireModule("service_center");
+  const canRead = [moduleGuard, app.requirePermission("service_center:read")];
+  const canWrite = [moduleGuard, app.requirePermission("service_center:write")];
+  const canAdmin = [moduleGuard, app.requirePermission("tenant:admin")];
+
   // Список доступных шаблонов (с фильтрацией по типу документа и видимости в меню)
-  app.get("/", async (request, reply) => {
+  app.get("/", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { type, document_type, visible_only, visibleOnly } = request.query as {
       type?: string;
@@ -30,20 +35,20 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Настройки печати тенанта (реквизиты, брендинг, правила, нумерация)
-  app.get("/settings", async (request, reply) => {
+  app.get("/settings", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const settings = await printTemplatesService.getSettings(tenant_id);
     return reply.send({ data: settings });
   });
 
-  app.put("/settings", async (request, reply) => {
+  app.put("/settings", { onRequest: canAdmin }, async (request, reply) => {
     const { tenant_id } = request;
     const body = updatePrintTemplateSettingsSchema.parse(request.body);
     const updated = await printTemplatesService.updateSettings(tenant_id, body);
     return reply.send({ data: updated });
   });
 
-  app.patch("/settings", async (request, reply) => {
+  app.patch("/settings", { onRequest: canAdmin }, async (request, reply) => {
     const { tenant_id } = request;
     const body = updatePrintTemplateSettingsSchema.parse(request.body);
     const updated = await printTemplatesService.updateSettings(tenant_id, body);
@@ -51,7 +56,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Создание / клонирование нового шаблона
-  app.post("/", async (request, reply) => {
+  app.post("/", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = createPrintTemplateSchema.parse(request.body);
     const created = await printTemplatesService.create(tenant_id, body);
@@ -59,7 +64,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Установка шаблона по умолчанию для его типа документа
-  app.post("/:id/set-default", async (request, reply) => {
+  app.post("/:id/set-default", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const updated = await printTemplatesService.setDefault(tenant_id, id);
@@ -67,7 +72,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Переключение видимости шаблона в меню быстрой печати
-  app.post("/:id/toggle-visibility", async (request, reply) => {
+  app.post("/:id/toggle-visibility", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const updated = await printTemplatesService.toggleVisibility(tenant_id, id);
@@ -75,7 +80,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Дублирование (клонирование) шаблона в пользовательскую копию
-  app.post("/:id/duplicate", async (request, reply) => {
+  app.post("/:id/duplicate", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const created = await printTemplatesService.duplicate(tenant_id, id);
@@ -83,7 +88,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Удаление кастомного шаблона
-  app.delete("/:id", async (request, reply) => {
+  app.delete("/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const result = await printTemplatesService.delete(tenant_id, id);
@@ -91,7 +96,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Получение шаблона по ID или слагу
-  app.get("/:idOrSlug", async (request, reply) => {
+  app.get("/:idOrSlug", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { idOrSlug } = request.params as { idOrSlug: string };
     const tpl = await printTemplatesService.getBySlug(tenant_id, idOrSlug);
@@ -102,7 +107,18 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Обновление шаблона по ID
-  app.put("/:id", async (request, reply) => {
+  app.put("/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = updatePrintTemplateSchema.parse(request.body);
+    const updated = await printTemplatesService.update(tenant_id, id, body);
+    if (!updated) {
+      return reply.status(404).send({ error: "Print template not found" });
+    }
+    return reply.send({ data: updated });
+  });
+
+  app.patch("/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const body = updatePrintTemplateSchema.parse(request.body);
@@ -114,7 +130,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
   });
 
   // Рендер шаблона для наряда (возвращает готовый HTML)
-  app.get("/:idOrSlug/render", async (request, reply) => {
+  app.get("/:idOrSlug/render", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const { idOrSlug } = request.params as { idOrSlug: string };
     const { orderId } = request.query as { orderId?: string };

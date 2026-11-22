@@ -384,6 +384,7 @@ export const RepairWorkOrderModal = memo(function RepairWorkOrderModal({
         onClose={() => setSettingsOpen(false)}
         initialDocumentType="work_order"
         orderId={ticket?.id}
+        order={ticket}
       />
     </div>
   );

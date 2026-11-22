@@ -15,7 +15,8 @@ import {
 import { DealListView } from "@/components/crm/deals/DealListView";
 import { DealsCalendarView } from "@/components/crm/deals/DealsCalendarView";
 import { useDealsViewMode } from "@/components/crm/deals/use-deals-view-mode";
-import { CreateDealModal } from "@/components/crm/deals/CreateDealModal";
+import { DrawerCreateDeal } from "@/components/crm/deals/DrawerCreateDeal";
+import { ContactImportDialog } from "@/components/crm/contacts/ContactImportDialog";
 import { DealDrawer } from "@/components/crm/deals/DealDrawer";
 import {
   DealsToolbar,
@@ -34,6 +35,7 @@ import {
   useKanban,
   usePipelines,
   useUpdateStage,
+  useExportDeals,
   type KanbanColumnDTO,
 } from "@/lib/api/use-deals";
 import { useTenantUsers, indexTenantUsers } from "@/lib/api/use-tenant-users";
@@ -88,6 +90,8 @@ function DealsContent() {
   const [configureMode, setConfigureMode] = useState(false);
   const [bulkEnabled, setBulkEnabled] = useState(false);
   const [appearance, setAppearance] = useState<DealCardOptions>(DEFAULT_APPEARANCE);
+  const [importOpen, setImportOpen] = useState(false);
+  const exportDealsMutation = useExportDeals();
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -305,30 +309,33 @@ function DealsContent() {
     return result;
   }, [columns]);
 
-  const handleExport = useCallback(() => {
-    const header = ["Название", "Этап", "Бюджет", "Валюта", "Создана"];
-    const stageOfDeal = (deal: (typeof filteredDeals)[number]): string =>
-      columns.find((column) => column.stageId === deal.stageId)?.stageName ?? "";
-    const lines = [
-      header.map(csvEscape).join(";"),
-      ...sortedDeals.map((deal) =>
-        [
-          csvEscape(deal.title),
-          csvEscape(stageOfDeal(deal)),
-          String(deal.budget),
-          deal.currency,
-          new Intl.DateTimeFormat("ru-RU").format(new Date(deal.createdAt)),
-        ].join(";"),
-      ),
-    ];
-    const blob = new Blob([`\uFEFF${lines.join("\r\n")}`], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `deals-${new Date().toISOString().slice(0, 10)}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, [columns, sortedDeals]);
+  const handleExportCsv = useCallback(async () => {
+    try {
+      toast.info("Экспорт сделок в CSV запущен...");
+      await exportDealsMutation.mutateAsync({
+        format: "csv",
+        pipelineId: pipelineId ?? undefined,
+        search: search || undefined,
+      });
+      toast.success("Файл сделок (CSV) скачан");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось экспортировать сделки");
+    }
+  }, [exportDealsMutation, pipelineId, search]);
+
+  const handleExportXlsx = useCallback(async () => {
+    try {
+      toast.info("Экспорт сделок в Excel запущен...");
+      await exportDealsMutation.mutateAsync({
+        format: "xlsx",
+        pipelineId: pipelineId ?? undefined,
+        search: search || undefined,
+      });
+      toast.success("Файл сделок (Excel) скачан");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось экспортировать сделки");
+    }
+  }, [exportDealsMutation, pipelineId, search]);
 
   // -------------------------------------------------------------------------
   // Редактор стадий («НАСТРОИТЬ»)
@@ -426,7 +433,9 @@ function DealsContent() {
         onBulkToggle={() => setBulkEnabled((prev) => !prev)}
         configureMode={configureMode}
         onConfigureToggle={handleConfigureToggle}
-        onExport={handleExport}
+        onExport={handleExportCsv}
+        onExportXlsx={handleExportXlsx}
+        onImport={() => setImportOpen(true)}
         duplicates={duplicates}
         onCreateDeal={() => setCreateOpen(true)}
       />
@@ -521,7 +530,14 @@ function DealsContent() {
           />
         )}
 
-      <CreateDealModal open={createOpen} onClose={() => setCreateOpen(false)} onSubmit={handleCreate} defaultPipelineId={pipelineId ?? undefined} />
+      <DrawerCreateDeal open={createOpen} onClose={() => setCreateOpen(false)} onSubmit={handleCreate} defaultPipelineId={pipelineId ?? undefined} />
+
+      <ContactImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        initialCreateDeal={true}
+        onSuccess={() => void kanban.refetch()}
+      />
 
       <DealDrawer
         dealId={drawerDealId}

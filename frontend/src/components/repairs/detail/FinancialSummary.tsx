@@ -16,13 +16,27 @@ import {
   ChevronDown,
   Loader2,
   FileText,
+  CloudUpload,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import type { WorkItem, PartItem } from "@/lib/repairs/repairs.types";
-import { useRepairInvoices, useSendInvoice, type InvoiceDTO } from "@/lib/api/use-invoices";
+import {
+  useRepairInvoices,
+  useSendInvoice,
+  useSyncInvoiceToElba,
+  useDeleteInvoice,
+  useFinanceOrganizations,
+  openInvoiceRfPrintWindow,
+  type InvoiceDTO,
+} from "@/lib/api/use-invoices";
 import { BatchPaymentModal } from "./BatchPaymentModal";
 import { GenerateInvoiceModal } from "./GenerateInvoiceModal";
+import { InvoiceEditModal } from "@/components/finance/InvoiceEditModal";
+import { Guard } from "@/components/shared/Guard";
 import { TagPill } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
+import { apiClient } from "@/lib/api/apiClient";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface FinancialSummaryProps {
@@ -30,6 +44,10 @@ interface FinancialSummaryProps {
   workItems: WorkItem[];
   parts: PartItem[];
   hasFinanceModule: boolean;
+  companyId?: string | null;
+  companyName?: string | null;
+  companyInn?: string | null;
+  companyAddress?: string | null;
   customerName?: string;
   customerPhone?: string;
   dealId?: string | null;
@@ -63,6 +81,10 @@ export const FinancialSummary = memo(function FinancialSummary({
   workItems,
   parts,
   hasFinanceModule,
+  companyId = null,
+  companyName = null,
+  companyInn = null,
+  companyAddress = null,
   customerName = "",
   customerPhone = "",
   dealId = null,
@@ -71,24 +93,48 @@ export const FinancialSummary = memo(function FinancialSummary({
 }: FinancialSummaryProps) {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<InvoiceDTO | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [printingId, setPrintingId] = useState<string | null>(null);
+  const [syncingElbaId, setSyncingElbaId] = useState<string | null>(null);
+  const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
   const [activeMessengerMenuId, setActiveMessengerMenuId] = useState<string | null>(null);
   const messengerMenuRef = useRef<HTMLDivElement>(null);
   useClickOutside(messengerMenuRef, () => setActiveMessengerMenuId(null), activeMessengerMenuId !== null);
 
   const { data: invoices = [], isLoading: isLoadingInvoices, refetch: refetchInvoices } = useRepairInvoices(repairOrderId);
+  const { data: organizations = [] } = useFinanceOrganizations();
   const sendInvoice = useSendInvoice();
+  const syncElba = useSyncInvoiceToElba();
+  const deleteInvoice = useDeleteInvoice();
+  const hasElbaConfigured = useMemo(
+    () => organizations.some((o) => o.elbaEnabled && o.elbaHasApiKey && o.elbaOrganizationId),
+    [organizations],
+  );
 
   const summary = useMemo(() => {
     const totalWork = workItems.reduce((sum, w) => sum + w.cost, 0);
     const totalPartsRetail = parts.reduce((sum, p) => sum + p.retail_price * p.quantity, 0);
     const totalPartsCost = parts.reduce((sum, p) => sum + p.cost_price * p.quantity, 0);
+    const partsMarkupAmount = totalPartsRetail - totalPartsCost;
+    const partsMarkupPct =
+      totalPartsCost > 0 ? Math.round((partsMarkupAmount / totalPartsCost) * 100) : 0;
     const totalClient = totalWork + totalPartsRetail;
     const totalCost = totalPartsCost;
     const grossProfit = totalClient - totalCost;
     const marginPct = totalClient > 0 ? Math.round((grossProfit / totalClient) * 100) : 0;
 
-    return { totalWork, totalPartsRetail, totalPartsCost, totalClient, totalCost, grossProfit, marginPct };
+    return {
+      totalWork,
+      totalPartsRetail,
+      totalPartsCost,
+      partsMarkupAmount,
+      partsMarkupPct,
+      totalClient,
+      totalCost,
+      grossProfit,
+      marginPct,
+    };
   }, [workItems, parts]);
 
   const hasData = workItems.length > 0 || parts.length > 0;
@@ -96,13 +142,7 @@ export const FinancialSummary = memo(function FinancialSummary({
   const handleDownloadPdf = useCallback(async (inv: InvoiceDTO) => {
     try {
       setDownloadingId(inv.id);
-      const res = await fetch(`/api/v1/invoices/${inv.id}/pdf`, {
-        credentials: "include",
-      });
-      if (!res.ok) {
-        throw new Error("Ошибка скачивания PDF с сервера");
-      }
-      const blob = await res.blob();
+      const { blob } = await apiClient.downloadBlob(`/api/v1/invoices/${inv.id}/pdf`);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -120,83 +160,56 @@ export const FinancialSummary = memo(function FinancialSummary({
     }
   }, []);
 
-  const handlePrintInvoice = useCallback((inv: InvoiceDTO) => {
-    // Generate clean printable window for invoice
-    const w = window.open("", "_blank", "width=850,height=1000");
-    if (!w) {
-      toast.error("Всплывающее окно заблокировано браузером");
-      return;
+  const handlePrintInvoice = useCallback(async (inv: InvoiceDTO) => {
+    try {
+      setPrintingId(inv.id);
+      await openInvoiceRfPrintWindow(inv.id);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Не удалось открыть печатную форму счёта";
+      toast.error(msg);
+    } finally {
+      setPrintingId(null);
     }
-
-    const itemsRows = inv.lineItems
-      .map(
-        (it, idx) => `
-        <tr>
-          <td style="padding:6px;border:1px solid #ccc;text-align:center;">${idx + 1}</td>
-          <td style="padding:6px;border:1px solid #ccc;">${it.description}${it.sourceLabel ? ` (${it.sourceLabel})` : ""}</td>
-          <td style="padding:6px;border:1px solid #ccc;text-align:center;">${it.quantity}</td>
-          <td style="padding:6px;border:1px solid #ccc;text-align:center;">шт.</td>
-          <td style="padding:6px;border:1px solid #ccc;text-align:right;">${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2 }).format(it.unitPrice)}</td>
-          <td style="padding:6px;border:1px solid #ccc;text-align:right;font-weight:bold;">${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2 }).format(it.total)}</td>
-        </tr>`,
-      )
-      .join("");
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Счёт № ${inv.invoiceNumber}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; color: #111; padding: 30px; margin: 0 auto; max-width: 800px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-    th { background: #f3f4f6; font-weight: bold; border: 1px solid #ccc; padding: 6px; }
-    @media print { @page { margin: 12mm; } }
-  </style>
-</head>
-<body onload="window.print()">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:2px solid #111;padding-bottom:10px;">
-    <div>
-      <h1 style="margin:0;font-size:20px;font-weight:bold;">Счёт на оплату № ${inv.invoiceNumber}</h1>
-      <p style="margin:4px 0 0;color:#666;font-size:12px;">от ${formatDateRu(inv.issueDate)}</p>
-    </div>
-    <div style="text-align:right;">
-      <span style="font-size:16px;font-weight:bold;color:#4a38f5;">${formatCost(inv.total)}</span>
-    </div>
-  </div>
-
-  <div style="margin-bottom:15px;font-size:12px;line-height:1.6;">
-    <p><strong>Плательщик:</strong> ${inv.companyName || inv.contactName} ${inv.companyInn ? `(ИНН: ${inv.companyInn})` : ""}</p>
-    <p><strong>Срок оплаты:</strong> до ${formatDateRu(inv.dueDate)}</p>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th style="width:30px;">№</th>
-        <th>Товары (работы, услуги)</th>
-        <th style="width:50px;">Кол-во</th>
-        <th style="width:40px;">Ед.</th>
-        <th style="width:85px;">Цена</th>
-        <th style="width:95px;">Сумма</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${itemsRows}
-    </tbody>
-  </table>
-
-  <div style="margin-top:20px;text-align:right;">
-    <p style="margin:4px 0;"><strong>Итого:</strong> ${formatCost(inv.subtotal)}</p>
-    ${inv.vatRate > 0 ? `<p style="margin:4px 0;color:#666;">В том числе НДС (${inv.vatRate}%): ${formatCost(inv.vatAmount)}</p>` : `<p style="margin:4px 0;color:#666;">Без НДС</p>`}
-    <p style="margin:8px 0;font-size:15px;font-weight:bold;">Всего к оплате: ${formatCost(inv.total)}</p>
-  </div>
-</body>
-</html>`;
-
-    w.document.write(html);
-    w.document.close();
   }, []);
+
+  const handleSyncToElba = useCallback(
+    async (inv: InvoiceDTO) => {
+      try {
+        setSyncingElbaId(inv.id);
+        await syncElba.mutateAsync(inv.id);
+        toast.success(`Счёт №${inv.invoiceNumber} выгружен в Контур.Эльбу`);
+        void refetchInvoices();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Не удалось выгрузить счёт в Контур.Эльбу";
+        toast.error(msg);
+      } finally {
+        setSyncingElbaId(null);
+      }
+    },
+    [syncElba, refetchInvoices],
+  );
+
+  const handleDeleteInvoice = useCallback(
+    async (inv: InvoiceDTO) => {
+      if (inv.status === "paid") {
+        toast.error("Оплаченный счёт нельзя удалить");
+        return;
+      }
+      if (!window.confirm(`Удалить счёт № ${inv.invoiceNumber}?`)) return;
+      try {
+        setDeletingInvoiceId(inv.id);
+        await deleteInvoice.mutateAsync(inv.id);
+        toast.success(`Счёт № ${inv.invoiceNumber} удалён`);
+        void refetchInvoices();
+        if (onRefresh) onRefresh();
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "Не удалось удалить счёт");
+      } finally {
+        setDeletingInvoiceId(null);
+      }
+    },
+    [deleteInvoice, refetchInvoices, onRefresh],
+  );
 
   const handleSendToMessenger = useCallback(
     async (inv: InvoiceDTO, channelType: "telegram" | "whatsapp" | "all") => {
@@ -275,9 +288,11 @@ export const FinancialSummary = memo(function FinancialSummary({
                   <span className="text-xs text-[#666666] font-mono">{formatCost(summary.totalPartsCost)}</span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
-                  <span className="text-xs text-emerald-700 pl-6">Наценка на запчасти</span>
+                  <span className="text-xs text-emerald-700 pl-6">
+                    Наценка на запчасти{summary.totalPartsCost > 0 ? ` (+${summary.partsMarkupPct}%)` : ""}
+                  </span>
                   <span className="text-xs font-semibold font-mono text-emerald-700">
-                    {formatCost(summary.totalPartsRetail - summary.totalPartsCost)}
+                    {formatCost(summary.partsMarkupAmount)}
                   </span>
                 </div>
               </div>
@@ -302,7 +317,7 @@ export const FinancialSummary = memo(function FinancialSummary({
               </div>
               <div className="text-right">
                 <span className="text-lg font-bold text-emerald-700">{formatCost(summary.grossProfit)}</span>
-                <span className="block text-xs text-emerald-700/80">наценка {summary.marginPct}%</span>
+                <span className="block text-xs text-emerald-700/80">маржа {summary.marginPct}%</span>
               </div>
             </div>
           </div>
@@ -435,14 +450,19 @@ export const FinancialSummary = memo(function FinancialSummary({
 
                       {/* Action buttons per invoice */}
                       <div className="flex items-center gap-1.5 relative">
-                        {/* 1. Печать */}
+                        {/* 1. Печать РФ-счёта */}
                         <button
                           type="button"
-                          onClick={() => handlePrintInvoice(inv)}
-                          title="Распечатать счёт"
-                          className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          onClick={() => void handlePrintInvoice(inv)}
+                          disabled={printingId === inv.id}
+                          title="Распечатать счёт по стандарту РФ"
+                          className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50"
                         >
-                          <Printer className="h-3.5 w-3.5 text-[#666666]" />
+                          {printingId === inv.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                          ) : (
+                            <Printer className="h-3.5 w-3.5 text-[#666666]" />
+                          )}
                           <span className="hidden sm:inline">Печать</span>
                         </button>
 
@@ -461,6 +481,32 @@ export const FinancialSummary = memo(function FinancialSummary({
                           )}
                           <span className="hidden sm:inline">PDF</span>
                         </button>
+
+                        {/* 2.5 Контур.Эльба */}
+                        {inv.elbaBillId ? (
+                          <span
+                            title={`Выгружен в Контур.Эльбу (ID: ${inv.elbaBillId})`}
+                            className="inline-flex h-8 items-center gap-1 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-700"
+                          >
+                            <CheckCircle2 className="h-3 w-3" />
+                            Эльба
+                          </span>
+                        ) : hasElbaConfigured ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleSyncToElba(inv)}
+                            disabled={syncingElbaId === inv.id}
+                            title="Выгрузить счёт в Контур.Эльбу"
+                            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {syncingElbaId === inv.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                            ) : (
+                              <CloudUpload className="h-3.5 w-3.5 text-[#4a38f5]" />
+                            )}
+                            <span className="hidden sm:inline">В Эльбу</span>
+                          </button>
+                        ) : null}
 
                         {/* 3. Отправить клиенту в мессенджер */}
                         <div ref={isMessengerMenuOpen ? messengerMenuRef : undefined} className="relative">
@@ -510,6 +556,33 @@ export const FinancialSummary = memo(function FinancialSummary({
                             </div>
                           )}
                         </div>
+
+                        {/* 4. Редактировать и удалить (только для неоплаченных и с правом finance:write) */}
+                        {!isPaid && (
+                          <Guard requiredPermission="finance:write">
+                            <button
+                              type="button"
+                              onClick={() => setEditingInvoice(inv)}
+                              title="Редактировать счёт"
+                              className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteInvoice(inv)}
+                              disabled={deletingInvoiceId === inv.id}
+                              title="Удалить счёт"
+                              className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {deletingInvoiceId === inv.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </Guard>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -533,10 +606,25 @@ export const FinancialSummary = memo(function FinancialSummary({
         open={isInvoiceModalOpen}
         onClose={() => setIsInvoiceModalOpen(false)}
         repairOrderId={repairOrderId}
+        defaultCompanyId={companyId}
+        defaultCompanyName={companyName}
+        defaultCompanyInn={companyInn}
+        defaultCompanyAddress={companyAddress}
         defaultCustomerName={customerName}
         defaultCustomerPhone={customerPhone}
         dealId={dealId}
         onSuccess={handleSuccessInvoice}
+      />
+
+      {/* Modal 3: Редактировать счёт */}
+      <InvoiceEditModal
+        open={editingInvoice !== null}
+        invoice={editingInvoice}
+        onClose={() => setEditingInvoice(null)}
+        onSaved={() => {
+          void refetchInvoices();
+          if (onRefresh) onRefresh();
+        }}
       />
     </div>
   );

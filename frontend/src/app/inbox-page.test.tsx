@@ -1,7 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import InboxPage from "./(dashboard)/inbox/page";
+
+vi.mock("@/lib/api/use-crm-chat", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    usePresence: () => ({ data: undefined, isLoading: false }),
+  };
+});
+
+function renderWithQuery(ui: React.ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
 
 vi.mock("@/lib/api/use-inbox", () => ({
   useInboxThreads: ({ search }: { search?: string } = {}) => ({
@@ -22,7 +36,7 @@ vi.mock("@/components/crm/shared/CrmChatView", () => ({
 
 describe("Inbox Omnichannel Page (Block 5.4)", () => {
   it("renders threads, active conversation and context card", () => {
-    render(<InboxPage />);
+    renderWithQuery(<InboxPage />);
     expect(screen.getByText("Входящие")).toBeDefined();
     expect(screen.getAllByText("Алексей Смирнов").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/MacBook Pro 16/i).length).toBeGreaterThanOrEqual(1);
@@ -30,14 +44,14 @@ describe("Inbox Omnichannel Page (Block 5.4)", () => {
   });
 
   it("filters threads by search query", () => {
-    render(<InboxPage />);
+    renderWithQuery(<InboxPage />);
     fireEvent.change(screen.getByPlaceholderText(/Поиск по диалогам и контактам/i), { target: { value: "iPhone" } });
     expect(screen.getAllByText("Елена Васильева").length).toBeGreaterThan(0);
     expect(screen.queryByText("MacBook Pro 16")).toBeNull();
   });
 
   it("blurs active element when selecting a thread to prevent accidental input takeover", () => {
-    render(<InboxPage />);
+    renderWithQuery(<InboxPage />);
     const searchInput = screen.getByPlaceholderText(/Поиск по диалогам и контактам/i);
     searchInput.focus();
     expect(document.activeElement).toBe(searchInput);

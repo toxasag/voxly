@@ -1,8 +1,14 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiClient, API_BASE_URL } from "./apiClient";
-import { readAccessToken } from "@/lib/auth/session";
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { apiClient, triggerBrowserDownload } from "./apiClient";
+
+export interface WarehouseItemModelDTO {
+  id: string;
+  name: string;
+  brandId?: string;
+  brandName?: string;
+}
 
 export interface WarehouseItemDTO {
   id: string;
@@ -14,9 +20,18 @@ export interface WarehouseItemDTO {
   minStock: number;
   retailPrice: number;
   costPrice: number;
+  fifoCostPrice?: number;
+  avgBatchCostPrice?: number;
+  stockValuation?: number;
+  activeBatchesCount?: number;
   totalStock: number;
   reservedStock: number;
   availableStock: number;
+  price?: number;
+  quantity?: number;
+  models?: WarehouseItemModelDTO[];
+  modelIds?: string[];
+  modelNames?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -41,6 +56,9 @@ export interface WarehouseMovementDTO {
   batchId: string | null;
   repairOrderId: string | null;
   repairTicketNumber?: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
+  dealTitle?: string | null;
   type: string;
   quantity: number;
   costPrice: number;
@@ -52,7 +70,10 @@ export interface WarehouseMovementDTO {
 export interface PurchaseRequestDTO {
   id: string;
   repairOrderId: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
   repairTicketNumber?: string | null;
+  dealTitle?: string | null;
   itemId: string | null;
   itemName: string;
   sku: string;
@@ -75,6 +96,8 @@ export interface CreateWarehouseItemPayload {
   min_stock?: number;
   retail_price?: number;
   cost_price?: number;
+  model_ids?: string[];
+  models?: string[];
 }
 
 export interface IntakeBatchPayload {
@@ -94,6 +117,8 @@ export interface IntakeBatchPayload {
 
 export interface CreatePurchaseRequestPayload {
   repair_order_id?: string;
+  deal_id?: string;
+  deal_item_id?: string;
   item_id?: string;
   item_name: string;
   sku?: string;
@@ -130,6 +155,11 @@ export interface SupplierOrderItemDTO {
   itemId: string | null;
   itemName: string;
   sku: string;
+  requestedQuantity: number;
+  extraQuantity: number;
+  repairOrderId?: string | null;
+  purchaseRequestIds?: string[];
+  repairOrders?: string;
   quantity: number;
   unit: string;
   price: number;
@@ -141,6 +171,7 @@ export interface SupplierOrderDTO {
   id: string;
   orderNumber: string;
   supplierName: string;
+  supplierCompanyId: string | null;
   status: "draft" | "pending_payment" | "paid" | "received" | "cancelled";
   totalAmount: number;
   cashAccountId: string | null;
@@ -157,17 +188,49 @@ export interface SupplierOrderDTO {
 
 export interface CreateSupplierOrderPayload {
   supplier_name: string;
+  supplier_company_id?: string | null;
   purchase_request_ids?: string[];
   items?: {
-    purchase_request_id?: string;
-    item_id?: string;
+    purchase_request_id?: string | null;
+    purchase_request_ids?: string[];
+    item_id?: string | null;
     item_name: string;
     sku?: string;
+    requested_quantity?: number;
+    extra_quantity?: number;
     quantity: number;
     unit?: string;
     price: number;
+    repair_orders?: string;
   }[];
   notes?: string;
+}
+
+export interface UpdateSupplierOrderPayload {
+  supplier_name?: string;
+  supplier_company_id?: string | null;
+  notes?: string;
+  status?: "draft" | "pending_payment" | "paid" | "received" | "cancelled";
+  items?: {
+    id?: string;
+    purchase_request_id?: string | null;
+    purchase_request_ids?: string[];
+    item_id?: string | null;
+    item_name: string;
+    sku?: string;
+    requested_quantity?: number;
+    extra_quantity?: number;
+    quantity: number;
+    unit?: string;
+    price: number;
+    repair_orders?: string;
+  }[];
+}
+
+export interface ReceiptSupplierOrderPayload {
+  cash_account_id?: string;
+  mark_paid?: boolean;
+  comment?: string;
 }
 
 export interface PaySupplierOrderPayload {
@@ -186,26 +249,132 @@ export const warehouseKeys = {
   items: (search?: string) => [...warehouseKeys.all, "items", search ?? ""] as const,
   batches: (itemId?: string) => [...warehouseKeys.all, "batches", itemId ?? ""] as const,
   movements: () => [...warehouseKeys.all, "movements"] as const,
-  purchases: (status?: string, orderId?: string) => {
+  categories: () => [...warehouseKeys.all, "categories"] as const,
+  brands: () => [...warehouseKeys.all, "brands"] as const,
+  models: (brandId?: string, brand?: string) =>
+    [...warehouseKeys.all, "models", brandId ?? "", brand ?? ""] as const,
+  purchases: (status?: string, orderId?: string, dealId?: string) => {
     const key = [...warehouseKeys.all, "purchases"] as string[];
-    if (status !== undefined || orderId !== undefined) {
+    if (status !== undefined || orderId !== undefined || dealId !== undefined) {
       key.push(status ?? "");
-      if (orderId !== undefined) {
-        key.push(orderId);
+      if (orderId !== undefined || dealId !== undefined) {
+        key.push(orderId ?? "");
+        if (dealId !== undefined) {
+          key.push(dealId);
+        }
       }
     }
     return key;
   },
 };
 
+export interface WarehousePaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+  totalValuation?: number;
+  lowStockCount?: number;
+}
+
+export interface PaginatedWarehouseResponse {
+  items: WarehouseItemDTO[];
+  meta: WarehousePaginationMeta;
+}
+
+export interface WarehousePaginationParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  category?: string;
+  brand?: string;
+  all?: boolean;
+}
+
+export function useWarehouse(params?: WarehousePaginationParams) {
+  const page = params?.page ?? 1;
+  const limit = params?.limit ?? 25;
+  const search = params?.search;
+  const category = params?.category;
+  const brand = params?.brand;
+  const all = params?.all;
+
+  return useQuery({
+    queryKey: [
+      "warehouse",
+      "items",
+      page,
+      limit,
+      search ?? "",
+      category ?? "",
+      brand ?? "",
+      Boolean(all),
+    ],
+    queryFn: async (): Promise<PaginatedWarehouseResponse> => {
+      const q = new URLSearchParams();
+      if (!all) {
+        q.set("page", String(page));
+        q.set("limit", String(limit));
+      } else {
+        q.set("all", "true");
+      }
+      if (search && search.trim()) {
+        q.set("search", search.trim());
+      }
+      if (category && category.trim()) {
+        q.set("category", category.trim());
+      }
+      if (brand && brand.trim()) {
+        q.set("brand", brand.trim());
+      }
+
+      const qs = q.toString();
+      const res = await apiClient.get<WarehouseItemDTO[]>(
+        `/api/v1/warehouse/items${qs ? `?${qs}` : ""}`,
+      );
+
+      const rawMeta = res.meta || {};
+      const total = Number(rawMeta.total ?? res.data.length);
+      const curPage = Number(rawMeta.page ?? page);
+      const curLimit = Number(rawMeta.limit ?? limit);
+      const pages = Number(rawMeta.pages ?? (total === 0 ? 0 : Math.ceil(total / curLimit)));
+
+      return {
+        items: res.data ?? [],
+        meta: {
+          total,
+          page: curPage,
+          limit: curLimit,
+          pages,
+        },
+      };
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+}
+
 export function useWarehouseItems(search?: string) {
   return useQuery({
     queryKey: warehouseKeys.items(search),
     queryFn: async () => {
-      const params = search ? `?search=${encodeURIComponent(search)}` : "";
+      const params = search ? `?search=${encodeURIComponent(search)}&all=true` : "?all=true";
       const res = await apiClient.get<WarehouseItemDTO[]>(`/api/v1/warehouse/items${params}`);
       return res.data;
     },
+    staleTime: 30_000,
+  });
+}
+
+export function useWarehouseItem(id?: string | null) {
+  return useQuery({
+    queryKey: ["warehouse", "items", id],
+    queryFn: async () => {
+      if (!id) throw new Error("Item ID is required");
+      const res = await apiClient.get<WarehouseItemDTO>(`/api/v1/warehouse/items/${id}`);
+      return res.data;
+    },
+    enabled: Boolean(id),
     staleTime: 30_000,
   });
 }
@@ -286,13 +455,14 @@ export function useWarehouseMovements(limit: number = 100) {
   });
 }
 
-export function usePurchaseRequests(status?: string, orderId?: string) {
+export function usePurchaseRequests(status?: string, orderId?: string, dealId?: string) {
   return useQuery({
-    queryKey: warehouseKeys.purchases(status, orderId),
+    queryKey: warehouseKeys.purchases(status, orderId, dealId),
     queryFn: async () => {
       const q = new URLSearchParams();
       if (status) q.append("status", status);
       if (orderId) q.append("repair_order_id", orderId);
+      if (dealId) q.append("deal_id", dealId);
       const res = await apiClient.get<PurchaseRequestDTO[]>(`/api/v1/warehouse/purchases?${q.toString()}`);
       return res.data;
     },
@@ -312,6 +482,16 @@ export function useCreatePurchaseRequest() {
   });
 }
 
+export interface UpdatePurchaseRequestPayload {
+  item_name?: string;
+  sku?: string;
+  quantity?: number;
+  unit?: string;
+  estimated_price?: number;
+  status?: "pending" | "ordered" | "received" | "cancelled";
+  comment?: string;
+}
+
 export function useUpdatePurchaseRequest() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -320,13 +500,29 @@ export function useUpdatePurchaseRequest() {
       payload,
     }: {
       id: string;
-      payload: { status?: string; comment?: string };
+      payload: UpdatePurchaseRequestPayload;
     }) => {
       const res = await apiClient.patch<PurchaseRequestDTO>(`/api/v1/warehouse/purchases/${id}`, payload);
       return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+    },
+  });
+}
+
+export function useDeletePurchaseRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete<{ deleted: boolean; id: string }>(`/api/v1/warehouse/purchases/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
     },
   });
 }
@@ -393,6 +589,45 @@ export function useCreateSupplierOrder() {
   });
 }
 
+export function useUpdateSupplierOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: UpdateSupplierOrderPayload;
+    }): Promise<SupplierOrderDTO> => {
+      const res = await apiClient.patch<SupplierOrderDTO>(
+        `/api/v1/warehouse/supplier-orders/${id}`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+    },
+  });
+}
+
+export function useDeleteSupplierOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<boolean> => {
+      await apiClient.delete(`/api/v1/warehouse/supplier-orders/${id}`);
+      return true;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+    },
+  });
+}
+
 export function usePaySupplierOrder() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -429,10 +664,16 @@ export function usePaySupplierOrder() {
 export function useCreateReceiptFromSupplierOrder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.post<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number }>(
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload?: ReceiptSupplierOrderPayload;
+    }): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }> => {
+      const res = await apiClient.post<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }>(
         `/api/v1/warehouse/supplier-orders/${id}/create-receipt`,
-        {},
+        payload ?? {},
       );
       return res.data;
     },
@@ -443,6 +684,8 @@ export function useCreateReceiptFromSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.batches() });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.movements() });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
     },
   });
 }
@@ -555,41 +798,12 @@ export interface BulkDeleteWarehouseItemsPayload {
 }
 
 export async function downloadWarehouseExport(payload: ExportWarehouseItemsPayload): Promise<void> {
-  const token = readAccessToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${API_BASE_URL}/api/v1/warehouse/export`, {
+  const { blob, filename } = await apiClient.downloadBlob("/api/v1/warehouse/export", {
     method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    credentials: "include",
+    body: payload,
   });
-
-  if (!res.ok) {
-    throw new Error("Не удалось экспортировать номенклатуру");
-  }
-
-  const blob = await res.blob();
-  const contentDisp = res.headers.get("content-disposition");
-  let filename = payload.format === "csv" ? "catalog.csv" : "catalog.xlsx";
-  if (contentDisp) {
-    const match = contentDisp.match(/filename="?([^";]+)"?/);
-    if (match && match[1]) {
-      filename = decodeURIComponent(match[1]);
-    }
-  }
-
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
+  const fallback = payload.format === "csv" ? "catalog.csv" : "catalog.xlsx";
+  triggerBrowserDownload(blob, filename ?? fallback);
 }
 
 export function useExportWarehouseItems() {
@@ -671,6 +885,144 @@ export function useBulkDeleteWarehouseItems() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+    },
+  });
+}
+
+export function useWarehouseCategories() {
+  return useQuery({
+    queryKey: warehouseKeys.categories(),
+    queryFn: async (): Promise<string[]> => {
+      const res = await apiClient.get<string[]>("/api/v1/warehouse/categories");
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateWarehouseCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string): Promise<{ id: string; name: string }> => {
+      const res = await apiClient.post<{ id: string; name: string }>(
+        "/api/v1/warehouse/categories",
+        { name },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.categories() });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+export function useWarehouseBrands() {
+  return useQuery({
+    queryKey: warehouseKeys.brands(),
+    queryFn: async (): Promise<string[]> => {
+      const res = await apiClient.get<string[]>("/api/v1/warehouse/brands");
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateWarehouseBrand() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string): Promise<{ id: string; name: string }> => {
+      const res = await apiClient.post<{ id: string; name: string }>(
+        "/api/v1/warehouse/brands",
+        { name },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.brands() });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+export function useWarehouseModels(params?: { brandId?: string; brand?: string }) {
+  return useQuery({
+    queryKey: warehouseKeys.models(params?.brandId, params?.brand),
+    queryFn: async (): Promise<WarehouseItemModelDTO[]> => {
+      const q = new URLSearchParams();
+      if (params?.brandId) q.set("brandId", params.brandId);
+      if (params?.brand) q.set("brand", params.brand);
+      const qs = q.toString();
+      const res = await apiClient.get<WarehouseItemModelDTO[]>(
+        `/api/v1/warehouse/models${qs ? `?${qs}` : ""}`,
+      );
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateWarehouseModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      name: string;
+      brand_id?: string;
+      brand?: string;
+    }): Promise<WarehouseItemModelDTO> => {
+      const res = await apiClient.post<WarehouseItemModelDTO>(
+        "/api/v1/warehouse/models",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+export function useUpdateWarehouseModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: { name: string; brand_id?: string; brand?: string };
+    }): Promise<WarehouseItemModelDTO> => {
+      const res = await apiClient.patch<WarehouseItemModelDTO>(
+        `/api/v1/warehouse/models/${id}`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+export function useDeleteWarehouseModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<{ success: boolean; id: string }> => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(
+        `/api/v1/warehouse/models/${id}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
     },
   });
 }

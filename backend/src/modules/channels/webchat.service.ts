@@ -630,10 +630,19 @@ export class WebchatService {
     WebchatService.sessionLocks.set(sessionKey, currentLock);
 
     // Ожидаем завершения предыдущего обращения по этой же сессии (с защитой от зависания и ошибок)
-    await Promise.race([
-      previousLock.catch(() => {}),
-      new Promise<void>((resolve) => setTimeout(resolve, 20000)),
-    ]);
+    let lockTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        previousLock.catch(() => {}),
+        new Promise<void>((resolve) => {
+          lockTimer = setTimeout(resolve, 20000);
+        }),
+      ]);
+    } finally {
+      if (lockTimer !== undefined) {
+        clearTimeout(lockTimer);
+      }
+    }
 
     try {
       return await this.executeProcessIncomingMessage(input);
@@ -915,7 +924,7 @@ export class WebchatService {
     }
 
     // Передаем агенту чистый вопрос и структурированный контекст текущей страницы (URL, title, pathname)
-    const outcome = await runWithTenantContext(account.tenantId, () =>
+    let outcome = await runWithTenantContext(account.tenantId, () =>
       this.agentPipeline.prepareReply({
         tenantId: account.tenantId,
         channelAccountId: account.id,
@@ -931,6 +940,28 @@ export class WebchatService {
         },
       }),
     );
+
+    // При кратковременном отказе LLM (спайк 429 или секундная перегрузка) делаем одну повторную попытку
+    // через 2 секунды перед отправкой операторской заглушки, спасая лид от потери
+    if (outcome.kind === "llm_failed") {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      outcome = await runWithTenantContext(account.tenantId, () =>
+        this.agentPipeline.prepareReply({
+          tenantId: account.tenantId,
+          channelAccountId: account.id,
+          chatId: input.visitorId,
+          text,
+          channelType: "онлайн-чат на сайте",
+          dealId: crmResult.dealId,
+          pageContext: {
+            pageUrl: input.pageUrl,
+            pageTitle: input.pageTitle,
+            pathname: input.pathname,
+            referrer: input.referrer,
+          },
+        }),
+      );
+    }
 
     const botSenderName = account.consultantName || account.botName || "Онлайн-консультант";
 

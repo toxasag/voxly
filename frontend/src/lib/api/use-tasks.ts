@@ -247,6 +247,30 @@ export function useDeleteTask(): UseMutationResult<null, ApiClientError, string>
   });
 }
 
+export interface BulkActionPayload {
+  mode: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+}
+
+export function useBulkDeleteTasks(): UseMutationResult<
+  { count: number },
+  ApiClientError,
+  BulkActionPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ count: number }>(`${BASE}/bulk-delete`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: taskKeys.all });
+    },
+  });
+}
+
 export function useDueTasks(hoursAhead = 24): UseQueryResult<TaskDTO[], ApiClientError> {
   return useQuery<TaskDTO[], ApiClientError>({
     queryKey: ["tasks", "due", hoursAhead],

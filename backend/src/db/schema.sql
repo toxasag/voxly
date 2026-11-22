@@ -303,6 +303,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   job_title TEXT NOT NULL DEFAULT '',
   company_name TEXT NOT NULL DEFAULT '',
   company_id UUID,
+  company_inn TEXT,
+  birth_date DATE,
   channel TEXT NOT NULL DEFAULT 'phone',
   -- Twenty: person.linkedinLink, группа social на record page.
   linkedin_link TEXT NOT NULL DEFAULT '',
@@ -312,6 +314,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes TEXT NOT NULL DEFAULT '',
   last_seen_at TIMESTAMPTZ,
   is_online BOOLEAN NOT NULL DEFAULT false,
+  contact_type VARCHAR(32) NOT NULL DEFAULT 'customer',
   -- Twenty: person.createdBy (ActorMetadata), группа system. NULL = система/импорт.
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -336,7 +339,8 @@ CREATE TABLE IF NOT EXISTS contacts (
       socials,
       '$[*] ? (@.type() != "object" || !(exists(@.kind ? (@.type() == "string"))) || !(exists(@.value ? (@.type() == "string"))))'
     )
-  )
+  ),
+  CONSTRAINT contacts_contact_type_check CHECK (contact_type IN ('customer', 'vendor'))
 );
 
 CREATE TABLE IF NOT EXISTS companies (
@@ -347,6 +351,7 @@ CREATE TABLE IF NOT EXISTS companies (
   phone TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   inn TEXT NOT NULL DEFAULT '',
+  kpp TEXT NOT NULL DEFAULT '',
   ogrn TEXT NOT NULL DEFAULT '',
   bik TEXT NOT NULL DEFAULT '',
   account_number TEXT NOT NULL DEFAULT '',
@@ -1771,6 +1776,7 @@ CREATE TABLE IF NOT EXISTS supplier_orders (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   order_number TEXT NOT NULL,
   supplier_name TEXT NOT NULL,
+  supplier_company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'draft',
   total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
   cash_account_id UUID REFERENCES cash_accounts(id) ON DELETE SET NULL,
@@ -1791,6 +1797,10 @@ CREATE TABLE IF NOT EXISTS supplier_order_items (
   item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
   item_name TEXT NOT NULL,
   sku TEXT NOT NULL DEFAULT '',
+  requested_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  extra_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  purchase_request_ids UUID[] DEFAULT '{}',
   quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
   unit TEXT NOT NULL DEFAULT 'шт',
   price NUMERIC(12, 2) NOT NULL DEFAULT 0,
@@ -1814,6 +1824,9 @@ CREATE TABLE IF NOT EXISTS print_templates (
   is_custom BOOLEAN NOT NULL DEFAULT false,
   parent_template_id UUID REFERENCES print_templates(id) ON DELETE SET NULL,
   is_hidden BOOLEAN NOT NULL DEFAULT false,
+  tool_info TEXT NOT NULL DEFAULT '',
+  client_info TEXT NOT NULL DEFAULT '',
+  comments TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1924,12 +1937,61 @@ CREATE TABLE IF NOT EXISTS deal_items (
   discount_percent NUMERIC NOT NULL DEFAULT 0,
   discount_amount NUMERIC NOT NULL DEFAULT 0,
   total_amount NUMERIC NOT NULL DEFAULT 0,
+  cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  cost_source TEXT NOT NULL DEFAULT 'manual',
+  consumed_at TIMESTAMPTZ NULL,
   sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_deal_items_tenant_deal ON deal_items (tenant_id, deal_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_deal_items_item_id ON deal_items (tenant_id, item_id) WHERE item_id IS NOT NULL;
+
+-- Привязка списания запчастей наряда к конкретным складским партиям (FIFO)
+CREATE TABLE IF NOT EXISTS repair_part_batch_allocations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  repair_order_id UUID NOT NULL REFERENCES repair_orders(id) ON DELETE CASCADE,
+  repair_part_id UUID NOT NULL REFERENCES repair_parts(id) ON DELETE CASCADE,
+  warehouse_item_id UUID NULL REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  batch_id UUID NULL REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  quantity NUMERIC(10, 2) NOT NULL,
+  unit_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rpba_tenant_part ON repair_part_batch_allocations (tenant_id, repair_part_id);
+CREATE INDEX IF NOT EXISTS idx_rpba_tenant_order ON repair_part_batch_allocations (tenant_id, repair_order_id);
+CREATE INDEX IF NOT EXISTS idx_rpba_tenant_created ON repair_part_batch_allocations (tenant_id, created_at DESC);
+ALTER TABLE repair_part_batch_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE repair_part_batch_allocations FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON repair_part_batch_allocations;
+CREATE POLICY tenant_isolation ON repair_part_batch_allocations
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Привязка списания товаров сделки к конкретным складским партиям (FIFO)
+CREATE TABLE IF NOT EXISTS deal_item_batch_allocations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+  deal_item_id UUID NOT NULL REFERENCES deal_items(id) ON DELETE CASCADE,
+  warehouse_item_id UUID NULL REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  batch_id UUID NULL REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  quantity NUMERIC(10, 2) NOT NULL,
+  unit_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_diba_tenant_item ON deal_item_batch_allocations (tenant_id, deal_item_id);
+CREATE INDEX IF NOT EXISTS idx_diba_tenant_deal ON deal_item_batch_allocations (tenant_id, deal_id);
+CREATE INDEX IF NOT EXISTS idx_diba_tenant_batch ON deal_item_batch_allocations (tenant_id, batch_id) WHERE batch_id IS NOT NULL;
+ALTER TABLE deal_item_batch_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE deal_item_batch_allocations FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON deal_item_batch_allocations;
+CREATE POLICY tenant_isolation ON deal_item_batch_allocations
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
 
 
 

@@ -78,6 +78,7 @@ interface ContactBody {
   firstName: string;
   lastName: string;
   middleName: string;
+  contactType?: string;
   phone: string;
   phones: ContactPhone[];
   city?: string;
@@ -395,5 +396,165 @@ describe("Контакт: поиск", () => {
     // Клиент звонит со второго номера так же часто, как с первого.
     expect(byExtraPhone.json<{ data: ContactBody[] }>().data).toHaveLength(1);
     expect(bySocial.json<{ data: ContactBody[] }>().data).toHaveLength(1);
+  });
+});
+
+describe("Контакт: тип контакта (клиент / поставщик) и запрет сделок", () => {
+  it("по умолчанию получает статус customer", async () => {
+    const session = await signedInOwner();
+    const res = await post(session, { first_name: "Обычный" });
+    expect(res.statusCode).toBe(201);
+    expect(res.json<{ data: ContactBody }>().data.contactType).toBe("customer");
+  });
+
+  it("сохраняет статус vendor и позволяет переключать его через patch", async () => {
+    const session = await signedInOwner();
+    const res = await post(session, { first_name: "Поставщик Запчастей", contact_type: "vendor" });
+    expect(res.statusCode).toBe(201);
+    const contact = res.json<{ data: ContactBody }>().data;
+    expect(contact.contactType).toBe("vendor");
+
+    const patched = await patch(session, contact.id, { contact_type: "customer" });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json<{ data: ContactBody }>().data.contactType).toBe("customer");
+  });
+
+  it("запрещает создание сделки с контактом в статусе vendor (HTTP 422)", async () => {
+    const session = await signedInOwner();
+    const vendorRes = await post(session, { first_name: "Поставщик ООО", contact_type: "vendor" });
+    const vendorId = vendorRes.json<{ data: ContactBody }>().data.id;
+
+    // Получаем pipeline и stage
+    const pipelinesRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/crm/deals/pipelines",
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    const pipelines = pipelinesRes.json<{ data: Array<{ id: string; stages: Array<{ id: string }> }> }>().data;
+    const firstPipeline = pipelines[0];
+    const firstStage = firstPipeline?.stages[0];
+    expect(firstPipeline).toBeDefined();
+    expect(firstStage).toBeDefined();
+    if (!firstPipeline || !firstStage) throw new Error("Pipeline or stage not found");
+    const pipelineId = firstPipeline.id;
+    const stageId = firstStage.id;
+
+    // Попытка создать сделку с поставщиком
+    const dealRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/crm/deals",
+      headers: { authorization: `Bearer ${session.token}` },
+      payload: {
+        title: "Сделка с поставщиком",
+        pipeline_id: pipelineId,
+        stage_id: stageId,
+        contact_id: vendorId,
+      },
+    });
+
+    expect(dealRes.statusCode).toBe(422);
+    const body = dealRes.json<{ error: { message: string } }>();
+    expect(body.error.message).toContain("поставщик");
+
+    // Создание сделки с клиентом проходит успешно
+    const customerRes = await post(session, { first_name: "Клиент ООО", contact_type: "customer" });
+    const customerId = customerRes.json<{ data: ContactBody }>().data.id;
+
+    const validDealRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/crm/deals",
+      headers: { authorization: `Bearer ${session.token}` },
+      payload: {
+        title: "Сделка с клиентом",
+        pipeline_id: pipelineId,
+        stage_id: stageId,
+        contact_id: customerId,
+      },
+    });
+
+    expect(validDealRes.statusCode).toBe(201);
+  });
+});
+
+describe("Контакт: актуальное имя компании и сортировка", () => {
+  it("подтягивает свежее название компании после переименования или обогащения", async () => {
+    const session = await signedInOwner();
+    const created = await post(session, {
+      first_name: "Кирилл",
+      company_name: "Компания ИНН 9702013705",
+    });
+    expect(created.statusCode).toBe(201);
+    const contact = created.json<{ data: ContactBody }>().data;
+    expect(contact.companyName).toBe("Компания ИНН 9702013705");
+
+    // Обновляем компанию в модуле companies
+    const companyId = contact.companyId;
+    expect(companyId).toBeDefined();
+    const patchCompany = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/crm/companies/${companyId}`,
+      headers: { authorization: `Bearer ${session.token}` },
+      payload: { name: 'ООО "ЦЕНТРИНЖИНИРИНГ"' },
+    });
+    expect(patchCompany.statusCode).toBe(200);
+
+    // Проверяем, что контакт отдает обновленное название компании и в деталях, и в списке
+    const getContact = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts/${contact.id}`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(getContact.statusCode).toBe(200);
+    expect(getContact.json<{ data: ContactBody }>().data.companyName).toBe('ООО "ЦЕНТРИНЖИНИРИНГ"');
+
+    const listContacts = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts?search=Кирилл`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(listContacts.statusCode).toBe(200);
+    const items = listContacts.json<{ data: ContactBody[] }>().data;
+    expect(items[0]?.companyName).toBe('ООО "ЦЕНТРИНЖИНИРИНГ"');
+  });
+
+  it("поддерживает серверную сортировку по компании через sort и order", async () => {
+    const session = await signedInOwner();
+    await post(session, { first_name: "Алексей", company_name: "Бетта" });
+    await post(session, { first_name: "Борис", company_name: "Альфа" });
+
+    const ascRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts?sort=company&order=asc`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(ascRes.statusCode).toBe(200);
+    const ascItems = ascRes.json<{ data: ContactBody[] }>().data;
+    expect(ascItems[0]?.companyName).toBe("Альфа");
+    expect(ascItems[1]?.companyName).toBe("Бетта");
+
+    const descRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/crm/contacts?sort=company&order=desc`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(descRes.statusCode).toBe(200);
+    const descItems = descRes.json<{ data: ContactBody[] }>().data;
+    expect(descItems[0]?.companyName).toBe("Бетта");
+    expect(descItems[1]?.companyName).toBe("Альфа");
+  });
+
+  it("отклоняет невалидный email (HTTP 400)", async () => {
+    const session = await signedInOwner();
+    const badRes = await post(session, {
+      first_name: "Иван",
+      email: 'ООО "ЦентрИнжиниринг"',
+    });
+    expect(badRes.statusCode).toBe(400);
+
+    const goodRes = await post(session, {
+      first_name: "Иван",
+      email: "ivan@example.com",
+    });
+    expect(goodRes.statusCode).toBe(201);
   });
 });

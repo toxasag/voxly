@@ -1,3 +1,4 @@
+import { nullIfBlank } from "../../../lib/string.utils.js";
 import type {
   CallerIdLookupDTO,
   ContactDTO,
@@ -5,6 +6,7 @@ import type {
   ContactDealsHistoryDTO,
   ContactRow,
   ContactSocialJson,
+  ContactType,
   CreateContactPayload,
   UpdateContactPayload,
 } from "./contacts.types.js";
@@ -22,6 +24,7 @@ import {
   type TransactionClient,
 } from "../../../db/client.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";
+import type { BulkActionPayload } from "../shared/bulk-action.types.js";
 import { ContactDedupeService } from "./dedupe.service.js";
 
 /**
@@ -35,8 +38,9 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.id, c.tenant_id, c.first_name, c.last_name, c.middle_name, c.phone,
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
-  c.job_title, c.company_name, c.company_id, c.channel,
-  c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
+  c.job_title, COALESCE(comp.name, c.company_name) AS company_name, c.company_id, c.company_inn, c.birth_date, c.channel,
+  c.linkedin_link, c.city, c.address, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.contact_type, c.created_by, c.created_at, c.updated_at,
+  c.name, c.messenger_id, c.messenger_name,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
   u.name AS created_by_name
@@ -57,23 +61,29 @@ const CONTACT_COUNT_JOIN = `
       AND crm_tasks.tenant_id = c.tenant_id
       AND crm_tasks.deleted_at IS NULL
   ) t ON true
+  LEFT JOIN companies comp ON comp.id = c.company_id AND comp.tenant_id = c.tenant_id AND comp.deleted_at IS NULL
   -- Автор ограничен арендатором записи: таблица users не входит в список под RLS,
   -- поэтому JOIN только по id подставил бы имя пользователя чужого арендатора,
   -- окажись его идентификатор в created_by.
   LEFT JOIN users u ON u.id = c.created_by AND u.tenant_id = c.tenant_id
 `;
 
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
-  return value;
+function cleanEmail(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = value.trim();
+  if (trimmed === "" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return null;
+  return trimmed;
 }
 
 export interface ListContactsOptions {
   search?: string;
   companyId?: string;
   channel?: string;
+  contactType?: string;
   limit: number;
   offset: number;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }
 
 /**
@@ -92,6 +102,10 @@ async function resolveCompany(
   tenantId: string,
   companyId: string | null,
   companyName: string,
+  companyInn?: string | null,
+  legalAddress?: string | null,
+  ogrn?: string | null,
+  kpp?: string | null,
 ): Promise<{ companyId: string | null; companyName: string }> {
   if (companyId !== null) {
     // Название берётся из самой компании: источник правды один, иначе строка у
@@ -111,24 +125,60 @@ async function resolveCompany(
     // появится своя компания с тем же именем.
   }
 
+  const cleanInn = companyInn ? companyInn.replace(/\D/g, "").trim() : "";
+  if (cleanInn) {
+    const byInn = await tx.queryOne<{ id: string; name: string }>(
+      `SELECT id, name FROM companies
+       WHERE tenant_id = $1 AND inn = $2 AND deleted_at IS NULL
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [tenantId, cleanInn],
+    );
+    if (byInn !== null) {
+      return { companyId: byInn.id, companyName: byInn.name };
+    }
+  }
+
   const name = companyName.trim();
-  if (name === "") return { companyId: null, companyName: "" };
+  if (name === "" && !cleanInn) return { companyId: null, companyName: "" };
+  const effectiveName = name || (cleanInn ? `Компания ИНН ${cleanInn}` : "");
 
   const existing = await tx.queryOne<{ id: string; name: string }>(
     `SELECT id, name FROM companies
      WHERE tenant_id = $1 AND lower(btrim(name)) = lower($2) AND deleted_at IS NULL
      ORDER BY created_at ASC
      LIMIT 1`,
-    [tenantId, name],
+    [tenantId, effectiveName],
   );
 
-  if (existing !== null) return { companyId: existing.id, companyName: existing.name };
+  if (existing !== null) {
+    if (cleanInn || legalAddress || ogrn || kpp) {
+      await tx.query(
+        `UPDATE companies SET
+           inn = CASE WHEN inn = '' THEN COALESCE($3, '') ELSE inn END,
+           legal_address = CASE WHEN legal_address = '' THEN COALESCE($4, '') ELSE legal_address END,
+           ogrn = CASE WHEN ogrn = '' THEN COALESCE($5, '') ELSE ogrn END,
+           kpp = CASE WHEN kpp = '' THEN COALESCE($6, '') ELSE kpp END
+         WHERE id = $1 AND tenant_id = $2`,
+        [existing.id, tenantId, cleanInn || null, legalAddress ?? null, ogrn ?? null, kpp ?? null],
+      );
+    }
+    return { companyId: existing.id, companyName: existing.name };
+  }
 
   const created = await tx.queryOneOrThrow<{ id: string; name: string }>(
-    `INSERT INTO companies (tenant_id, name, notes)
-     VALUES ($1, $2, $3)
+    `INSERT INTO companies (tenant_id, name, inn, legal_address, ogrn, kpp, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id, name`,
-    [tenantId, name, "Создана автоматически при указании компании у контакта"],
+    [
+      tenantId,
+      effectiveName,
+      cleanInn,
+      legalAddress ?? "",
+      ogrn ?? "",
+      kpp ?? "",
+      "Создана автоматически при указании компании у контакта",
+    ],
   );
 
   return { companyId: created.id, companyName: created.name };
@@ -156,6 +206,7 @@ export class ContactsService {
           OR c.email ILIKE ${placeholder}
           OR c.job_title ILIKE ${placeholder}
           OR c.company_name ILIKE ${placeholder}
+          OR comp.name ILIKE ${placeholder}
           OR EXISTS (
             SELECT 1 FROM jsonb_array_elements(c.additional_phones) AS extra
             WHERE extra ->> 'number' ILIKE ${placeholder}
@@ -177,21 +228,63 @@ export class ContactsService {
       conditions.push(`c.channel = $${params.length}`);
     }
 
+    if (options.contactType !== undefined) {
+      params.push(options.contactType);
+      conditions.push(`c.contact_type = $${params.length}`);
+    }
+
     const where = conditions.join(" AND ");
 
     const countRow = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM contacts c WHERE ${where}`,
+      `SELECT COUNT(*)::text AS total
+       FROM contacts c
+       LEFT JOIN companies comp ON comp.id = c.company_id AND comp.tenant_id = c.tenant_id AND comp.deleted_at IS NULL
+       WHERE ${where}`,
       params,
     );
 
     params.push(options.limit, options.offset);
+
+    let orderBy = "c.created_at DESC";
+    if (options.sortBy) {
+      const direction = options.sortOrder === "asc" ? "ASC" : "DESC";
+      switch (options.sortBy) {
+        case "name":
+          orderBy = `c.first_name ${direction}, c.last_name ${direction}`;
+          break;
+        case "company":
+        case "company_name":
+          orderBy = `COALESCE(comp.name, c.company_name) ${direction}`;
+          break;
+        case "email":
+          orderBy = `c.email ${direction} NULLS LAST`;
+          break;
+        case "phone":
+          orderBy = `c.phone ${direction} NULLS LAST`;
+          break;
+        case "jobTitle":
+        case "job_title":
+          orderBy = `c.job_title ${direction} NULLS LAST`;
+          break;
+        case "contact_type":
+          orderBy = `c.contact_type ${direction}`;
+          break;
+        case "created":
+        case "created_at":
+          orderBy = `c.created_at ${direction}`;
+          break;
+        default:
+          orderBy = "c.created_at DESC";
+          break;
+      }
+    }
 
     const rows = await query<ContactRow>(
       `SELECT ${CONTACT_COLUMNS_WITH_COUNTS}
        FROM contacts c
        ${CONTACT_COUNT_JOIN}
        WHERE ${where}
-       ORDER BY c.created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -305,21 +398,46 @@ export class ContactsService {
       tenantId,
       nullIfBlank(payload.company_id),
       payload.company_name ?? "",
+      payload.company_inn,
     );
 
     const phones = splitPhones(payload.phones ?? []);
     const socials = normalizeSocials(payload.socials ?? []);
+
+    if (phones.phone) {
+      const activeChannels = await tx.query<{ channel: string }>(
+        `SELECT channel FROM channel_accounts WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL`,
+        [tenantId],
+      );
+      const hasMaxAcc = activeChannels.some((c) => c.channel === "max" || c.channel === "max_bot");
+      const hasWaAcc = activeChannels.some((c) => c.channel === "whatsapp");
+
+      if (hasMaxAcc && !socials.some((s) => s.kind === "max")) {
+        socials.push({ kind: "max", value: phones.phone });
+      }
+      if (hasWaAcc && !socials.some((s) => s.kind === "whatsapp")) {
+        socials.push({ kind: "whatsapp", value: phones.phone });
+      }
+    }
+
+    const effectiveChannel =
+      payload.channel && payload.channel !== "phone"
+        ? payload.channel
+        : socials.some((s) => s.kind === "max")
+          ? "max"
+          : payload.channel ?? "phone";
 
     const row = await tx.queryOneOrThrow<{ id: string }>(
       `INSERT INTO contacts
          (tenant_id, first_name, last_name, middle_name,
           phone, phone_country_code, phone_calling_code, additional_phones,
           email, telegram_username, telegram_chat_id, whatsapp, socials,
-          job_title, company_name, company_id, channel, linkedin_link,
+          job_title, company_name, company_id, company_inn, birth_date, channel, linkedin_link,
           city, address,
-          custom_fields, source_metadata, notes, created_by)
+          custom_fields, source_metadata, notes, contact_type, created_by,
+          messenger_id, messenger_name)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb,
-               $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22::jsonb, $23, $24)
+               $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24::jsonb, $25, $26, $27, $28, $29)
        RETURNING id`,
       [
         tenantId,
@@ -330,7 +448,7 @@ export class ContactsService {
         phones.countryCode,
         phones.callingCode,
         JSON.stringify(phones.additional),
-        nullIfBlank(payload.email),
+        cleanEmail(payload.email),
         socialValue(socials, "telegram"),
         nullIfBlank(payload.telegram_chat_id),
         socialValue(socials, "whatsapp"),
@@ -338,14 +456,19 @@ export class ContactsService {
         payload.job_title ?? "",
         company.companyName,
         company.companyId,
-        payload.channel ?? "phone",
+        nullIfBlank(payload.company_inn),
+        nullIfBlank(payload.birth_date ?? undefined),
+        effectiveChannel,
         payload.linkedin_link ?? "",
         payload.city ?? "",
         payload.address ?? "",
         JSON.stringify(payload.custom_fields ?? {}),
         JSON.stringify(payload.source_metadata ?? {}),
         payload.notes ?? "",
+        payload.contact_type ?? "customer",
         createdBy ?? null,
+        nullIfBlank(payload.messenger_id),
+        nullIfBlank(payload.messenger_name),
       ],
     );
 
@@ -386,7 +509,7 @@ export class ContactsService {
         pushJson("additional_phones", phones.additional);
       }
 
-      if (payload.email !== undefined) push("email", nullIfBlank(payload.email));
+      if (payload.email !== undefined) push("email", cleanEmail(payload.email));
 
       // Соцсети тоже приходят списком, и вместе с ними синхронизируются колонки
       // telegram_username / whatsapp: по ним ищет транспорт каналов.
@@ -422,16 +545,39 @@ export class ContactsService {
 
         const nextName = payload.company_name ?? current.company_name;
 
-        const company = await resolveCompany(tx, tenantId, nextId, nextName);
+        const company = await resolveCompany(
+          tx,
+          tenantId,
+          nextId,
+          nextName,
+          payload.company_inn,
+        );
         push("company_name", company.companyName);
         push("company_id", company.companyId);
       }
 
+      if (payload.company_inn !== undefined) {
+        push("company_inn", nullIfBlank(payload.company_inn));
+      }
+      if (payload.birth_date !== undefined) {
+        push("birth_date", nullIfBlank(payload.birth_date ?? undefined));
+      }
+
       if (payload.channel !== undefined) push("channel", payload.channel);
+      if (payload.messenger_id !== undefined) push("messenger_id", nullIfBlank(payload.messenger_id));
+      if (payload.messenger_name !== undefined) push("messenger_name", nullIfBlank(payload.messenger_name));
+      if (payload.contact_type !== undefined) push("contact_type", payload.contact_type);
       if (payload.linkedin_link !== undefined) push("linkedin_link", payload.linkedin_link ?? "");
       if (payload.city !== undefined) push("city", payload.city ?? "");
       if (payload.address !== undefined) push("address", payload.address ?? "");
       if (payload.notes !== undefined) push("notes", payload.notes);
+
+      if (payload.created_at !== undefined) {
+        const createdAt = nullIfBlank(payload.created_at);
+        if (createdAt) {
+          push("created_at", new Date(createdAt).toISOString());
+        }
+      }
 
       // custom_fields is merged, not replaced, so a partial PATCH cannot silently
       // drop keys the client did not send.
@@ -509,6 +655,68 @@ export class ContactsService {
     );
 
     return row !== null;
+  }
+
+  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+    if (payload.mode === "ids") {
+      const ids = payload.ids ?? [];
+      if (ids.length === 0) return { count: 0 };
+      const rows = await query<{ id: string }>(
+        `UPDATE contacts
+         SET deleted_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, ids],
+      );
+      return { count: rows.length };
+    }
+
+    const conditions: string[] = ["c.tenant_id = $1", "c.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    const filters = payload.filters ?? {};
+    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
+      params.push(`%${filters.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(c.first_name ILIKE ${placeholder}
+          OR c.last_name ILIKE ${placeholder}
+          OR c.email ILIKE ${placeholder}
+          OR c.phone ILIKE ${placeholder}
+          OR c.company_name ILIKE ${placeholder})`,
+      );
+    }
+
+    if (typeof filters.company_id === "string" && filters.company_id.trim().length > 0) {
+      params.push(filters.company_id.trim());
+      conditions.push(`c.company_id = $${params.length}`);
+    }
+
+    if (typeof filters.channel === "string" && filters.channel.trim().length > 0 && filters.channel !== "all") {
+      params.push(filters.channel.trim());
+      conditions.push(`c.channel = $${params.length}`);
+    }
+
+    if (typeof filters.contact_type === "string" && filters.contact_type.trim().length > 0 && filters.contact_type !== "all") {
+      params.push(filters.contact_type.trim());
+      conditions.push(`c.contact_type = $${params.length}`);
+    }
+
+    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
+      params.push(payload.excluded_ids);
+      conditions.push(`NOT (c.id = ANY($${params.length}::uuid[]))`);
+    }
+
+    const where = conditions.join(" AND ");
+    const rows = await query<{ id: string }>(
+      `UPDATE contacts c
+       SET deleted_at = now()
+       WHERE ${where}
+       RETURNING c.id`,
+      params,
+    );
+
+    return { count: rows.length };
   }
 
   /**
@@ -684,6 +892,7 @@ export class ContactsService {
       company_name: string;
       company_id: string | null;
       company_title: string | null;
+      contact_type: string | null;
       active_deal_id: string | null;
       active_deal_title: string | null;
       active_deal_budget: string | number | null;
@@ -691,7 +900,7 @@ export class ContactsService {
       active_deal_stage_name: string | null;
     }>(
       `SELECT
-         c.id, c.first_name, c.last_name, c.middle_name, c.phone,
+         c.id, c.first_name, c.last_name, c.middle_name, c.phone, c.contact_type,
          c.job_title, c.company_name, c.company_id,
          comp.name AS company_title,
          d.id AS active_deal_id,
@@ -746,6 +955,7 @@ export class ContactsService {
       normalizedPhone: normalizedE164,
       contact: {
         id: row.id,
+        contactType: (row.contact_type as ContactType) === "vendor" ? "vendor" : "customer",
         fullName,
         firstName: row.first_name,
         lastName: row.last_name,

@@ -8,7 +8,8 @@
 import { query, queryOne } from "../../db/client.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { EmailService } from "../../services/email.service.js";
-import { TelegramService, escapeHtml } from "../auth/telegram.service.js";
+import { escapeTelegramHtml as escapeHtml } from "../../lib/html.utils.js";
+import { TelegramService } from "../auth/telegram.service.js";
 import {
   bitrix24Service,
   normalizeBitrixWebhookUrl,
@@ -76,7 +77,7 @@ export class NotificationChannelsService {
          tenant_id, channel_type, destination, extra_meta, is_active, is_verified
        )
        VALUES ($1, 'telegram', $2, $3, true, true)
-       ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+       ON CONFLICT (tenant_id, channel_type, destination) WHERE channel_type IN ('email', 'telegram', 'whatsapp') DO UPDATE
        SET is_active = true,
            is_verified = true,
            extra_meta = tenant_notification_channels.extra_meta || EXCLUDED.extra_meta,

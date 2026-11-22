@@ -4,7 +4,7 @@ import React from "react";
 import { useForm } from "react-hook-form";
 import { RepairClientSection } from "./RepairClientSection";
 import type { CreateRepairPayload } from "@/schemas/repair.schema";
-import type { ClientLookupResultDTO } from "@/lib/api/use-repairs";
+import type { ClientLookupResultDTO, CompanyInnLookupResult } from "@/lib/api/use-repairs";
 
 // Mock useRepairClientLookup
 const mockLookupData: ClientLookupResultDTO = {
@@ -56,11 +56,22 @@ let currentLookupResponse: {
   isFetching: false,
 };
 
+let currentInnLookupResponse: {
+  data: CompanyInnLookupResult | undefined;
+  isLoading: boolean;
+  isFetching: boolean;
+} = {
+  data: undefined,
+  isLoading: false,
+  isFetching: false,
+};
+
 vi.mock("@/lib/api/use-repairs", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
     useRepairClientLookup: () => currentLookupResponse,
+    useCompanyInnLookup: () => currentInnLookupResponse,
   };
 });
 
@@ -110,6 +121,11 @@ describe("RepairClientSection Component (Unified Reactive Flow)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     currentLookupResponse = {
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+    };
+    currentInnLookupResponse = {
       data: undefined,
       isLoading: false,
       isFetching: false,
@@ -195,12 +211,12 @@ describe("RepairClientSection Component (Unified Reactive Flow)", () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText("ООО «Вектор», ИП Иванов")).toBeDefined();
       expect(
-        screen.getByText("Указать реквизиты (ИНН, ОГРН, БИК, Р/с, Адрес)"),
+        screen.getByText("Указать реквизиты (ОГРН, БИК, Р/с, Адрес)"),
       ).toBeDefined();
     });
 
     // Expand requisites
-    fireEvent.click(screen.getByText("Указать реквизиты (ИНН, ОГРН, БИК, Р/с, Адрес)"));
+    fireEvent.click(screen.getByText("Указать реквизиты (ОГРН, БИК, Р/с, Адрес)"));
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText("7701234567")).toBeDefined();
@@ -246,6 +262,112 @@ describe("RepairClientSection Component (Unified Reactive Flow)", () => {
 
     await waitFor(() => {
       expect(screen.queryByPlaceholderText("Имя контакта / ФИО *")).toBeNull();
+    });
+  });
+
+  it("decouples INN lookup from customer name and provides 1-click button to transfer entrepreneur name", async () => {
+    currentInnLookupResponse = {
+      data: {
+        inn: "505030516451",
+        name: "ИП САГАЙДАК АНТОН ГЕННАДЬЕВИЧ",
+        ogrn: "319508100012345",
+        legalAddress: "Московская обл, г Щелково",
+        directorName: "САГАЙДАК АНТОН ГЕННАДЬЕВИЧ",
+        type: "INDIVIDUAL",
+      },
+      isLoading: false,
+      isFetching: false,
+    };
+
+    render(
+      <TestWrapper
+        defaultValues={{
+          customer_name: "Алексей (Снабжение)",
+          is_company: true,
+          company_inn: "505030516451",
+        }}
+      />,
+    );
+
+    // Company requisites populated
+    await waitFor(() => {
+      expect(screen.getByTestId("form-company-name").textContent).toBe("ИП САГАЙДАК АНТОН ГЕННАДЬЕВИЧ");
+    });
+
+    // Customer name MUST NOT be overwritten by INN lookup!
+    expect(screen.getByTestId("form-customer-name").textContent).toBe("Алексей (Снабжение)");
+
+    // Suggestion badge for entrepreneur name is displayed with explicit action button
+    expect(screen.getByText("Владелец ИП (ЕГРИП):")).toBeDefined();
+    expect(screen.getAllByText("САГАЙДАК АНТОН ГЕННАДЬЕВИЧ").length).toBeGreaterThan(0);
+    const useBtn = screen.getByText("Использовать имя ИП для контакта");
+    expect(useBtn).toBeDefined();
+
+    // Clicking button explicitly copies entrepreneur name to customer name
+    fireEvent.click(useBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("form-customer-name").textContent).toBe("САГАЙДАК АНТОН ГЕННАДЬЕВИЧ");
+      expect(screen.getByText("Контакт совпадает с владельцем ИП")).toBeDefined();
+    });
+  });
+
+  it("handles existingContact match, populates all contact fields on bind, and renders name suggestion", async () => {
+    currentLookupResponse = {
+      data: {
+        found: true,
+        client: null,
+        company: null,
+        activeDeals: [],
+        repairsCount: 3,
+        suggestedName: "Плахов Сергей",
+        suggestedSource: "telegram",
+        sources: [],
+        channelsChecked: ["telegram"],
+        messengerLookupStatus: "found",
+        existsInCrm: true,
+        existingContact: {
+          contactId: "contact-99",
+          fullName: "Плахов Сергей Николаевич",
+          phone: "+7 (964) 562-40-20",
+          email: "plakhov@example.com",
+          companyId: "comp-99",
+          companyName: "ООО ПлаховТрейд",
+          repairsCount: 3,
+          activeDealsCount: 1,
+          matchedBy: "phone",
+        },
+      },
+      isLoading: false,
+      isFetching: false,
+    };
+
+    render(<TestWrapper />);
+
+    // Telegram suggested name is rendered with full text without truncation
+    expect(screen.getAllByText("Плахов Сергей").length).toBeGreaterThan(0);
+    expect(screen.getByText("Использовать")).toBeDefined();
+
+    // Existing contact banner is rendered
+    expect(screen.getByText("Клиент уже есть в базе CRM")).toBeDefined();
+    expect(screen.getAllByText("Плахов Сергей Николаевич").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("+7 (964) 562-40-20").length).toBeGreaterThan(0);
+
+    // Existing contact is auto-bound on phone match (or bound via explicit button if present)
+    const bindBtn = screen.queryByText("Привязать");
+    if (bindBtn) {
+      fireEvent.click(bindBtn);
+    } else {
+      expect(screen.getByText("Привязан к клиенту")).toBeDefined();
+    }
+
+    await waitFor(() => {
+      expect(screen.getByTestId("form-customer-id").textContent).toBe("contact-99");
+      expect(screen.getByTestId("form-customer-name").textContent).toBe("Плахов Сергей Николаевич");
+      expect(screen.getByTestId("form-customer-phone").textContent).toBe("+7 (964) 562-40-20");
+      expect(screen.getByTestId("form-customer-email").textContent).toBe("plakhov@example.com");
+      expect(screen.getByTestId("form-company-id").textContent).toBe("comp-99");
+      expect(screen.getByTestId("form-company-name").textContent).toBe("ООО ПлаховТрейд");
     });
   });
 });

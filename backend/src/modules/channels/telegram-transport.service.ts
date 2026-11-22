@@ -511,17 +511,105 @@ export class TelegramTransportService {
 
       if (senderId === undefined || chatId === undefined) return;
 
+      const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+      const systemBotUsername = (process.env.TELEGRAM_AUTH_BOT_USERNAME || "GetVoxlybot").trim().toLowerCase().replace(/^@/, "");
+
+      if (
+        (systemBotId && (senderId === systemBotId || chatId === systemBotId)) ||
+        (systemBotUsername && (senderId.toLowerCase() === systemBotUsername || chatId.toLowerCase() === systemBotUsername))
+      ) {
+        this.log.info(
+          { senderId, chatId, systemBotId, systemBotUsername, accountId: account.id },
+          "Skipping incoming message from system notification bot",
+        );
+        return;
+      }
+
+      // Проверка нативного флага бота в GramJS
+      const senderEntity = message.sender;
+      if (senderEntity instanceof Api.User && senderEntity.bot) {
+        this.log.info(
+          { senderId, accountId: account.id },
+          "Skipping lead/contact creation: sender is a bot",
+        );
+        return;
+      }
+
       // Быстрая проверка: если профиль отправителя уже в кэше и это бот — сразу игнорируем
       const cachedProfile = this.profiles.get(account.id, senderId);
-      if (cachedProfile && isBotSender({ profile: cachedProfile, channel: "telegram", chatId })) {
+      if (
+        (cachedProfile && isBotSender({ profile: cachedProfile, channel: "telegram", chatId })) ||
+        isBotSender({ channel: "telegram", chatId, senderName: senderId, isBot: senderEntity instanceof Api.User ? senderEntity.bot : undefined })
+      ) {
         this.log.info(
-          { senderId, username: cachedProfile.username, accountId: account.id },
-          `Skipping lead/contact creation: sender is a bot (@${(cachedProfile.username || "").replace(/^@/, "")})`,
+          { senderId, username: cachedProfile?.username, accountId: account.id },
+          `Skipping lead/contact creation: sender is a bot`,
         );
         return;
       }
 
       const text = typeof message.message === "string" ? message.message.trim() : "";
+
+      // Защита от зацикливания уведомлений CRM
+      if (
+        text.startsWith("Новая заявка:") ||
+        (text.includes("Этап: Новый лид") && text.includes("Суть обращения:")) ||
+        text.includes("Открыть сделку в CRM")
+      ) {
+        this.log.info(
+          { senderId, chatId, accountId: account.id },
+          "Skipping incoming message: internal CRM notification loopback detected",
+        );
+        return;
+      }
+
+      // Проверяем контактную карточку Telegram (Api.MessageMediaContact)
+      const contactMedia =
+        message.contact ||
+        (message.media instanceof Api.MessageMediaContact ? message.media : null);
+      let contactCardText = "";
+      let contactCardPhone: string | undefined = undefined;
+      let contactCardName: string | undefined = undefined;
+      if (contactMedia) {
+        contactCardName = [contactMedia.firstName, contactMedia.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        contactCardPhone = contactMedia.phoneNumber?.startsWith("+")
+          ? contactMedia.phoneNumber
+          : contactMedia.phoneNumber
+          ? `+${contactMedia.phoneNumber}`
+          : undefined;
+        contactCardText = `Контакт: ${contactCardName || "Без имени"}${
+          contactCardPhone ? ` (${contactCardPhone})` : ""
+        }`;
+      }
+
+      // Извлечение метаданных пересылки (Forward)
+      let forwardMetadata: Record<string, unknown> | undefined = undefined;
+      if (message.fwdFrom) {
+        const fwd = message.fwdFrom;
+        forwardMetadata = {
+          is_forwarded: true,
+          forward_from_name: fwd.fromName || (fwd as any).postAuthor || undefined,
+          forward_date: fwd.date ? new Date(fwd.date * 1000).toISOString() : undefined,
+        };
+      }
+
+      const effectiveText = text || contactCardText;
+      const combinedMetadata: Record<string, unknown> | undefined =
+        forwardMetadata || contactMedia
+          ? {
+              ...forwardMetadata,
+              ...(contactMedia
+                ? {
+                    is_contact_card: true,
+                    contact_phone: contactCardPhone,
+                    contact_name: contactCardName,
+                  }
+                : {}),
+            }
+          : undefined;
 
       // Проверяем наличие медиавложения (фотография, документ)
       let mediaAttachment: { url: string; mimeType: string; filename: string } | null = null;
@@ -537,9 +625,9 @@ export class TelegramTransportService {
       // M5.3: Зеркалирование нативных исходящих от оператора (fromMe / out)
       const isFromOperator = message.out === true;
       if (isFromOperator) {
-        if (text.length > 0 || mediaAttachment !== null) {
+        if (effectiveText.length > 0 || mediaAttachment !== null) {
           const contentText =
-            text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
+            effectiveText || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
           await runWithTenantContext(account.tenant_id, () =>
             this.crm.processNativeOutbound({
               tenantId: account.tenant_id,
@@ -563,7 +651,7 @@ export class TelegramTransportService {
       }
 
       // Если ни текста, ни медиа — пропускаем
-      if (text.length === 0 && mediaAttachment === null) {
+      if (effectiveText.length === 0 && mediaAttachment === null) {
         this.log.info(
           { accountId: account.id },
           "Incoming message without text or media — ignored",
@@ -574,17 +662,20 @@ export class TelegramTransportService {
       // Если получено медиа (фотография или документ)
       if (mediaAttachment !== null) {
         const profile = connection ? await this.fetchProfile(connection, senderId) : null;
-        if (profile && isBotSender({ profile, channel: "telegram", chatId })) {
+        if (
+          (profile && isBotSender({ profile, channel: "telegram", chatId })) ||
+          isBotSender({ channel: "telegram", chatId, senderName: senderId, isBot: profile?.isBot })
+        ) {
           this.log.info(
-            { senderId, username: profile.username, accountId: account.id },
-            `Skipping lead/contact creation: sender is a bot (@${(profile.username || "").replace(/^@/, "")})`,
+            { senderId, username: profile?.username, accountId: account.id },
+            `Skipping lead/contact creation: sender is a bot`,
           );
           return;
         }
 
         const senderName = profile?.firstName || senderId;
         const contentText =
-          text || (mediaAttachment.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
+          effectiveText || (mediaAttachment.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
 
         const crmResult = await runWithTenantContext(account.tenant_id, () =>
           this.crm.processIncoming({
@@ -596,9 +687,11 @@ export class TelegramTransportService {
             senderName,
             senderTelegramChatId: senderId,
             senderTelegramUsername: profile?.username,
+            senderPhone: contactCardPhone || profile?.phone,
             profile: profile ?? undefined,
             attachment: mediaAttachment.url,
             attachmentType: mediaAttachment.mimeType,
+            sourceMetadata: combinedMetadata,
           }),
         ).catch((error) => {
           this.log.error(
@@ -634,13 +727,14 @@ export class TelegramTransportService {
         }
 
         // Если с медиа была текстовая подпись, передаем её в буфер для AI-бота
-        if (text.length > 0) {
+        if (effectiveText.length > 0) {
           this.buffer.add({
             tenantId: account.tenant_id,
             channelAccountId: account.id,
             chatId,
             peerId: senderId,
-            text,
+            text: effectiveText,
+            sourceMetadata: combinedMetadata,
           });
         }
         return;
@@ -652,7 +746,8 @@ export class TelegramTransportService {
         channelAccountId: account.id,
         chatId,
         peerId: senderId,
-        text,
+        text: effectiveText,
+        sourceMetadata: combinedMetadata,
       });
     } catch (error) {
       this.log.error({ error, accountId: account.id }, "Failed to handle incoming message");
@@ -678,11 +773,23 @@ export class TelegramTransportService {
     // заполнить имя потом будет нечем. Отказ не мешает сохранить переписку.
     const profile = await this.fetchProfile(connection, batch.peerId);
 
+    const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+
     // Защита от ботов: если собеседник — бот, прерываем обработку до создания контактов/сделок
-    if (profile && isBotSender({ profile, channel: "telegram", chatId: batch.chatId })) {
+    if (
+      (systemBotId && (batch.peerId === systemBotId || batch.chatId === systemBotId)) ||
+      isBotSender({
+        profile,
+        channel: "telegram",
+        chatId: batch.chatId,
+        senderTelegramUsername: profile?.username,
+        senderName: profile?.firstName || batch.peerId,
+        isBot: profile?.isBot ?? (batch.peerId === systemBotId ? true : undefined),
+      })
+    ) {
       this.log.info(
-        { peerId: batch.peerId, username: profile.username, channelAccountId: batch.channelAccountId },
-        `Skipping lead/contact creation: sender is a bot (@${(profile.username || "").replace(/^@/, "")})`,
+        { peerId: batch.peerId, username: profile?.username, channelAccountId: batch.channelAccountId },
+        `Skipping lead/contact creation: sender is a bot (@${(profile?.username || "").replace(/^@/, "")})`,
       );
       return;
     }
@@ -699,10 +806,12 @@ export class TelegramTransportService {
           channelAccountId: batch.channelAccountId,
           chatId: batch.chatId,
           text: batch.text,
-          senderName: batch.peerId,
+          senderName: profile?.firstName || batch.peerId,
           senderTelegramChatId: batch.peerId,
           senderTelegramUsername: profile?.username,
+          senderPhone: profile?.phone,
           profile: profile ?? undefined,
+          sourceMetadata: batch.sourceMetadata,
         }),
       );
 
@@ -930,7 +1039,7 @@ export class TelegramTransportService {
       return { ok: false, reason: "Аккаунт Telegram не подключён к транспорту" };
     }
 
-    const sendToTarget = async (target: any) => {
+    const sendToTarget = async (target: Parameters<TelegramClient["sendMessage"]>[0]) => {
       if (message.attachment) {
         const media = await resolveOutboundMedia(
           message.attachment,
@@ -1126,9 +1235,12 @@ export class TelegramTransportService {
       let toUpload: CustomFile;
 
       if (payload.mediaUrl.startsWith("http://") || payload.mediaUrl.startsWith("https://")) {
-        const res = await fetch(payload.mediaUrl);
+        const res = await fetch(payload.mediaUrl, { signal: AbortSignal.timeout(30_000) });
         if (!res.ok) {
           return { ok: false, reason: `Не удалось скачать медиафайл по URL: HTTP ${res.status}` };
+        }
+        if (Number(res.headers.get("content-length") ?? 0) > 50 * 1024 * 1024) {
+          return { ok: false, reason: "Медиафайл по URL слишком большой (лимит 50 МБ)" };
         }
         const arrayBuf = await res.arrayBuffer();
         const buf = Buffer.from(arrayBuf);
@@ -1251,7 +1363,7 @@ export class TelegramTransportService {
             new Api.InputPhoneContact({
               clientId: bigInt(Date.now()),
               phone,
-              firstName: options?.firstName || "Клиент",
+              firstName: options?.firstName || "",
               lastName: options?.lastName || "",
             }),
           ],
@@ -1296,6 +1408,28 @@ export class TelegramTransportService {
           await conn.client.invoke(new Api.contacts.DeleteContacts({ id: [input] }));
         } catch {
           // ignore
+        }
+      }
+
+      // После удаления временного контакта из адресной книги запрашиваем реальный публичный профиль пользователя
+      try {
+        const fresh = await conn.client.getEntity(user.id ? user.id.toString() : user);
+        if (fresh instanceof Api.User && !fresh.bot) {
+          user = fresh;
+          if (fresh.username) {
+            username = String(fresh.username).trim().replace(/^@/, "");
+          }
+        }
+      } catch {
+        if (username) {
+          try {
+            const freshByUsername = await conn.client.getEntity(username);
+            if (freshByUsername instanceof Api.User && !freshByUsername.bot) {
+              user = freshByUsername;
+            }
+          } catch {
+            // ignore
+          }
         }
       }
 

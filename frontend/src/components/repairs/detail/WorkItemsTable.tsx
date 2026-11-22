@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, type KeyboardEvent } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, type KeyboardEvent } from "react";
 import { Wrench, Plus, Trash2, User, Search, BookOpen, Loader2, Check } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkItem } from "@/lib/repairs/repairs.types";
@@ -10,6 +10,8 @@ import {
   useAddRepairServiceToCatalog,
   useCreateWork,
   useDeleteWork,
+  useRepairMasters,
+  type RepairMasterDTO,
 } from "@/lib/api/use-repairs";
 import { ServiceCatalogDialog } from "./ServiceCatalogDialog";
 import { cn } from "@/lib/utils";
@@ -42,8 +44,20 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
   const comboboxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const { data: mastersData } = useRepairMasters();
   const { data: teamData } = useTeamMembers();
-  const masters = teamData?.members ?? [];
+  const masters: RepairMasterDTO[] = useMemo(() => {
+    if (mastersData && mastersData.length > 0) return mastersData;
+    return (teamData?.members ?? [])
+      .filter((m) => m.status === "active" && m.role !== "viewer")
+      .map((m) => ({
+        id: m.id,
+        fullName: m.fullName,
+        email: m.email,
+        phone: m.phone,
+        role: m.role,
+      }));
+  }, [mastersData, teamData]);
 
   const { data: servicesCatalog = [], isLoading: isCatalogLoading } = useRepairServicesCatalog();
   const addServiceMutation = useAddRepairServiceToCatalog();
@@ -137,9 +151,19 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
     const master = masters.find((m) => m.id === newMaster);
     const masterName = master?.fullName ?? "Не назначен";
 
+    const normalizedDesc = desc.toLowerCase().replace(/\s+/g, " ");
+    const existingItem = items.find((it) => {
+      const existingQty = it.quantity != null && it.quantity > 0 ? it.quantity : 1;
+      const existingUnit = it.unit_price != null ? it.unit_price : it.cost / existingQty;
+      return (
+        it.description.trim().toLowerCase().replace(/\s+/g, " ") === normalizedDesc &&
+        Math.abs(existingUnit - unitPriceNum) < 0.01
+      );
+    });
+
     if (orderId) {
       try {
-        await createWorkMutation.mutateAsync({
+        const result = await createWorkMutation.mutateAsync({
           orderId,
           payload: {
             description: desc,
@@ -150,7 +174,11 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
             cost: costNum,
           },
         });
-        toast.success(`Работа «${desc}» добавлена`);
+        if (existingItem) {
+          toast.success(`Количество «${desc}» увеличено до ${result.quantity ?? (existingItem.quantity ?? 1) + qtyNum}`);
+        } else {
+          toast.success(`Работа «${desc}» добавлена`);
+        }
         setNewDesc("");
         setNewQty("1");
         setNewUnitPrice("");
@@ -160,17 +188,32 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
         toast.error(err instanceof Error ? err.message : "Не удалось добавить работу");
       }
     } else {
-      const newItem: WorkItem = {
-        id: `wi${Date.now()}`,
-        description: desc,
-        master_name: master?.fullName ?? "Не назначен",
-        master_id: newMaster,
-        quantity: qtyNum,
-        unit_price: unitPriceNum,
-        cost: costNum,
-      };
-
-      onChange?.([...items, newItem]);
+      if (existingItem) {
+        const nextItems = items.map((it) => {
+          if (it.id !== existingItem.id) return it;
+          const prevQty = it.quantity != null && it.quantity > 0 ? it.quantity : 1;
+          const nextQty = Math.round((prevQty + qtyNum) * 1000) / 1000;
+          const unit = it.unit_price != null ? it.unit_price : unitPriceNum;
+          return {
+            ...it,
+            quantity: nextQty,
+            unit_price: unit,
+            cost: Math.round(nextQty * unit * 100) / 100,
+          };
+        });
+        onChange?.(nextItems);
+      } else {
+        const newItem: WorkItem = {
+          id: `wi${Date.now()}`,
+          description: desc,
+          master_name: master?.fullName ?? "Не назначен",
+          master_id: newMaster,
+          quantity: qtyNum,
+          unit_price: unitPriceNum,
+          cost: costNum,
+        };
+        onChange?.([...items, newItem]);
+      }
       setNewDesc("");
       setNewQty("1");
       setNewUnitPrice("");

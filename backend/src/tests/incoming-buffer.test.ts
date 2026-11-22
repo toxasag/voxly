@@ -12,6 +12,7 @@ import {
 import {
   TYPING_PAUSE_MAX_MS,
   TYPING_PAUSE_MIN_MS,
+  buildRetrievedFactsContext,
   buildSystemPrompt,
   nextTypingPauseMs,
   parseAgentReply,
@@ -338,35 +339,37 @@ describe("nextTypingPauseMs", () => {
   });
 });
 
-describe("buildSystemPrompt", () => {
-  it("включает промпт агента, контекст и требование JSON", () => {
+describe("buildSystemPrompt & buildRetrievedFactsContext", () => {
+  it("включает промпт агента, требование JSON и выносит чанки в <retrieved_facts>", () => {
+    const contextChunks = [
+      { content: "Гарантия 90 дней.", filename: "Регламент.docx" },
+      { content: "Диагностика 900 ₽.", filename: "Прайс.txt" },
+    ];
     const prompt = buildSystemPrompt({
       agentPrompt: "Ты помощник сервисного центра.",
-      contextChunks: [
-        { content: "Гарантия 90 дней.", filename: "Регламент.docx" },
-        { content: "Диагностика 900 ₽.", filename: "Прайс.txt" },
-      ],
+      contextChunks,
     });
 
     expect(prompt).toContain("Ты помощник сервисного центра.");
-    expect(prompt).toContain("Гарантия 90 дней.");
-    expect(prompt).toContain("Регламент.docx");
     expect(prompt).toContain("message1");
-    // Рамка вокруг контекста обязательна: без неё модель смешивает найденное с
-    // собственными представлениями.
-    expect(prompt).toContain("не придумывай факты");
+    expect(prompt).toContain("ЗАПРЕЩЕНО придумывать цифры");
+
+    // Чанки базы знаний намеренно передаются в хвостовом блоке <retrieved_facts>
+    // для сохранения префиксного кеша системного промпта.
+    const facts = buildRetrievedFactsContext({ contextChunks });
+    expect(facts).toContain("<retrieved_facts>");
+    expect(facts).toContain("Гарантия 90 дней.");
+    expect(facts).toContain("Регламент.docx");
   });
 
-  it("при пустом контексте запрещает называть цены и сроки", () => {
+  it("при пустом контексте запрещает выдумывать цены и возвращает пустой блок фактов", () => {
     const prompt = buildSystemPrompt({
       agentPrompt: "Ты помощник.",
       contextChunks: [],
     });
 
-    // Иначе агент отвечает общими словами о сроках, которых в регламенте компании
-    // может не быть вовсе.
-    expect(prompt).toContain("нет материалов");
-    expect(prompt).toContain("Не называй конкретные цены");
+    expect(prompt).toContain("ЗАПРЕЩЕНО придумывать цифры");
     expect(prompt).toContain("message1");
+    expect(buildRetrievedFactsContext({ contextChunks: [] })).toBe("");
   });
 });

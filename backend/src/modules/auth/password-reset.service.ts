@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import argon2 from "argon2";
+import { hashToken } from "../../lib/crypto.utils.js";
+import { toDate } from "../../lib/date.utils.js";
 import { queryOne, transaction } from "../../db/client.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
@@ -40,14 +42,6 @@ export class InvalidResetTokenError extends AppError {
       "Ссылка недействительна или устарела. Запросите восстановление пароля заново.",
     );
   }
-}
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
 }
 
 export class PasswordResetService {

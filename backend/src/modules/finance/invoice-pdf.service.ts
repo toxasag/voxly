@@ -1,14 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
+import * as QRCode from "qrcode";
 import type { InvoiceDTO } from "./finance.types.js";
 import { amountToWords } from "./amount-to-words.js";
+import { buildGostPaymentQrString } from "./invoice-html.service.js";
+import {
+  normalizeInvoiceFormConfig,
+  type InvoiceIssuerSnapshot,
+} from "./finance-organizations.types.js";
 
 interface PrintSettings {
   company_name?: string;
   company_address?: string;
+  actual_address?: string;
   company_phone?: string;
   company_email?: string;
   company_website?: string;
+  edo_info?: string;
   company_inn?: string;
   company_ogrn?: string;
   bank_name?: string;
@@ -16,8 +24,13 @@ interface PrintSettings {
   corr_account?: string;
   settlement_account?: string;
   company_kpp?: string;
+  director_title?: string;
   director_name?: string;
   accountant_name?: string;
+  show_qr_code?: boolean;
+  show_notice?: boolean;
+  notice_text?: string;
+  show_accountant?: boolean;
 }
 
 interface FontMetrics {
@@ -267,36 +280,72 @@ export function generateInvoicePdfBuffer(
   // Current drawing cursor from top
   let curY = pageHeight - 36;
 
-  // 1. Top Notice box
-  const noticeText =
-    "Внимание! Оплата данного счета означает согласие с условиями поставки товара / оказания услуг. Уведомление об оплате обязательно, в противном случае не гарантируется сохранение цены и наличие товара. Товар/услуга отпускается по факту прихода денег на р/с Поставщика.";
-  const noticeLines = wrapText(noticeText, contentWidth - 12, 7.5, false);
-  const noticeBoxH = noticeLines.length * 10 + 8;
-  curY -= noticeBoxH;
-  drawRect(marginX, curY, contentWidth, noticeBoxH, 0.5, "0.85 0.85 0.85", "0.98 0.98 0.98");
-  noticeLines.forEach((line, idx) => {
-    drawText(line, marginX + 6, curY + noticeBoxH - 10 - idx * 10, 7.5, false, "0.4 0.4 0.4");
-  });
+  // 1. Top Supplier Header (matches RF standard reference)
+  const compName = settings.company_name || "Организация";
+  drawText(compName, marginX, curY, 9.5, true, "0.08 0.08 0.08");
+  curY -= 13;
 
-  curY -= 14;
+  if (settings.company_address) {
+    for (const line of wrapText(settings.company_address, contentWidth, 8, false)) {
+      drawText(line, marginX, curY, 8, false, "0.2 0.2 0.2");
+      curY -= 10;
+    }
+  }
+  if (settings.actual_address && settings.actual_address !== settings.company_address) {
+    for (const line of wrapText(settings.actual_address, contentWidth, 8, false)) {
+      drawText(line, marginX, curY, 8, false, "0.2 0.2 0.2");
+      curY -= 10;
+    }
+  }
+  curY -= 3;
+  if (settings.company_phone) {
+    drawText(`Телефон: ${settings.company_phone}`, marginX, curY, 8, false, "0.2 0.2 0.2");
+    curY -= 10;
+  }
+  if (settings.edo_info) {
+    drawText(settings.edo_info, marginX, curY, 8, true, "0.15 0.15 0.15");
+    curY -= 10;
+  }
+  if (settings.company_email) {
+    drawText(`Эл.почта: ${settings.company_email}`, marginX, curY, 8, false, "0.2 0.2 0.2");
+    curY -= 10;
+  }
+  if (settings.company_website) {
+    drawText(`Сайт: ${settings.company_website}`, marginX, curY, 8, false, "0.2 0.2 0.2");
+    curY -= 10;
+  }
 
-  // 2. Bank Requisites Table (Образец заполнения платежного поручения)
-  const bankTableH = 75;
+  if (settings.show_notice && settings.notice_text) {
+    const noticeLines = wrapText(settings.notice_text, contentWidth - 12, 7.5, false);
+    const noticeBoxH = noticeLines.length * 10 + 8;
+    curY -= noticeBoxH + 2;
+    drawRect(marginX, curY, contentWidth, noticeBoxH, 0.5, "0.85 0.85 0.85", "0.98 0.98 0.98");
+    noticeLines.forEach((line, idx) => {
+      drawText(line, marginX + 6, curY + noticeBoxH - 10 - idx * 10, 7.5, false, "0.4 0.4 0.4");
+    });
+  }
+
+  curY -= 8;
+
+  // 2. Bank Requisites Table (Образец заполнения платежного поручения РФ)
+  const bankTableH = 78;
   curY -= bankTableH;
   const bY = curY;
   const bX = marginX;
   const bW = contentWidth;
 
-  drawRect(bX, bY, bW, bankTableH, 0.75, "0.3 0.3 0.3");
+  drawRect(bX, bY, bW, bankTableH, 0.75, "0.15 0.15 0.15");
 
-  const colBankW = 270;
-  const colBikW = 55;
+  const colBankW = 285;
+  const colBikW = 48;
 
   // Split lines
-  drawLine(bX + colBankW, bY, bX + colBankW, bY + bankTableH, 0.5, "0.3 0.3 0.3");
-  drawLine(bX + colBankW + colBikW, bY, bX + colBankW + colBikW, bY + bankTableH, 0.5, "0.3 0.3 0.3");
-  drawLine(bX, bY + 38, bX + bW, bY + 38, 0.5, "0.3 0.3 0.3");
-  drawLine(bX, bY + 56, bX + colBankW, bY + 56, 0.5, "0.3 0.3 0.3");
+  drawLine(bX + colBankW, bY, bX + colBankW, bY + bankTableH, 0.5, "0.15 0.15 0.15");
+  drawLine(bX + colBankW + colBikW, bY, bX + colBankW + colBikW, bY + bankTableH, 0.5, "0.15 0.15 0.15");
+  drawLine(bX, bY + 40, bX + bW, bY + 40, 0.5, "0.15 0.15 0.15");
+  drawLine(bX + colBankW, bY + 59, bX + bW, bY + 59, 0.5, "0.15 0.15 0.15");
+  drawLine(bX, bY + 24, bX + colBankW, bY + 24, 0.5, "0.15 0.15 0.15");
+  drawLine(bX + 142, bY + 24, bX + 142, bY + 40, 0.5, "0.15 0.15 0.15");
 
   const bankName = settings.bank_name || "";
   const bik = settings.bik || "";
@@ -304,81 +353,131 @@ export function generateInvoicePdfBuffer(
   const settAcc = settings.settlement_account || "";
   const inn = settings.company_inn || "";
   const kpp = settings.company_kpp || "";
-  const compName = settings.company_name || "Организация";
 
   // Bank name
-  drawText(bankName, bX + 5, bY + bankTableH - 12, 8.5, true);
-  drawText("Банк получателя", bX + 5, bY + 41, 7, false, "0.5 0.5 0.5");
+  drawText(bankName, bX + 5, bY + bankTableH - 13, 8.5, false);
+  drawText("Банк получателя", bX + 5, bY + 43, 7, false, "0.4 0.4 0.4");
 
   // BIK
-  drawText("БИК", bX + colBankW + 5, bY + bankTableH - 12, 8, false);
-  drawText(bik, bX + colBankW + colBikW + 5, bY + bankTableH - 12, 8.5, true);
+  drawText("БИК", bX + colBankW + 5, bY + bankTableH - 13, 8, false);
+  drawText(bik, bX + colBankW + colBikW + 5, bY + bankTableH - 13, 8.5, false);
 
   // Corr Account
-  drawText("Сч. №", bX + colBankW + 5, bY + 44, 8, false);
-  drawText(corrAcc, bX + colBankW + colBikW + 5, bY + 44, 8.5, true);
+  drawText("Сч. №", bX + colBankW + 5, bY + 46, 8, false);
+  drawText(corrAcc, bX + colBankW + colBikW + 5, bY + 46, 8.5, false);
 
   // INN / KPP
-  const innKpp = kpp ? `ИНН ${inn}   КПП ${kpp}` : `ИНН ${inn}`;
-  drawText(innKpp, bX + 5, bY + 26, 8.5, true);
+  drawText(`ИНН   ${inn}`, bX + 5, bY + 29, 8.5, false);
+  drawText(`КПП   ${kpp}`, bX + 147, bY + 29, 8.5, false);
 
   // Settlement Account
-  drawText("Сч. №", bX + colBankW + 5, bY + 18, 8, false);
-  drawText(settAcc, bX + colBankW + colBikW + 5, bY + 18, 8.5, true);
+  drawText("Сч. №", bX + colBankW + 5, bY + 27, 8, false);
+  drawText(settAcc, bX + colBankW + colBikW + 5, bY + 27, 8.5, false);
 
   // Beneficiary Name
-  drawText(compName, bX + 5, bY + 8, 8.5, true);
-  drawText("Получатель", bX + 5, bY + 2, 7, false, "0.5 0.5 0.5");
+  drawText(compName, bX + 5, bY + 13, 8.5, false);
+  drawText("Получатель", bX + 5, bY + 3, 7, false, "0.4 0.4 0.4");
 
-  curY -= 20;
+  curY -= 24;
 
-  // 3. Invoice Title
+  // 3. Invoice Title (centered bold, matching reference PDF)
   const issueDateFormatted = formatDateRu(invoice.issueDate);
   const titleText = `Счёт на оплату № ${invoice.invoiceNumber} от ${issueDateFormatted}`;
-  drawText(titleText, marginX, curY, 13, true, "0.05 0.05 0.05");
+  const titleW = measureText(titleText, 13.5, true);
+  drawText(titleText, marginX + Math.max(0, (contentWidth - titleW) / 2), curY, 13.5, true, "0.05 0.05 0.05");
 
-  curY -= 6;
-  drawLine(marginX, curY, marginX + contentWidth, curY, 1.5, "0.2 0.2 0.2");
+  curY -= 18;
 
-  curY -= 14;
+  // 4. Supplier, Buyer + GOST R 56042-2014 Vector Payment QR Code
+  const qrSnapshot: InvoiceIssuerSnapshot = {
+    name: compName,
+    inn,
+    kpp,
+    ogrn: settings.company_ogrn || "",
+    legalAddress: settings.company_address || "",
+    actualAddress: settings.actual_address || "",
+    phone: settings.company_phone || "",
+    email: settings.company_email || "",
+    website: settings.company_website || "",
+    edoInfo: settings.edo_info || "",
+    bankName,
+    bik,
+    corrAccount: corrAcc,
+    settlementAccount: settAcc,
+    directorTitle: settings.director_title || "Индивидуальный предприниматель",
+    directorName: settings.director_name || "",
+    accountantName: settings.accountant_name || "",
+    logoUrl: "",
+    logoWidth: 140,
+    stampUrl: "",
+    signatureUrl: "",
+    invoiceConfig: normalizeInvoiceFormConfig({}),
+  };
 
-  // 4. Supplier, Buyer, Basis Details
-  const supplierLabel = "Поставщик:";
-  const supplierDetails = `${compName}, ИНН ${inn}${kpp ? `, КПП ${kpp}` : ""}${
-    settings.company_address ? `, ${settings.company_address}` : ""
-  }${settings.company_phone ? `, тел.: ${settings.company_phone}` : ""}`;
-  const supLines = wrapText(supplierDetails, contentWidth - 85, 8.5, false);
+  const qrPayload = settings.show_qr_code !== false ? buildGostPaymentQrString(invoice, qrSnapshot) : null;
+  const hasQr = Boolean(qrPayload);
+  const partiesMaxW = hasQr ? contentWidth - 190 : contentWidth - 85;
+  const partiesStartY = curY;
 
-  drawText(supplierLabel, marginX, curY, 8.5, true);
+  const supplierDetails = `${compName}${inn ? `, ИНН ${inn}` : ""}${kpp ? `, КПП ${kpp}` : ""}`;
+  const supLines = wrapText(supplierDetails, partiesMaxW, 8.5, false);
+  drawText("Поставщик:", marginX, curY, 8.5, false, "0.25 0.25 0.25");
   supLines.forEach((l, idx) => {
-    drawText(l, marginX + 75, curY - idx * 11, 8.5, false);
+    drawText(l, marginX + 68, curY - idx * 11, 8.5, false);
   });
-  curY -= supLines.length * 11 + 5;
+  curY -= supLines.length * 11 + 6;
 
-  const buyerLabel = "Покупатель:";
   const buyerName = invoice.companyName || invoice.contactName || "Физическое лицо";
   const buyerDetails = `${buyerName}${invoice.companyInn ? `, ИНН ${invoice.companyInn}` : ""}${
     invoice.companyAddress ? `, ${invoice.companyAddress}` : ""
-  }${invoice.contactPhone ? `, тел.: ${invoice.contactPhone}` : ""}`;
-  const buyLines = wrapText(buyerDetails, contentWidth - 85, 8.5, false);
-
-  drawText(buyerLabel, marginX, curY, 8.5, true);
+  }`;
+  const buyLines = wrapText(buyerDetails, partiesMaxW, 8.5, false);
+  drawText("Покупатель:", marginX, curY, 8.5, false, "0.25 0.25 0.25");
   buyLines.forEach((l, idx) => {
-    drawText(l, marginX + 75, curY - idx * 11, 8.5, false);
+    drawText(l, marginX + 68, curY - idx * 11, 8.5, false);
   });
-  curY -= buyLines.length * 11 + 5;
+  curY -= buyLines.length * 11 + 6;
 
-  // Basis
+  if (qrPayload) {
+    try {
+      const qr = QRCode.create(qrPayload, { errorCorrectionLevel: "M" });
+      const size = qr.modules.size;
+      const qrBoxSize = 86;
+      const cell = qrBoxSize / size;
+      const qrX = marginX + contentWidth - 178;
+      const qrTopY = partiesStartY + 6;
+      const qrBottomY = qrTopY - qrBoxSize;
+
+      streamOps.push("q 0 0 0 rg");
+      for (let r = 0; r < size; r += 1) {
+        for (let c = 0; c < size; c += 1) {
+          if (qr.modules.get(r, c)) {
+            const rx = qrX + c * cell;
+            const ry = qrTopY - (r + 1) * cell;
+            streamOps.push(
+              `${rx.toFixed(2)} ${ry.toFixed(2)} ${(cell + 0.05).toFixed(2)} ${(cell + 0.05).toFixed(2)} re f`,
+            );
+          }
+        }
+      }
+      streamOps.push("Q");
+
+      const capX = qrX + qrBoxSize + 8;
+      drawText("QR-код", capX, qrTopY - 12, 8.5, true, "0.1 0.1 0.1");
+      drawText("для оплаты", capX, qrTopY - 22, 8.5, true, "0.1 0.1 0.1");
+      drawText("Отсканируйте код", capX, qrTopY - 35, 7, false, "0.4 0.4 0.4");
+      drawText("с помощью", capX, qrTopY - 44, 7, false, "0.4 0.4 0.4");
+      drawText("банковского", capX, qrTopY - 53, 7, false, "0.4 0.4 0.4");
+      drawText("приложения", capX, qrTopY - 62, 7, false, "0.4 0.4 0.4");
+
+      curY = Math.min(curY, qrBottomY - 6);
+    } catch {
+      // ignore QR draw error
+    }
+  }
+
   const lineItems = invoice.lineItems ?? [];
-  const basisLabel = "Основание:";
-  const acts = Array.from(
-    new Set(lineItems.map((li) => li.sourceLabel).filter(Boolean)),
-  );
-  const basisDetails = acts.length > 0 ? `Наряд-заказ(ы) ${acts.join(", ")}` : "Оказание услуг / ремонт";
-  drawText(basisLabel, marginX, curY, 8.5, true);
-  drawText(basisDetails, marginX + 75, curY, 8.5, false);
-
-  curY -= 16;
+  curY -= 12;
 
   // 5. Line Items Table
   const col1W = 24; // №
@@ -414,20 +513,18 @@ export function generateInvoicePdfBuffer(
 
   // Table rows
   lineItems.forEach((item, index) => {
-    const itemTitle = item.sourceLabel
-      ? `${item.description} (${item.sourceLabel})`
-      : item.description;
+    const itemTitle = item.description;
     const lines = wrapText(itemTitle, col2W - 12, 8, false);
     const rowH = Math.max(16, lines.length * 10 + 6);
     curY -= rowH;
 
-    drawRect(marginX, curY, contentWidth, rowH, 0.5, "0.5 0.5 0.5");
+    drawRect(marginX, curY, contentWidth, rowH, 0.5, "0.25 0.25 0.25");
 
-    drawLine(x2, curY, x2, curY + rowH, 0.5, "0.5 0.5 0.5");
-    drawLine(x3, curY, x3, curY + rowH, 0.5, "0.5 0.5 0.5");
-    drawLine(x4, curY, x4, curY + rowH, 0.5, "0.5 0.5 0.5");
-    drawLine(x5, curY, x5, curY + rowH, 0.5, "0.5 0.5 0.5");
-    drawLine(x6, curY, x6, curY + rowH, 0.5, "0.5 0.5 0.5");
+    drawLine(x2, curY, x2, curY + rowH, 0.5, "0.25 0.25 0.25");
+    drawLine(x3, curY, x3, curY + rowH, 0.5, "0.25 0.25 0.25");
+    drawLine(x4, curY, x4, curY + rowH, 0.5, "0.25 0.25 0.25");
+    drawLine(x5, curY, x5, curY + rowH, 0.5, "0.25 0.25 0.25");
+    drawLine(x6, curY, x6, curY + rowH, 0.5, "0.25 0.25 0.25");
 
     drawText(String(index + 1), x1 + 6, curY + rowH - 11, 8, false);
 
@@ -435,8 +532,9 @@ export function generateInvoicePdfBuffer(
       drawText(l, x2 + 5, curY + rowH - 11 - lIdx * 10, 8, false);
     });
 
-    drawText(String(item.quantity), x3 + 12, curY + rowH - 11, 8, false);
-    drawText("шт.", x4 + 8, curY + rowH - 11, 8, false);
+    const qtyStr = String(item.quantity);
+    drawText(qtyStr, x3 + col3W - measureText(qtyStr, 8, false) - 6, curY + rowH - 11, 8, false);
+    drawText(item.source === "repair_work" ? "усл." : "шт.", x4 + 7, curY + rowH - 11, 8, false);
 
     const priceStr = formatRubles(item.unitPrice);
     const totalStr = formatRubles(item.total);
@@ -444,63 +542,66 @@ export function generateInvoicePdfBuffer(
     drawText(totalStr, x6 + col6W - measureText(totalStr, 8, false) - 6, curY + rowH - 11, 8, false);
   });
 
-  curY -= 14;
+  curY -= 16;
 
-  // 6. Totals block
-  const totalsW = 180;
+  // 6. Totals block (matches reference PDF)
+  const totalsW = 190;
   const totalsX = marginX + contentWidth - totalsW;
 
-  const subtotalStr = formatRubles(invoice.subtotal);
-  drawText("Итого:", totalsX, curY, 9, true);
-  drawText(subtotalStr, marginX + contentWidth - measureText(subtotalStr, 9, true) - 6, curY, 9, true);
-  curY -= 12;
+  const totalStr = formatRubles(invoice.total);
+  drawText("Итого к оплате:", totalsX, curY, 9, true);
+  drawText(totalStr, marginX + contentWidth - measureText(totalStr, 9, true) - 6, curY, 9, true);
+  curY -= 13;
 
-  const vatRate = invoice.vatRate ?? 20;
+  const vatRate = invoice.vatRate ?? 0;
   if (vatRate > 0) {
     const vatStr = formatRubles(invoice.vatAmount);
-    drawText(`В том числе НДС (${vatRate}%):`, totalsX - 25, curY, 8.5, false);
+    drawText(`В том числе НДС (${vatRate}%):`, totalsX - 24, curY, 8.5, false);
     drawText(vatStr, marginX + contentWidth - measureText(vatStr, 8.5, false) - 6, curY, 8.5, false);
   } else {
-    drawText("Без налога (НДС)", totalsX, curY, 8.5, false);
-    drawText("—", marginX + contentWidth - 16, curY, 8.5, false);
+    drawText("В том числе НДС:", totalsX, curY, 8.5, false);
+    const noVat = "Без НДС";
+    drawText(noVat, marginX + contentWidth - measureText(noVat, 8.5, false) - 6, curY, 8.5, false);
   }
-  curY -= 14;
 
-  const totalStr = `${formatRubles(invoice.total)} руб.`;
-  drawText("Всего к оплате:", totalsX, curY, 10.5, true);
-  drawText(totalStr, marginX + contentWidth - measureText(totalStr, 10.5, true) - 6, curY, 10.5, true);
-
-  curY -= 16;
+  curY -= 18;
 
   // 7. Amount in words
   const rubles = Math.floor(invoice.total);
   const kopecks = Math.round((invoice.total - rubles) * 100);
-  const wordsStr = amountToWords(rubles, kopecks);
+  const wordsStr = `Всего к оплате: ${amountToWords(rubles, kopecks)}.`;
+  drawText(wordsStr, marginX, curY, 8.5, false);
 
-  const countSummary = `Всего наименований ${lineItems.length}, на сумму ${formatRubles(invoice.total)} руб.`;
-  drawText(countSummary, marginX, curY, 8.5, false);
-  curY -= 12;
-  drawText(wordsStr, marginX, curY, 8.5, true);
+  curY -= 7;
+  drawLine(marginX, curY, marginX + contentWidth, curY, 1, "0.15 0.15 0.15");
 
-  curY -= 8;
-  drawLine(marginX, curY, marginX + contentWidth, curY, 1, "0.2 0.2 0.2");
+  curY -= 32;
 
-  curY -= 28;
+  // 8. Signatures Block (Поставщик | должность | подпись | расшифровка подписи)
+  const dirTitle = settings.director_title || "Индивидуальный предприниматель";
+  const sigDirector = settings.director_name || "";
 
-  // 8. Signatures Block
-  const sigDirector = settings.director_name || compName;
-  const sigAccountant = settings.accountant_name || sigDirector;
+  drawText("Поставщик", marginX, curY, 8.5, false);
+  drawText(dirTitle, marginX + 82, curY + 2, 8.5, false);
+  drawLine(marginX + 75, curY - 2, marginX + 265, curY - 2, 0.5, "0.2 0.2 0.2");
+  drawText("должность", marginX + 148, curY - 10, 7, false, "0.4 0.4 0.4");
 
-  drawText("Руководитель", marginX, curY, 8.5, true);
-  drawLine(marginX + 75, curY - 2, marginX + 220, curY - 2, 0.5, "0.2 0.2 0.2");
-  drawText(`(${sigDirector})`, marginX + 225, curY, 8.5, false);
+  drawLine(marginX + 280, curY - 2, marginX + 390, curY - 2, 0.5, "0.2 0.2 0.2");
+  drawText("подпись", marginX + 320, curY - 10, 7, false, "0.4 0.4 0.4");
 
-  drawText("Бухгалтер", marginX + 330, curY, 8.5, true);
-  drawLine(marginX + 380, curY - 2, marginX + 460, curY - 2, 0.5, "0.2 0.2 0.2");
-  drawText(`(${sigAccountant})`, marginX + 465, curY, 8.5, false);
+  drawText(sigDirector, marginX + 412, curY + 2, 8.5, false);
+  drawLine(marginX + 405, curY - 2, marginX + contentWidth, curY - 2, 0.5, "0.2 0.2 0.2");
+  drawText("расшифровка подписи", marginX + 426, curY - 10, 7, false, "0.4 0.4 0.4");
 
-  curY -= 30;
-  drawText("М.П.", marginX + 90, curY, 9, false, "0.6 0.6 0.6");
+  if (settings.show_accountant && settings.accountant_name) {
+    curY -= 32;
+    drawText("Бухгалтер", marginX, curY, 8.5, false);
+    drawText("Главный бухгалтер", marginX + 82, curY + 2, 8.5, false);
+    drawLine(marginX + 75, curY - 2, marginX + 265, curY - 2, 0.5, "0.2 0.2 0.2");
+    drawLine(marginX + 280, curY - 2, marginX + 390, curY - 2, 0.5, "0.2 0.2 0.2");
+    drawText(settings.accountant_name, marginX + 412, curY + 2, 8.5, false);
+    drawLine(marginX + 405, curY - 2, marginX + contentWidth, curY - 2, 0.5, "0.2 0.2 0.2");
+  }
 
   // Build PDF document objects
   const objects: (string | Buffer)[] = [];

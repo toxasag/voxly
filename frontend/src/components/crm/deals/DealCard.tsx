@@ -254,11 +254,46 @@ export const DealCard = memo(function DealCard({
             <div className="flex items-center gap-2 text-[#666666]">
               <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
               {deal.contactName ? (
-                contactFields.name ? (
-                  <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" />
-                ) : (
-                  <span className="font-medium text-[#111111]">{deal.contactName}</span>
-                )
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {contactFields.name ? (
+                    <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" />
+                  ) : (
+                    <span className="font-medium text-[#111111]">{deal.contactName}</span>
+                  )}
+                  {(deal.contactSocials?.some((s) => s.kind === "max") ||
+                    deal.contactChannel === "max" ||
+                    deal.sourceChannel === "max" ||
+                    deal.sourceChannel === "max_bot") && (
+                    <span
+                      title="Мессенджер MAX"
+                      className="inline-flex h-3.5 items-center justify-center rounded-[3px] border border-violet-200 bg-violet-50 px-1 text-[8.5px] font-bold text-violet-700 select-none"
+                    >
+                      MAX
+                    </span>
+                  )}
+                  {(deal.contactTelegramUsername ||
+                    deal.contactSocials?.some((s) => s.kind === "telegram") ||
+                    deal.contactChannel === "telegram" ||
+                    deal.sourceChannel === "telegram") && (
+                    <span
+                      title="Telegram"
+                      className="inline-flex h-3.5 items-center justify-center rounded-[3px] border border-sky-200 bg-sky-50 px-1 text-[8.5px] font-bold text-sky-700 select-none"
+                    >
+                      TG
+                    </span>
+                  )}
+                  {(deal.contactWhatsapp ||
+                    deal.contactSocials?.some((s) => s.kind === "whatsapp") ||
+                    deal.contactChannel === "whatsapp" ||
+                    deal.sourceChannel === "whatsapp") && (
+                    <span
+                      title="WhatsApp"
+                      className="inline-flex h-3.5 items-center justify-center rounded-[3px] border border-emerald-200 bg-emerald-50 px-1 text-[8.5px] font-bold text-emerald-700 select-none"
+                    >
+                      WA
+                    </span>
+                  )}
+                </div>
               ) : (
                 <span className="text-[#888888]">Контакт: —</span>
               )}

@@ -10,6 +10,153 @@ import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClien
 export type TransactionType = "income" | "expense";
 export type InvoiceStatus = "draft" | "sent" | "paid" | "overdue" | "cancelled";
 export type AccountType = "bank" | "cash" | "acquiring" | "safe";
+export type OrgType = "ip" | "ooo" | "self_employed";
+export type VatMode = "none" | "included_5" | "included_7" | "included_10" | "included_20";
+
+export interface InvoiceFormConfig {
+  showLogo: boolean;
+  showQrCode: boolean;
+  showContactsHeader: boolean;
+  showEdo: boolean;
+  showNotice: boolean;
+  noticeText: string;
+  showBasis: boolean;
+  showAccountant: boolean;
+  showStamp: boolean;
+  showSignature: boolean;
+  invoiceNumberPrefix: string;
+  accentColor: string;
+  footerNote: string;
+}
+
+export interface InvoiceIssuerSnapshot {
+  organizationId?: string;
+  orgType?: OrgType;
+  name: string;
+  shortName?: string;
+  inn: string;
+  kpp: string;
+  ogrn: string;
+  legalAddress: string;
+  actualAddress: string;
+  phone: string;
+  email: string;
+  website: string;
+  edoInfo: string;
+  bankName: string;
+  bik: string;
+  corrAccount: string;
+  settlementAccount: string;
+  directorTitle: string;
+  directorName: string;
+  accountantName: string;
+  logoUrl: string;
+  logoWidth: number;
+  stampUrl: string;
+  signatureUrl: string;
+  invoiceConfig: InvoiceFormConfig;
+}
+
+export interface FinanceOrganizationDTO {
+  id: string;
+  isDefault: boolean;
+  orgType: OrgType;
+  name: string;
+  shortName: string;
+  inn: string;
+  kpp: string;
+  ogrn: string;
+  legalAddress: string;
+  actualAddress: string;
+  phone: string;
+  email: string;
+  website: string;
+  edoInfo: string;
+  bankName: string;
+  bik: string;
+  corrAccount: string;
+  settlementAccount: string;
+  directorTitle: string;
+  directorName: string;
+  accountantName: string;
+  vatMode: VatMode;
+  vatRate: number;
+  logoUrl: string;
+  logoWidth: number;
+  stampUrl: string;
+  signatureUrl: string;
+  invoiceConfig: InvoiceFormConfig;
+  elbaEnabled: boolean;
+  elbaHasApiKey: boolean;
+  elbaApiKeyHint: string;
+  elbaOrganizationId: string;
+  elbaOrganizationName: string;
+  elbaBankAccountId: string;
+  elbaAutoSyncInvoices: boolean;
+  elbaLastSyncAt: string | null;
+  elbaLastError: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ElbaOrganization {
+  id: string;
+  name: string;
+  shortName?: string | null;
+  inn?: string | null;
+  kpp?: string | null;
+  ogrn?: string | null;
+  type?: string | null;
+}
+
+export interface ElbaBankAccount {
+  id: string;
+  accountNumber: string;
+  closed: boolean;
+  bank: {
+    name?: string | null;
+    bik?: string | null;
+    corrAccount?: string | null;
+    city?: string | null;
+    cityType?: string | null;
+  };
+}
+
+export interface SaveOrganizationPayload {
+  is_default?: boolean;
+  org_type?: OrgType;
+  name?: string;
+  short_name?: string;
+  inn?: string;
+  kpp?: string;
+  ogrn?: string;
+  legal_address?: string;
+  actual_address?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  edo_info?: string;
+  bank_name?: string;
+  bik?: string;
+  corr_account?: string;
+  settlement_account?: string;
+  director_title?: string;
+  director_name?: string;
+  accountant_name?: string;
+  vat_mode?: VatMode;
+  logo_url?: string;
+  logo_width?: number;
+  stamp_url?: string;
+  signature_url?: string;
+  invoice_config?: Partial<InvoiceFormConfig>;
+  elba_enabled?: boolean;
+  elba_api_key?: string;
+  clear_elba_api_key?: boolean;
+  elba_organization_id?: string;
+  elba_organization_name?: string;
+  elba_bank_account_id?: string;
+  elba_auto_sync_invoices?: boolean;
+}
 
 export interface AccountDTO {
   id: string;
@@ -63,6 +210,7 @@ export interface InvoiceDTO {
   dealId: string | null;
   repairOrderId: string | null;
   subtotal: number;
+  vatMode?: VatMode;
   vatRate: number;
   vatAmount: number;
   total: number;
@@ -70,6 +218,11 @@ export interface InvoiceDTO {
   notes: string;
   paidAt: string | null;
   paidAccountId: string | null;
+  issuerOrganizationId?: string | null;
+  issuerSnapshot?: InvoiceIssuerSnapshot | null;
+  elbaBillId?: string;
+  elbaSyncedAt?: string | null;
+  elbaSyncError?: string;
   lineItems: InvoiceItemDTO[];
 }
 
@@ -77,6 +230,35 @@ export interface PnlCategoryDTO {
   categoryName: string;
   amount: number;
   percentage: number;
+}
+
+export interface PnlCogsBreakdownItemDTO {
+  movementId: string;
+  itemName: string;
+  batchNumber: string;
+  supplierName: string;
+  ticketNumber: string | null;
+  dealId?: string | null;
+  dealTitle?: string | null;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  occurredAt: string;
+}
+
+export interface PnlCogsSummaryDTO {
+  partsRevenue: number;
+  repairPartsRevenue?: number;
+  dealProductsRevenue?: number;
+  worksRevenue: number;
+  partsCogs: number;
+  partsGrossProfit: number;
+  partsMarkupPercent: number;
+  partsMarginPercent: number;
+  accrualGrossProfit: number;
+  stockValuation: number;
+  writeOffsCount: number;
+  breakdown: PnlCogsBreakdownItemDTO[];
 }
 
 export interface PnlDTO {
@@ -87,6 +269,7 @@ export interface PnlDTO {
   netProfit: number;
   incomeByCategory: PnlCategoryDTO[];
   expensesByCategory: PnlCategoryDTO[];
+  cogs?: PnlCogsSummaryDTO;
 }
 
 export interface TransactionsListResult {
@@ -140,6 +323,7 @@ export interface CreateTransactionPayload {
 }
 
 export interface CreateInvoicePayload {
+  issuer_organization_id?: string;
   company_id?: string;
   company_name: string;
   company_inn?: string;
@@ -149,9 +333,11 @@ export interface CreateInvoicePayload {
   deal_id?: string;
   repair_order_id?: string;
   due_date: string;
+  vat_mode?: VatMode;
   vat_rate?: number;
   currency?: string;
   notes?: string;
+  sync_to_elba?: boolean;
   line_items: {
     description: string;
     quantity?: number;
@@ -163,8 +349,24 @@ export interface CreateInvoicePayload {
 
 export interface UpdateInvoicePayload {
   status?: InvoiceStatus;
+  issuer_organization_id?: string;
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  company_address?: string;
+  contact_name?: string;
+  contact_phone?: string;
   due_date?: string;
+  vat_mode?: VatMode;
+  vat_rate?: number;
   notes?: string;
+  line_items?: {
+    description: string;
+    quantity?: number;
+    unit_price: number;
+    source?: string;
+    source_label?: string;
+  }[];
 }
 
 export interface MarkInvoicePaidPayload {
@@ -396,6 +598,24 @@ export function useUpdateInvoice(): UseMutationResult<InvoiceDTO, ApiClientError
     },
     onSuccess: (invoice) => {
       queryClient.setQueryData(financeKeys.invoiceDetail(invoice.id), invoice);
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useDeleteInvoice(): UseMutationResult<{ success: boolean; id: string }, ApiClientError, string> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean; id: string }, ApiClientError, string>({
+    mutationFn: async (id) => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(`/api/v1/invoices/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
@@ -418,6 +638,7 @@ export function useMarkInvoicePaid(): UseMutationResult<InvoiceDTO, ApiClientErr
 
 export interface CreateInvoiceFromActsPayload {
   repair_order_ids: string[];
+  issuer_organization_id?: string;
   company_id?: string;
   company_name?: string;
   company_inn?: string;
@@ -426,15 +647,20 @@ export interface CreateInvoiceFromActsPayload {
   contact_phone?: string;
   deal_id?: string;
   due_date?: string;
+  vat_mode?: VatMode;
   vat_rate?: number;
   currency?: string;
   notes?: string;
+  sync_to_elba?: boolean;
 }
 
 export interface BatchPaymentPayload {
   repair_order_ids: string[];
   cash_account_id: string;
   category_id?: string;
+  works_category_id?: string;
+  parts_category_id?: string;
+  split_works_and_parts?: boolean;
   description?: string;
 }
 
@@ -654,6 +880,192 @@ export function useCounterparties(search?: string): UseQueryResult<Counterpartie
     },
     staleTime: 30_000,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Finance Organizations, RF Invoice Form & Kontur.Elba
+// ---------------------------------------------------------------------------
+
+export const organizationKeys = {
+  all: ["finance", "organizations"] as const,
+};
+
+export function useFinanceOrganizations(): UseQueryResult<FinanceOrganizationDTO[], ApiClientError> {
+  return useQuery<FinanceOrganizationDTO[], ApiClientError>({
+    queryKey: organizationKeys.all,
+    queryFn: async () => {
+      const res = await apiClient.get<FinanceOrganizationDTO[]>("/api/v1/finance/organizations");
+      return res.data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateFinanceOrganization(): UseMutationResult<
+  FinanceOrganizationDTO,
+  ApiClientError,
+  SaveOrganizationPayload & { name: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<FinanceOrganizationDTO>("/api/v1/finance/organizations", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+    },
+  });
+}
+
+export function useUpdateFinanceOrganization(): UseMutationResult<
+  FinanceOrganizationDTO,
+  ApiClientError,
+  { id: string; payload: SaveOrganizationPayload }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.patch<FinanceOrganizationDTO>(
+        `/api/v1/finance/organizations/${id}`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+    },
+  });
+}
+
+export function useSetDefaultFinanceOrganization(): UseMutationResult<
+  FinanceOrganizationDTO,
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) => {
+      const res = await apiClient.post<FinanceOrganizationDTO>(
+        `/api/v1/finance/organizations/${id}/set-default`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+    },
+  });
+}
+
+export function useDeleteFinanceOrganization(): UseMutationResult<
+  { success: boolean },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) => {
+      const res = await apiClient.delete<{ success: boolean }>(
+        `/api/v1/finance/organizations/${id}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+    },
+  });
+}
+
+export function useTestElbaConnection(): UseMutationResult<
+  { connected: boolean; organizations: ElbaOrganization[]; bankAccounts: ElbaBankAccount[] },
+  ApiClientError,
+  { id: string; api_key?: string }
+> {
+  return useMutation({
+    mutationFn: async ({ id, api_key }) => {
+      const res = await apiClient.post<{
+        connected: boolean;
+        organizations: ElbaOrganization[];
+        bankAccounts: ElbaBankAccount[];
+      }>(`/api/v1/finance/organizations/${id}/elba/test`, api_key ? { api_key } : {});
+      return res.data;
+    },
+  });
+}
+
+export function useElbaBankAccounts(): UseMutationResult<
+  ElbaBankAccount[],
+  ApiClientError,
+  { id: string; elba_organization_id: string; api_key?: string }
+> {
+  return useMutation({
+    mutationFn: async ({ id, elba_organization_id, api_key }) => {
+      const res = await apiClient.post<ElbaBankAccount[]>(
+        `/api/v1/finance/organizations/${id}/elba/bank-accounts`,
+        { elba_organization_id, ...(api_key ? { api_key } : {}) },
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useInvoicePreviewHtml(): UseMutationResult<
+  { html: string },
+  ApiClientError,
+  { id: string; payload: SaveOrganizationPayload }
+> {
+  return useMutation({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.post<{ html: string }>(
+        `/api/v1/finance/organizations/${id}/invoice-preview`,
+        payload,
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useSyncInvoiceToElba(): UseMutationResult<
+  { invoice: InvoiceDTO; elbaBillId: string },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (invoiceId) => {
+      const res = await apiClient.post<{ invoice: InvoiceDTO; elbaBillId: string }>(
+        `/api/v1/invoices/${invoiceId}/sync-elba`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+    },
+  });
+}
+
+export async function fetchInvoiceRfHtml(invoiceId: string, autoPrint = false): Promise<string> {
+  const path = autoPrint
+    ? `/api/v1/invoices/${invoiceId}/html?print=1`
+    : `/api/v1/invoices/${invoiceId}/html`;
+  const { blob } = await apiClient.downloadBlob(path);
+  return blob.text();
+}
+
+export async function openInvoiceRfPrintWindow(invoiceId: string): Promise<void> {
+  const html = await fetchInvoiceRfHtml(invoiceId, true);
+  const w = window.open("", "_blank", "width=880,height=1040");
+  if (!w) {
+    throw new Error("Всплывающее окно заблокировано браузером");
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
 }
 
 // ---------------------------------------------------------------------------

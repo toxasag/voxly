@@ -4,6 +4,7 @@ import { CompaniesService } from "./companies.service.js";
 import { createCompanySchema, updateCompanySchema } from "./companies.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { innLookupService } from "../../integrations/inn-lookup.service.js";
+import { bulkActionSchema } from "../shared/bulk-action.types.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
@@ -46,6 +47,59 @@ export async function companiesRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: "Организация по данному ИНН не найдена" });
     }
     return reply.send({ data: result });
+  });
+
+  app.post("/bulk-delete", { onRequest: canDelete }, async (request, reply) => {
+    const payload = bulkActionSchema.parse(request.body);
+    const result = await service.bulkDelete(request.tenant_id, payload);
+    return reply.send({ data: result });
+  });
+
+  app.post("/:id/enrich-inn", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = z.object({ inn: z.string().min(10).max(12).optional() }).parse(request.body ?? {});
+
+    const existing = await service.get(request.tenant_id, id);
+    if (!existing) throw new NotFoundError("Company not found");
+
+    const targetInn = body.inn?.trim() || existing.requisites.inn?.trim();
+    if (!targetInn) {
+      return reply.status(400).send({ error: "Укажите ИНН организации для автоматического заполнения реквизитов" });
+    }
+
+    const lookupResult = await innLookupService.lookup(targetInn);
+    if (!lookupResult) {
+      return reply.status(404).send({ error: "Организация по данному ИНН не найдена в реестре ЕГРЮЛ/ФНС" });
+    }
+
+    const updatedCustomFields: Record<string, unknown> = {
+      ...(existing.customFields ?? {}),
+    };
+    if (lookupResult.directorName) {
+      updatedCustomFields.director = lookupResult.directorName;
+    }
+    if (lookupResult.directorPost) {
+      updatedCustomFields.director_post = lookupResult.directorPost;
+    }
+    if (lookupResult.type) {
+      updatedCustomFields.legal_type = lookupResult.type;
+    }
+
+    const shouldUpdateName =
+      !existing.name ||
+      existing.name.startsWith("Компания ИНН") ||
+      existing.name.trim() === targetInn;
+
+    const updated = await service.update(request.tenant_id, id, {
+      name: shouldUpdateName ? lookupResult.name : existing.name,
+      inn: lookupResult.inn || targetInn,
+      kpp: lookupResult.kpp || existing.requisites.kpp || "",
+      ogrn: lookupResult.ogrn || existing.requisites.ogrn || "",
+      legal_address: lookupResult.legalAddress || existing.requisites.legalAddress || "",
+      custom_fields: updatedCustomFields,
+    });
+
+    return reply.send({ data: updated });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {

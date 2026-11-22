@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { toIso, toIsoOrNull } from "../../lib/date.utils.js";
+
+export { toIso };
 
 // ---------------------------------------------------------------------------
 // Status workflow
@@ -43,10 +46,10 @@ const ALLOWED_TRANSITIONS: Record<RepairStatus, readonly RepairStatus[]> = {
   parts_order: ["ready", "issued", "intake", "rejected"],
   ready: ["issued", "waiting_parts", "parts_order", "intake"],
   issued: ["ready", "intake"],
-  // Legacy
-  diagnostics: ["waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
-  approval: ["waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
-  in_progress: ["waiting_parts", "parts_order", "ready", "issued", "rejected"],
+  // Active workflow & rollback transitions
+  diagnostics: ["intake", "waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
+  approval: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
+  in_progress: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "rejected"],
   rejected: ["intake"],
 };
 
@@ -91,6 +94,7 @@ export const createRepairSchema = z.object({
   customer_phone: z.string().min(5, "Customer phone is required").max(30),
   customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
   additional_contacts: z.array(additionalContactSchema).optional(),
+  is_company: z.boolean().optional(),
   company_id: optionalUuid,
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: z.string().optional().or(z.literal("")),
@@ -118,6 +122,23 @@ export const createRepairSchema = z.object({
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative("Estimated cost cannot be negative").default(0),
   notes: z.string().max(4000).optional().or(z.literal("")),
+}).superRefine((data, ctx) => {
+  const isCompany = Boolean(
+    data.is_company ||
+    (data.company_inn && data.company_inn.trim()) ||
+    (data.company_ogrn && data.company_ogrn.trim()) ||
+    (data.company_bik && data.company_bik.trim()) ||
+    (data.company_account_number && data.company_account_number.trim()) ||
+    (data.company_legal_address && data.company_legal_address.trim())
+  );
+
+  if (isCompany && (!data.company_name || !data.company_name.trim())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Укажите название компании",
+      path: ["company_name"],
+    });
+  }
 });
 
 export const equipmentIntakeItemSchema = z.object({
@@ -146,6 +167,7 @@ export const createBatchRepairSchema = z.object({
   customer_phone: z.string().min(5, "Customer phone is required").max(30),
   customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
   additional_contacts: z.array(additionalContactSchema).optional(),
+  is_company: z.boolean().optional(),
   company_id: optionalUuid,
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: z.string().optional().or(z.literal("")),
@@ -161,8 +183,33 @@ export const createBatchRepairSchema = z.object({
   master_name: z.string().max(200).optional().or(z.literal("")),
   estimated_cost: z.number().nonnegative().default(0),
   notes: z.string().max(4000).optional().or(z.literal("")),
+}).superRefine((data, ctx) => {
+  const isCompany = Boolean(
+    data.is_company ||
+    (data.company_inn && data.company_inn.trim()) ||
+    (data.company_ogrn && data.company_ogrn.trim()) ||
+    (data.company_bik && data.company_bik.trim()) ||
+    (data.company_account_number && data.company_account_number.trim()) ||
+    (data.company_legal_address && data.company_legal_address.trim())
+  );
+
+  if (isCompany && (!data.company_name || !data.company_name.trim())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Укажите название компании",
+      path: ["company_name"],
+    });
+  }
 });
 export type CreateBatchRepairPayload = z.infer<typeof createBatchRepairSchema>;
+
+export interface RepairMasterDTO {
+  id: string;
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+}
 
 export const renameDictionaryItemSchema = z.object({
   name: z.string().min(1, "Наименование не может быть пустым").max(200),
@@ -363,7 +410,18 @@ export interface RepairPartRow {
   quantity: number;
   retail_price: string;
   cost_price: string;
+  consumed_at?: Date | string | null;
+  cost_source?: string | null;
   created_at: Date | string;
+}
+
+export interface RepairPartBatchAllocationDTO {
+  batchId: string | null;
+  batchNumber: string;
+  supplierName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
 }
 
 export interface RepairNoteRow {
@@ -417,6 +475,13 @@ export interface RepairPartDTO {
   costTotal: number;
   /** retailTotal − costTotal */
   margin: number;
+  /** Наценка от себестоимости: (retailTotal − costTotal) / costTotal × 100 */
+  markupPercent?: number;
+  /** Маржа от цены продажи: (retailTotal − costTotal) / retailTotal × 100 */
+  marginPercent?: number;
+  consumedAt?: string | null;
+  costSource?: string;
+  batchAllocations?: RepairPartBatchAllocationDTO[];
   createdAt: string;
 }
 
@@ -514,14 +579,6 @@ export interface RepairOrderDetailDTO extends RepairOrderDTO {
 // Mappers
 // ---------------------------------------------------------------------------
 
-export function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
-}
-
 export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
   return {
     id: row.id,
@@ -591,11 +648,17 @@ export function toRepairWorkDTO(row: RepairWorkRow): RepairWorkDTO {
   };
 }
 
-export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
+export function toRepairPartDTO(
+  row: RepairPartRow,
+  batchAllocations?: RepairPartBatchAllocationDTO[],
+): RepairPartDTO {
   const retailPrice = Number(row.retail_price);
   const costPrice = Number(row.cost_price);
-  const retailTotal = retailPrice * row.quantity;
-  const costTotal = costPrice * row.quantity;
+  const retailTotal = Math.round(retailPrice * row.quantity * 100) / 100;
+  const costTotal = Math.round(costPrice * row.quantity * 100) / 100;
+  const margin = Math.round((retailTotal - costTotal) * 100) / 100;
+  const markupPercent = costTotal > 0 ? Math.round((margin / costTotal) * 1000) / 10 : 0;
+  const marginPercent = retailTotal > 0 ? Math.round((margin / retailTotal) * 1000) / 10 : 0;
 
   return {
     id: row.id,
@@ -608,7 +671,12 @@ export function toRepairPartDTO(row: RepairPartRow): RepairPartDTO {
     costPrice,
     retailTotal,
     costTotal,
-    margin: retailTotal - costTotal,
+    margin,
+    markupPercent,
+    marginPercent,
+    consumedAt: row.consumed_at ? toIso(row.consumed_at) : null,
+    costSource: row.cost_source ?? "manual",
+    batchAllocations: batchAllocations ?? [],
     createdAt: toIso(row.created_at),
   };
 }
@@ -666,6 +734,18 @@ export interface ClientMessengerSourceDTO {
   isVerified?: boolean;
 }
 
+export interface ExistingContactDTO {
+  contactId: string | null;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
+  repairsCount: number;
+  activeDealsCount: number;
+  matchedBy?: "phone" | "name" | null;
+}
+
 export interface ClientLookupResultDTO {
   found: boolean;
   client: {
@@ -689,9 +769,13 @@ export interface ClientLookupResultDTO {
   } | null;
   activeDeals: ClientLookupDealDTO[];
   suggestedName?: string | null;
+  suggestedSource?: "telegram" | "whatsapp" | "max" | "crm" | null;
   sources?: ClientMessengerSourceDTO[];
   channelsChecked?: string[];
   messengerLookupStatus?: "idle" | "searching" | "found" | "not_found";
+  repairsCount?: number;
+  existsInCrm?: boolean;
+  existingContact?: ExistingContactDTO | null;
 }
 
 export interface DictionaryItemDTO {
@@ -707,6 +791,7 @@ export interface ServiceDictionariesDTO {
   models: DictionaryItemDTO[];
   accessories: DictionaryItemDTO[];
   malfunctions: DictionaryItemDTO[];
+  categories?: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {

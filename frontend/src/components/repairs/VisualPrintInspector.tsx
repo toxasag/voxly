@@ -27,6 +27,8 @@ import {
   SlidersHorizontal,
   Receipt,
   Sparkles,
+  Pencil,
+  X,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { AvatarCropModal } from "@/components/settings/AvatarCropModal";
@@ -70,6 +72,7 @@ interface VisualPrintInspectorProps {
   onDuplicateTemplate?: (id: string) => void;
   onDeleteTemplate?: (id: string) => void;
   onResetToPreset?: () => void;
+  onRenameTemplate?: (template: PrintTemplateDTO, newName: string) => Promise<void> | void;
 }
 
 export function VisualPrintInspector({
@@ -87,7 +90,26 @@ export function VisualPrintInspector({
   onDuplicateTemplate,
   onDeleteTemplate,
   onResetToPreset,
+  onRenameTemplate,
 }: VisualPrintInspectorProps) {
+  // Rename state
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [editNameValue, setEditNameValue] = useState("");
+
+  const handleStartRename = (e: React.MouseEvent, tpl: PrintTemplateDTO) => {
+    e.stopPropagation();
+    if (!tpl.isCustom) return;
+    setEditingTemplateId(tpl.id);
+    setEditNameValue(tpl.name);
+  };
+
+  const handleFinishRename = (tpl: PrintTemplateDTO) => {
+    const trimmed = editNameValue.trim();
+    if (trimmed && trimmed !== tpl.name && onRenameTemplate) {
+      void onRenameTemplate(tpl, trimmed);
+    }
+    setEditingTemplateId(null);
+  };
   // Logo upload & crop state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isProcessingLogo, setIsProcessingLogo] = useState(false);
@@ -205,7 +227,6 @@ export function VisualPrintInspector({
 
   const DOC_TYPE_LABELS: Record<string, string> = {
     work_order: "Акт приема",
-    repair_order: "Заказ-наряд",
     completion_act: "Акт вып. работ",
     receipt: "Товарный чек",
     warranty_ticket: "Гарантийный талон",
@@ -262,13 +283,54 @@ export function VisualPrintInspector({
 
             {/* Template name & description */}
             <div className="flex items-center gap-1.5">
-              <h4 className="text-xs font-semibold text-[#111111] truncate group-hover:text-[#4a38f5] transition-colors">
-                {tpl.name}
-              </h4>
-              {isSelected && (
-                <span className="rounded-full bg-[#4a38f5] text-white px-1.5 py-0.2 text-[9px] font-bold shrink-0">
-                  Активен
-                </span>
+              {editingTemplateId === tpl.id ? (
+                <div
+                  className="flex items-center gap-1 w-full my-0.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="text"
+                    value={editNameValue}
+                    onChange={(e) => setEditNameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleFinishRename(tpl);
+                      } else if (e.key === "Escape") {
+                        setEditingTemplateId(null);
+                      }
+                    }}
+                    autoFocus
+                    className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs font-semibold text-[#111111] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleFinishRename(tpl)}
+                    className="flex h-6 w-6 items-center justify-center rounded bg-[#4a38f5] text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer shrink-0"
+                    title="Сохранить"
+                  >
+                    <Check className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingTemplateId(null)}
+                    className="flex h-6 w-6 items-center justify-center rounded text-[#888888] hover:bg-[#f0f0f0] transition-colors cursor-pointer shrink-0"
+                    title="Отмена"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <h4 className="text-xs font-semibold text-[#111111] truncate group-hover:text-[#4a38f5] transition-colors">
+                    {tpl.name}
+                  </h4>
+                  {isSelected && (
+                    <span className="rounded-full bg-[#4a38f5] text-white px-1.5 py-0.2 text-[9px] font-bold shrink-0">
+                      Активен
+                    </span>
+                  )}
+                </>
               )}
             </div>
             {tpl.description && (
@@ -286,6 +348,18 @@ export function VisualPrintInspector({
           </span>
 
           <div className="flex items-center gap-1 shrink-0">
+            {/* Rename button (custom only) */}
+            {tpl.isCustom && onRenameTemplate && (
+              <button
+                type="button"
+                onClick={(e) => handleStartRename(e, tpl)}
+                className="p-1 text-[#666666] hover:text-[#4a38f5] hover:bg-[#f0f0f0] rounded-[4px] transition-colors cursor-pointer"
+                title="Переименовать шаблон"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+
             {/* Visibility toggle button */}
             {onToggleVisibility && (
               <button
@@ -1352,9 +1426,9 @@ export function VisualPrintInspector({
             <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-3 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-semibold text-[#111111]">Отрывной талон клиента</div>
+                  <div className="text-xs font-semibold text-[#111111]">Талон мастера (нижняя часть)</div>
                   <div className="text-[10.5px] text-[#666666]">
-                    Квиток с линией отреза ножницами внизу листа
+                    Остаётся у мастера: данные об инструменте, клиенте и комментарии
                   </div>
                 </div>
                 <Switch
@@ -1371,8 +1445,8 @@ export function VisualPrintInspector({
                       type="text"
                       value={config.tearOffTicket.title}
                       onChange={(e) => updateConfig("tearOffTicket", { title: e.target.value })}
-                      placeholder="ОТРЫВНОЙ ТАЛОН КЛИЕНТА"
-                      className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                      placeholder="ТАЛОН ПРИЕМА (ЭКЗЕМПЛЯР МАСТЕРА)"
+                      className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-hidden"
                     />
                   </div>
 
@@ -1387,13 +1461,13 @@ export function VisualPrintInspector({
                   </div>
 
                   <div>
-                    <span className="text-[10px] text-[#888888]">Памятка клиенту</span>
+                    <span className="text-[10px] text-[#888888]">Свободные комментарии мастера / памятка</span>
                     <textarea
                       rows={2}
                       value={config.tearOffTicket.customNote}
                       onChange={(e) => updateConfig("tearOffTicket", { customNote: e.target.value })}
-                      placeholder="Предъявите данный талон при получении..."
-                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                      placeholder="Экземпляр сервисного центра. Оборудование и клиент проверены при приёмке..."
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-hidden"
                     />
                   </div>
                 </div>

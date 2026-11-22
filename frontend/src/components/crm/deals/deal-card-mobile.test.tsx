@@ -157,7 +157,7 @@ describe("Оболочка карточки записи на мобильном
     expect(panel.className).toContain("w-full");
     expect(panel.className).toContain("md:w-[var(--side-panel-width)]");
     expect(panel.className).toContain("md:border-l");
-    expect(panel.style.getPropertyValue("--side-panel-width")).toBe("500px");
+    expect(panel.style.getPropertyValue("--side-panel-width")).toBe("560px");
   });
 
   it("кнопка закрытия крупнее на мобильном", () => {

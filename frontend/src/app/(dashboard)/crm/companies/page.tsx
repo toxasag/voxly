@@ -43,11 +43,13 @@ import {
   formatDateTwenty,
 } from "@/components/crm/shared/twenty-table-helpers";
 import { cn, formatDateTime, timeAgo } from "@/lib/utils";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
 import {
   useCompanies,
   useCompanyStats,
   useCreateCompany,
   useDeleteCompany,
+  useBulkDeleteCompanies,
   useUpdateCompany,
   toCompanyFormValues,
   type CompanyDTO,
@@ -81,6 +83,7 @@ function CompaniesContent() {
   const [contactDetailId, setContactDetailId] = useState<string | null>(null);
   const [edit, setEdit] = useState<CompanyDTO | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [isAllSelected, setIsAllSelected] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CompanyDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
@@ -92,6 +95,7 @@ function CompaniesContent() {
       setSearch(input.trim());
       setPage(1);
       setSelected(new Set());
+      setIsAllSelected(false);
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [input]);
@@ -100,6 +104,7 @@ function CompaniesContent() {
   const create = useCreateCompany();
   const update = useUpdateCompany();
   const deleteCompany = useDeleteCompany();
+  const bulkDeleteCompanies = useBulkDeleteCompanies();
   const stats = useCompanyStats(detailId);
   const contactDetail = useContact(contactDetailId);
 
@@ -149,27 +154,41 @@ function CompaniesContent() {
   const bulkDelete = useCallback(async () => {
     setBulkDeleteConfirmOpen(false);
     setIsBulkDeleting(true);
-    const ids = Array.from(selected);
-    let successCount = 0;
-    for (const id of ids) {
-      try {
-        await deleteCompany.mutateAsync(id);
-        successCount++;
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Не удалось удалить компанию");
-        break;
+    try {
+      if (isAllSelected) {
+        const res = await bulkDeleteCompanies.mutateAsync({
+          mode: "all",
+          filters: { search: search || undefined },
+        });
+        toast.success(`Удалено компаний: ${res.count}`);
+      } else {
+        const ids = Array.from(selected);
+        const res = await bulkDeleteCompanies.mutateAsync({
+          mode: "ids",
+          ids,
+        });
+        toast.success(`Удалено компаний: ${res.count}`);
       }
-    }
-    setIsBulkDeleting(false);
-    setSelected(new Set());
-    if (detailId !== null && selected.has(detailId)) {
-      closeDetail();
-    }
-    if (successCount > 0) {
-      toast.success(`Удалено компаний: ${successCount}`);
+      setSelected(new Set());
+      setIsAllSelected(false);
+      if (detailId !== null && selected.has(detailId)) {
+        closeDetail();
+      }
       void query.refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось удалить компанию");
+    } finally {
+      setIsBulkDeleting(false);
     }
-  }, [selected, deleteCompany, detailId, closeDetail, query]);
+  }, [
+    isAllSelected,
+    selected,
+    bulkDeleteCompanies,
+    search,
+    detailId,
+    closeDetail,
+    query,
+  ]);
 
   const commitCompany = useCallback(
     (company: CompanyDTO, payload: CreateCompanyPayload) => {
@@ -458,7 +477,10 @@ function CompaniesContent() {
           tableId="companies"
           selectable={true}
           selectedIds={selected}
-          onSelectionChange={setSelected}
+          onSelectionChange={(next) => {
+            setSelected(next);
+            if (next.size === 0) setIsAllSelected(false);
+          }}
           onRowClick={editing === null ? (company) => setDetailId(company.id) : undefined}
           onCellEdit={(company, columnId) => setEditing({ rowId: company.id, columnId })}
           footerCells={{
@@ -470,27 +492,20 @@ function CompaniesContent() {
             ),
           }}
           bulkBar={
-            <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2.5 shadow-2xs">
-              <span className="text-xs font-medium text-[#111111]">
-                Выбрано: {selected.size}
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelected(new Set())}
-                className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-              >
-                Снять выделение
-              </button>
-              <button
-                type="button"
-                onClick={() => setBulkDeleteConfirmOpen(true)}
-                disabled={isBulkDeleting}
-                className="flex items-center gap-1.5 rounded-[8px] bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50 cursor-pointer"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Удалить
-              </button>
-            </div>
+            <TableBulkBar
+              selectedCount={isAllSelected ? total : selected.size}
+              totalCount={total}
+              isAllSelected={isAllSelected}
+              entityNamePlural="компаний"
+              pageItemCount={items.length}
+              onSelectAll={() => setIsAllSelected(true)}
+              onClearSelection={() => {
+                setSelected(new Set());
+                setIsAllSelected(false);
+              }}
+              onDelete={() => setBulkDeleteConfirmOpen(true)}
+              isDeleting={isBulkDeleting}
+            />
           }
           emptyState={
             <EmptyState
@@ -578,8 +593,12 @@ function CompaniesContent() {
         open={bulkDeleteConfirmOpen}
         onClose={() => setBulkDeleteConfirmOpen(false)}
         onConfirm={bulkDelete}
-        title={`Удалить компании: ${selected.size}?`}
-        description="Компании будут перемещены в корзину (мягкое удаление). Связанные контакты и сделки останутся, но потеряют ссылку на компанию."
+        title={isAllSelected ? `Удалить все компании (${total})?` : `Удалить компании: ${selected.size}?`}
+        description={
+          isAllSelected
+            ? `Все компании (${total}), соответствующие текущим фильтрам, будут перемещены в корзину.`
+            : "Компании будут перемещены в корзину (мягкое удаление). Связанные контакты и сделки останутся, но потеряют ссылку на компанию."
+        }
         confirmLabel="Удалить"
         variant="destructive"
         isPending={isBulkDeleting}

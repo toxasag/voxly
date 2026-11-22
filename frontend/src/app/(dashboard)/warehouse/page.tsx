@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
@@ -29,6 +29,10 @@ import {
   ChevronDown,
   X,
   FileSpreadsheet,
+  Eye,
+  Edit2,
+  SquarePen,
+  Filter,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -37,6 +41,7 @@ import { useAuth } from "@/lib/auth/use-auth";
 import { useServices } from "@/lib/api/use-services";
 import { ServicesCatalogTab } from "@/components/warehouse/ServicesCatalogTab";
 import {
+  useWarehouse,
   useWarehouseItems,
   useWarehouseBatches,
   useWarehouseMovements,
@@ -45,22 +50,37 @@ import {
   useSupplierOrders,
   usePaySupplierOrder,
   useCreateReceiptFromSupplierOrder,
+  useDeleteSupplierOrder,
   useWarehouseSettings,
   useUpdateWarehouseSettings,
   useDeleteWarehouseItem,
   useUpdatePurchaseRequest,
+  useDeletePurchaseRequest,
   useExportWarehouseItems,
   useBulkDeleteWarehouseItems,
+  useWarehouseCategories,
+  useWarehouseBrands,
   type WarehouseItemDTO,
   type PurchaseRequestDTO,
   type AggregatedPurchaseRequestDTO,
   type SupplierOrderDTO,
 } from "@/lib/api/use-warehouse";
+import {
+  WarehousePagination,
+  WAREHOUSE_LIMITS,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
 import { CreateItemModal } from "@/components/warehouse/CreateItemModal";
 import { IntakeModal } from "@/components/warehouse/IntakeModal";
 import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierOrderModal";
+import { EditSupplierOrderModal } from "@/components/warehouse/EditSupplierOrderModal";
+import { SupplierOrderDetailModal } from "@/components/warehouse/SupplierOrderDetailModal";
+import { ReceiptSupplierOrderModal } from "@/components/warehouse/ReceiptSupplierOrderModal";
 import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
 import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
+import { EditItemModal } from "@/components/warehouse/EditItemModal";
+import { EditPurchaseRequestModal } from "@/components/warehouse/EditPurchaseRequestModal";
+import { WarehouseDictionariesModal } from "@/components/warehouse/WarehouseDictionariesModal";
 import { cn } from "@/lib/utils";
 
 type WarehouseTab = "items" | "batches" | "purchases" | "supplier_orders" | "movements";
@@ -111,6 +131,85 @@ function WarehouseContent() {
 
   const [activeTab, setActiveTab] = useState<WarehouseTab>("items");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Параметры серверной пагинации и фильтрации номенклатуры склада
+  const rawPage = parseInt(searchParams.get("page") ?? "1", 10);
+  const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
+
+  const rawLimit = parseInt(searchParams.get("limit") ?? "25", 10);
+  const limit: WarehouseLimit = WAREHOUSE_LIMITS.includes(rawLimit as WarehouseLimit)
+    ? (rawLimit as WarehouseLimit)
+    : 25;
+
+  const categoryParam = searchParams.get("category") ?? "";
+  const brandParam = searchParams.get("brand") ?? "";
+
+  const [selectedCategory, setSelectedCategory] = useState<string>(categoryParam);
+  const [selectedBrand, setSelectedBrand] = useState<string>(brandParam);
+
+  useEffect(() => {
+    setSelectedCategory(categoryParam);
+  }, [categoryParam]);
+
+  useEffect(() => {
+    setSelectedBrand(brandParam);
+  }, [brandParam]);
+
+  const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
+  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  useClickOutside(filterPopoverRef, () => setFilterPopoverOpen(false), filterPopoverOpen);
+
+  const [dictionariesModalOpen, setDictionariesModalOpen] = useState(false);
+
+  const { data: warehouseCategoriesList = [] } = useWarehouseCategories();
+  const { data: warehouseBrandsList = [] } = useWarehouseBrands();
+
+  const activeFiltersCount = (selectedCategory ? 1 : 0) + (selectedBrand ? 1 : 0);
+
+  const updateUrl = (updates: {
+    page?: number;
+    limit?: number;
+    category?: string;
+    brand?: string;
+  }) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (updates.page !== undefined) {
+      params.set("page", String(updates.page));
+    }
+    if (updates.limit !== undefined) {
+      params.set("limit", String(updates.limit));
+    }
+    if (updates.category !== undefined) {
+      if (updates.category) {
+        params.set("category", updates.category);
+      } else {
+        params.delete("category");
+      }
+    }
+    if (updates.brand !== undefined) {
+      if (updates.brand) {
+        params.set("brand", updates.brand);
+      } else {
+        params.delete("brand");
+      }
+    }
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleClearFilters = () => {
+    setSelectedCategory("");
+    setSelectedBrand("");
+    setFilterPopoverOpen(false);
+    updateUrl({ page: 1, category: "", brand: "" });
+  };
+
+  const handleSearchChange = (newVal: string) => {
+    setSearchQuery(newVal);
+    if (page !== 1) {
+      updateUrl({ page: 1 });
+    }
+  };
+
   const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<string>("all");
   const [supplierOrderStatusFilter, setSupplierOrderStatusFilter] = useState<string>("all");
 
@@ -120,11 +219,19 @@ function WarehouseContent() {
   const [intakePurchaseRequest, setIntakePurchaseRequest] = useState<PurchaseRequestDTO | null>(null);
   const [createSupplierOrderModalOpen, setCreateSupplierOrderModalOpen] = useState(false);
   const [selectedAggregatedIds, setSelectedAggregatedIds] = useState<Set<string>>(new Set());
+  const [selectedPurchaseForEdit, setSelectedPurchaseForEdit] = useState<AggregatedPurchaseRequestDTO | null>(null);
+
+  // Модальные окна заказов поставщикам
+  const [selectedOrderForEdit, setSelectedOrderForEdit] = useState<SupplierOrderDTO | null>(null);
+  const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<SupplierOrderDTO | null>(null);
+  const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<SupplierOrderDTO | null>(null);
 
   // Выбор позиций для массовых действий и модалки
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
+  const [editItemModalOpen, setEditItemModalOpen] = useState(false);
+  const [selectedItemForEdit, setSelectedItemForEdit] = useState<WarehouseItemDTO | null>(null);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   useClickOutside(exportDropdownRef, () => setExportDropdownOpen(false), exportDropdownOpen);
@@ -134,8 +241,23 @@ function WarehouseContent() {
   const updateSettingsMutation = useUpdateWarehouseSettings();
   const allowNegativeStock = Boolean(warehouseSettings?.allowNegativeStock);
 
-  // Данные
-  const { data: items = [], isLoading: isItemsLoading } = useWarehouseItems();
+  // Данные номенклатуры с серверной пагинацией
+  const {
+    data: warehouseData,
+    isLoading: isItemsLoading,
+    isPlaceholderData,
+  } = useWarehouse({
+    page,
+    limit,
+    search: searchQuery,
+    category: selectedCategory || undefined,
+    brand: selectedBrand || undefined,
+  });
+
+  const items = warehouseData?.items ?? [];
+  const meta = warehouseData?.meta ?? { total: 0, page: 1, limit: 25, pages: 0 };
+  const filteredItems = items;
+
   const { data: batches = [], isLoading: isBatchesLoading } = useWarehouseBatches();
   const { data: movements = [], isLoading: isMovementsLoading } = useWarehouseMovements();
   const { data: purchaseRequests = [], isLoading: isPurchasesLoading } = usePurchaseRequests();
@@ -144,23 +266,12 @@ function WarehouseContent() {
 
   const deleteItemMutation = useDeleteWarehouseItem();
   const updatePurchaseMutation = useUpdatePurchaseRequest();
+  const deletePurchaseMutation = useDeletePurchaseRequest();
   const paySupplierOrderMutation = usePaySupplierOrder();
   const createReceiptMutation = useCreateReceiptFromSupplierOrder();
+  const deleteSupplierOrderMutation = useDeleteSupplierOrder();
   const exportMutation = useExportWarehouseItems();
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
-
-  // Фильтрация номенклатуры
-  const filteredItems = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (item) =>
-        item.name.toLowerCase().includes(q) ||
-        item.sku.toLowerCase().includes(q) ||
-        (item.brand && item.brand.toLowerCase().includes(q)) ||
-        item.category.toLowerCase().includes(q),
-    );
-  }, [items, searchQuery]);
 
   const handleToggleSelectAll = () => {
     if (selectedItemIds.size === filteredItems.length && filteredItems.length > 0) {
@@ -239,17 +350,23 @@ function WarehouseContent() {
     });
   }, [supplierOrders, supplierOrderStatusFilter, searchQuery]);
 
-  // Статистика склада
+  // Статистика склада (приоритетно из серверного партионного агрегата по всему складу)
   const stats = useMemo(() => {
-    const totalItemsCount = items.length;
-    const lowStockCount = items.filter((i) => i.availableStock <= i.minStock).length;
-    const totalValuation = items.reduce((sum, i) => sum + i.totalStock * i.costPrice, 0);
+    const totalItemsCount = meta.total > 0 ? meta.total : items.length;
+    const lowStockCount =
+      meta.lowStockCount !== undefined
+        ? meta.lowStockCount
+        : items.filter((i) => i.availableStock <= i.minStock).length;
+    const totalValuation =
+      meta.totalValuation !== undefined
+        ? meta.totalValuation
+        : items.reduce((sum, i) => sum + (i.stockValuation ?? i.totalStock * i.costPrice), 0);
     const pendingPurchasesCount = aggregatedPurchases.filter(
       (p) => p.status === "pending" || p.status === "ordered",
     ).length;
 
     return { totalItemsCount, lowStockCount, totalValuation, pendingPurchasesCount };
-  }, [items, aggregatedPurchases]);
+  }, [items, meta, aggregatedPurchases]);
 
   const handleToggleNegativeStock = async (checked: boolean) => {
     try {
@@ -306,21 +423,38 @@ function WarehouseContent() {
     }
   };
 
-  const handleCreateReceipt = async (order: SupplierOrderDTO) => {
+  const handleOpenReceiptModal = (order: SupplierOrderDTO) => {
+    setSelectedOrderForReceipt(order);
+  };
+
+  const handleOpenEditModal = (order: SupplierOrderDTO) => {
+    if (order.status === "received") {
+      toast.error("Нельзя редактировать заказ, товары по которому уже оприходованы на склад");
+      return;
+    }
+    setSelectedOrderForEdit(order);
+  };
+
+  const handleDeleteSupplierOrder = async (order: SupplierOrderDTO) => {
+    if (order.status === "received") {
+      toast.error("Нельзя удалить заказ, по которому уже оприходован товар на склад");
+      return;
+    }
     if (
       !confirm(
-        `Сформировать приходную накладную по заказу №${order.orderNumber}? Партии будут оприходованы, а остатки на складе увеличены.`,
+        `Удалить заказ поставщику №${order.orderNumber}? Все заявки на закупку вернутся в статус «В ожидании», а оплата (если была) будет отменена.`,
       )
     ) {
       return;
     }
     try {
-      const res = await createReceiptMutation.mutateAsync(order.id);
-      toast.success(
-        `Приходная накладная создана: оприходовано партий: ${res.batchesCreated}, статус заказа — Поступило`,
-      );
+      await deleteSupplierOrderMutation.mutateAsync(order.id);
+      toast.success(`Заказ №${order.orderNumber} удален, заявки возвращены в очередь`);
+      if (selectedOrderForDetail?.id === order.id) {
+        setSelectedOrderForDetail(null);
+      }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось создать приходную накладную");
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить заказ поставщику");
     }
   };
 
@@ -338,6 +472,46 @@ function WarehouseContent() {
       toast.error(err instanceof Error ? err.message : "Ошибка при удалении товара");
     }
   };
+
+  const handleOpenEditItemModal = (item: WarehouseItemDTO) => {
+    setSelectedItemForEdit(item);
+    setEditItemModalOpen(true);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("edit", item.id);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleCloseEditItemModal = () => {
+    setEditItemModalOpen(false);
+    setSelectedItemForEdit(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("edit");
+    params.delete("record");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const handleBulkEditClick = () => {
+    if (selectedItemIds.size === 1) {
+      const selectedId = Array.from(selectedItemIds)[0];
+      const item = items.find((i) => i.id === selectedId);
+      if (item) {
+        handleOpenEditItemModal(item);
+        return;
+      }
+    }
+    setBulkEditModalOpen(true);
+  };
+
+  const editParam = searchParams.get("edit") || searchParams.get("record");
+  useEffect(() => {
+    if (editParam && !editItemModalOpen) {
+      const found = items.find((i) => i.id === editParam);
+      if (found) {
+        setSelectedItemForEdit(found);
+      }
+      setEditItemModalOpen(true);
+    }
+  }, [editParam, items, editItemModalOpen]);
 
   const handleOpenIntakeForItem = (item: WarehouseItemDTO) => {
     setIntakeInitialItem(item);
@@ -464,6 +638,16 @@ function WarehouseContent() {
               </div>
             )}
           </div>
+
+          {/* Справочники */}
+          <button
+            type="button"
+            onClick={() => setDictionariesModalOpen(true)}
+            className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors"
+          >
+            <BookOpen className="h-4 w-4 text-[#666666]" />
+            Справочники
+          </button>
 
           {/* Импорт */}
           <button
@@ -633,18 +817,119 @@ function WarehouseContent() {
         })}
       </div>
 
-      {/* Поисковая строка для активной вкладки */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Поиск по названию, артикулу..."
-            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-          />
-        </div>
+      {/* Поисковая строка и фильтры для активной вкладки */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-1 max-w-md">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Поиск по названию, артикулу..."
+                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              />
+            </div>
+
+            {activeTab === "items" && (
+              <div ref={filterPopoverRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setFilterPopoverOpen((prev) => !prev)}
+                  className={cn(
+                    "flex h-8 items-center gap-1.5 rounded-[8px] border px-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+                    activeFiltersCount > 0
+                      ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                      : "border-[#e5e5e5] bg-white text-[#111111] hover:bg-[#fafafa] hover:border-[#cccccc]",
+                  )}
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  <span>Фильтры</span>
+                  {activeFiltersCount > 0 && (
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#4a38f5] text-[10px] font-bold text-white">
+                      {activeFiltersCount}
+                    </span>
+                  )}
+                </button>
+
+                {filterPopoverOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 z-30 w-72 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#f0f0f0]">
+                      <span className="text-xs font-semibold text-[#111111]">
+                        Фильтры склада
+                      </span>
+                      {activeFiltersCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleClearFilters}
+                          className="text-[11px] text-[#4a38f5] hover:underline"
+                        >
+                          Сбросить
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <label className="block text-[11px] font-medium text-[#666666] mb-1">
+                          Категория
+                        </label>
+                        <select
+                          value={selectedCategory}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedCategory(val);
+                            updateUrl({ page: 1, category: val, brand: selectedBrand });
+                          }}
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                        >
+                          <option value="">Все категории</option>
+                          {warehouseCategoriesList.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-medium text-[#666666] mb-1">
+                          Бренд
+                        </label>
+                        <select
+                          value={selectedBrand}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedBrand(val);
+                            updateUrl({ page: 1, category: selectedCategory, brand: val });
+                          }}
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                        >
+                          <option value="">Все бренды</option>
+                          {warehouseBrandsList.map((b) => (
+                            <option key={b} value={b}>
+                              {b}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-end gap-2 border-t border-[#f0f0f0]">
+                        <button
+                          type="button"
+                          onClick={() => setFilterPopoverOpen(false)}
+                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                        >
+                          Готово
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
         {activeTab === "purchases" && (
           <div className="flex items-center gap-1.5 text-xs">
@@ -676,11 +961,63 @@ function WarehouseContent() {
         )}
       </div>
 
+      {/* Активные фильтры (чипы) */}
+      {activeTab === "items" && activeFiltersCount > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <span className="text-[11px] text-[#888888]">Активно:</span>
+          {selectedCategory && (
+            <span className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs text-[#4a38f5] font-medium">
+              <span>Категория: {selectedCategory}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCategory("");
+                  updateUrl({ page: 1, category: "", brand: selectedBrand });
+                }}
+                className="hover:text-[#3d2ee0]"
+                title="Удалить фильтр"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {selectedBrand && (
+            <span className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs text-[#4a38f5] font-medium">
+              <span>Бренд: {selectedBrand}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBrand("");
+                  updateUrl({ page: 1, category: selectedCategory, brand: "" });
+                }}
+                className="hover:text-[#3d2ee0]"
+                title="Удалить фильтр"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleClearFilters}
+            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1"
+          >
+            Сбросить все
+          </button>
+        </div>
+      )}
+    </div>
+
       {/* Вкладка 1: Номенклатура и остатки */}
       {activeTab === "items" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className={cn(
+                "w-full transition-opacity duration-150",
+                isPlaceholderData && "opacity-50 pointer-events-none",
+              )}
+            >
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
                   <th className="w-[38px] px-3 py-2.5 text-center">
@@ -696,6 +1033,9 @@ function WarehouseContent() {
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Наименование
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
+                    Категория
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
                     Бренд
@@ -745,9 +1085,21 @@ function WarehouseContent() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-[13px] text-[#111111]">{item.name}</div>
-                        {item.category && (
-                          <span className="text-[11px] text-[#888888]">{item.category}</span>
+                        {item.models && item.models.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {item.models.map((m) => (
+                              <span
+                                key={m.id}
+                                className="inline-flex items-center rounded-[4px] bg-slate-100 border border-slate-200/80 px-1.5 py-0.2 text-[10px] font-mono text-slate-700"
+                              >
+                                {m.name}
+                              </span>
+                            ))}
+                          </div>
                         )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-[#666666]">{item.category || "—"}</span>
                       </td>
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#111111] font-medium">{item.brand || "—"}</span>
@@ -781,9 +1133,21 @@ function WarehouseContent() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <span className="font-mono text-[13px] text-[#666666]">
-                          {formatRub(item.costPrice)}
-                        </span>
+                        <div className="flex flex-col items-end">
+                          <span className="font-mono text-[13px] text-[#666666]" title="Себестоимость следующей списываемой партии (FIFO)">
+                            {formatRub(item.fifoCostPrice ?? item.costPrice)}
+                          </span>
+                          {(item.activeBatchesCount ?? 0) > 1 &&
+                            item.avgBatchCostPrice !== undefined &&
+                            Math.abs(item.avgBatchCostPrice - (item.fifoCostPrice ?? item.costPrice)) >= 0.01 && (
+                              <span
+                                className="font-mono text-[10px] text-[#888888]"
+                                title={`Активных партий: ${item.activeBatchesCount}. Средняя по остаткам партий.`}
+                              >
+                                ср. {formatRub(item.avgBatchCostPrice)} ({item.activeBatchesCount} п.)
+                              </span>
+                            )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="font-mono text-[13px] font-semibold text-[#111111]">
@@ -794,11 +1158,11 @@ function WarehouseContent() {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             type="button"
-                            onClick={() => handleOpenIntakeForItem(item)}
-                            className="rounded p-1 text-[#888888] hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
-                            title="Оприходовать партию этого товара"
+                            onClick={() => handleOpenEditItemModal(item)}
+                            className="rounded p-1 text-[#888888] hover:text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors"
+                            title="Редактировать товар"
                           >
-                            <ArrowDownToLine className="h-3.5 w-3.5" />
+                            <SquarePen className="h-3.5 w-3.5" />
                           </button>
                           <button
                             type="button"
@@ -815,14 +1179,32 @@ function WarehouseContent() {
                 })}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-12 text-center text-sm text-[#888888]">
-                      {isItemsLoading ? "Загрузка каталога склада..." : "Товаров не найдено."}
+                    <td colSpan={11} className="px-4 py-12 text-center text-sm text-[#888888]">
+                      {isItemsLoading ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
+                          <span>Загрузка каталога склада...</span>
+                        </div>
+                      ) : (
+                        "Товаров не найдено."
+                      )}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {/* Серверная пагинация и селектор лимита */}
+          <WarehousePagination
+            total={meta.total}
+            page={meta.page}
+            pages={meta.pages}
+            limit={meta.limit}
+            onPageChange={(newPage) => updateUrl({ page: newPage })}
+            onLimitChange={(newLimit) => updateUrl({ limit: newLimit, page: 1 })}
+            disabled={isItemsLoading}
+          />
         </div>
       )}
 
@@ -957,7 +1339,7 @@ function WarehouseContent() {
                     Остаток на складе
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Наряды-заказы
+                    Наряды / Сделки
                   </th>
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
                     Ориент. цена
@@ -1049,13 +1431,58 @@ function WarehouseContent() {
                                 setSelectedAggregatedIds(new Set([pr.id]));
                                 setCreateSupplierOrderModalOpen(true);
                               }}
-                              className="inline-flex items-center gap-1 rounded bg-[#4a38f5] px-2 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                              className="inline-flex items-center gap-1 rounded bg-[#4a38f5] px-2 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer"
                               title="Сформировать заказ поставщику на эту позицию"
                             >
                               <Truck className="h-3 w-3" />
                               В заказ
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPurchaseForEdit(pr)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:border-[#4a38f5] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                            title="Редактировать заявку"
+                            aria-label="Редактировать заявку"
+                          >
+                            <SquarePen className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletePurchaseMutation.isPending}
+                            onClick={async () => {
+                              const count = pr.requestIds.length;
+                              const promptText =
+                                count > 1
+                                  ? `Удалить все заявки (${count} шт.) по позиции «${pr.itemName}»?`
+                                  : `Удалить заявку на закупку «${pr.itemName}»?`;
+                              if (!confirm(promptText)) return;
+                              try {
+                                await Promise.all(
+                                  pr.requestIds.map((reqId) => deletePurchaseMutation.mutateAsync(reqId)),
+                                );
+                                setSelectedAggregatedIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(pr.id);
+                                  return next;
+                                });
+                                toast.success(
+                                  count > 1
+                                    ? `Удалено заявок: ${count}`
+                                    : `Заявка «${pr.itemName}» удалена`,
+                                );
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof Error ? err.message : "Не удалось удалить заявку",
+                                );
+                              }
+                            }}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#888888] hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-50 cursor-pointer"
+                            title="Удалить заявку"
+                            aria-label="Удалить заявку"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1101,7 +1528,7 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Оплата / Приход
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[240px]">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[260px]">
                     Действия
                   </th>
                 </tr>
@@ -1121,7 +1548,11 @@ function WarehouseContent() {
                   const isReceived = order.status === "received";
 
                   return (
-                    <tr key={order.id} className="transition-colors hover:bg-[#fafafa]">
+                    <tr
+                      key={order.id}
+                      onClick={() => setSelectedOrderForDetail(order)}
+                      className="transition-colors hover:bg-[#fafafa] cursor-pointer"
+                    >
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs font-bold text-[#111111]">
                           {order.orderNumber}
@@ -1176,14 +1607,39 @@ function WarehouseContent() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div
+                          className="flex items-center justify-end gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Кнопка Просмотр */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOrderForDetail(order)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors"
+                            title="Просмотр деталей заказа"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+
+                          {/* Кнопка Редактировать */}
+                          {!isReceived && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditModal(order)}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors"
+                              title="Редактировать заказ"
+                            >
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+
                           {/* Кнопка Оплачено */}
                           {!isPaid && order.status !== "cancelled" && (
                             <button
                               type="button"
                               onClick={() => handlePayOrder(order)}
                               disabled={paySupplierOrderMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 h-7 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors"
                               title="Оплатить заказ поставщику (создать расходный ордер в кассе)"
                             >
                               <CreditCard className="h-3 w-3" />
@@ -1191,17 +1647,17 @@ function WarehouseContent() {
                             </button>
                           )}
 
-                          {/* Кнопка Создать приходную накладную */}
+                          {/* Кнопка Оприходовать */}
                           {!isReceived && order.status !== "cancelled" && (
                             <button
                               type="button"
-                              onClick={() => handleCreateReceipt(order)}
+                              onClick={() => handleOpenReceiptModal(order)}
                               disabled={createReceiptMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
-                              title="Создать приходную накладную и пополнить остатки склада"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 h-7 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
+                              title="Оприходовать заказ на склад"
                             >
                               <ArrowDownToLine className="h-3 w-3" />
-                              Создать накладную
+                              Оприходовать
                             </button>
                           )}
 
@@ -1210,6 +1666,19 @@ function WarehouseContent() {
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               На складе
                             </span>
+                          )}
+
+                          {/* Кнопка Удалить */}
+                          {!isReceived && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSupplierOrder(order)}
+                              disabled={deleteSupplierOrderMutation.isPending}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 shadow-xs transition-colors"
+                              title="Удалить заказ поставщику"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -1306,6 +1775,15 @@ function WarehouseContent() {
                             <ExternalLink className="h-2.5 w-2.5" />
                           </Link>
                         )}
+                        {!m.repairOrderId && m.dealId && (
+                          <Link
+                            href={`/crm/deals?record=${m.dealId}`}
+                            className="inline-flex items-center gap-1 text-[11px] text-[#4a38f5] hover:underline mt-0.5"
+                          >
+                            <span>Сделка: {m.dealTitle ?? "Открыть"}</span>
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </Link>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#888888]">{m.createdByName || "Система"}</span>
@@ -1327,6 +1805,11 @@ function WarehouseContent() {
       )}
 
       {/* Модалки */}
+      <WarehouseDictionariesModal
+        open={dictionariesModalOpen}
+        onClose={() => setDictionariesModalOpen(false)}
+      />
+
       <CreateItemModal
         open={createItemModalOpen}
         onClose={() => setCreateItemModalOpen(false)}
@@ -1357,6 +1840,40 @@ function WarehouseContent() {
         }}
       />
 
+      <SupplierOrderDetailModal
+        open={Boolean(selectedOrderForDetail)}
+        onClose={() => setSelectedOrderForDetail(null)}
+        order={selectedOrderForDetail}
+        onEdit={(o) => {
+          setSelectedOrderForDetail(null);
+          handleOpenEditModal(o);
+        }}
+        onPay={(o) => handlePayOrder(o)}
+        onReceipt={(o) => {
+          setSelectedOrderForDetail(null);
+          handleOpenReceiptModal(o);
+        }}
+        onDelete={(o) => handleDeleteSupplierOrder(o)}
+      />
+
+      <EditSupplierOrderModal
+        open={Boolean(selectedOrderForEdit)}
+        onClose={() => setSelectedOrderForEdit(null)}
+        order={selectedOrderForEdit}
+        onSuccess={() => {
+          setSelectedOrderForEdit(null);
+        }}
+      />
+
+      <ReceiptSupplierOrderModal
+        open={Boolean(selectedOrderForReceipt)}
+        onClose={() => setSelectedOrderForReceipt(null)}
+        order={selectedOrderForReceipt}
+        onSuccess={() => {
+          setSelectedOrderForReceipt(null);
+        }}
+      />
+
       <ProductImportDialog
         open={importModalOpen}
         onClose={() => setImportModalOpen(false)}
@@ -1369,6 +1886,23 @@ function WarehouseContent() {
         onSuccess={() => {
           setSelectedItemIds(new Set());
         }}
+      />
+
+      <EditItemModal
+        open={editItemModalOpen || Boolean(editParam)}
+        itemId={selectedItemForEdit?.id ?? editParam ?? null}
+        initialItem={selectedItemForEdit}
+        onClose={handleCloseEditItemModal}
+        onSuccess={() => {
+          setSelectedItemIds(new Set());
+        }}
+      />
+
+      <EditPurchaseRequestModal
+        open={Boolean(selectedPurchaseForEdit)}
+        onClose={() => setSelectedPurchaseForEdit(null)}
+        aggregatedRow={selectedPurchaseForEdit}
+        allRequests={purchaseRequests}
       />
 
       {/* Floating Action Bar при выборе позиций */}
@@ -1384,7 +1918,7 @@ function WarehouseContent() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setBulkEditModalOpen(true)}
+              onClick={handleBulkEditClick}
               className="flex h-7 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />

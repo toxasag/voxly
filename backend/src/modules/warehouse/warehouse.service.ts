@@ -1,4 +1,4 @@
-import { query, queryOneOrThrow, withTenant, type SqlParam } from "../../db/client.js";
+import { query, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import {
   type AggregatedPurchaseRequestDTO,
   type BulkDeleteWarehouseItemsPayload,
@@ -15,21 +15,25 @@ import {
   type ImportValidatePayload,
   type ImportValidateResultDTO,
   type IntakeBatchPayload,
+  type PaginatedWarehouseItemsDTO,
   type PaySupplierOrderPayload,
   type PurchaseRequestDTO,
   type PurchaseRequestRow,
   type PurchaseRequestStatus,
+  type ReceiptSupplierOrderPayload,
   type SupplierOrderDTO,
   type SupplierOrderItemDTO,
   type SupplierOrderItemRow,
   type SupplierOrderRow,
   type SupplierOrderStatus,
   type UpdatePurchaseRequestPayload,
+  type UpdateSupplierOrderPayload,
   type UpdateWarehouseItemPayload,
   type UpdateWarehouseSettingsPayload,
   type WarehouseBatchDTO,
   type WarehouseBatchRow,
   type WarehouseItemDTO,
+  type WarehouseItemModelDTO,
   type WarehouseItemRow,
   type WarehouseMovementDTO,
   type WarehouseMovementRow,
@@ -181,15 +185,261 @@ export class WarehouseService {
   // Warehouse Items & Batches
   // ---------------------------------------------------------------------------
 
-  async listItems(tenantId: string, search?: string): Promise<WarehouseItemDTO[]> {
+  private async syncItemModels(
+    tx: TransactionClient,
+    tenantId: string,
+    itemId: string,
+    brandName?: string,
+    modelIds?: string[],
+    modelNames?: string[],
+  ): Promise<void> {
+    if (modelIds === undefined && modelNames === undefined) return;
+
+    await tx.query(
+      `DELETE FROM warehouse_item_models WHERE tenant_id = $1 AND item_id = $2`,
+      [tenantId, itemId],
+    );
+
+    const targetModelIds = new Set<string>();
+
+    if (modelIds && modelIds.length > 0) {
+      for (const mid of modelIds) {
+        if (mid) targetModelIds.add(mid);
+      }
+    }
+
+    if (modelNames && modelNames.length > 0) {
+      for (const name of modelNames) {
+        const trimmed = name.trim();
+        if (!trimmed) continue;
+
+        let modelRow = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM equipment_models WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+          [tenantId, trimmed],
+        );
+
+        if (!modelRow) {
+          const bName = brandName?.trim() || "Общий";
+          let brandRow = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+            [tenantId, bName],
+          );
+          if (!brandRow) {
+            brandRow = await tx.queryOneOrThrow<{ id: string }>(
+              `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2)
+               ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+               RETURNING id`,
+              [tenantId, bName],
+            );
+          }
+
+          modelRow = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (tenant_id, brand_id, lower(name)) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [tenantId, brandRow.id, bName, trimmed],
+          );
+        }
+
+        targetModelIds.add(modelRow.id);
+      }
+    }
+
+    for (const mid of targetModelIds) {
+      await tx.query(
+        `INSERT INTO warehouse_item_models (tenant_id, item_id, model_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [tenantId, itemId, mid],
+      );
+    }
+  }
+
+  async listItems(
+    tenantId: string,
+    search?: string,
+    options?: { page?: number; limit?: number; all?: boolean; category?: string; brand?: string },
+  ): Promise<PaginatedWarehouseItemsDTO> {
+    const page = Math.max(1, options?.page ?? 1);
+    const limit = options?.limit ?? 25;
+    const all = Boolean(options?.all);
+
     const params: (string | number)[] = [tenantId];
     let searchFilter = "";
 
     if (search && search.trim()) {
       params.push(`%${search.trim().toLowerCase()}%`);
-      searchFilter = `AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length} OR lower(COALESCE(i.brand, '')) LIKE $${params.length})`;
+      searchFilter += ` AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length} OR lower(COALESCE(i.brand, '')) LIKE $${params.length})`;
+    }
+    if (options?.category && options.category.trim()) {
+      params.push(options.category.trim());
+      searchFilter += ` AND i.category = $${params.length}`;
+    }
+    if (options?.brand && options.brand.trim()) {
+      params.push(options.brand.trim());
+      searchFilter += ` AND i.brand = $${params.length}`;
     }
 
+    const settings = await this.getSettings(tenantId);
+
+    return withTenant(tenantId, async (tx) => {
+      // 1. Подсчет общего количества позиций для текущего тенанта с учетом поиска и фильтров
+      const countRow = await tx.queryOne<{ count: string | number }>(
+        `SELECT count(*)::int AS count
+         FROM warehouse_items i
+         WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+         ${searchFilter}`,
+        params,
+      );
+      const total = typeof countRow?.count === "number" ? countRow.count : parseInt(String(countRow?.count || 0), 10);
+      const pages = total === 0 ? 0 : Math.ceil(total / limit);
+
+      const summaryRow = await tx.queryOne<{ total_valuation: string | number; low_stock_count: string | number }>(
+        `SELECT
+           COALESCE((
+             SELECT SUM(b.remaining_quantity * b.purchase_price)
+             FROM warehouse_batches b
+             JOIN warehouse_items wi ON wi.id = b.item_id AND wi.tenant_id = b.tenant_id AND wi.deleted_at IS NULL
+             WHERE b.tenant_id = $1 AND b.remaining_quantity > 0
+           ), 0)::numeric(14,2) AS total_valuation,
+           COALESCE((
+             SELECT COUNT(*)
+             FROM (
+               SELECT i.id, i.min_stock,
+                      COALESCE(SUM(b.remaining_quantity), 0)
+                      - COALESCE((
+                        SELECT SUM(r.quantity) FROM warehouse_reservations r
+                        WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
+                      ), 0) AS avail
+               FROM warehouse_items i
+               LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+               WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+               GROUP BY i.id, i.min_stock
+             ) s
+             WHERE s.avail <= s.min_stock
+           ), 0)::int AS low_stock_count`,
+        [tenantId],
+      );
+      const totalValuation = Math.round(Number(summaryRow?.total_valuation ?? 0) * 100) / 100;
+      const lowStockCount = Number(summaryRow?.low_stock_count ?? 0);
+
+      const offset = (page - 1) * limit;
+
+      // Если в выборке 0 позиций или запрошенная страница превышает общее число
+      if (total === 0 || (!all && offset >= total)) {
+        return {
+          data: [],
+          meta: {
+            total,
+            page,
+            limit: all ? total : limit,
+            pages: all ? (total > 0 ? 1 : 0) : pages,
+            totalValuation,
+            lowStockCount,
+          },
+        };
+      }
+
+      const itemParams = [...params];
+      let limitClause = "";
+      if (!all) {
+        itemParams.push(limit, offset);
+        limitClause = `LIMIT $${itemParams.length - 1} OFFSET $${itemParams.length}`;
+      }
+
+      const rows = await tx.query<WarehouseItemRow>(
+        `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
+                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
+                COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
+                COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
+                (
+                  SELECT b2.purchase_price
+                  FROM warehouse_batches b2
+                  WHERE b2.tenant_id = i.tenant_id AND b2.item_id = i.id AND b2.remaining_quantity > 0
+                  ORDER BY b2.received_at ASC, b2.created_at ASC
+                  LIMIT 1
+                ) AS fifo_cost_price,
+                COALESCE((
+                  SELECT SUM(r.quantity)
+                  FROM warehouse_reservations r
+                  WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
+                ), 0) AS reserved_stock,
+                COALESCE((
+                  SELECT json_agg(json_build_object('id', em.id, 'name', em.name, 'brandId', em.brand_id, 'brandName', em.brand_name) ORDER BY em.name ASC)
+                  FROM warehouse_item_models wim
+                  JOIN equipment_models em ON em.id = wim.model_id AND em.tenant_id = wim.tenant_id
+                  WHERE wim.tenant_id = i.tenant_id AND wim.item_id = i.id
+                ), '[]'::json) AS models_json
+         FROM warehouse_items i
+         LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+         WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+         ${searchFilter}
+         GROUP BY i.id
+         ORDER BY i.name ASC
+         ${limitClause}`,
+        itemParams,
+      );
+
+      const data = rows.map((r) => {
+        const totalStock = Number(r.total_stock ?? 0);
+        const reserved = Number(r.reserved_stock ?? 0);
+        const available = settings.allowNegativeStock
+          ? totalStock - reserved
+          : Math.max(totalStock - reserved, 0);
+
+        const retailPrice = Number(r.retail_price ?? 0);
+        const costPrice = Number(r.cost_price ?? 0);
+        const stockValuation = Math.round(Number(r.stock_valuation ?? 0) * 100) / 100;
+        const activeBatchesCount = Number(r.active_batches_count ?? 0);
+        const fifoCostPrice =
+          r.fifo_cost_price !== null && r.fifo_cost_price !== undefined
+            ? Number(r.fifo_cost_price)
+            : costPrice;
+        const avgBatchCostPrice =
+          totalStock > 0 ? Math.round((stockValuation / totalStock) * 100) / 100 : costPrice;
+        const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+        return {
+          id: r.id,
+          sku: r.sku,
+          name: r.name,
+          brand: r.brand ?? "",
+          category: r.category ?? "",
+          unit: r.unit,
+          minStock: Number(r.min_stock ?? 0),
+          retailPrice,
+          price: retailPrice,
+          costPrice,
+          fifoCostPrice,
+          avgBatchCostPrice,
+          stockValuation,
+          activeBatchesCount,
+          totalStock: totalStock,
+          quantity: totalStock,
+          reservedStock: reserved,
+          availableStock: available,
+          models,
+          modelIds: models.map((m) => m.id),
+          modelNames: models.map((m) => m.name),
+          createdAt: toIso(r.created_at),
+          updatedAt: toIso(r.updated_at),
+        };
+      });
+
+      return {
+        data,
+        meta: {
+          total,
+          page,
+          limit: all ? total : limit,
+          pages: all ? (total > 0 ? 1 : 0) : pages,
+          totalValuation,
+          lowStockCount,
+        },
+      };
+    });
+  }
+
+  async getItem(tenantId: string, itemId: string): Promise<WarehouseItemDTO | null> {
     const settings = await this.getSettings(tenantId);
 
     return withTenant(tenantId, async (tx) => {
@@ -197,50 +447,85 @@ export class WarehouseService {
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
                 i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
+                COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
+                COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
+                (
+                  SELECT b2.purchase_price
+                  FROM warehouse_batches b2
+                  WHERE b2.tenant_id = i.tenant_id AND b2.item_id = i.id AND b2.remaining_quantity > 0
+                  ORDER BY b2.received_at ASC, b2.created_at ASC
+                  LIMIT 1
+                ) AS fifo_cost_price,
                 COALESCE((
                   SELECT SUM(r.quantity)
                   FROM warehouse_reservations r
                   WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
-                ), 0) AS reserved_stock
+                ), 0) AS reserved_stock,
+                COALESCE((
+                  SELECT json_agg(json_build_object('id', em.id, 'name', em.name, 'brandId', em.brand_id, 'brandName', em.brand_name) ORDER BY em.name ASC)
+                  FROM warehouse_item_models wim
+                  JOIN equipment_models em ON em.id = wim.model_id AND em.tenant_id = wim.tenant_id
+                  WHERE wim.tenant_id = i.tenant_id AND wim.item_id = i.id
+                ), '[]'::json) AS models_json
          FROM warehouse_items i
          LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
-         WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
-         ${searchFilter}
-         GROUP BY i.id
-         ORDER BY i.name ASC`,
-        params,
+         WHERE i.tenant_id = $1 AND i.id = $2 AND i.deleted_at IS NULL
+         GROUP BY i.id`,
+        [tenantId, itemId],
       );
 
-      return rows.map((r) => {
-        const total = Number(r.total_stock ?? 0);
-        const reserved = Number(r.reserved_stock ?? 0);
-        const available = settings.allowNegativeStock
-          ? total - reserved
-          : Math.max(total - reserved, 0);
+      if (rows.length === 0 || !rows[0]) return null;
+      const r = rows[0];
 
-        return {
-          id: r.id,
-          sku: r.sku,
-          name: r.name,
-          brand: r.brand ?? "",
-          category: r.category,
-          unit: r.unit,
-          minStock: Number(r.min_stock ?? 0),
-          retailPrice: Number(r.retail_price ?? 0),
-          costPrice: Number(r.cost_price ?? 0),
-          totalStock: total,
-          reservedStock: reserved,
-          availableStock: available,
-          createdAt: toIso(r.created_at),
-          updatedAt: toIso(r.updated_at),
-        };
-      });
+      const total = Number(r.total_stock ?? 0);
+      const reserved = Number(r.reserved_stock ?? 0);
+      const available = settings.allowNegativeStock
+        ? total - reserved
+        : Math.max(total - reserved, 0);
+
+      const retailPrice = Number(r.retail_price ?? 0);
+      const costPrice = Number(r.cost_price ?? 0);
+      const stockValuation = Math.round(Number(r.stock_valuation ?? 0) * 100) / 100;
+      const activeBatchesCount = Number(r.active_batches_count ?? 0);
+      const fifoCostPrice =
+        r.fifo_cost_price !== null && r.fifo_cost_price !== undefined
+          ? Number(r.fifo_cost_price)
+          : costPrice;
+      const avgBatchCostPrice =
+        total > 0 ? Math.round((stockValuation / total) * 100) / 100 : costPrice;
+      const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+
+      return {
+        id: r.id,
+        sku: r.sku,
+        name: r.name,
+        brand: r.brand ?? "",
+        category: r.category ?? "",
+        unit: r.unit,
+        minStock: Number(r.min_stock ?? 0),
+        retailPrice,
+        price: retailPrice,
+        costPrice,
+        fifoCostPrice,
+        avgBatchCostPrice,
+        stockValuation,
+        activeBatchesCount,
+        totalStock: total,
+        quantity: total,
+        reservedStock: reserved,
+        availableStock: available,
+        models,
+        modelIds: models.map((m) => m.id),
+        modelNames: models.map((m) => m.name),
+        createdAt: toIso(r.created_at),
+        updatedAt: toIso(r.updated_at),
+      };
     });
   }
 
   async createItem(tenantId: string, payload: CreateWarehouseItemPayload): Promise<WarehouseItemDTO> {
     const row = await withTenant(tenantId, async (tx) => {
-      return tx.queryOneOrThrow<WarehouseItemRow>(
+      const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
         `INSERT INTO warehouse_items
            (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -257,24 +542,17 @@ export class WarehouseService {
           payload.cost_price ?? 0,
         ],
       );
+
+      if (payload.model_ids !== undefined || payload.models !== undefined) {
+        await this.syncItemModels(tx, tenantId, inserted.id, payload.brand, payload.model_ids, payload.models);
+      }
+
+      return inserted;
     });
 
-    return {
-      id: row.id,
-      sku: row.sku,
-      name: row.name,
-      brand: row.brand ?? "",
-      category: row.category,
-      unit: row.unit,
-      minStock: Number(row.min_stock),
-      retailPrice: Number(row.retail_price),
-      costPrice: Number(row.cost_price),
-      totalStock: 0,
-      reservedStock: 0,
-      availableStock: 0,
-      createdAt: toIso(row.created_at),
-      updatedAt: toIso(row.updated_at),
-    };
+    const item = await this.getItem(tenantId, row.id);
+    if (!item) throw new Error("Failed to retrieve created warehouse item");
+    return item;
   }
 
   async updateItem(
@@ -299,22 +577,152 @@ export class WarehouseService {
     if (payload.retail_price !== undefined) add("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) add("cost_price", payload.cost_price);
 
-    if (fields.length === 0) {
-      const items = await this.listItems(tenantId);
-      return items.find((i) => i.id === itemId) ?? null;
-    }
+    await withTenant(tenantId, async (tx) => {
+      if (fields.length > 0) {
+        add("updated_at", new Date());
+        await tx.query(
+          `UPDATE warehouse_items SET ${fields.join(", ")}
+           WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          params,
+        );
+      }
+      if (payload.model_ids !== undefined || payload.models !== undefined) {
+        await this.syncItemModels(tx, tenantId, itemId, payload.brand, payload.model_ids, payload.models);
+      }
+    });
 
-    add("updated_at", new Date());
+    return this.getItem(tenantId, itemId);
+  }
 
+  // ---------------------------------------------------------------------------
+  // Справочник Модели
+  // ---------------------------------------------------------------------------
+
+  async listModels(
+    tenantId: string,
+    brandId?: string,
+    brandName?: string,
+  ): Promise<WarehouseItemModelDTO[]> {
     return withTenant(tenantId, async (tx) => {
-      await tx.query(
-        `UPDATE warehouse_items SET ${fields.join(", ")}
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      let filter = "";
+      const params: (string | number)[] = [tenantId];
+      if (brandId) {
+        params.push(brandId);
+        filter += ` AND em.brand_id = $${params.length}`;
+      } else if (brandName && brandName.trim()) {
+        params.push(brandName.trim());
+        filter += ` AND lower(em.brand_name) = lower($${params.length})`;
+      }
+
+      const rows = await tx.query<{ id: string; name: string; brand_id: string; brand_name: string }>(
+        `SELECT em.id, em.name, em.brand_id, COALESCE(eb.name, em.brand_name) AS brand_name
+         FROM equipment_models em
+         LEFT JOIN equipment_brands eb ON eb.id = em.brand_id
+         WHERE em.tenant_id = $1 ${filter}
+         ORDER BY em.name ASC`,
         params,
       );
 
-      const items = await this.listItems(tenantId);
-      return items.find((i) => i.id === itemId) ?? null;
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        brandId: r.brand_id,
+        brandName: r.brand_name,
+      }));
+    });
+  }
+
+  async createModel(
+    tenantId: string,
+    payload: { name: string; brand_id?: string; brand_name?: string },
+  ): Promise<WarehouseItemModelDTO> {
+    const trimmed = payload.name.trim();
+    if (!trimmed) throw new Error("Model name is required");
+
+    return withTenant(tenantId, async (tx) => {
+      let brandId = payload.brand_id;
+      let brandName = payload.brand_name?.trim();
+
+      if (brandId) {
+        const brandRow = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, brandId],
+        );
+        if (brandRow) brandName = brandRow.name;
+      } else if (brandName) {
+        let brandRow = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+          [tenantId, brandName],
+        );
+        if (!brandRow) {
+          brandRow = await tx.queryOneOrThrow<{ id: string; name: string }>(
+            `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2)
+             ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id, name`,
+            [tenantId, brandName],
+          );
+        }
+        brandId = brandRow.id;
+      } else {
+        let brandRow = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 ORDER BY name ASC LIMIT 1`,
+          [tenantId],
+        );
+        if (!brandRow) {
+          brandRow = await tx.queryOneOrThrow<{ id: string; name: string }>(
+            `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, 'Общий')
+             ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id, name`,
+            [tenantId],
+          );
+        }
+        brandId = brandRow.id;
+        brandName = brandRow.name;
+      }
+
+      const row = await tx.queryOneOrThrow<{ id: string; name: string; brand_id: string }>(
+        `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id, brand_id, lower(name)) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id, name, brand_id`,
+        [tenantId, brandId, brandName ?? "", trimmed],
+      );
+
+      return {
+        id: row.id,
+        name: row.name,
+        brandId: row.brand_id,
+        brandName,
+      };
+    });
+  }
+
+  async renameModel(tenantId: string, id: string, name: string): Promise<WarehouseItemModelDTO> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("Model name is required");
+
+    return withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOne<{ id: string; name: string; brand_id: string; brand_name: string }>(
+        `UPDATE equipment_models
+         SET name = $1
+         WHERE tenant_id = $2 AND id = $3
+         RETURNING id, name, brand_id, brand_name`,
+        [trimmed, tenantId, id],
+      );
+      if (!row) throw new Error("Model not found");
+      return {
+        id: row.id,
+        name: row.name,
+        brandId: row.brand_id,
+        brandName: row.brand_name,
+      };
+    });
+  }
+
+  async deleteModel(tenantId: string, id: string): Promise<{ success: boolean; id: string }> {
+    return withTenant(tenantId, async (tx) => {
+      await tx.query(`DELETE FROM equipment_models WHERE tenant_id = $1 AND id = $2`, [tenantId, id]);
+      return { success: true, id };
     });
   }
 
@@ -322,7 +730,8 @@ export class WarehouseService {
     return withTenant(tenantId, async (tx) => {
       const res = await tx.query(
         `UPDATE warehouse_items SET deleted_at = now()
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         RETURNING id`,
         [tenantId, itemId],
       );
       return res.length > 0;
@@ -499,13 +908,16 @@ export class WarehouseService {
   async listMovements(tenantId: string, limit: number = 100): Promise<WarehouseMovementDTO[]> {
     const rows = await query<WarehouseMovementRow>(
       `SELECT m.id, m.tenant_id, m.item_id, m.batch_id, m.repair_order_id,
+              m.deal_id, m.deal_item_id,
               m.type, m.quantity, m.cost_price, m.description, m.created_by, m.created_at,
               i.name AS item_name,
               ro.ticket_number AS repair_ticket_number,
+              d.title AS deal_title,
               u.name AS created_by_name
        FROM warehouse_movements m
        JOIN warehouse_items i ON i.id = m.item_id AND i.tenant_id = m.tenant_id
        LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+       LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
        LEFT JOIN users u ON u.id = m.created_by AND u.tenant_id = m.tenant_id
        WHERE m.tenant_id = $1
        ORDER BY m.created_at DESC
@@ -520,6 +932,9 @@ export class WarehouseService {
       batchId: r.batch_id,
       repairOrderId: r.repair_order_id,
       repairTicketNumber: r.repair_ticket_number,
+      dealId: r.deal_id ?? null,
+      dealItemId: r.deal_item_id ?? null,
+      dealTitle: r.deal_title ?? null,
       type: r.type,
       quantity: Number(r.quantity),
       costPrice: Number(r.cost_price),
@@ -537,6 +952,7 @@ export class WarehouseService {
     tenantId: string,
     status?: string,
     repairOrderId?: string,
+    dealId?: string,
   ): Promise<PurchaseRequestDTO[]> {
     const params: (string | number)[] = [tenantId];
     const filters: string[] = [];
@@ -549,17 +965,24 @@ export class WarehouseService {
       params.push(repairOrderId);
       filters.push(`pr.repair_order_id = $${params.length}`);
     }
+    if (dealId) {
+      params.push(dealId);
+      filters.push(`pr.deal_id = $${params.length}`);
+    }
 
     const whereExtra = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
 
     const rows = await query<PurchaseRequestRow>(
-      `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
+      `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.deal_id, pr.deal_item_id,
+              pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
               pr.quantity, pr.unit, pr.estimated_price, pr.status, pr.comment,
               pr.created_by, pr.created_at, pr.updated_at,
               ro.ticket_number AS repair_ticket_number,
+              d.title AS deal_title,
               u.name AS created_by_name
        FROM purchase_requests pr
        LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+       LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
        LEFT JOIN users u ON u.id = pr.created_by AND u.tenant_id = pr.tenant_id
        WHERE pr.tenant_id = $1 ${whereExtra}
        ORDER BY pr.created_at DESC`,
@@ -569,8 +992,11 @@ export class WarehouseService {
     return rows.map((r) => ({
       id: r.id,
       repairOrderId: r.repair_order_id,
+      dealId: r.deal_id ?? null,
+      dealItemId: r.deal_item_id ?? null,
       supplierOrderId: r.supplier_order_id,
       repairTicketNumber: r.repair_ticket_number,
+      dealTitle: r.deal_title ?? null,
       itemId: r.item_id,
       itemName: r.item_name,
       sku: r.sku,
@@ -587,7 +1013,7 @@ export class WarehouseService {
 
   /**
    * Агрегированный список заявок на закупку (группировка по деталям)
-   * Суммирует количество и собирает наряды через запятую (#1042, #1055, ...)
+   * Суммирует количество и собирает наряды и сделки через запятую (#1042, Сделка: ...)
    */
   async listAggregatedPurchaseRequests(
     tenantId: string,
@@ -623,7 +1049,20 @@ export class WarehouseService {
          SUM(pr.quantity)::numeric AS quantity,
          COALESCE(AVG(pr.estimated_price), 0)::numeric AS estimated_price,
          pr.status,
-         COALESCE(STRING_AGG(DISTINCT ro.ticket_number, ', ' ORDER BY ro.ticket_number), '—') AS repair_orders,
+         COALESCE(
+           STRING_AGG(
+             DISTINCT COALESCE(
+               ro.ticket_number,
+               CASE WHEN d.title IS NOT NULL THEN 'Сделка: ' || d.title ELSE NULL END
+             ),
+             ', '
+             ORDER BY COALESCE(
+               ro.ticket_number,
+               CASE WHEN d.title IS NOT NULL THEN 'Сделка: ' || d.title ELSE NULL END
+             )
+           ),
+           '—'
+         ) AS repair_orders,
          ARRAY_AGG(pr.id) AS request_ids,
          COALESCE((
            SELECT SUM(b.remaining_quantity)
@@ -637,6 +1076,7 @@ export class WarehouseService {
          ), 0)::numeric AS reserved_stock
        FROM purchase_requests pr
        LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+       LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
        WHERE pr.tenant_id = $1 ${statusFilter}
        GROUP BY pr.tenant_id, pr.item_id, pr.item_name, pr.sku, pr.unit, pr.status
        ORDER BY pr.item_name ASC`,
@@ -672,13 +1112,15 @@ export class WarehouseService {
   ): Promise<PurchaseRequestDTO> {
     const row = await queryOneOrThrow<PurchaseRequestRow>(
       `INSERT INTO purchase_requests
-         (tenant_id, repair_order_id, item_id, item_name, sku, quantity, unit, estimated_price, comment, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id, tenant_id, repair_order_id, supplier_order_id, item_id, item_name, sku, quantity, unit,
+         (tenant_id, repair_order_id, deal_id, deal_item_id, item_id, item_name, sku, quantity, unit, estimated_price, comment, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, tenant_id, repair_order_id, deal_id, deal_item_id, supplier_order_id, item_id, item_name, sku, quantity, unit,
                  estimated_price, status, comment, created_by, created_at, updated_at`,
       [
         tenantId,
         payload.repair_order_id ?? null,
+        payload.deal_id ?? null,
+        payload.deal_item_id ?? null,
         payload.item_id ?? null,
         payload.item_name,
         payload.sku ?? "",
@@ -693,8 +1135,11 @@ export class WarehouseService {
     return {
       id: row.id,
       repairOrderId: row.repair_order_id,
+      dealId: row.deal_id ?? null,
+      dealItemId: row.deal_item_id ?? null,
       supplierOrderId: row.supplier_order_id,
       repairTicketNumber: null,
+      dealTitle: null,
       itemId: row.item_id,
       itemName: row.item_name,
       sku: row.sku,
@@ -717,12 +1162,32 @@ export class WarehouseService {
     const fields: string[] = [];
     const params: SqlParam[] = [tenantId, requestId];
 
+    if (payload.item_name !== undefined) {
+      params.push(payload.item_name.trim());
+      fields.push(`item_name = $${params.length}`);
+    }
+    if (payload.sku !== undefined) {
+      params.push(payload.sku.trim());
+      fields.push(`sku = $${params.length}`);
+    }
+    if (payload.quantity !== undefined) {
+      params.push(payload.quantity);
+      fields.push(`quantity = $${params.length}`);
+    }
+    if (payload.unit !== undefined) {
+      params.push(payload.unit.trim());
+      fields.push(`unit = $${params.length}`);
+    }
+    if (payload.estimated_price !== undefined) {
+      params.push(payload.estimated_price);
+      fields.push(`estimated_price = $${params.length}`);
+    }
     if (payload.status) {
       params.push(payload.status);
       fields.push(`status = $${params.length}`);
     }
     if (payload.comment !== undefined) {
-      params.push(payload.comment);
+      params.push(payload.comment.trim());
       fields.push(`comment = $${params.length}`);
     }
 
@@ -732,14 +1197,75 @@ export class WarehouseService {
     fields.push(`updated_at = $${params.length}`);
 
     return withTenant(tenantId, async (tx) => {
-      await tx.query(
+      const updatedRows = await tx.query<{ id: string }>(
         `UPDATE purchase_requests SET ${fields.join(", ")}
-         WHERE tenant_id = $1 AND id = $2`,
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING id`,
         params,
       );
+      if (updatedRows.length === 0) return null;
 
-      const list = await this.listPurchaseRequests(tenantId);
-      return list.find((r) => r.id === requestId) ?? null;
+      const row = await tx.queryOne<PurchaseRequestRow>(
+        `SELECT pr.id, pr.tenant_id, pr.repair_order_id, pr.deal_id, pr.deal_item_id,
+                pr.supplier_order_id, pr.item_id, pr.item_name, pr.sku,
+                pr.quantity, pr.unit, pr.estimated_price, pr.status, pr.comment,
+                pr.created_by, pr.created_at, pr.updated_at,
+                ro.ticket_number AS repair_ticket_number,
+                d.title AS deal_title,
+                u.name AS created_by_name
+         FROM purchase_requests pr
+         LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+         LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
+         LEFT JOIN users u ON u.id = pr.created_by AND u.tenant_id = pr.tenant_id
+         WHERE pr.tenant_id = $1 AND pr.id = $2`,
+        [tenantId, requestId],
+      );
+      if (!row) return null;
+
+      // Если заявка под закрытую (won) сделку поступила на склад — дописываем дефицит FIFO
+      if (payload.status === "received" && row.deal_id) {
+        await this.fulfillWonDealIfReadyInTx(
+          tx,
+          tenantId,
+          row.deal_id,
+          row.deal_item_id ?? null,
+          row.item_id,
+          row.created_by,
+        );
+      }
+
+      return {
+        id: row.id,
+        repairOrderId: row.repair_order_id,
+        dealId: row.deal_id ?? null,
+        dealItemId: row.deal_item_id ?? null,
+        supplierOrderId: row.supplier_order_id,
+        repairTicketNumber: row.repair_ticket_number,
+        dealTitle: row.deal_title ?? null,
+        itemId: row.item_id,
+        itemName: row.item_name,
+        sku: row.sku,
+        quantity: Number(row.quantity),
+        unit: row.unit,
+        estimatedPrice: Number(row.estimated_price),
+        status: (row.status as PurchaseRequestStatus) || "pending",
+        comment: row.comment,
+        createdByName: row.created_by_name,
+        createdAt: toIso(row.created_at),
+        updatedAt: toIso(row.updated_at),
+      };
+    });
+  }
+
+  async deletePurchaseRequest(tenantId: string, requestId: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const deletedRows = await tx.query<{ id: string }>(
+        `DELETE FROM purchase_requests
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING id`,
+        [tenantId, requestId],
+      );
+      return deletedRows.length > 0;
     });
   }
 
@@ -764,45 +1290,87 @@ export class WarehouseService {
 
       const orderRow = await tx.queryOneOrThrow<SupplierOrderRow>(
         `INSERT INTO supplier_orders
-           (tenant_id, order_number, supplier_name, status, total_amount, notes, created_by)
-         VALUES ($1, $2, $3, 'pending_payment', 0, $4, $5)
+           (tenant_id, order_number, supplier_name, supplier_company_id, status, total_amount, notes, created_by)
+         VALUES ($1, $2, $3, $4, 'pending_payment', 0, $5, $6)
          RETURNING *`,
-        [tenantId, orderNumber, payload.supplier_name, payload.notes ?? "", userId],
+        [
+          tenantId,
+          orderNumber,
+          payload.supplier_name,
+          payload.supplier_company_id ?? null,
+          payload.notes ?? "",
+          userId,
+        ],
       );
 
       let totalAmount = 0;
       const createdItems: SupplierOrderItemDTO[] = [];
+      const linkedRequestIds: string[] = [];
 
-      // Вариант 1: Формирование из purchase_request_ids
-      if (payload.purchase_request_ids && payload.purchase_request_ids.length > 0) {
-        const requests = await tx.query<PurchaseRequestRow>(
-          `SELECT * FROM purchase_requests
-           WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
-          [tenantId, payload.purchase_request_ids],
-        );
+      // Подготовка позиций без дублирования
+      let itemsToProcess = payload.items;
+      if (!itemsToProcess || itemsToProcess.length === 0) {
+        if (payload.purchase_request_ids && payload.purchase_request_ids.length > 0) {
+          const requests = await tx.query<PurchaseRequestRow>(
+            `SELECT * FROM purchase_requests
+             WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+            [tenantId, payload.purchase_request_ids],
+          );
+          itemsToProcess = requests.map((req) => ({
+            purchase_request_id: req.id,
+            purchase_request_ids: [req.id],
+            item_id: req.item_id ?? undefined,
+            item_name: req.item_name,
+            sku: req.sku || "",
+            requested_quantity: Number(req.quantity),
+            extra_quantity: 0,
+            quantity: Number(req.quantity),
+            unit: req.unit || "шт",
+            price: Number(req.estimated_price || 0),
+            repair_order_id: req.repair_order_id ?? undefined,
+          }));
+        }
+      }
 
-        for (const req of requests) {
-          const qty = Number(req.quantity);
-          const price = Number(req.estimated_price || 0);
-          const itemTotal = qty * price;
+      if (itemsToProcess && itemsToProcess.length > 0) {
+        for (const it of itemsToProcess) {
+          const reqQty = Number(it.requested_quantity ?? 0);
+          const totalQty = Number(it.quantity);
+          const extraQty = Number(it.extra_quantity ?? Math.max(0, totalQty - reqQty));
+          const unitPrice = Number(it.price || 0);
+          const itemTotal = totalQty * unitPrice;
           totalAmount += itemTotal;
+
+          const reqIds: string[] = [];
+          if (it.purchase_request_ids && it.purchase_request_ids.length > 0) {
+            reqIds.push(...it.purchase_request_ids);
+          } else if (it.purchase_request_id) {
+            reqIds.push(it.purchase_request_id);
+          }
+          linkedRequestIds.push(...reqIds);
 
           const itemRow = await tx.queryOneOrThrow<SupplierOrderItemRow>(
             `INSERT INTO supplier_order_items
-               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku, quantity, unit, price, total_price)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku,
+                requested_quantity, extra_quantity, quantity, unit, price, total_price,
+                repair_order_id, purchase_request_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              RETURNING *`,
             [
               tenantId,
               orderRow.id,
-              req.id,
-              req.item_id,
-              req.item_name,
-              req.sku,
-              qty,
-              req.unit,
-              price,
+              reqIds[0] ?? it.purchase_request_id ?? null,
+              it.item_id ?? null,
+              it.item_name,
+              it.sku ?? "",
+              reqQty,
+              extraQty,
+              totalQty,
+              it.unit ?? "шт",
+              unitPrice,
               itemTotal,
+              it.repair_order_id ?? null,
+              reqIds,
             ],
           );
 
@@ -813,62 +1381,29 @@ export class WarehouseService {
             itemId: itemRow.item_id,
             itemName: itemRow.item_name,
             sku: itemRow.sku,
-            quantity: Number(itemRow.quantity),
+            requestedQuantity: reqQty,
+            extraQuantity: extraQty,
+            repairOrderId: itemRow.repair_order_id ?? null,
+            purchaseRequestIds: reqIds,
+            repairOrders: it.repair_orders,
+            quantity: totalQty,
             unit: itemRow.unit,
-            price: Number(itemRow.price),
-            totalPrice: Number(itemRow.total_price),
+            price: unitPrice,
+            totalPrice: itemTotal,
             createdAt: toIso(itemRow.created_at),
           });
         }
+      }
 
-        // Обновляем статус исходных заявок на 'ordered'
+      // Обновляем статус исходных заявок на 'ordered'
+      const uniqueRequestIds = Array.from(new Set(linkedRequestIds));
+      if (uniqueRequestIds.length > 0) {
         await tx.query(
           `UPDATE purchase_requests
            SET status = 'ordered', supplier_order_id = $1, updated_at = now()
            WHERE tenant_id = $2 AND id = ANY($3::uuid[])`,
-          [orderRow.id, tenantId, payload.purchase_request_ids],
+          [orderRow.id, tenantId, uniqueRequestIds],
         );
-      }
-
-      // Вариант 2: Прямая передача позиций
-      if (payload.items && payload.items.length > 0) {
-        for (const it of payload.items) {
-          const itemTotal = it.quantity * it.price;
-          totalAmount += itemTotal;
-
-          const itemRow = await tx.queryOneOrThrow<SupplierOrderItemRow>(
-            `INSERT INTO supplier_order_items
-               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku, quantity, unit, price, total_price)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-             RETURNING *`,
-            [
-              tenantId,
-              orderRow.id,
-              it.purchase_request_id ?? null,
-              it.item_id ?? null,
-              it.item_name,
-              it.sku ?? "",
-              it.quantity,
-              it.unit ?? "шт",
-              it.price,
-              itemTotal,
-            ],
-          );
-
-          createdItems.push({
-            id: itemRow.id,
-            supplierOrderId: itemRow.supplier_order_id,
-            purchaseRequestId: itemRow.purchase_request_id,
-            itemId: itemRow.item_id,
-            itemName: itemRow.item_name,
-            sku: itemRow.sku,
-            quantity: Number(itemRow.quantity),
-            unit: itemRow.unit,
-            price: Number(itemRow.price),
-            totalPrice: Number(itemRow.total_price),
-            createdAt: toIso(itemRow.created_at),
-          });
-        }
       }
 
       // Фиксируем итоговую сумму заказа
@@ -882,6 +1417,7 @@ export class WarehouseService {
         id: orderRow.id,
         orderNumber: orderRow.order_number,
         supplierName: orderRow.supplier_name,
+        supplierCompanyId: orderRow.supplier_company_id ?? null,
         status: (orderRow.status as SupplierOrderStatus) || "pending_payment",
         totalAmount,
         cashAccountId: orderRow.cash_account_id,
@@ -894,6 +1430,166 @@ export class WarehouseService {
         createdAt: toIso(orderRow.created_at),
         updatedAt: toIso(orderRow.updated_at),
       };
+    });
+  }
+
+  async updateSupplierOrder(
+    tenantId: string,
+    id: string,
+    payload: UpdateSupplierOrderPayload,
+  ): Promise<SupplierOrderDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const order = await tx.queryOne<SupplierOrderRow>(
+        `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, id],
+      );
+      if (!order) {
+        throw new Error("Заказ поставщику не найден");
+      }
+      if (order.status === "received") {
+        throw new Error("Нельзя редактировать заказ, который уже оприходован на склад");
+      }
+
+      const updates: string[] = [];
+      const params: (string | number | null)[] = [tenantId, id];
+
+      if (payload.supplier_name !== undefined) {
+        params.push(payload.supplier_name);
+        updates.push(`supplier_name = $${params.length}`);
+      }
+      if (payload.supplier_company_id !== undefined) {
+        params.push(payload.supplier_company_id);
+        updates.push(`supplier_company_id = $${params.length}`);
+      }
+      if (payload.notes !== undefined) {
+        params.push(payload.notes);
+        updates.push(`notes = $${params.length}`);
+      }
+      if (payload.status !== undefined) {
+        params.push(payload.status);
+        updates.push(`status = $${params.length}`);
+      }
+
+      if (payload.items && payload.items.length > 0) {
+        await tx.query(
+          `DELETE FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
+          [tenantId, id],
+        );
+
+        let totalAmount = 0;
+        const linkedRequestIds: string[] = [];
+
+        for (const it of payload.items) {
+          const reqQty = Number(it.requested_quantity ?? 0);
+          const totalQty = Number(it.quantity);
+          const extraQty = Number(it.extra_quantity ?? Math.max(0, totalQty - reqQty));
+          const unitPrice = Number(it.price || 0);
+          const itemTotal = totalQty * unitPrice;
+          totalAmount += itemTotal;
+
+          const reqIds: string[] = [];
+          if (it.purchase_request_ids && it.purchase_request_ids.length > 0) {
+            reqIds.push(...it.purchase_request_ids);
+          } else if (it.purchase_request_id) {
+            reqIds.push(it.purchase_request_id);
+          }
+          linkedRequestIds.push(...reqIds);
+
+          await tx.query(
+            `INSERT INTO supplier_order_items
+               (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku,
+                requested_quantity, extra_quantity, quantity, unit, price, total_price,
+                repair_order_id, purchase_request_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+            [
+              tenantId,
+              id,
+              reqIds[0] ?? it.purchase_request_id ?? null,
+              it.item_id ?? null,
+              it.item_name,
+              it.sku ?? "",
+              reqQty,
+              extraQty,
+              totalQty,
+              it.unit ?? "шт",
+              unitPrice,
+              itemTotal,
+              it.repair_order_id ?? null,
+              reqIds,
+            ],
+          );
+        }
+
+        const uniqueReqIds = Array.from(new Set(linkedRequestIds));
+        if (uniqueReqIds.length > 0) {
+          await tx.query(
+            `UPDATE purchase_requests
+             SET status = 'ordered', supplier_order_id = $1, updated_at = now()
+             WHERE tenant_id = $2 AND id = ANY($3::uuid[])`,
+            [id, tenantId, uniqueReqIds],
+          );
+        }
+
+        params.push(totalAmount);
+        updates.push(`total_amount = $${params.length}`);
+      }
+
+      updates.push(`updated_at = now()`);
+
+      await tx.query(
+        `UPDATE supplier_orders SET ${updates.join(", ")} WHERE tenant_id = $1 AND id = $2`,
+        params,
+      );
+
+      const refreshed = await this.getSupplierOrder(tenantId, id);
+      return refreshed!;
+    });
+  }
+
+  async deleteSupplierOrder(tenantId: string, id: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const order = await tx.queryOne<SupplierOrderRow>(
+        `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, id],
+      );
+      if (!order) {
+        throw new Error("Заказ поставщику не найден");
+      }
+      if (order.status === "received") {
+        throw new Error("Нельзя удалить заказ, который уже оприходован на склад");
+      }
+
+      // Возвращаем связанные заявки на закупку в статус 'pending'
+      await tx.query(
+        `UPDATE purchase_requests
+         SET status = 'pending', supplier_order_id = NULL, updated_at = now()
+         WHERE tenant_id = $1 AND supplier_order_id = $2`,
+        [tenantId, id],
+      );
+
+      // Если была создана кассовая проводка, удаляем её и возвращаем баланс
+      if (order.finance_transaction_id && order.cash_account_id) {
+        await tx.query(
+          `DELETE FROM transactions WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, order.finance_transaction_id],
+        );
+        await tx.query(
+          `UPDATE cash_accounts SET balance = balance + $1 WHERE tenant_id = $2 AND id = $3`,
+          [order.total_amount, tenantId, order.cash_account_id],
+        );
+      }
+
+      // Удаляем позиции и сам заказ
+      await tx.query(
+        `DELETE FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
+        [tenantId, id],
+      );
+      await tx.query(
+        `DELETE FROM supplier_orders WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id],
+      );
+
+      return true;
     });
   }
 
@@ -918,16 +1614,26 @@ export class WarehouseService {
     if (orderRows.length === 0) return [];
 
     const orderIds = orderRows.map((o) => o.id);
-    const itemRows = await query<SupplierOrderItemRow>(
-      `SELECT * FROM supplier_order_items
-       WHERE tenant_id = $1 AND supplier_order_id = ANY($2::uuid[])
-       ORDER BY created_at ASC`,
+    const itemRows = await query<
+      SupplierOrderItemRow & { repair_ticket_number?: string | null }
+    >(
+      `SELECT soi.*,
+              COALESCE(ro.ticket_number, pr_ro.ticket_number) AS repair_ticket_number
+       FROM supplier_order_items soi
+       LEFT JOIN repair_orders ro ON ro.id = soi.repair_order_id AND ro.tenant_id = soi.tenant_id
+       LEFT JOIN purchase_requests pr ON pr.id = soi.purchase_request_id AND pr.tenant_id = soi.tenant_id
+       LEFT JOIN repair_orders pr_ro ON pr_ro.id = pr.repair_order_id AND pr_ro.tenant_id = soi.tenant_id
+       WHERE soi.tenant_id = $1 AND soi.supplier_order_id = ANY($2::uuid[])
+       ORDER BY soi.created_at ASC`,
       [tenantId, orderIds],
     );
 
     const itemsByOrder = new Map<string, SupplierOrderItemDTO[]>();
     for (const item of itemRows) {
       const list = itemsByOrder.get(item.supplier_order_id) ?? [];
+      const totalQty = Number(item.quantity);
+      const reqQty = Number(item.requested_quantity || 0);
+      const extraQty = Number(item.extra_quantity || Math.max(0, totalQty - reqQty));
       list.push({
         id: item.id,
         supplierOrderId: item.supplier_order_id,
@@ -935,7 +1641,12 @@ export class WarehouseService {
         itemId: item.item_id,
         itemName: item.item_name,
         sku: item.sku,
-        quantity: Number(item.quantity),
+        requestedQuantity: reqQty,
+        extraQuantity: extraQty,
+        repairOrderId: item.repair_order_id ?? null,
+        purchaseRequestIds: item.purchase_request_ids || [],
+        repairOrders: item.repair_ticket_number ? `№${item.repair_ticket_number}` : undefined,
+        quantity: totalQty,
         unit: item.unit,
         price: Number(item.price),
         totalPrice: Number(item.total_price),
@@ -948,6 +1659,7 @@ export class WarehouseService {
       id: o.id,
       orderNumber: o.order_number,
       supplierName: o.supplier_name,
+      supplierCompanyId: o.supplier_company_id ?? null,
       status: (o.status as SupplierOrderStatus) || "pending_payment",
       totalAmount: Number(o.total_amount),
       cashAccountId: o.cash_account_id,
@@ -1045,50 +1757,17 @@ export class WarehouseService {
       );
 
       // Переводим заказ в статус 'paid'
-      const updatedOrder = await tx.queryOneOrThrow<SupplierOrderRow>(
+      await tx.query(
         `UPDATE supplier_orders
          SET status = 'paid', cash_account_id = $1, finance_transaction_id = $2, paid_at = now(), updated_at = now()
-         WHERE tenant_id = $3 AND id = $4
-         RETURNING *`,
+         WHERE tenant_id = $3 AND id = $4`,
         [cashAccountId, txRow.id, tenantId, id],
       );
 
-      const items = await tx.query<SupplierOrderItemRow>(
-        `SELECT * FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
-        [tenantId, id],
-      );
-
-      const orderDto: SupplierOrderDTO = {
-        id: updatedOrder.id,
-        orderNumber: updatedOrder.order_number,
-        supplierName: updatedOrder.supplier_name,
-        status: "paid",
-        totalAmount,
-        cashAccountId,
-        financeTransactionId: txRow.id,
-        notes: updatedOrder.notes,
-        paidAt: toIso(updatedOrder.paid_at),
-        receivedAt: toNullableIso(updatedOrder.received_at),
-        createdBy: updatedOrder.created_by,
-        items: items.map((i) => ({
-          id: i.id,
-          supplierOrderId: i.supplier_order_id,
-          purchaseRequestId: i.purchase_request_id,
-          itemId: i.item_id,
-          itemName: i.item_name,
-          sku: i.sku,
-          quantity: Number(i.quantity),
-          unit: i.unit,
-          price: Number(i.price),
-          totalPrice: Number(i.total_price),
-          createdAt: toIso(i.created_at),
-        })),
-        createdAt: toIso(updatedOrder.created_at),
-        updatedAt: toIso(updatedOrder.updated_at),
-      };
+      const refreshed = await this.getSupplierOrder(tenantId, id);
 
       return {
-        order: orderDto,
+        order: refreshed!,
         transactionId: txRow.id,
         status: "PAID",
       };
@@ -1096,18 +1775,23 @@ export class WarehouseService {
   }
 
   /**
-   * Оприходование по заказу поставщику (создание партий и журнала движений)
+   * Оприходование по заказу поставщику (создание партий, движений и резервирование под наряд)
    */
   async createReceiptFromSupplierOrder(
     tenantId: string,
     id: string,
     userId: string | null,
-  ): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number }> {
+    payload?: ReceiptSupplierOrderPayload,
+  ): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }> {
     return withTenant(tenantId, async (tx) => {
       const order = await tx.queryOneOrThrow<SupplierOrderRow>(
         `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
         [tenantId, id],
       );
+
+      if (order.status === "received") {
+        throw new Error("Заказ поставщику уже оприходован");
+      }
 
       const items = await tx.query<SupplierOrderItemRow>(
         `SELECT * FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
@@ -1146,10 +1830,11 @@ export class WarehouseService {
           }
         }
 
-        const qty = Number(it.quantity);
+        const totalQty = Number(it.quantity);
+        const reqQty = Number(it.requested_quantity || 0);
         const price = Number(it.price);
 
-        // Обновляем закупочную цену детали
+        // Обновляем себестоимость в номенклатуре
         await tx.query(
           `UPDATE warehouse_items
            SET cost_price = $1, updated_at = now()
@@ -1157,7 +1842,7 @@ export class WarehouseService {
           [price, tenantId, itemId],
         );
 
-        // Создаем партию
+        // Создаем партию на ВСЕ поступившее количество
         const batch = await tx.queryOneOrThrow<WarehouseBatchRow>(
           `INSERT INTO warehouse_batches
              (tenant_id, item_id, batch_number, supplier_name, purchase_price, initial_quantity, remaining_quantity)
@@ -1169,12 +1854,12 @@ export class WarehouseService {
             order.order_number,
             order.supplier_name,
             price,
-            qty,
-            qty,
+            totalQty,
+            totalQty,
           ],
         );
 
-        // Движение на склад
+        // Фиксируем поступление на склад (intake)
         await tx.query(
           `INSERT INTO warehouse_movements
              (tenant_id, item_id, batch_id, type, quantity, cost_price, description, created_by)
@@ -1183,7 +1868,7 @@ export class WarehouseService {
             tenantId,
             itemId,
             batch.id,
-            qty,
+            totalQty,
             price,
             `Поступление по заказу поставщику ${order.order_number} (${order.supplier_name})`,
             userId,
@@ -1192,59 +1877,160 @@ export class WarehouseService {
 
         batchesCount++;
 
-        // Если заявка была привязана, переводим ее в 'received'
-        if (it.purchase_request_id) {
+        // БИЗНЕС-ЛОГИКА РАЗДЕЛЕНИЯ:
+        // Подтягиваем связанные заявки на закупку под наряды
+        const linkedReqIds: string[] = [];
+        if (it.purchase_request_ids && it.purchase_request_ids.length > 0) {
+          linkedReqIds.push(...it.purchase_request_ids);
+        } else if (it.purchase_request_id) {
+          linkedReqIds.push(it.purchase_request_id);
+        }
+
+        let linkedRequests: PurchaseRequestRow[] = [];
+        if (linkedReqIds.length > 0) {
+          linkedRequests = await tx.query<PurchaseRequestRow>(
+            `SELECT * FROM purchase_requests WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+            [tenantId, linkedReqIds],
+          );
+        } else if (reqQty > 0) {
+          linkedRequests = await tx.query<PurchaseRequestRow>(
+            `SELECT * FROM purchase_requests
+             WHERE tenant_id = $1 AND supplier_order_id = $2
+               AND (item_id = $3 OR lower(btrim(item_name)) = lower(btrim($4)))`,
+            [tenantId, id, itemId, it.item_name],
+          );
+        }
+
+        for (const req of linkedRequests) {
+          const partQty = Number(req.quantity);
+          if (req.repair_order_id && partQty > 0) {
+            // 1. Резервируем количество под заказ-наряд с привязкой к партии
+            await tx.query(
+              `INSERT INTO warehouse_reservations
+                 (tenant_id, repair_order_id, item_id, batch_id, quantity, status)
+               VALUES ($1, $2, $3, $4, $5, 'reserved')`,
+              [tenantId, req.repair_order_id, itemId, batch.id, partQty],
+            );
+
+            // 2. Движение резервирования
+            await tx.query(
+              `INSERT INTO warehouse_movements
+                 (tenant_id, item_id, batch_id, repair_order_id, type, quantity, cost_price, description, created_by)
+               VALUES ($1, $2, $3, $4, 'reserve', $5, $6, $7, $8)`,
+              [
+                tenantId,
+                itemId,
+                batch.id,
+                req.repair_order_id,
+                partQty,
+                price,
+                `Резерв под наряд по заказу ${order.order_number} (${it.item_name})`,
+                userId,
+              ],
+            );
+
+            // 3. Обновляем статус детали в наряде repair_parts
+            await tx.query(
+              `UPDATE repair_parts
+               SET warehouse_item_id = $1, cost_price = $2, status = 'reserved'
+               WHERE tenant_id = $3 AND repair_order_id = $4
+                 AND (warehouse_item_id = $1 OR lower(btrim(name)) = lower(btrim($5)))`,
+              [itemId, price, tenantId, req.repair_order_id, it.item_name],
+            );
+          }
+
+          // Переводим заявку на закупку в статус 'received'
           await tx.query(
             `UPDATE purchase_requests
-             SET status = 'received', updated_at = now()
+             SET status = 'received', item_id = COALESCE(item_id, $3), updated_at = now()
              WHERE tenant_id = $1 AND id = $2`,
-            [tenantId, it.purchase_request_id],
+            [tenantId, req.id, itemId],
+          );
+
+          // Если заявка была создана под закрытую (won) сделку CRM — дописываем дефицит FIFO
+          if (req.deal_id) {
+            await this.fulfillWonDealIfReadyInTx(
+              tx,
+              tenantId,
+              req.deal_id,
+              req.deal_item_id ?? null,
+              itemId,
+              userId,
+            );
+          }
+        }
+        // Излишки сверх наряда (extra_quantity) остаются на свободном остатке склада!
+      }
+
+      let paidTransactionId: string | undefined;
+
+      // Если в модалке подтвердили оплату при оприходовании:
+      if (payload?.mark_paid || payload?.cash_account_id) {
+        let cashAccountId = payload?.cash_account_id || order.cash_account_id;
+        if (!cashAccountId) {
+          const defaultCash = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM cash_accounts WHERE tenant_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+            [tenantId],
+          );
+          cashAccountId = defaultCash?.id ?? null;
+        }
+
+        if (cashAccountId) {
+          let cat = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM finance_categories
+             WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
+             LIMIT 1`,
+            [tenantId],
+          );
+          if (!cat) {
+            cat = await tx.queryOne<{ id: string }>(
+              `INSERT INTO finance_categories (tenant_id, name, type)
+               VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
+               RETURNING id`,
+              [tenantId],
+            );
+          }
+
+          const desc = payload?.comment || `Оплата при оприходовании заказа ${order.order_number} (${order.supplier_name})`;
+          const txRow = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO transactions
+               (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name)
+             VALUES ($1, $2, $3, $4, 'expense', $5, $6)
+             RETURNING id`,
+            [tenantId, cashAccountId, cat?.id ?? null, Number(order.total_amount), desc, order.supplier_name],
+          );
+
+          await tx.query(
+            `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
+            [Number(order.total_amount), tenantId, cashAccountId],
+          );
+
+          paidTransactionId = txRow.id;
+
+          await tx.query(
+            `UPDATE supplier_orders
+             SET paid_at = now(), cash_account_id = $1, finance_transaction_id = $2
+             WHERE tenant_id = $3 AND id = $4`,
+            [cashAccountId, txRow.id, tenantId, id],
           );
         }
       }
 
       // Переводим заказ в статус 'received'
-      const updatedOrder = await tx.queryOneOrThrow<SupplierOrderRow>(
+      await tx.query(
         `UPDATE supplier_orders
          SET status = 'received', received_at = now(), updated_at = now()
-         WHERE tenant_id = $1 AND id = $2
-         RETURNING *`,
+         WHERE tenant_id = $1 AND id = $2`,
         [tenantId, id],
       );
 
-      const orderDto: SupplierOrderDTO = {
-        id: updatedOrder.id,
-        orderNumber: updatedOrder.order_number,
-        supplierName: updatedOrder.supplier_name,
-        status: "received",
-        totalAmount: Number(updatedOrder.total_amount),
-        cashAccountId: updatedOrder.cash_account_id,
-        financeTransactionId: updatedOrder.finance_transaction_id,
-        notes: updatedOrder.notes,
-        paidAt: toNullableIso(updatedOrder.paid_at),
-        receivedAt: toIso(updatedOrder.received_at),
-        createdBy: updatedOrder.created_by,
-        items: items.map((i) => ({
-          id: i.id,
-          supplierOrderId: i.supplier_order_id,
-          purchaseRequestId: i.purchase_request_id,
-          itemId: i.item_id,
-          itemName: i.item_name,
-          sku: i.sku,
-          quantity: Number(i.quantity),
-          unit: i.unit,
-          price: Number(i.price),
-          totalPrice: Number(i.total_price),
-          createdAt: toIso(i.created_at),
-        })),
-        createdAt: toIso(updatedOrder.created_at),
-        updatedAt: toIso(updatedOrder.updated_at),
-      };
+      const refreshed = await this.getSupplierOrder(tenantId, id);
 
       return {
         success: true,
-        order: orderDto,
+        order: refreshed!,
         batchesCreated: batchesCount,
+        transactionId: paidTransactionId,
       };
     });
   }
@@ -1253,40 +2039,352 @@ export class WarehouseService {
   // Repair Order FIFO Consumption & Deficit Write-off
   // ---------------------------------------------------------------------------
 
-  async consumePartsForOrder(tenantId: string, orderId: string, userId: string): Promise<void> {
-    await withTenant(tenantId, async (tx) => {
-      const parts = await tx.query<{
-        id: string;
-        warehouse_item_id: string | null;
-        name: string;
-        quantity: number;
-        retail_price: string;
-        cost_price: string;
-      }>(
-        `SELECT id, warehouse_item_id, name, quantity, retail_price, cost_price
-         FROM repair_parts
-         WHERE tenant_id = $1 AND repair_order_id = $2`,
-        [tenantId, orderId],
+  /**
+   * Рассчитывает ожидаемую FIFO-себестоимость за единицу для запрошенного количества
+   * по непустым партиям товара (ORDER BY received_at ASC).
+   */
+  async estimateFifoUnitCost(
+    tx: TransactionClient,
+    tenantId: string,
+    itemId: string,
+    quantity: number,
+  ): Promise<{ unitCost: number; hasBatches: boolean; itemCostPrice: number }> {
+    const itemRow = await tx.queryOne<{ cost_price: string }>(
+      `SELECT cost_price FROM warehouse_items WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, itemId],
+    );
+    const fallbackCost = Number(itemRow?.cost_price ?? 0);
+
+    const batches = await tx.query<{ remaining_quantity: string; purchase_price: string }>(
+      `SELECT remaining_quantity, purchase_price
+       FROM warehouse_batches
+       WHERE tenant_id = $1 AND item_id = $2 AND remaining_quantity > 0
+       ORDER BY received_at ASC, created_at ASC`,
+      [tenantId, itemId],
+    );
+
+    if (batches.length === 0 || quantity <= 0) {
+      return { unitCost: fallbackCost, hasBatches: false, itemCostPrice: fallbackCost };
+    }
+
+    let remaining = quantity;
+    let totalCost = 0;
+
+    for (const batch of batches) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, Number(batch.remaining_quantity));
+      totalCost += take * Number(batch.purchase_price);
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      const lastBatchPrice = Number(batches[batches.length - 1]?.purchase_price ?? fallbackCost);
+      totalCost += remaining * lastBatchPrice;
+    }
+
+    return {
+      unitCost: Math.round((totalCost / quantity) * 100) / 100,
+      hasBatches: true,
+      itemCostPrice: fallbackCost,
+    };
+  }
+
+  /**
+   * Идемпотентное списание запчастей наряда по партиям (FIFO) внутри открытой транзакции.
+   * Приоритизирует явно зарезервированные под наряд партии (batch_id), затем остальные по received_at ASC.
+   * Фиксирует разбивку в repair_part_batch_allocations, движения write_off с repair_part_id
+   * и обновляет repair_parts.cost_price фактической средневзвешенной себестоимостью списания.
+   */
+  async consumePartsForOrderInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    orderId: string,
+    userId: string,
+  ): Promise<void> {
+    const parts = await tx.query<{
+      id: string;
+      warehouse_item_id: string | null;
+      name: string;
+      quantity: number;
+      retail_price: string;
+      cost_price: string;
+      consumed_at: Date | string | null;
+    }>(
+      `SELECT id, warehouse_item_id, name, quantity, retail_price, cost_price, consumed_at
+       FROM repair_parts
+       WHERE tenant_id = $1 AND repair_order_id = $2
+       FOR UPDATE`,
+      [tenantId, orderId],
+    );
+
+    const settingsRow = await tx.queryOne<{ allow_negative_stock: boolean }>(
+      `SELECT allow_negative_stock FROM warehouse_settings WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    const allowNegativeStock = Boolean(settingsRow?.allow_negative_stock);
+
+    for (const part of parts) {
+      if (!part.warehouse_item_id || part.consumed_at !== null) continue;
+
+      const totalQty = Number(part.quantity);
+      if (totalQty <= 0) continue;
+
+      let needed = totalQty;
+      let totalCost = 0;
+      let consumedFromBatches = 0;
+
+      // Сначала собираем явно зарезервированные партии под этот наряд
+      const reservedBatches = await tx.query<{ batch_id: string }>(
+        `SELECT DISTINCT batch_id
+         FROM warehouse_reservations
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3
+           AND status = 'reserved' AND batch_id IS NOT NULL`,
+        [tenantId, orderId, part.warehouse_item_id],
+      );
+      const reservedBatchIds = reservedBatches.map((r) => r.batch_id);
+
+      const batches = await tx.query<{ id: string; remaining_quantity: string; purchase_price: string }>(
+        `SELECT id, remaining_quantity, purchase_price
+         FROM warehouse_batches
+         WHERE tenant_id = $1 AND item_id = $2 AND remaining_quantity > 0
+         ORDER BY
+           CASE WHEN id = ANY($3::uuid[]) THEN 0 ELSE 1 END ASC,
+           received_at ASC,
+           created_at ASC
+         FOR UPDATE`,
+        [tenantId, part.warehouse_item_id, reservedBatchIds],
       );
 
-      for (const part of parts) {
-        if (!part.warehouse_item_id) continue;
+      for (const batch of batches) {
+        if (needed <= 0) break;
+        const rem = Number(batch.remaining_quantity);
+        const take = Math.min(needed, rem);
+        const unitCost = Number(batch.purchase_price);
+        const allocCost = Math.round(take * unitCost * 100) / 100;
 
-        let needed = Number(part.quantity);
+        await tx.query(
+          `UPDATE warehouse_batches
+           SET remaining_quantity = remaining_quantity - $1
+           WHERE tenant_id = $2 AND id = $3`,
+          [take, tenantId, batch.id],
+        );
+
+        await tx.query(
+          `INSERT INTO warehouse_movements
+             (tenant_id, item_id, batch_id, repair_order_id, repair_part_id, type, quantity, cost_price, description, created_by)
+           VALUES ($1, $2, $3, $4, $5, 'write_off', $6, $7, $8, $9)`,
+          [
+            tenantId,
+            part.warehouse_item_id,
+            batch.id,
+            orderId,
+            part.id,
+            take,
+            unitCost,
+            `Списание в заказ-наряд (${part.name})`,
+            userId,
+          ],
+        );
+
+        await tx.query(
+          `INSERT INTO repair_part_batch_allocations
+             (tenant_id, repair_order_id, repair_part_id, warehouse_item_id, batch_id, quantity, unit_cost, total_cost)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            tenantId,
+            orderId,
+            part.id,
+            part.warehouse_item_id,
+            batch.id,
+            take,
+            unitCost,
+            allocCost,
+          ],
+        );
+
+        totalCost += allocCost;
+        consumedFromBatches += take;
+        needed -= take;
+      }
+
+      // Если остался дефицит (продажа в минус / пересорт)
+      let costSource: "fifo_batch" | "negative_stock" = "fifo_batch";
+      if (needed > 0) {
+        costSource = "negative_stock";
+        const fallbackUnitCost = Number(part.cost_price || 0);
+        const deficitCost = Math.round(needed * fallbackUnitCost * 100) / 100;
+        totalCost += deficitCost;
+
+        if (allowNegativeStock) {
+          await tx.query(
+            `INSERT INTO warehouse_movements
+               (tenant_id, item_id, repair_order_id, repair_part_id, type, quantity, cost_price, description, created_by)
+             VALUES ($1, $2, $3, $4, 'write_off', $5, $6, $7, $8)`,
+            [
+              tenantId,
+              part.warehouse_item_id,
+              orderId,
+              part.id,
+              needed,
+              fallbackUnitCost,
+              `Списание в заказ-наряд (дефицит/продажа в минус: ${part.name})`,
+              userId,
+            ],
+          );
+
+          await tx.query(
+            `INSERT INTO repair_part_batch_allocations
+               (tenant_id, repair_order_id, repair_part_id, warehouse_item_id, batch_id, quantity, unit_cost, total_cost)
+             VALUES ($1, $2, $3, $4, NULL, $5, $6, $7)`,
+            [
+              tenantId,
+              orderId,
+              part.id,
+              part.warehouse_item_id,
+              needed,
+              fallbackUnitCost,
+              deficitCost,
+            ],
+          );
+        }
+      }
+
+      const effectiveUnitCost =
+        consumedFromBatches > 0 || allowNegativeStock
+          ? Math.round((totalCost / totalQty) * 100) / 100
+          : Number(part.cost_price || 0);
+
+      await tx.query(
+        `UPDATE repair_parts
+         SET cost_price = $1,
+             status = 'used',
+             consumed_at = now(),
+             cost_source = $2
+         WHERE tenant_id = $3 AND id = $4`,
+        [effectiveUnitCost, costSource, tenantId, part.id],
+      );
+
+      await tx.query(
+        `UPDATE warehouse_reservations
+         SET status = 'consumed', updated_at = now()
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'`,
+        [tenantId, orderId, part.warehouse_item_id],
+      );
+    }
+  }
+
+  async consumePartsForOrder(tenantId: string, orderId: string, userId: string): Promise<void> {
+    await withTenant(tenantId, async (tx) => {
+      await this.consumePartsForOrderInTx(tx, tenantId, orderId, userId);
+    });
+  }
+
+  /**
+   * Атомарное, идемпотентное списание товаров сделки CRM по FIFO при переходе в стадию `won`.
+   * - Списывает доступные партии (received_at ASC) и сохраняет аллокации в deal_item_batch_allocations.
+   * - Записывает движения write_off в warehouse_movements (с deal_id, deal_item_id) — попадает в P&L COGS.
+   * - Если товара нет на складе (или не хватает количества) — автоматически формирует заявку на закупку
+   *   в purchase_requests на странице /warehouse (без дублей при повторных вызовах).
+   */
+  async consumeDealItemsInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    dealId: string,
+    userId: string | null,
+  ): Promise<{ consumedItemsCount: number; purchaseRequestsCreated: number }> {
+    const dealRow = await tx.queryOne<{ id: string; title: string }>(
+      `SELECT id, title FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+    if (!dealRow) {
+      return { consumedItemsCount: 0, purchaseRequestsCreated: 0 };
+    }
+
+    const items = await tx.query<{
+      id: string;
+      item_id: string | null;
+      name: string;
+      sku: string | null;
+      unit: string | null;
+      quantity: string | number;
+      cost_price: string | number;
+      consumed_at: Date | string | null;
+    }>(
+      `SELECT id, item_id, name, sku, unit, quantity, cost_price, consumed_at
+       FROM deal_items
+       WHERE tenant_id = $1 AND deal_id = $2 AND item_type = 'product' AND consumed_at IS NULL
+       ORDER BY sort_order ASC, created_at ASC
+       FOR UPDATE`,
+      [tenantId, dealId],
+    );
+
+    if (items.length === 0) {
+      return { consumedItemsCount: 0, purchaseRequestsCreated: 0 };
+    }
+
+    let consumedItemsCount = 0;
+    let purchaseRequestsCreated = 0;
+
+    for (const item of items) {
+      const totalQty = Number(item.quantity);
+      if (totalQty <= 0) continue;
+
+      // Проверяем сколько уже списано по этой позиции (защита от двойного списания при частичном дефиците)
+      const prevAlloc = await tx.queryOne<{ qty: string; cost: string }>(
+        `SELECT
+           COALESCE(SUM(quantity), 0)::numeric(10,2)::text AS qty,
+           COALESCE(SUM(total_cost), 0)::numeric(12,2)::text AS cost
+         FROM deal_item_batch_allocations
+         WHERE tenant_id = $1 AND deal_item_id = $2 AND batch_id IS NOT NULL`,
+        [tenantId, item.id],
+      );
+      const alreadyConsumedQty = Number(prevAlloc?.qty ?? 0);
+      const alreadyConsumedCost = Number(prevAlloc?.cost ?? 0);
+
+      let needed = Math.round((totalQty - alreadyConsumedQty) * 100) / 100;
+      if (needed <= 0) {
+        const avgCost =
+          alreadyConsumedQty > 0
+            ? Math.round((alreadyConsumedCost / alreadyConsumedQty) * 100) / 100
+            : Number(item.cost_price || 0);
+        await tx.query(
+          `UPDATE deal_items
+           SET cost_price = $1, cost_source = 'fifo_batch', consumed_at = now(), updated_at = now()
+           WHERE tenant_id = $2 AND id = $3`,
+          [avgCost, tenantId, item.id],
+        );
+        consumedItemsCount++;
+        continue;
+      }
+
+      let newlyConsumedQty = 0;
+      let newlyConsumedCost = 0;
+      let warehouseItemCostPrice = Number(item.cost_price || 0);
+
+      if (item.item_id) {
+        const whItem = await tx.queryOne<{ cost_price: string }>(
+          `SELECT cost_price::text FROM warehouse_items WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, item.item_id],
+        );
+        if (whItem && warehouseItemCostPrice <= 0) {
+          warehouseItemCostPrice = Number(whItem.cost_price || 0);
+        }
 
         const batches = await tx.query<{ id: string; remaining_quantity: string; purchase_price: string }>(
           `SELECT id, remaining_quantity, purchase_price
            FROM warehouse_batches
            WHERE tenant_id = $1 AND item_id = $2 AND remaining_quantity > 0
-           ORDER BY received_at ASC
+           ORDER BY received_at ASC, created_at ASC
            FOR UPDATE`,
-          [tenantId, part.warehouse_item_id],
+          [tenantId, item.item_id],
         );
 
         for (const batch of batches) {
           if (needed <= 0) break;
           const rem = Number(batch.remaining_quantity);
           const take = Math.min(needed, rem);
+          const unitCost = Number(batch.purchase_price);
+          const allocCost = Math.round(take * unitCost * 100) / 100;
 
           await tx.query(
             `UPDATE warehouse_batches
@@ -1297,52 +2395,142 @@ export class WarehouseService {
 
           await tx.query(
             `INSERT INTO warehouse_movements
-               (tenant_id, item_id, batch_id, repair_order_id, type, quantity, cost_price, description, created_by)
-             VALUES ($1, $2, $3, $4, 'write_off', $5, $6, $7, $8)`,
+               (tenant_id, item_id, batch_id, deal_id, deal_item_id, type, quantity, cost_price, description, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'write_off', $6, $7, $8, $9)`,
             [
               tenantId,
-              part.warehouse_item_id,
+              item.item_id,
               batch.id,
-              orderId,
+              dealId,
+              item.id,
               take,
-              Number(batch.purchase_price),
-              `Списание в заказ-наряд (${part.name})`,
+              unitCost,
+              `Продажа по сделке «${dealRow.title}» (${item.name})`,
               userId,
             ],
           );
 
-          needed -= take;
+          await tx.query(
+            `INSERT INTO deal_item_batch_allocations
+               (tenant_id, deal_id, deal_item_id, warehouse_item_id, batch_id, quantity, unit_cost, total_cost)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              tenantId,
+              dealId,
+              item.id,
+              item.item_id,
+              batch.id,
+              take,
+              unitCost,
+              allocCost,
+            ],
+          );
+
+          newlyConsumedCost += allocCost;
+          newlyConsumedQty += take;
+          needed = Math.round((needed - take) * 100) / 100;
+        }
+      }
+
+      const totalConsumedQty = Math.round((alreadyConsumedQty + newlyConsumedQty) * 100) / 100;
+      const totalConsumedCost = Math.round((alreadyConsumedCost + newlyConsumedCost) * 100) / 100;
+
+      if (needed > 0) {
+        // Нехватка на складе (или товар вне каталога): создаём заявку на закупку на /warehouse, если активной ещё нет
+        const existingReq = await tx.queryOne<{ id: string }>(
+          `SELECT id
+           FROM purchase_requests
+           WHERE tenant_id = $1 AND deal_item_id = $2 AND status IN ('pending', 'ordered')
+           LIMIT 1`,
+          [tenantId, item.id],
+        );
+
+        if (!existingReq) {
+          const reason = item.item_id
+            ? `Автозаявка: дефицит на складе при закрытии сделки «${dealRow.title}»`
+            : `Автозаявка: товар вне каталога склада при закрытии сделки «${dealRow.title}»`;
+          await tx.query(
+            `INSERT INTO purchase_requests
+               (tenant_id, deal_id, deal_item_id, item_id, item_name, sku, quantity, unit, estimated_price, status, comment, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11)`,
+            [
+              tenantId,
+              dealId,
+              item.id,
+              item.item_id,
+              item.name,
+              item.sku ?? "",
+              needed,
+              item.unit ?? "шт",
+              warehouseItemCostPrice,
+              reason,
+              userId,
+            ],
+          );
+          purchaseRequestsCreated++;
         }
 
-        // Если остался дефицит (продажа в минус / пересорт)
-        if (needed > 0) {
-          const settings = await this.getSettings(tenantId);
-          if (settings.allowNegativeStock) {
-            await tx.query(
-              `INSERT INTO warehouse_movements
-                 (tenant_id, item_id, repair_order_id, type, quantity, cost_price, description, created_by)
-               VALUES ($1, $2, $3, 'write_off', $4, $5, $6, $7)`,
-              [
-                tenantId,
-                part.warehouse_item_id,
-                orderId,
-                needed,
-                Number(part.cost_price || 0),
-                `Списание в заказ-наряд (дефицит/продажа в минус: ${part.name})`,
-                userId,
-              ],
-            );
-          }
-        }
+        const estTotalCost = totalConsumedCost + needed * warehouseItemCostPrice;
+        const effectiveUnitCost =
+          totalQty > 0 ? Math.round((estTotalCost / totalQty) * 100) / 100 : warehouseItemCostPrice;
 
         await tx.query(
-          `UPDATE warehouse_reservations
-           SET status = 'consumed', updated_at = now()
-           WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'`,
-          [tenantId, orderId, part.warehouse_item_id],
+          `UPDATE deal_items
+           SET cost_price = $1, cost_source = 'pending_purchase', updated_at = now()
+           WHERE tenant_id = $2 AND id = $3`,
+          [effectiveUnitCost, tenantId, item.id],
         );
+      } else {
+        const effectiveUnitCost =
+          totalConsumedQty > 0
+            ? Math.round((totalConsumedCost / totalConsumedQty) * 100) / 100
+            : warehouseItemCostPrice;
+
+        await tx.query(
+          `UPDATE deal_items
+           SET cost_price = $1, cost_source = 'fifo_batch', consumed_at = now(), updated_at = now()
+           WHERE tenant_id = $2 AND id = $3`,
+          [effectiveUnitCost, tenantId, item.id],
+        );
+        consumedItemsCount++;
       }
-    });
+    }
+
+    return { consumedItemsCount, purchaseRequestsCreated };
+  }
+
+  /**
+   * Если заявка на закупку под сделку оприходована, а сделка уже в стадии won —
+   * привязываем item_id к позиции сделки (если его не было) и дописываем дефицит FIFO.
+   */
+  private async fulfillWonDealIfReadyInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    dealId: string,
+    dealItemId: string | null,
+    warehouseItemId: string | null,
+    userId: string | null,
+  ): Promise<void> {
+    if (dealItemId && warehouseItemId) {
+      await tx.query(
+        `UPDATE deal_items
+         SET item_id = COALESCE(item_id, $3), updated_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, dealItemId, warehouseItemId],
+      );
+    }
+
+    const wonDeal = await tx.queryOne<{ id: string }>(
+      `SELECT d.id
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL AND s.is_won = true`,
+      [tenantId, dealId],
+    );
+
+    if (wonDeal) {
+      await this.consumeDealItemsInTx(tx, tenantId, dealId, userId);
+    }
   }
 
   async releaseReservationsForOrder(tenantId: string, orderId: string): Promise<void> {
@@ -1364,7 +2552,8 @@ export class WarehouseService {
     tenantId: string,
     payload: ExportWarehouseItemsPayload,
   ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
-    let items = await this.listItems(tenantId, payload.search);
+    const result = await this.listItems(tenantId, payload.search, { all: true });
+    let items = result.data;
     if (payload.ids && payload.ids.length > 0) {
       const idSet = new Set(payload.ids);
       items = items.filter((i) => idSet.has(i.id));
@@ -1845,6 +3034,111 @@ export class WarehouseService {
       );
 
       return { deletedCount, errors: errors.length > 0 ? errors : undefined };
+    });
+  }
+
+  /**
+   * Returns all categories for the tenant: combines categories from warehouse_categories
+   * table and distinct categories from existing warehouse_items.
+   */
+  async listCategories(tenantId: string): Promise<string[]> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{ name: string }>(
+        `SELECT DISTINCT btrim(name) AS name
+         FROM (
+           SELECT name FROM warehouse_categories WHERE tenant_id = $1
+           UNION
+           SELECT name FROM equipment_types WHERE tenant_id = $1
+           UNION
+           SELECT category AS name FROM warehouse_items WHERE tenant_id = $1 AND category <> '' AND deleted_at IS NULL
+         ) sub
+         WHERE btrim(name) <> ''
+         ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      const list = rows.map((r) => r.name);
+      if (list.length === 0) {
+        return [
+          "Запчасти",
+          "Расходники",
+          "Дисплеи",
+          "Аккумуляторы",
+          "Корпуса",
+          "Шлейфы",
+          "Инструменты",
+          "Оборудование",
+          "Аксессуары",
+          "Химия и пайка",
+        ];
+      }
+      return list;
+    });
+  }
+
+  /**
+   * Creates or ensures a warehouse category for the tenant.
+   */
+  async createCategory(tenantId: string, name: string): Promise<{ id: string; name: string }> {
+    const trimmed = name.trim();
+    return withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOneOrThrow<{ id: string; name: string }>(
+        `INSERT INTO warehouse_categories (tenant_id, name)
+         VALUES ($1, $2)
+         ON CONFLICT (tenant_id, name) DO UPDATE SET updated_at = now()
+         RETURNING id, name`,
+        [tenantId, trimmed],
+      );
+      return { id: row.id, name: row.name };
+    });
+  }
+
+  /**
+   * Returns all brands for the tenant: combines equipment_brands
+   * and distinct brands from warehouse_items.
+   */
+  async listBrands(tenantId: string): Promise<string[]> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{ name: string }>(
+        `SELECT DISTINCT btrim(name) AS name
+         FROM (
+           SELECT name FROM equipment_brands WHERE tenant_id = $1
+           UNION
+           SELECT brand AS name FROM warehouse_items WHERE tenant_id = $1 AND brand <> '' AND deleted_at IS NULL
+         ) sub
+         WHERE btrim(name) <> ''
+         ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      const list = rows.map((r) => r.name);
+      if (list.length === 0) {
+        return ["Apple", "Samsung", "Xiaomi", "Huawei", "Honor", "Realme", "Toua", "Makita", "Bosch", "DeWalt"];
+      }
+      return list;
+    });
+  }
+
+  /**
+   * Creates or ensures a brand in equipment_brands for the tenant.
+   */
+  async createBrand(tenantId: string, name: string): Promise<{ id: string; name: string }> {
+    const trimmed = name.trim();
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+        [tenantId, trimmed],
+      );
+      if (existing) {
+        return existing;
+      }
+      const row = await tx.queryOneOrThrow<{ id: string; name: string }>(
+        `INSERT INTO equipment_brands (tenant_id, name)
+         VALUES ($1, $2)
+         RETURNING id, name`,
+        [tenantId, trimmed],
+      );
+      return { id: row.id, name: row.name };
     });
   }
 }

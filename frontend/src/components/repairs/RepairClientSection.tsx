@@ -29,6 +29,7 @@ import {
   type ClientLookupDealDTO,
   type ClientLookupResultDTO,
   type ClientMessengerSourceDTO,
+  type ExistingContactDTO,
 } from "@/lib/api/use-repairs";
 import { formatAsYouType, formatPhone } from "@/lib/utils/phone";
 import { cn } from "@/lib/utils";
@@ -84,9 +85,17 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
   const [debouncedName, setDebouncedName] = useState(customerName);
 
   // Организация и реквизиты
+  const isCompanyFormVal = form.watch("is_company");
   const [isCompanyChecked, setIsCompanyChecked] = useState<boolean>(
-    Boolean(companyName || companyInn || form.watch("company_id")),
+    Boolean(isCompanyFormVal || companyName || companyInn || form.watch("company_id")),
   );
+
+  // Синхронизация состояния чекбокса с формой
+  useEffect(() => {
+    if (isCompanyFormVal !== undefined && isCompanyFormVal !== isCompanyChecked) {
+      setIsCompanyChecked(isCompanyFormVal);
+    }
+  }, [isCompanyFormVal]);
   const [isRequisitesOpen, setIsRequisitesOpen] = useState<boolean>(
     Boolean(companyInn || companyOgrn || companyBik || companyAccountNumber || companyLegalAddress),
   );
@@ -149,18 +158,19 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
       if (info.legalAddress) {
         form.setValue("company_legal_address", info.legalAddress, { shouldDirty: true });
       }
-      if (info.type === "INDIVIDUAL" && info.directorName && (!customerName || customerName.trim() === "")) {
-        form.setValue("customer_name", info.directorName, { shouldDirty: true });
-      }
+      // ВАЖНО: Разделение сущностей Контакт (физическое лицо / заявитель) и Организация (юрлицо / ИП).
+      // Автоматическое перезаписывание customer_name именем директора/ИП СТРОГО ЗАПРЕЩЕНО.
+      // По умолчанию поля не связаны. Перенос имени доступен только по явному клику пользователя в UI.
       setIsRequisitesOpen(true);
     }
-  }, [innLookupQuery.data, form, customerName]);
+  }, [innLookupQuery.data, form]);
 
-  // Реактивный поиск по телефону или имени
+  // Реактивный поиск по номеру телефона или имени (при отсутствии полного номера)
+  const phoneDigitsCount = debouncedPhone.replace(/\D/g, "").length;
   const lookupQuery = useRepairClientLookup({
     phone: debouncedPhone,
-    query: debouncedName,
-    enabled: !isManuallyDetached && (debouncedPhone.replace(/\D/g, "").length >= 6 || debouncedName.trim().length >= 2),
+    query: phoneDigitsCount < 6 ? debouncedName : "",
+    enabled: !isManuallyDetached && (phoneDigitsCount >= 6 || debouncedName.trim().length >= 2),
   });
 
   const lookupData: ClientLookupResultDTO | undefined = lookupQuery.data;
@@ -168,50 +178,83 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
   // Автозаполнение формы при обнаружении клиента
   useEffect(() => {
-    if (!lookupData || !lookupData.found || !lookupData.client || isManuallyDetached) {
+    if (!lookupData || !lookupData.found || isManuallyDetached) {
       return;
     }
 
     const client = lookupData.client;
+    if (client) {
+      // Заполняем ID клиента в форме
+      form.setValue("customer_id", client.id, { shouldDirty: true });
 
-    // Заполняем ID клиента в форме
-    form.setValue("customer_id", client.id, { shouldDirty: true });
+      // Если ФИО еще не заполнено, подставляем из базы
+      if (!customerName || customerName.trim() === "") {
+        const fullName = [client.lastName, client.firstName, client.middleName].filter(Boolean).join(" ").trim();
+        if (fullName) {
+          form.setValue("customer_name", fullName, { shouldValidate: true, shouldDirty: true });
+        }
+      }
 
-    // Если ФИО еще не заполнено, подставляем из базы
-    if (!customerName || customerName.trim() === "") {
-      const fullName = [client.lastName, client.firstName, client.middleName].filter(Boolean).join(" ").trim();
-      if (fullName) {
-        form.setValue("customer_name", fullName, { shouldValidate: true, shouldDirty: true });
+      // Если email еще не заполнен
+      if ((!customerEmail || customerEmail.trim() === "") && client.email) {
+        form.setValue("customer_email", client.email, { shouldDirty: true });
+      }
+
+      // Если у клиента есть компания или реквизиты
+      if (lookupData.company) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
+        form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
+        if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
+        if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
+        if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
+        if (lookupData.company.accountNumber) {
+          form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
+        }
+        if (lookupData.company.legalAddress) {
+          form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
+        }
+      } else if (client.companyName && !companyName) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        if (client.companyId) form.setValue("company_id", client.companyId, { shouldDirty: true });
+        form.setValue("company_name", client.companyName, { shouldValidate: true, shouldDirty: true });
+      }
+    } else if (lookupData.existingContact?.contactId) {
+      const ec = lookupData.existingContact;
+      form.setValue("customer_id", ec.contactId || "", { shouldDirty: true });
+      if (!customerName || customerName.trim() === "") {
+        form.setValue("customer_name", ec.fullName, { shouldValidate: true, shouldDirty: true });
+      }
+      if ((!customerPhone || customerPhone.trim() === "") && ec.phone) {
+        setPhoneInput(ec.phone);
+        form.setValue("customer_phone", ec.phone, { shouldValidate: true, shouldDirty: true });
+      }
+      if ((!customerEmail || customerEmail.trim() === "") && ec.email) {
+        form.setValue("customer_email", ec.email, { shouldDirty: true });
+      }
+      if (lookupData.company) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
+        form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
+        if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
+        if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
+        if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
+        if (lookupData.company.accountNumber) {
+          form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
+        }
+        if (lookupData.company.legalAddress) {
+          form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
+        }
+      } else if (ec.companyName && !companyName) {
+        setIsCompanyChecked(true);
+        form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+        if (ec.companyId) form.setValue("company_id", ec.companyId, { shouldDirty: true });
+        form.setValue("company_name", ec.companyName, { shouldValidate: true, shouldDirty: true });
       }
     }
-
-    // Если email еще не заполнен
-    if ((!customerEmail || customerEmail.trim() === "") && client.email) {
-      form.setValue("customer_email", client.email, { shouldDirty: true });
-    }
-
-    // Если у клиента есть компания или реквизиты
-    if (lookupData.company) {
-      setIsCompanyChecked(true);
-      form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
-      form.setValue("company_name", lookupData.company.name, { shouldDirty: true });
-      if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
-      if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
-      if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
-      if (lookupData.company.accountNumber) {
-        form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
-      }
-      if (lookupData.company.legalAddress) {
-        form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
-      }
-    } else if (client.companyName && !companyName) {
-      setIsCompanyChecked(true);
-      if (client.companyId) form.setValue("company_id", client.companyId, { shouldDirty: true });
-      form.setValue("company_name", client.companyName, { shouldDirty: true });
-    }
-
-    // Если есть активные сделки и сделка в форме еще не выбрана — по умолчанию не навязываем,
-    // но если сделка ровно одна, можно оставить выбор пользователю
   }, [lookupData, isManuallyDetached]);
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -230,6 +273,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     form.setValue("deal_id", "");
     form.setValue("customer_name", "");
     form.setValue("customer_email", "");
+    form.setValue("is_company", false);
     form.setValue("company_id", "");
     form.setValue("company_name", "");
     form.setValue("company_inn", "");
@@ -241,6 +285,51 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     setPhoneInput("");
     setIsCompanyChecked(false);
     setIsRequisitesOpen(false);
+    form.clearErrors("company_name");
+  };
+
+  const handleApplyExistingContact = () => {
+    if (!lookupData?.existingContact) return;
+    const ec = lookupData.existingContact;
+    const client = lookupData.client;
+
+    if (ec.contactId) {
+      form.setValue("customer_id", ec.contactId, { shouldDirty: true });
+    }
+    if (ec.fullName) {
+      form.setValue("customer_name", ec.fullName, { shouldValidate: true, shouldDirty: true });
+    }
+    if (ec.phone) {
+      setPhoneInput(ec.phone);
+      form.setValue("customer_phone", ec.phone, { shouldValidate: true, shouldDirty: true });
+    }
+    const emailToSet = ec.email || client?.email;
+    if (emailToSet) {
+      form.setValue("customer_email", emailToSet, { shouldValidate: true, shouldDirty: true });
+    }
+
+    if (lookupData.company) {
+      setIsCompanyChecked(true);
+      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+      form.setValue("company_id", lookupData.company.id, { shouldDirty: true });
+      form.setValue("company_name", lookupData.company.name, { shouldValidate: true, shouldDirty: true });
+      if (lookupData.company.inn) form.setValue("company_inn", lookupData.company.inn, { shouldDirty: true });
+      if (lookupData.company.ogrn) form.setValue("company_ogrn", lookupData.company.ogrn, { shouldDirty: true });
+      if (lookupData.company.bik) form.setValue("company_bik", lookupData.company.bik, { shouldDirty: true });
+      if (lookupData.company.accountNumber) {
+        form.setValue("company_account_number", lookupData.company.accountNumber, { shouldDirty: true });
+      }
+      if (lookupData.company.legalAddress) {
+        form.setValue("company_legal_address", lookupData.company.legalAddress, { shouldDirty: true });
+      }
+    } else if (ec.companyName || client?.companyName) {
+      const cName = ec.companyName || client?.companyName || "";
+      const cId = ec.companyId || client?.companyId || null;
+      setIsCompanyChecked(true);
+      form.setValue("is_company", true, { shouldValidate: true, shouldDirty: true });
+      if (cId) form.setValue("company_id", cId, { shouldDirty: true });
+      form.setValue("company_name", cName, { shouldValidate: true, shouldDirty: true });
+    }
   };
 
   const handleSelectDeal = (selectedId: string) => {
@@ -253,6 +342,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
   const handleToggleCompany = (checked: boolean) => {
     setIsCompanyChecked(checked);
+    form.setValue("is_company", checked, { shouldValidate: true, shouldDirty: true });
     if (!checked) {
       form.setValue("company_id", "");
       form.setValue("company_name", "");
@@ -262,6 +352,9 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
       form.setValue("company_account_number", "");
       form.setValue("company_legal_address", "");
       setIsRequisitesOpen(false);
+      form.clearErrors("company_name");
+    } else {
+      void form.trigger("company_name");
     }
   };
 
@@ -393,6 +486,69 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
           {form.formState.errors.customer_name && (
             <p className="text-[11px] text-rose-600">{form.formState.errors.customer_name.message}</p>
           )}
+
+          {/* Интерактивная 1-click плашка подсказки имени */}
+          {lookupData?.suggestedName && (
+            <div className="pt-1">
+              {customerName !== lookupData.suggestedName ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2.5 py-1.5 text-xs text-[#854d0e]">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="shrink-0">💡</span>
+                    <span className="text-xs break-words">
+                      {lookupData.suggestedSource === "telegram" ? "Telegram" : lookupData.suggestedSource === "whatsapp" ? "WhatsApp" : "Мессенджер"}:
+                      {" "}
+                      <strong className="font-semibold text-[#111111]">{lookupData.suggestedName}</strong>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleApplySuggestedName(lookupData.suggestedName!)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-[#4a38f5] px-2.5 py-1 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+                  >
+                    <Check className="h-3 w-3" />
+                    Использовать
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-0.5 text-[11px] text-emerald-700">
+                  <Check className="h-3 w-3 text-emerald-600 shrink-0" />
+                  <span>
+                    Имя из {lookupData.suggestedSource === "telegram" ? "Telegram" : lookupData.suggestedSource === "whatsapp" ? "WhatsApp" : "мессенджера"} применено ({lookupData.suggestedName})
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Интерактивная подсказка имени из ЕГРИП / ЕГРЮЛ по ИНН (по умолчанию не перезаписывает) */}
+          {!lookupData?.suggestedName && innLookupQuery.data?.directorName && customerName?.trim().toLowerCase() !== innLookupQuery.data.directorName.trim().toLowerCase() && (
+            <div className="pt-1">
+              <div className="flex items-center justify-between gap-1.5 rounded-[6px] border border-indigo-100 bg-indigo-50/60 px-2.5 py-1 text-xs text-indigo-950">
+                <span className="flex items-center gap-1.5 truncate">
+                  <span className="text-xs">💡</span>
+                  <span className="truncate">
+                    {innLookupQuery.data.type === "INDIVIDUAL" ? "Владелец ИП по ИНН:" : "Руководитель по ИНН:"}{" "}
+                    <strong className="font-semibold text-[#111111]">{innLookupQuery.data.directorName}</strong>
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (innLookupQuery.data?.directorName) {
+                      form.setValue("customer_name", innLookupQuery.data.directorName, {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      });
+                    }
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-[#4a38f5] px-2 py-0.5 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+                >
+                  <Check className="h-3 w-3" />
+                  Использовать
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Email */}
@@ -422,6 +578,82 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
           )}
         </div>
       </div>
+
+      {/* Карточка дедупликации существующего клиента CRM */}
+      {lookupData?.existingContact && !isManuallyDetached && (
+        <div className="rounded-[8px] border border-amber-200 bg-amber-50/50 p-3 shadow-2xs transition-all">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-amber-100 text-amber-800">
+                <UserCheck className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[13px] font-semibold text-[#111111]">
+                    Клиент уже есть в базе CRM
+                  </span>
+                  <span className="rounded-[4px] bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 border border-emerald-200">
+                    Дедупликация активна
+                  </span>
+                </div>
+                <p className="text-xs text-[#666666] mt-0.5">
+                  {lookupData.existingContact.matchedBy === "name" ? (
+                    <>
+                      По запросу найден клиент <strong className="text-[#111111]">{lookupData.existingContact.fullName}</strong>
+                      {lookupData.existingContact.phone ? (
+                        <> (тел. <span className="font-mono tabular-nums text-[#111111] font-medium">{lookupData.existingContact.phone}</span>)</>
+                      ) : null}.
+                    </>
+                  ) : (
+                    <>
+                      По номеру <span className="font-mono tabular-nums text-[#111111] font-medium">{lookupData.existingContact.phone || phoneInput}</span> найден клиент{" "}
+                      <strong className="text-[#111111]">{lookupData.existingContact.fullName}</strong>.
+                    </>
+                  )}
+                </p>
+                <div className="flex items-center gap-3 mt-2 text-[11px] text-[#666666]">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#4a38f5]" />
+                    Заказов в сервисе: <strong className="font-mono tabular-nums text-[#111111]">{lookupData.existingContact.repairsCount}</strong>
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    Открытых сделок: <strong className="font-mono tabular-nums text-[#111111]">{lookupData.existingContact.activeDealsCount}</strong>
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-800/90 mt-1.5">
+                  Заявка будет привязана к существующему клиенту без создания дубликата.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+              {customerId === lookupData.existingContact.contactId ? (
+                <span className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 border border-emerald-200">
+                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                  Привязан к клиенту
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleApplyExistingContact}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  Привязать
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleClearCustomer}
+                className="text-[11px] text-[#888888] hover:text-rose-600 transition-colors underline underline-offset-2"
+              >
+                Создать нового
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Авто-ресерч и подсказка обогащения данных по мессенджерам */}
       {isLookupLoading && digitsCount >= 10 && (
@@ -588,15 +820,27 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
               <div className="space-y-1 md:col-span-2">
                 <label className="text-[11px] font-medium text-[#666666] uppercase tracking-wider">
-                  Название компании / контрагента *
+                  Название компании / контрагента <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={companyName}
-                  onChange={(e) => form.setValue("company_name", e.target.value, { shouldDirty: true })}
+                  onChange={(e) =>
+                    form.setValue("company_name", e.target.value, { shouldValidate: true, shouldDirty: true })
+                  }
                   placeholder="ООО «Вектор», ИП Иванов"
-                  className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  className={cn(
+                    "h-8 w-full rounded-[8px] border bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:outline-none focus:ring-1 transition-colors",
+                    form.formState.errors.company_name
+                      ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-[#e5e5e5] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20",
+                  )}
                 />
+                {form.formState.errors.company_name && (
+                  <p className="text-xs text-rose-500 mt-1">
+                    {form.formState.errors.company_name.message || "Укажите название компании"}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -635,6 +879,50 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
                 </div>
               </div>
             </div>
+
+            {/* Подсказка владельца ИП / руководителя с явным действием переноса в контакт */}
+            {innLookupQuery.data?.directorName && (
+              <div className="rounded-[6px] border border-indigo-100 bg-indigo-50/60 p-2.5 text-xs transition-colors">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm">💡</span>
+                    <div className="truncate">
+                      <span className="text-[#666666]">
+                        {innLookupQuery.data.type === "INDIVIDUAL" ? "Владелец ИП (ЕГРИП):" : "Руководитель (ЕГРЮЛ):"}{" "}
+                      </span>
+                      <strong className="font-semibold text-[#111111]">
+                        {innLookupQuery.data.directorName}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    {customerName?.trim().toLowerCase() === innLookupQuery.data.directorName.trim().toLowerCase() ? (
+                      <span className="inline-flex items-center gap-1 rounded-[4px] border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                        <Check className="h-3 w-3 text-emerald-600" />
+                        Контакт совпадает с {innLookupQuery.data.type === "INDIVIDUAL" ? "владельцем ИП" : "руководителем"}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (innLookupQuery.data?.directorName) {
+                            form.setValue("customer_name", innLookupQuery.data.directorName, {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                            });
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5] px-2.5 py-1 text-[11px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+                      >
+                        <UserCheck className="h-3 w-3" />
+                        {innLookupQuery.data.type === "INDIVIDUAL" ? "Использовать имя ИП для контакта" : "Использовать для контакта"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Раскрывающийся блок реквизитов */}
             <div>
