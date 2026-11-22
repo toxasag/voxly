@@ -42,7 +42,8 @@ export class KeyPoolManager {
           (provider === "gemini" && (config.baseUrl.includes("googleapis.com") || config.providerId?.includes("gemini") || config.chatModel?.includes("gemini"))) ||
           (provider === "openai" && (config.baseUrl.includes("openai.com") || config.providerId?.includes("openai") || config.chatModel?.includes("gpt") || config.chatModel?.includes("o1") || config.chatModel?.includes("o3"))) ||
           (provider === "deepseek" && (config.baseUrl.includes("deepseek.com") || config.providerId?.includes("deepseek") || config.chatModel?.includes("deepseek"))) ||
-          (provider === "openrouter" && (config.baseUrl.includes("openrouter.ai") || config.providerId?.includes("openrouter")));
+          (provider === "openrouter" && (config.baseUrl.includes("openrouter.ai") || config.providerId?.includes("openrouter"))) ||
+          (provider === "custom" && (config.providerId?.includes("custom") || (config.baseUrl && (config.baseUrl.includes("noirlight") || !config.baseUrl.includes("googleapis.com")))));
         if (isMatch) {
           if (config.allKeys && config.allKeys.length > 0) {
             rawKeys.push(...config.allKeys);
@@ -60,6 +61,7 @@ export class KeyPoolManager {
         if (provider === "deepseek") return p.providerType === "deepseek" || p.id.includes("deepseek") || (p.baseUrl && p.baseUrl.includes("deepseek.com"));
         if (provider === "anthropic") return p.providerType === "custom" && p.baseUrl.includes("anthropic");
         if (provider === "openrouter") return p.providerType === "openrouter" || p.id.includes("openrouter") || (p.baseUrl && p.baseUrl.includes("openrouter.ai"));
+        if (provider === "custom") return p.providerType === "custom" || p.id.includes("custom") || (p.baseUrl && p.baseUrl.includes("noirlight"));
         return p.providerType === provider || p.id === provider;
       });
 

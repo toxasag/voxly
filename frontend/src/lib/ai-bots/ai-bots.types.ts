@@ -57,6 +57,9 @@ export const MODEL_CATALOG: ModelInfo[] = [
   { id: "claude-sonnet-4", label: "Claude Sonnet 4", provider: "anthropic", context_window: 200_000, price_in_per_1k: 0.27, price_out_per_1k: 1.35 },
   { id: "claude-opus-4", label: "Claude Opus 4", provider: "anthropic", context_window: 200_000, price_in_per_1k: 1.35, price_out_per_1k: 6.75 },
   { id: "deepseek-v3", label: "DeepSeek V3", provider: "deepseek", context_window: 64_000, price_in_per_1k: 0.02, price_out_per_1k: 0.09 },
+  { id: "agnes-3.0-flash", label: "Agnes 3.0 Flash (Fast & Resilient)", provider: "openai", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "glm-4-flash", label: "GLM-4 Flash (Zhipu AI)", provider: "openai", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "qwen-omni-plus", label: "Qwen Omni Plus (Alibaba)", provider: "openai", context_window: 128_000, price_in_per_1k: 0.10, price_out_per_1k: 0.30 },
   { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.11, price_out_per_1k: 0.45 },
 ];
 
