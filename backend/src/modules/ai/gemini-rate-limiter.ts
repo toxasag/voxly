@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getRedisClient, isRedisAvailable } from "../../infrastructure/redis.js";
+import { deleteKeysByPattern, getRedisClient, isRedisAvailable } from "../../infrastructure/redis.js";
 
 export interface ModelQuotaConfig {
   rpm: number;
@@ -473,10 +473,7 @@ export class GeminiRateLimiter {
     const redis = isRedisAvailable() ? getRedisClient() : null;
     if (redis) {
       try {
-        const keys = await redis.keys("gemini:keys:*");
-        if (keys.length > 0) {
-          await redis.del(...keys);
-        }
+        await deleteKeysByPattern(redis, "gemini:keys:*");
       } catch {}
     }
   }

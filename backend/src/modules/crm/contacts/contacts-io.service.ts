@@ -760,6 +760,9 @@ export class ContactsIOService {
       where.push(`channel = $${params.length}`);
     }
 
+    // Защитный предел на один экспорт, чтобы выгрузка гигантской базы не вызвала OOM.
+    const MAX_EXPORT_ROWS = 25_000;
+    params.push(MAX_EXPORT_ROWS);
     const rows = await query<{
       id: string;
       first_name: string;
@@ -784,7 +787,8 @@ export class ContactsIOService {
               city, address, notes, created_at
        FROM contacts
        WHERE ${where.join(" AND ")}
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
       params,
     );
 

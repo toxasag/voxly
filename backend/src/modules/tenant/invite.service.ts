@@ -2,6 +2,7 @@ import argon2 from "argon2";
 import { hashToken } from "../../lib/crypto.utils.js";
 import { toDate } from "../../lib/date.utils.js";
 import { queryOne, transaction } from "../../db/client.js";
+import { invalidateAuthUserCache } from "../../plugins/auth-cache.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { ROLE_LABELS } from "../../config/permissions.js";
 import type { Role } from "../../types/index.js";
@@ -89,7 +90,7 @@ export class InviteService {
     const cleanEmail = input.email ? input.email.trim().toLowerCase() : null;
     const hashed = hashToken(input.token);
 
-    await transaction(async (tx) => {
+    const activatedUser = await transaction(async (tx) => {
       // FOR UPDATE сериализует параллельные переходы по одной ссылке: иначе два
       // запроса могли бы оба увидеть непогашенный токен.
       const row = await tx.queryOne<{
@@ -151,7 +152,10 @@ export class InviteService {
          WHERE id = $1`,
         [row.id, passwordHash, phoneDigits, cleanEmail],
       );
+      return { tenantId: row.tenant_id, userId: row.id };
     });
+
+    await invalidateAuthUserCache(activatedUser.tenantId, activatedUser.userId);
 
     return { message: "Учётная запись активирована. Войдите с новым паролем." };
   }

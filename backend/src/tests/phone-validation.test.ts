@@ -106,13 +106,13 @@ describe("Phone Validation & Incomplete Phone Detection", () => {
     });
 
     it("принимает международные номера с + (E.164 от 10 до 15 цифр)", () => {
-      const res1 = validatePhoneCandidate("+375291234567");
+      const res1 = validatePhoneCandidate("+375295847362");
       expect(res1.isValid).toBe(true);
-      expect(res1.normalized).toBe("+375291234567");
+      expect(res1.normalized).toBe("+375295847362");
 
-      const res2 = validatePhoneCandidate("+998901234567");
+      const res2 = validatePhoneCandidate("+998905847362");
       expect(res2.isValid).toBe(true);
-      expect(res2.normalized).toBe("+998901234567");
+      expect(res2.normalized).toBe("+998905847362");
     });
   });
 

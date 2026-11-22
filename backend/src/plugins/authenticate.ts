@@ -3,6 +3,12 @@ import fp from "fastify-plugin";
 import { UnauthorizedError } from "./errorHandler.js";
 import { query, queryOne, setRequestTenant } from "../db/client.js";
 import { toPermissions } from "../config/permissions.js";
+import {
+  getCachedAuthUser,
+  getCachedTenantModules,
+  setCachedAuthUser,
+  setCachedTenantModules,
+} from "./auth-cache.js";
 import type { Permission, PlatformRole, Role, User } from "../types/index.js";
 
 // ---------------------------------------------------------------------------
@@ -81,6 +87,9 @@ function toPlatformRole(raw: string | null): PlatformRole | null {
 }
 
 async function resolveUser(userId: string, tenantId: string): Promise<User | null> {
+  const cached = await getCachedAuthUser(tenantId, userId);
+  if (cached !== null) return cached;
+
   // `deleted_at IS NULL` обязателен: access-токен живёт 15 минут, и без этого
   // условия уволенный сотрудник продолжал бы работать до его истечения, а
   // выданный ранее refresh-токен восстанавливал бы сессию и после.
@@ -96,7 +105,7 @@ async function resolveUser(userId: string, tenantId: string): Promise<User | nul
   const row = rows[0];
   if (row === undefined) return null;
 
-  return {
+  const user: User = {
     id: row.id,
     tenant_id: row.tenant_id,
     email: row.email,
@@ -110,6 +119,9 @@ async function resolveUser(userId: string, tenantId: string): Promise<User | nul
     created_at: toIsoString(row.created_at),
     updated_at: toIsoString(row.updated_at),
   };
+
+  await setCachedAuthUser(user);
+  return user;
 }
 
 /**
@@ -122,11 +134,16 @@ async function resolveUser(userId: string, tenantId: string): Promise<User | nul
  * module-gated route would 403.
  */
 async function resolveInstalledModules(tenantId: string): Promise<string[]> {
+  const cached = await getCachedTenantModules(tenantId);
+  if (cached !== null) return cached;
+
   const rows = await query<ModuleRow>(
     `SELECT slug FROM installed_modules WHERE tenant_id = $1`,
     [tenantId],
   );
-  return rows.map((row) => row.slug);
+  const slugs = rows.map((row) => row.slug);
+  await setCachedTenantModules(tenantId, slugs);
+  return slugs;
 }
 
 // ---------------------------------------------------------------------------
