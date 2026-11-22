@@ -91,3 +91,11 @@ export function toIsoOrNull(value: Date | string | null | undefined): string | n
   if (value === null || value === undefined) return null;
   return value instanceof Date ? value.toISOString() : value;
 }
+
+/**
+ * Нормализует nullable Date/строку из pg в ISO-строку с fallback на текущее время.
+ */
+export function toIsoOrNow(value: Date | string | null | undefined): string {
+  if (!value) return new Date().toISOString();
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}

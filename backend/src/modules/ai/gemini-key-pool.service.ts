@@ -1,4 +1,5 @@
 import { getEnv } from "../../config/env.js";
+import { maskApiKey as maskKey } from "../../lib/mask.utils.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { platformConfigService } from "../admin/platform-config.service.js";
 import {
@@ -55,12 +56,6 @@ export class GeminiQuotaExhaustedError extends AppError {
     this.retryAfterSeconds = retryAfterSeconds;
     this.modelsChecked = modelsChecked;
   }
-}
-
-function maskKey(key: string): string {
-  const trimmed = key.trim();
-  if (trimmed.length <= 8) return "••••••••";
-  return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
 }
 
 export class GeminiKeyPoolService {

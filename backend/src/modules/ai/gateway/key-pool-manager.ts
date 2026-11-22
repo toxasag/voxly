@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { maskApiKey as maskApiKeyShared } from "../../../lib/mask.utils.js";
 import { getEnv } from "../../../config/env.js";
 import { platformConfigService } from "../../admin/platform-config.service.js";
 import { redisLuaLimiter, getSecondsUntilUtcMidnight } from "./redis-lua-limiter.js";
@@ -10,9 +11,7 @@ export function hashApiKey(key: string, provider = "llm"): string {
 }
 
 export function maskApiKey(key: string): string {
-  const trimmed = key.trim();
-  if (trimmed.length <= 8) return "••••••••";
-  return `${trimmed.slice(0, 7)}••••${trimmed.slice(-4)}`;
+  return maskApiKeyShared(key, 7);
 }
 
 export interface AcquireKeySlotOptions {

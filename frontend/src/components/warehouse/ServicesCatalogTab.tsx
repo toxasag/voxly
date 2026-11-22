@@ -20,13 +20,7 @@ import {
 import { CreateOrEditServiceModal } from "./CreateOrEditServiceModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 
-function formatRub(amount: number): string {
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: "RUB",
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
+import { formatRub } from "@/lib/utils/format";
 
 export function ServicesCatalogTab() {
   const [searchQuery, setSearchQuery] = useState("");

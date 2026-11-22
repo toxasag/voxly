@@ -1,4 +1,5 @@
 import { getEnv } from "../../config/env.js";
+import { maskApiKey } from "../../lib/mask.utils.js";
 import { query, queryOne, runWithPlatformScope } from "../../db/client.js";
 
 export type LlmProviderType = "gemini" | "openai" | "openrouter" | "deepseek" | "custom";
@@ -166,13 +167,6 @@ interface PlatformIntegrationsRow {
   llm_chat_model: string | null;
   llm_providers: LlmProviderStoredItem[] | null;
   updated_at: Date | string;
-}
-
-function maskApiKey(key: string): string {
-  const trimmed = key.trim();
-  if (!trimmed) return "";
-  if (trimmed.length <= 8) return "••••••••";
-  return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
 }
 
 export class PlatformConfigService {

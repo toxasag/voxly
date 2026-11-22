@@ -3,6 +3,7 @@ import { Api, TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import QRCode from "qrcode";
 
+import { maskPhone } from "../../lib/mask.utils.js";
 import { pluralRu } from "../../lib/string.utils.js";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
@@ -839,10 +840,6 @@ function isUserInputError(code: string): boolean {
 }
 
 /** Телефон в логах маскируется: журналы читают шире, чем сами данные. */
-function maskPhone(phone: string): string {
-  return phone.length <= 5 ? "***" : `${phone.slice(0, 3)}***${phone.slice(-2)}`;
-}
-
 function pluralConnections(count: number): string {
   return pluralRu(count, ["подключение", "подключения", "подключений"]);
 }

@@ -1,3 +1,4 @@
+import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
 import { withTenant, type SqlParam } from "../../db/client.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { ALL_PRESETS, INTAKE_ACT_PRESET } from "./print-presets.js";
@@ -44,11 +45,6 @@ function parsePageSize(val: string | null | undefined): "A4" | "A5" | "thermal_8
 
 function parseOrientation(val: string | null | undefined): "portrait" | "landscape" {
   return val === "landscape" ? "landscape" : "portrait";
-}
-
-function toIso(val: Date | string | null | undefined): string {
-  if (!val) return new Date().toISOString();
-  return typeof val === "string" ? new Date(val).toISOString() : val.toISOString();
 }
 
 function formatMoney(amount: number): string {
