@@ -48,6 +48,22 @@ export const createTransactionSchema = z.object({
   occurred_at: isoDate.optional(),
 });
 
+export const updateTransactionSchema = z.object({
+  account_id: accountIdSchema.optional(),
+  type: transactionTypeSchema.optional(),
+  amount: z.number().positive().optional(),
+  currency: z.string().length(3).optional(),
+  category_id: optionalUuid,
+  category_name: z.string().min(1).max(120).optional(),
+  description: z.string().max(500).optional().or(z.literal("")),
+  counterparty_name: z.string().max(200).optional().or(z.literal("")),
+  counterparty_inn: z.string().max(20).optional().or(z.literal("")),
+  deal_id: optionalUuid,
+  repair_order_id: optionalUuid,
+  invoice_id: optionalUuid,
+  occurred_at: isoDate.optional(),
+});
+
 export const pnlQuerySchema = z.object({
   from: isoDate.optional(),
   to: isoDate.optional(),
@@ -143,6 +159,7 @@ export type BulkTransactionsPayload = z.infer<typeof bulkTransactionsSchema>;
 export type CreateAccountPayload = z.infer<typeof createAccountSchema>;
 export type TransferPayload = z.infer<typeof transferSchema>;
 export type CreateTransactionPayload = z.infer<typeof createTransactionSchema>;
+export type UpdateTransactionPayload = z.infer<typeof updateTransactionSchema>;
 export type CreateInvoicePayload = z.infer<typeof createInvoiceSchema>;
 export type CreateInvoiceFromActsPayload = z.infer<typeof createInvoiceFromActsSchema>;
 export type UpdateInvoicePayload = z.infer<typeof updateInvoiceSchema>;

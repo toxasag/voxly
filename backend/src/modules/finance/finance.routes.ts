@@ -10,6 +10,7 @@ import {
   pnlQuerySchema,
   transferSchema,
   updateCategorySchema,
+  updateTransactionSchema,
 } from "./finance.types.js";
 import {
   buildIssuerSnapshot,
@@ -79,6 +80,12 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     const { ids } = bulkTransactionsSchema.parse(req.body);
     const items = await service.bulkDuplicateTransactions(req.tenant_id, ids);
     return reply.status(201).send({ data: items, count: items.length });
+  });
+  app.patch("/transactions/:id", { onRequest: write }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const p = updateTransactionSchema.parse(req.body);
+    const row = await service.updateTransaction(req.tenant_id, id, p);
+    return reply.send({ data: row });
   });
   app.delete("/transactions/:id", { onRequest: write }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
