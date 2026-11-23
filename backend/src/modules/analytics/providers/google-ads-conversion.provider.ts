@@ -27,7 +27,8 @@ export class GoogleAdsConversionProvider implements IConversionProvider {
     const eventName = payload.eventName || (payload.isWon ? "Purchase" : "Lead");
 
     // Формируем вызов Google Ads Click/Offline Conversion URL
-    const url = `https://www.googleadservices.com/pagead/conversion/${encodeURIComponent(conversionId)}/?label=${encodeURIComponent(conversionLabel)}&value=${payload.budget}&currency_code=${encodeURIComponent(payload.currency || "RUB")}&guid=ON&script=0`;
+    const gclidParam = payload.gclid ? `&gclid=${encodeURIComponent(payload.gclid)}` : "";
+    const url = `https://www.googleadservices.com/pagead/conversion/${encodeURIComponent(conversionId)}/?label=${encodeURIComponent(conversionLabel)}&value=${payload.budget}&currency_code=${encodeURIComponent(payload.currency || "RUB")}${gclidParam}&guid=ON&script=0`;
 
     try {
       const response = await fetch(url, {

@@ -165,6 +165,7 @@ export interface ConversionEventPayload {
   clientId?: string | null;
   ymUid?: string | null;
   yclid?: string | null;
+  gclid?: string | null;
   yandexuid?: string | null;
   gaId?: string | null;
   fbId?: string | null;
