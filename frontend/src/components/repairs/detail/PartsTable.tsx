@@ -199,11 +199,17 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
     [orderId, deletePartMutation, items, onChange],
   );
 
-  const handleCreatePurchase = async (partName: string, sku: string, qty: number, estPrice: number) => {
+  const handleCreatePurchase = async (
+    partName: string,
+    sku: string,
+    qty: number,
+    estPrice: number,
+    itemId?: string,
+  ) => {
     try {
       await createPurchaseMutation.mutateAsync({
         repair_order_id: orderId,
-        item_id: selectedWarehouseItem?.id,
+        item_id: itemId || (selectedWarehouseItem?.name === partName ? selectedWarehouseItem.id : undefined),
         item_name: partName,
         sku: sku || "Б/А",
         quantity: qty > 0 ? qty : 1,
@@ -279,7 +285,7 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
               <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
                 Наценка
               </th>
-              <th className="px-4 py-2.5 w-[80px]" />
+              <th className="px-4 py-2.5 w-[160px] text-right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#f0f0f0]">
@@ -290,10 +296,23 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
               const markupPct = itemTotalCost > 0 ? Math.round((margin / itemTotalCost) * 100) : 0;
               const allocations = item.batch_allocations ?? [];
 
+              const whItem = item.warehouse_item_id
+                ? warehouseItems.find((w) => w.id === item.warehouse_item_id)
+                : warehouseItems.find((w) => w.name.toLowerCase().trim() === item.name.toLowerCase().trim());
+              const isOutOfStock = whItem
+                ? (whItem.availableStock <= 0 || whItem.totalStock <= 0)
+                : (item.status === "needs_purchase" || item.status === "out_of_stock");
+              const purchaseReq = purchaseRequests.find(
+                (pr) =>
+                  (item.warehouse_item_id && pr.itemId === item.warehouse_item_id) ||
+                  pr.itemName.toLowerCase().trim() === item.name.toLowerCase().trim(),
+              );
+              const hasPurchase = !!purchaseReq;
+
               return (
                 <tr key={item.id} className="transition-colors hover:bg-[#f5f5f5]">
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-[13px] font-medium text-[#111111]">{item.name}</p>
                       {item.warehouse_item_id && (
                         <span className="inline-flex items-center rounded-[4px] bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 border border-sky-200">
@@ -303,6 +322,11 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
                       {item.status === "reserved" && (
                         <span className="inline-flex items-center rounded-[4px] bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 border border-amber-200">
                           Резерв
+                        </span>
+                      )}
+                      {isOutOfStock && (
+                        <span className="inline-flex items-center rounded-[4px] bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 border border-rose-200">
+                          Нет в наличии
                         </span>
                       )}
                     </div>
@@ -351,11 +375,31 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {orderId && (
+                    <div className="flex items-center justify-end gap-1.5">
+                      {orderId && hasPurchase && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-[4px] bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 border border-sky-200"
+                          title={`Заявка создана: статус ${purchaseReq.status}`}
+                        >
+                          <ShoppingCart className="h-3 w-3 text-sky-600" />
+                          В закупке
+                        </span>
+                      )}
+                      {orderId && !hasPurchase && isOutOfStock && (
                         <button
                           type="button"
-                          onClick={() => handleCreatePurchase(item.name, item.article, item.quantity, item.cost_price)}
+                          onClick={() => handleCreatePurchase(item.name, item.article, item.quantity, item.cost_price, item.warehouse_item_id || whItem?.id)}
+                          className="flex items-center gap-1 rounded-[4px] bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+                          title="Сформировать заявку на закупку (детали нет в наличии)"
+                        >
+                          <ShoppingCart className="h-3 w-3 text-amber-700" />
+                          Отметить для заказа
+                        </button>
+                      )}
+                      {orderId && !hasPurchase && !isOutOfStock && (
+                        <button
+                          type="button"
+                          onClick={() => handleCreatePurchase(item.name, item.article, item.quantity, item.cost_price, item.warehouse_item_id || whItem?.id)}
                           className="rounded p-1 text-[#888888] hover:text-[#4a38f5] hover:bg-slate-100 transition-colors"
                           title="Создать заявку на закупку"
                         >

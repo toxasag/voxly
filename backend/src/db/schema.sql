@@ -1699,6 +1699,7 @@ CREATE TABLE IF NOT EXISTS warehouse_items (
   min_stock NUMERIC(10, 2) NOT NULL DEFAULT 0,
   retail_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
   cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  reserved BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
