@@ -836,6 +836,7 @@ export class InvoicesService {
       show_notice: issuer.invoiceConfig.showNotice,
       notice_text: issuer.invoiceConfig.noticeText,
       show_accountant: issuer.invoiceConfig.showAccountant,
+      show_basis: issuer.invoiceConfig.showBasis,
     });
     return { buffer, filename: `Invoice-${inv.invoiceNumber}.pdf` };
   }
@@ -928,40 +929,184 @@ export class InvoicesService {
   async sendToMessenger(
     tenant: string,
     id: string,
-    channelType: "telegram" | "whatsapp" | "all",
+    channelType: "telegram" | "whatsapp" | "max" | "all",
   ): Promise<{ success: boolean; channels: string[]; message: string }> {
     const inv = await this.get(tenant, id);
+    const { buffer, filename } = await this.getPdf(tenant, id);
+
+    const { ChatMediaService } = await import("../crm/chat/media.service.js");
+    const mediaService = new ChatMediaService();
+    const stored = await mediaService.storeBuffer({
+      buffer,
+      originalName: filename,
+      mimeType: "application/pdf",
+      tenantId: tenant,
+    });
+
+    const formattedTotal = new Intl.NumberFormat("ru-RU", {
+      maximumFractionDigits: 2,
+    }).format(inv.total);
+    const dueStr = inv.dueDate ? inv.dueDate.slice(0, 10) : "";
+    const text = [
+      `Счёт на оплату № ${inv.invoiceNumber}`,
+      `Сумма к оплате: ${formattedTotal} ${inv.currency === "RUB" ? "₽" : inv.currency}`,
+      dueStr ? `Срок оплаты: ${dueStr}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    // Находим связанную сделку (напрямую или через привязанные наряд-заказы)
+    let targetDealId = inv.dealId;
+    if (!targetDealId && inv.repairOrderId) {
+      const ro = await queryOne<{ deal_id: string | null }>(
+        `SELECT deal_id FROM repair_orders WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenant, inv.repairOrderId],
+      );
+      targetDealId = ro?.deal_id ?? null;
+    }
+    if (!targetDealId) {
+      const linkedRo = await queryOne<{ deal_id: string | null }>(
+        `SELECT ro.deal_id
+         FROM invoice_repair_orders iro
+         JOIN repair_orders ro ON ro.id = iro.repair_order_id AND ro.tenant_id = iro.tenant_id
+         WHERE iro.tenant_id = $1 AND iro.invoice_id = $2 AND ro.deal_id IS NOT NULL AND ro.deleted_at IS NULL
+         LIMIT 1`,
+        [tenant, id],
+      );
+      targetDealId = linkedRo?.deal_id ?? null;
+    }
+
+    const connectedAccounts = await query<{ id: string; channel: string }>(
+      `SELECT id, channel
+       FROM channel_accounts
+       WHERE tenant_id = $1
+         AND channel IN ('telegram', 'whatsapp', 'max')
+         AND status = 'connected'
+         AND deleted_at IS NULL
+       ORDER BY created_at ASC`,
+      [tenant],
+    );
+
+    const requestedChannels: Array<"telegram" | "whatsapp" | "max"> =
+      channelType === "all"
+        ? (["max", "telegram", "whatsapp"] as const).filter((ch) =>
+            connectedAccounts.some((acc) => acc.channel === ch),
+          )
+        : [channelType];
+
+    if (requestedChannels.length === 0) {
+      throw new AppError(
+        400,
+        "NO_MESSENGER_CONNECTED",
+        "Нет подключённых мессенджеров (MAX, Telegram или WhatsApp) для отправки PDF-счёта",
+      );
+    }
+
+    const channelLabel = (ch: "telegram" | "whatsapp" | "max"): string =>
+      ch === "max" ? "MAX" : ch === "telegram" ? "Telegram" : "WhatsApp";
+
     const sentChannels: string[] = [];
+    const errors: string[] = [];
 
-    const text = `Счёт на оплату № ${inv.invoiceNumber}\nСумма к оплате: ${inv.total} ${inv.currency}\nСрок оплаты: ${inv.dueDate.slice(0, 10)}`;
+    if (targetDealId) {
+      const { DealMessagingService } = await import("../crm/deals/deal-messaging.service.js");
+      const messaging = new DealMessagingService();
 
-    if (inv.dealId) {
+      for (const ch of requestedChannels) {
+        try {
+          const msg = await messaging.sendManagerMessage({
+            tenantId: tenant,
+            dealId: targetDealId,
+            senderName: "Менеджер",
+            payload: {
+              content: text,
+              channel: ch,
+              source: "manager",
+              direction: "outbound",
+              attachment: stored.url,
+              attachment_type: "application/pdf",
+            },
+          });
+          if (msg.deliveryStatus === "sent") {
+            sentChannels.push(channelLabel(ch));
+          } else {
+            errors.push(`${channelLabel(ch)}: ${msg.deliveryError || "не удалось доставить PDF"}`);
+          }
+        } catch (err) {
+          errors.push(`${channelLabel(ch)}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    } else {
+      const { resolveOutboundSender } = await import("../channels/outbound-registry.js");
+      const recipient = (inv.contactPhone || "").trim();
+      if (!recipient) {
+        throw new AppError(
+          400,
+          "RECIPIENT_MISSING",
+          "У счёта нет привязанной сделки и не указан телефон контакта для отправки PDF",
+        );
+      }
+
+      for (const ch of requestedChannels) {
+        const sender = resolveOutboundSender(ch);
+        const acc = connectedAccounts.find((a) => a.channel === ch);
+        if (!sender || !acc) {
+          errors.push(`${channelLabel(ch)}: канал не подключён`);
+          continue;
+        }
+        try {
+          const res = await sender({
+            tenantId: tenant,
+            channelAccountId: acc.id,
+            recipient,
+            phone: recipient,
+            text,
+            attachment: stored.url,
+            attachmentType: "application/pdf",
+          });
+          if (res.ok) {
+            sentChannels.push(channelLabel(ch));
+          } else {
+            errors.push(`${channelLabel(ch)}: ${res.reason}`);
+          }
+        } catch (err) {
+          errors.push(`${channelLabel(ch)}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    if (sentChannels.length === 0) {
+      throw new AppError(
+        400,
+        "INVOICE_SEND_FAILED",
+        `Не удалось отправить PDF-счёт: ${errors.join("; ")}`,
+      );
+    }
+
+    // Если счёт был в черновике — переводим в «Выставлен» (sent)
+    if (inv.status === "draft") {
       await query(
-        `INSERT INTO deal_messages (tenant_id, deal_id, channel, sender, content, created_at)
-         VALUES ($1, $2, 'system', 'manager', $3, now())`,
-        [tenant, inv.dealId, text],
+        `UPDATE invoices SET status = 'sent', updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+        [tenant, id],
       );
     }
 
     if (inv.repairOrderId) {
       await query(
-        `INSERT INTO repair_notes (tenant_id, repair_order_id, text, author_id, author_name)
-         VALUES ($1, $2, $3, '00000000-0000-0000-0000-000000000000', 'Система')`,
-        [tenant, inv.repairOrderId, `Счёт №${inv.invoiceNumber} отправлен клиенту в мессенджер (${channelType})`],
-      );
-    }
-
-    if (channelType === "telegram" || channelType === "all") {
-      sentChannels.push("Telegram");
-    }
-    if (channelType === "whatsapp" || channelType === "all") {
-      sentChannels.push("WhatsApp");
+        `INSERT INTO repair_notes (tenant_id, repair_order_id, author_id, author_name, kind, content)
+         VALUES ($1, $2, NULL, 'Система', 'note', $3)`,
+        [
+          tenant,
+          inv.repairOrderId,
+          `PDF-счёт №${inv.invoiceNumber} (${filename}) отправлен клиенту: ${sentChannels.join(", ")}`,
+        ],
+      ).catch(() => {});
     }
 
     return {
       success: true,
       channels: sentChannels,
-      message: `Счёт ${inv.invoiceNumber} успешно отправлен клиенту (${sentChannels.join(", ")})`,
+      message: `PDF-счёт №${inv.invoiceNumber} отправлен клиенту (${sentChannels.join(", ")})`,
     };
   }
 
@@ -1286,40 +1431,90 @@ export class InvoicesService {
         [tenant, id],
       );
       if (!inv) throw new NotFoundError("Invoice not found");
-      if (inv.status === "paid") throw new AppError(409, "INVOICE_ALREADY_PAID", "Invoice is already paid");
-      const account = await tx.queryOne<{ id: string; currency: string }>(
-        `SELECT id,currency FROM cash_accounts WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
-        [tenant, p.account_id],
-      );
-      if (!account) throw new NotFoundError("Cash account not found");
-      if (account.currency !== inv.currency) throw new ValidationError("Account currency differs from invoice");
+      if (inv.status === "paid") throw new AppError(409, "INVOICE_ALREADY_PAID", "Счёт уже оплачен");
+
+      let account: { id: string; currency: string } | null = null;
+      const requestedAccountId = p.account_id && p.account_id.trim() ? p.account_id.trim() : null;
+      if (requestedAccountId) {
+        account = await tx.queryOne<{ id: string; currency: string }>(
+          `SELECT id, currency FROM cash_accounts WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`,
+          [tenant, requestedAccountId],
+        );
+      } else {
+        // При быстрой оплате без явного выбора счёта приоритетно берём расчётный счёт (bank), затем основной
+        account = await tx.queryOne<{ id: string; currency: string }>(
+          `SELECT id, currency
+           FROM cash_accounts
+           WHERE tenant_id=$1 AND deleted_at IS NULL AND currency=$2
+           ORDER BY (CASE WHEN account_type = 'bank' THEN 0 ELSE 1 END) ASC, is_default DESC, created_at ASC
+           LIMIT 1
+           FOR UPDATE`,
+          [tenant, inv.currency],
+        );
+      }
+
+      if (!account) throw new NotFoundError("Не найден активный счёт или касса для зачисления оплаты");
+      if (account.currency !== inv.currency) throw new ValidationError("Валюта счёта не совпадает с валютой документа");
+
       await tx.query(
-        `UPDATE invoices SET status='paid',paid_at=COALESCE($3::timestamptz,now()),paid_account_id=$4 WHERE tenant_id=$1 AND id=$2`,
-        [tenant, id, p.occurred_at || null, p.account_id],
+        `UPDATE invoices
+         SET status='paid', paid_at=COALESCE($3::timestamptz, now()), paid_account_id=$4, updated_at=now()
+         WHERE tenant_id=$1 AND id=$2`,
+        [tenant, id, p.occurred_at || null, account.id],
       );
-      await tx.query(`UPDATE cash_accounts SET balance=balance+$3 WHERE tenant_id=$1 AND id=$2`, [
-        tenant,
-        p.account_id,
-        Number(inv.total),
-      ]);
+
       await tx.query(
-        `INSERT INTO transactions(tenant_id,cash_account_id,category_id,category_name,amount,currency,direction,description,invoice_id,repair_order_id,deal_id) VALUES($1,$2,NULL,'Оплата счёта',$3,$4,'income',$5,$6,$7,$8)`,
+        `INSERT INTO transactions(tenant_id,cash_account_id,category_id,category_name,amount,currency,direction,description,invoice_id,repair_order_id,deal_id,occurred_at)
+         VALUES($1,$2,NULL,'Оплата счёта',$3,$4,'income',$5,$6,$7,$8,COALESCE($9::timestamptz,now()))`,
         [
           tenant,
-          p.account_id,
+          account.id,
           Number(inv.total),
           inv.currency,
           p.description || `Оплата счёта №${inv.invoice_number}`,
           id,
           inv.repair_order_id,
           inv.deal_id,
+          p.occurred_at || null,
         ],
       );
+
+      // Пересчитываем баланс счёта строго по активным операциям
+      await tx.query(
+        `UPDATE cash_accounts
+         SET balance = COALESCE((
+           SELECT SUM(CASE WHEN direction = 'income' THEN amount ELSE -amount END)
+           FROM transactions
+           WHERE tenant_id = $1 AND cash_account_id = $2 AND deleted_at IS NULL
+         ), 0),
+         updated_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenant, account.id],
+      );
+
+      // Синхронизируем статус оплаты связанных наряд-заказов
+      const linkedRows = await tx.query<{ repair_order_id: string }>(
+        `SELECT repair_order_id FROM invoice_repair_orders WHERE tenant_id=$1 AND invoice_id=$2`,
+        [tenant, id],
+      );
+      const linkedOrderIds = new Set<string>(linkedRows.map((r) => r.repair_order_id));
+      if (inv.repair_order_id) {
+        linkedOrderIds.add(inv.repair_order_id);
+      }
+      if (linkedOrderIds.size > 0) {
+        await tx.query(
+          `UPDATE repair_orders
+           SET payment_status = 'paid', updated_at = now()
+           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+          [tenant, Array.from(linkedOrderIds)],
+        );
+      }
+
       const updated = {
         ...inv,
         status: "paid" as const,
         paid_at: new Date().toISOString(),
-        paid_account_id: p.account_id,
+        paid_account_id: account.id,
       };
       return this.dtoTx(tenant, tx, updated);
     });

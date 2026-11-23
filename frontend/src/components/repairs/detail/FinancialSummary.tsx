@@ -1,6 +1,7 @@
 "use client";
 
-import { memo, useMemo, useState, useCallback, useRef } from "react";
+import { memo, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
   Banknote,
@@ -24,6 +25,7 @@ import type { WorkItem, PartItem } from "@/lib/repairs/repairs.types";
 import {
   useRepairInvoices,
   useSendInvoice,
+  useMarkInvoicePaid,
   useSyncInvoiceToElba,
   useDeleteInvoice,
   useFinanceOrganizations,
@@ -37,7 +39,6 @@ import { Guard } from "@/components/shared/Guard";
 import { TagPill } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api/apiClient";
-import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface FinancialSummaryProps {
   repairOrderId: string;
@@ -98,15 +99,69 @@ export const FinancialSummary = memo(function FinancialSummary({
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [syncingElbaId, setSyncingElbaId] = useState<string | null>(null);
   const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
-  const [activeMessengerMenuId, setActiveMessengerMenuId] = useState<string | null>(null);
-  const messengerMenuRef = useRef<HTMLDivElement>(null);
-  useClickOutside(messengerMenuRef, () => setActiveMessengerMenuId(null), activeMessengerMenuId !== null);
+  const [markingPaidId, setMarkingPaidId] = useState<string | null>(null);
+  const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
+  const [messengerMenuState, setMessengerMenuState] = useState<{
+    invoice: InvoiceDTO;
+    anchorRect: DOMRect;
+    top: number;
+    left: number;
+  } | null>(null);
+  const messengerPortalRef = useRef<HTMLDivElement>(null);
+  const messengerTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const { data: invoices = [], isLoading: isLoadingInvoices, refetch: refetchInvoices } = useRepairInvoices(repairOrderId);
   const { data: organizations = [] } = useFinanceOrganizations();
   const sendInvoice = useSendInvoice();
+  const markInvoicePaid = useMarkInvoicePaid();
   const syncElba = useSyncInvoiceToElba();
   const deleteInvoice = useDeleteInvoice();
+
+  useLayoutEffect(() => {
+    if (!messengerMenuState) return;
+    const menuWidth = 224;
+    const menuHeight = messengerPortalRef.current?.offsetHeight || 210;
+    const { anchorRect } = messengerMenuState;
+    const margin = 8;
+    const left = Math.max(
+      margin,
+      Math.min(anchorRect.right - menuWidth, window.innerWidth - menuWidth - margin),
+    );
+    const spaceBelow = window.innerHeight - anchorRect.bottom;
+    const top =
+      spaceBelow < menuHeight + margin && anchorRect.top > menuHeight + margin
+        ? Math.max(margin, anchorRect.top - menuHeight - 6)
+        : Math.min(window.innerHeight - menuHeight - margin, anchorRect.bottom + 6);
+
+    if (Math.abs(top - messengerMenuState.top) > 1 || Math.abs(left - messengerMenuState.left) > 1) {
+      setMessengerMenuState((prev) => (prev ? { ...prev, top, left } : null));
+    }
+  }, [messengerMenuState]);
+
+  useEffect(() => {
+    if (!messengerMenuState) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (messengerPortalRef.current?.contains(target)) return;
+      if (messengerTriggerRef.current?.contains(target)) return;
+      setMessengerMenuState(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMessengerMenuState(null);
+    };
+    const handleClose = () => setMessengerMenuState(null);
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleClose, true);
+    window.addEventListener("resize", handleClose);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleClose, true);
+      window.removeEventListener("resize", handleClose);
+    };
+  }, [messengerMenuState]);
   const hasElbaConfigured = useMemo(
     () => organizations.some((o) => o.elbaEnabled && o.elbaHasApiKey && o.elbaOrganizationId),
     [organizations],
@@ -212,20 +267,46 @@ export const FinancialSummary = memo(function FinancialSummary({
   );
 
   const handleSendToMessenger = useCallback(
-    async (inv: InvoiceDTO, channelType: "telegram" | "whatsapp" | "all") => {
-      setActiveMessengerMenuId(null);
+    async (inv: InvoiceDTO, channelType: "telegram" | "whatsapp" | "max" | "all") => {
+      setMessengerMenuState(null);
       try {
+        setSendingInvoiceId(inv.id);
         const res = await sendInvoice.mutateAsync({
           id: inv.id,
           channel_type: channelType,
         });
-        toast.success(res.message || "Счёт отправлен клиенту");
+        toast.success(res.message || "PDF счёта отправлен клиенту");
+        void refetchInvoices();
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Не удалось отправить счёт";
         toast.error(msg);
+      } finally {
+        setSendingInvoiceId(null);
       }
     },
-    [sendInvoice],
+    [sendInvoice, refetchInvoices],
+  );
+
+  const handleQuickMarkPaid = useCallback(
+    async (inv: InvoiceDTO) => {
+      if (inv.status === "paid" || inv.status === "cancelled") return;
+      try {
+        setMarkingPaidId(inv.id);
+        await markInvoicePaid.mutateAsync({
+          id: inv.id,
+          payload: {},
+        });
+        toast.success(`Счёт № ${inv.invoiceNumber} и наряд отмечены как оплаченные`);
+        void refetchInvoices();
+        if (onRefresh) onRefresh();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Не удалось отметить счёт оплаченным";
+        toast.error(msg);
+      } finally {
+        setMarkingPaidId(null);
+      }
+    },
+    [markInvoicePaid, refetchInvoices, onRefresh],
   );
 
   const handleSuccessPayment = useCallback(() => {
@@ -400,20 +481,23 @@ export const FinancialSummary = memo(function FinancialSummary({
               </button>
             </div>
           ) : (
-            <div className="divide-y divide-[#f0f0f0] border border-[#e5e5e5] rounded-[8px] overflow-hidden">
+            <div className="divide-y divide-[#f0f0f0] border border-[#e5e5e5] rounded-[8px]">
               {invoices.map((inv) => {
                 const isPaid = inv.status === "paid";
+                const isCancelled = inv.status === "cancelled";
                 const isDownloading = downloadingId === inv.id;
-                const isMessengerMenuOpen = activeMessengerMenuId === inv.id;
+                const isSending = sendingInvoiceId === inv.id;
+                const isMarkingPaid = markingPaidId === inv.id;
+                const isMessengerMenuOpen = messengerMenuState?.invoice.id === inv.id;
 
                 return (
                   <div
                     key={inv.id}
-                    className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-[#fafafa] transition-colors"
+                    className="p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-[#fafafa] transition-colors first:rounded-t-[8px] last:rounded-b-[8px]"
                   >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-[#111111] font-mono">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                        <span className="font-semibold text-sm text-[#111111] font-mono whitespace-nowrap">
                           № {inv.invoiceNumber}
                         </span>
                         {isPaid ? (
@@ -425,20 +509,22 @@ export const FinancialSummary = memo(function FinancialSummary({
                         ) : (
                           <TagPill color="amber">Черновик</TagPill>
                         )}
-                        <span className="text-xs text-[#888888]">
+                        <span className="text-xs text-[#888888] whitespace-nowrap">
                           от {formatDateRu(inv.issueDate)}
                         </span>
                       </div>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-[#666666]">
-                        <span>Плательщик: {inv.companyName || inv.contactName}</span>
-                        <span>•</span>
-                        <span>Срок: до {formatDateRu(inv.dueDate)}</span>
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 mt-1.5 text-xs text-[#666666]">
+                        <span className="truncate max-w-full">
+                          Плательщик: <strong className="font-medium text-[#111111]">{inv.companyName || inv.contactName}</strong>
+                        </span>
+                        <span className="text-[#cccccc]">•</span>
+                        <span className="whitespace-nowrap">Срок: до {formatDateRu(inv.dueDate)}</span>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between md:justify-end gap-3">
-                      <div className="text-right">
-                        <span className="text-sm font-bold font-mono text-[#111111]">
+                    <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3 shrink-0">
+                      <div className="text-left lg:text-right whitespace-nowrap">
+                        <span className="text-sm font-bold font-mono tabular-nums text-[#111111]">
                           {formatCost(inv.total)}
                         </span>
                         {inv.vatRate > 0 && (
@@ -449,14 +535,34 @@ export const FinancialSummary = memo(function FinancialSummary({
                       </div>
 
                       {/* Action buttons per invoice */}
-                      <div className="flex items-center gap-1.5 relative">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {/* 0. Быстрая отметка оплаты */}
+                        {!isPaid && !isCancelled && (
+                          <Guard requiredPermission="finance:write">
+                            <button
+                              type="button"
+                              onClick={() => void handleQuickMarkPaid(inv)}
+                              disabled={isMarkingPaid}
+                              title="Отметить счёт и наряд как оплаченные"
+                              className="flex h-8 items-center gap-1.5 rounded-[8px] bg-emerald-600 px-2.5 text-xs font-semibold text-white hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                            >
+                              {isMarkingPaid ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              )}
+                              <span>Оплачен</span>
+                            </button>
+                          </Guard>
+                        )}
+
                         {/* 1. Печать РФ-счёта */}
                         <button
                           type="button"
                           onClick={() => void handlePrintInvoice(inv)}
                           disabled={printingId === inv.id}
                           title="Распечатать счёт по стандарту РФ"
-                          className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50"
+                          className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
                         >
                           {printingId === inv.id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
@@ -472,7 +578,7 @@ export const FinancialSummary = memo(function FinancialSummary({
                           onClick={() => handleDownloadPdf(inv)}
                           disabled={isDownloading}
                           title="Скачать PDF документ счёта"
-                          className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50"
+                          className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
                         >
                           {isDownloading ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
@@ -486,7 +592,7 @@ export const FinancialSummary = memo(function FinancialSummary({
                         {inv.elbaBillId ? (
                           <span
                             title={`Выгружен в Контур.Эльбу (ID: ${inv.elbaBillId})`}
-                            className="inline-flex h-8 items-center gap-1 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-700"
+                            className="inline-flex h-8 items-center gap-1 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-700 whitespace-nowrap"
                           >
                             <CheckCircle2 className="h-3 w-3" />
                             Эльба
@@ -497,7 +603,7 @@ export const FinancialSummary = memo(function FinancialSummary({
                             onClick={() => void handleSyncToElba(inv)}
                             disabled={syncingElbaId === inv.id}
                             title="Выгрузить счёт в Контур.Эльбу"
-                            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50"
+                            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
                           >
                             {syncingElbaId === inv.id ? (
                               <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
@@ -508,54 +614,39 @@ export const FinancialSummary = memo(function FinancialSummary({
                           </button>
                         ) : null}
 
-                        {/* 3. Отправить клиенту в мессенджер */}
-                        <div ref={isMessengerMenuOpen ? messengerMenuRef : undefined} className="relative">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setActiveMessengerMenuId(isMessengerMenuOpen ? null : inv.id)
+                        {/* 3. Отправить клиенту PDF в мессенджер (портал поверх всех слоёв) */}
+                        <button
+                          type="button"
+                          disabled={isSending}
+                          onClick={(e) => {
+                            if (isMessengerMenuOpen) {
+                              setMessengerMenuState(null);
+                              return;
                             }
-                            title="Отправить счёт в мессенджер"
-                            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
-                          >
-                            <Send className="h-3.5 w-3.5 text-[#4a38f5]" />
-                            <span className="hidden sm:inline">Отправить</span>
-                            <ChevronDown className="h-3 w-3 text-[#888888]" />
-                          </button>
-
-                          {isMessengerMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 z-20 w-52 rounded-[8px] border border-[#e5e5e5] bg-white py-1 shadow-lg text-xs">
-                              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888] border-b border-[#f0f0f0]">
-                                Отправить счёт в:
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => handleSendToMessenger(inv, "telegram")}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] text-[#111111] transition-colors cursor-pointer"
-                              >
-                                <MessageCircle className="h-3.5 w-3.5 text-sky-500" />
-                                <span>Telegram</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleSendToMessenger(inv, "whatsapp")}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] text-[#111111] transition-colors cursor-pointer"
-                              >
-                                <MessageCircle className="h-3.5 w-3.5 text-emerald-600" />
-                                <span>WhatsApp / Чат</span>
-                              </button>
-                              <div className="h-px bg-[#f0f0f0] my-1" />
-                              <button
-                                type="button"
-                                onClick={() => handleSendToMessenger(inv, "all")}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] text-[#4a38f5] font-medium transition-colors cursor-pointer"
-                              >
-                                <Send className="h-3.5 w-3.5 text-[#4a38f5]" />
-                                <span>Во все мессенджеры</span>
-                              </button>
-                            </div>
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            messengerTriggerRef.current = e.currentTarget;
+                            const menuWidth = 224;
+                            const left = Math.max(
+                              8,
+                              Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8),
+                            );
+                            const top = rect.bottom + 6;
+                            setMessengerMenuState({ invoice: inv, anchorRect: rect, top, left });
+                          }}
+                          title="Отправить PDF счёта в мессенджер"
+                          className={cn(
+                            "flex h-8 items-center gap-1 rounded-[8px] border bg-white px-2.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap",
+                            isMessengerMenuOpen ? "border-[#4a38f5] bg-[#4a38f5]/5" : "border-[#e5e5e5]",
                           )}
-                        </div>
+                        >
+                          {isSending ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                          ) : (
+                            <Send className="h-3.5 w-3.5 text-[#4a38f5]" />
+                          )}
+                          <span className="hidden sm:inline">Отправить</span>
+                          <ChevronDown className="h-3 w-3 text-[#888888]" />
+                        </button>
 
                         {/* 4. Редактировать и удалить (только для неоплаченных и с правом finance:write) */}
                         {!isPaid && (
@@ -615,6 +706,55 @@ export const FinancialSummary = memo(function FinancialSummary({
         dealId={dealId}
         onSuccess={handleSuccessInvoice}
       />
+
+      {/* Portal dropdown: Отправить PDF счёта в мессенджер */}
+      {messengerMenuState && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={messengerPortalRef}
+              style={{ top: messengerMenuState.top, left: messengerMenuState.left }}
+              className="fixed z-[9999] w-56 rounded-[10px] border border-[#e5e5e5] bg-white py-1.5 shadow-xl text-xs"
+            >
+              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#888888] border-b border-[#f0f0f0]">
+                Отправить PDF счёта в:
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleSendToMessenger(messengerMenuState.invoice, "max")}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] text-[#111111] transition-colors cursor-pointer"
+              >
+                <MessageCircle className="h-3.5 w-3.5 text-[#4a38f5]" />
+                <span>MAX (PDF)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSendToMessenger(messengerMenuState.invoice, "telegram")}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] text-[#111111] transition-colors cursor-pointer"
+              >
+                <MessageCircle className="h-3.5 w-3.5 text-sky-500" />
+                <span>Telegram (PDF)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSendToMessenger(messengerMenuState.invoice, "whatsapp")}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] text-[#111111] transition-colors cursor-pointer"
+              >
+                <MessageCircle className="h-3.5 w-3.5 text-emerald-600" />
+                <span>WhatsApp / Чат (PDF)</span>
+              </button>
+              <div className="h-px bg-[#f0f0f0] my-1" />
+              <button
+                type="button"
+                onClick={() => void handleSendToMessenger(messengerMenuState.invoice, "all")}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] text-[#4a38f5] font-medium transition-colors cursor-pointer"
+              >
+                <Send className="h-3.5 w-3.5 text-[#4a38f5]" />
+                <span>Во все мессенджеры</span>
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {/* Modal 3: Редактировать счёт */}
       <InvoiceEditModal

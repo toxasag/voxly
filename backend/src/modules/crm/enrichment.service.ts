@@ -1,5 +1,6 @@
-import { query, queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
+import { query, queryOne, transaction, runWithPlatformScope, runWithTenantContext } from "../../db/client.js";
 import type { ContactSocialJson } from "./contacts/contacts.types.js";
+import { MaxBridgeService } from "../channels/max-bridge.service.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { resolveTelegramPhone } from "../channels/outbound-registry.js";
 import { isPlaceholderName, parseNameFromTelegramUsername, cleanContactDisplayName } from "./identity-resolution.js";
@@ -116,6 +117,23 @@ export class CrmEnrichmentService {
       phoneOverride?: string;
       channels?: Array<"telegram" | "max" | "whatsapp">;
       dealId?: string;
+      skipIfAlreadyChecked?: boolean;
+    },
+  ): Promise<EnrichContactResult> {
+    const run = async (): Promise<EnrichContactResult> => this.enrichContactInTenant(tenantId, contactId, options);
+    return typeof runWithTenantContext === "function"
+      ? runWithTenantContext(tenantId, run)
+      : run();
+  }
+
+  private async enrichContactInTenant(
+    tenantId: string,
+    contactId: string,
+    options?: {
+      phoneOverride?: string;
+      channels?: Array<"telegram" | "max" | "whatsapp">;
+      dealId?: string;
+      skipIfAlreadyChecked?: boolean;
     },
   ): Promise<EnrichContactResult> {
     const contact = await queryOne<{
@@ -127,9 +145,10 @@ export class CrmEnrichmentService {
       telegram_chat_id: string | null;
       whatsapp: string | null;
       socials: ContactSocialJson[];
+      custom_fields?: Record<string, unknown> | null;
     }>(
       `SELECT id, first_name, last_name, phone, telegram_username,
-              telegram_chat_id::text, whatsapp, socials
+              telegram_chat_id::text, whatsapp, socials, custom_fields
        FROM contacts
        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
       [contactId, tenantId],
@@ -143,6 +162,16 @@ export class CrmEnrichmentService {
         enrichedFields: [],
         channelsChecked: [],
         error: "Contact not found",
+      };
+    }
+
+    if (options?.skipIfAlreadyChecked && contact.custom_fields && typeof contact.custom_fields === "object" && "enrichment" in contact.custom_fields) {
+      return {
+        contactId,
+        phone: contact.phone,
+        ok: true,
+        enrichedFields: [],
+        channelsChecked: [],
       };
     }
 
@@ -791,55 +820,73 @@ export class CrmEnrichmentService {
     if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
 
     try {
-      let account = await runWithPlatformScope(() =>
-        queryOne<{ id: string }>(
+      let accounts = await runWithPlatformScope(() =>
+        query<{ id: string }>(
           `SELECT id FROM channel_accounts
            WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-           ORDER BY connected_at DESC NULLS LAST
-           LIMIT 1`,
+           ORDER BY connected_at DESC NULLS LAST`,
           [tenantId],
         ),
       );
-      if (!account) {
-        account = await runWithPlatformScope(() =>
-          queryOne<{ id: string }>(
+      if (accounts.length === 0) {
+        accounts = await runWithPlatformScope(() =>
+          query<{ id: string }>(
             `SELECT id FROM channel_accounts
              WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-             ORDER BY connected_at DESC NULLS LAST
-             LIMIT 1`,
+             ORDER BY connected_at DESC NULLS LAST`,
           ),
         );
       }
-      if (!account) return { exists: false, error: "No active MAX account" };
+      if (accounts.length === 0) return { exists: false, error: "No active MAX account" };
 
-      const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
-        signal: AbortSignal.timeout(10_000),
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ botId: account.id, phone: `+${phone}` }),
-      });
-      if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
-      const data = (await res.json()) as {
-        ok?: boolean;
-        exists?: boolean;
-        userId?: string;
-        username?: string;
-        firstName?: string;
-        lastName?: string;
-        link?: string;
-      };
-      return {
-        exists: Boolean(data.ok && data.exists),
-        userId: data.userId,
-        username: data.username,
-        firstName: data.firstName,
-        lastName: data.lastName,
-        link: data.link,
-        error: (data as { error?: string }).error ?? undefined,
-      };
+      // При нескольких MAX-аккаунтах сначала пробуем те, у которых реально живая сессия в max-bridge.
+      if (accounts.length > 1) {
+        const liveIds = await new MaxBridgeService().getLiveBotIds().catch(() => null);
+        if (liveIds && liveIds.size > 0) {
+          accounts = [...accounts].sort((a, b) => Number(liveIds.has(b.id)) - Number(liveIds.has(a.id)));
+        }
+      }
+
+      let lastError = "No active MAX account";
+      for (const account of accounts) {
+        try {
+          const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
+            signal: AbortSignal.timeout(10_000),
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ botId: account.id, phone: `+${phone}` }),
+          });
+          if (!res.ok) {
+            lastError = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = (await res.json()) as {
+            ok?: boolean;
+            exists?: boolean;
+            userId?: string;
+            username?: string;
+            firstName?: string;
+            lastName?: string;
+            link?: string;
+            error?: string;
+          };
+          return {
+            exists: Boolean(data.ok && data.exists),
+            userId: data.userId,
+            username: data.username,
+            firstName: data.firstName,
+            lastName: data.lastName,
+            link: data.link,
+            error: data.error ?? undefined,
+          };
+        } catch (err) {
+          lastError = String(err);
+        }
+      }
+      return { exists: false, error: lastError };
     } catch (err) {
       return { exists: false, error: String(err) };
     }

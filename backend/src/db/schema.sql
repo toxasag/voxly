@@ -417,6 +417,8 @@ CREATE TABLE IF NOT EXISTS deals (
   position DOUBLE PRECISION NOT NULL DEFAULT 0,
   closed_at TIMESTAMPTZ,
   ai_paused_until TIMESTAMPTZ,
+  chat_thread_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1699,6 +1701,7 @@ CREATE TABLE IF NOT EXISTS warehouse_items (
   min_stock NUMERIC(10, 2) NOT NULL DEFAULT 0,
   retail_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
   cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  reserved BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
@@ -1998,6 +2001,33 @@ DROP POLICY IF EXISTS tenant_isolation ON deal_item_batch_allocations;
 CREATE POLICY tenant_isolation ON deal_item_batch_allocations
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- Таблица bots: автоматическая регистрация и управление конфигурациями ботов
+CREATE TABLE IF NOT EXISTS bots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name VARCHAR(120) NOT NULL,
+  username VARCHAR(64) NOT NULL,
+  token TEXT NOT NULL,
+  token_encrypted BOOLEAN NOT NULL DEFAULT false,
+  status VARCHAR(32) NOT NULL DEFAULT 'connected' CHECK (status IN ('pending', 'connected', 'error', 'disabled')),
+  channel_account_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
+  agent_id UUID REFERENCES ai_agents(id) ON DELETE SET NULL,
+  config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bots_tenant ON bots (tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bots_username ON bots (LOWER(username));
+CREATE INDEX IF NOT EXISTS idx_bots_channel_account ON bots (channel_account_id);
+ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bots FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS bots_tenant_isolation ON bots;
+CREATE POLICY bots_tenant_isolation ON bots
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 
 
 

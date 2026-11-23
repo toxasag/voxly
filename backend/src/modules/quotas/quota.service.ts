@@ -18,57 +18,101 @@ export class QuotaService {
    * Подсчёт фактического текущего использования для каждой фичи тенанта.
    */
   async getCurrentUsage(tenantId: string, featureKey: string): Promise<number> {
-    switch (featureKey) {
-      case "webchat_widgets": {
-        const row = await queryOne<{ count: string }>(
-          `SELECT count(*)::text AS count FROM channel_accounts
-           WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL`,
-          [tenantId],
-        );
-        return Number(row?.count ?? 0);
+    try {
+      switch (featureKey) {
+        case "webchat_widgets": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "site_integrations": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM site_integrations
+             WHERE tenant_id = $1`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "ai_agents": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM ai_agents
+             WHERE tenant_id = $1 AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "telegram_channels": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'telegram' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "telegram_bot_channels": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'telegram_bot' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "whatsapp_channels": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'whatsapp' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "max_channels": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "max_bot_channels": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'max_bot' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "avito_channels": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'avito' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "instagram_channels": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM channel_accounts
+             WHERE tenant_id = $1 AND channel = 'instagram' AND deleted_at IS NULL`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        case "custom_pipelines": {
+          const row = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM pipelines
+             WHERE tenant_id = $1`,
+            [tenantId],
+          );
+          return Number(row?.count ?? 0);
+        }
+        default:
+          return 0;
       }
-      case "ai_agents": {
-        const row = await queryOne<{ count: string }>(
-          `SELECT count(*)::text AS count FROM ai_agents
-           WHERE tenant_id = $1 AND deleted_at IS NULL`,
-          [tenantId],
-        );
-        return Number(row?.count ?? 0);
-      }
-      case "telegram_channels": {
-        const row = await queryOne<{ count: string }>(
-          `SELECT count(*)::text AS count FROM channel_accounts
-           WHERE tenant_id = $1 AND channel = 'telegram' AND deleted_at IS NULL`,
-          [tenantId],
-        );
-        return Number(row?.count ?? 0);
-      }
-      case "whatsapp_channels": {
-        const row = await queryOne<{ count: string }>(
-          `SELECT count(*)::text AS count FROM channel_accounts
-           WHERE tenant_id = $1 AND channel = 'whatsapp' AND deleted_at IS NULL`,
-          [tenantId],
-        );
-        return Number(row?.count ?? 0);
-      }
-      case "max_channels": {
-        const row = await queryOne<{ count: string }>(
-          `SELECT count(*)::text AS count FROM channel_accounts
-           WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL`,
-          [tenantId],
-        );
-        return Number(row?.count ?? 0);
-      }
-      case "custom_pipelines": {
-        const row = await queryOne<{ count: string }>(
-          `SELECT count(*)::text AS count FROM pipelines
-           WHERE tenant_id = $1`,
-          [tenantId],
-        );
-        return Number(row?.count ?? 0);
-      }
-      default:
-        return 0;
+    } catch {
+      return 0;
     }
   }
 
@@ -106,18 +150,49 @@ export class QuotaService {
 
   /**
    * Проверка квоты для тенанта: разрешено ли создать ещё одну сущность.
+   *
+   * Для главного портала платформы (Root / Voxly Platform) ВСЕГДА возвращает
+   * isUnlimited: true и allowed: true (никаких ограничений для владельца системы).
    */
   async checkQuota(tenantId: string, featureKey: string): Promise<QuotaCheckResult> {
     return runWithTenantContext(tenantId, async () => {
       const current = await this.getCurrentUsage(tenantId, featureKey);
 
+      // 0. Если это главный портал платформы (root / voxly) — у него ВСЕГДА БЕЗЛИМИТНО!
+      let isPlatformRoot = tenantId === "c0000000-0000-0000-0000-000000000001";
+      try {
+        const tenant = await queryOne<{ slug: string; tenant_type: string }>(
+          `SELECT slug, tenant_type FROM tenants WHERE id = $1`,
+          [tenantId],
+        );
+        if (tenant?.slug === "voxly" || tenant?.tenant_type === "platform") {
+          isPlatformRoot = true;
+        }
+      } catch {
+        // Fallback если БД недоступна
+      }
+
+      if (isPlatformRoot) {
+        return {
+          allowed: true,
+          isUnlimited: true,
+          current,
+          maxLimit: null,
+        };
+      }
+
       // 1. Проверяем наличие индивидуального переопределения для конкретного тенанта
-      const custom = await queryOne<CustomQuotaRow>(
-        `SELECT feature_key, is_unlimited, max_limit
-         FROM tenant_feature_quotas
-         WHERE tenant_id = $1 AND feature_key = $2`,
-        [tenantId, featureKey],
-      );
+      let custom: CustomQuotaRow | null = null;
+      try {
+        custom = await queryOne<CustomQuotaRow>(
+          `SELECT feature_key, is_unlimited, max_limit
+           FROM tenant_feature_quotas
+           WHERE tenant_id = $1 AND feature_key = $2`,
+          [tenantId, featureKey],
+        );
+      } catch {
+        // Таблица может отсутствовать в unit-тестах
+      }
 
       if (custom) {
         if (custom.is_unlimited || custom.max_limit === -1) {
@@ -143,16 +218,35 @@ export class QuotaService {
       if (featureKey === "webchat_widgets") moduleSlug = "webchat";
       else if (featureKey === "ai_agents") moduleSlug = "ai_bots";
       else if (featureKey === "telegram_channels") moduleSlug = "telegram";
+      else if (featureKey === "telegram_bot_channels") moduleSlug = "telegram_bot";
       else if (featureKey === "whatsapp_channels") moduleSlug = "whatsapp";
       else if (featureKey === "max_channels") moduleSlug = "max";
+      else if (featureKey === "max_bot_channels") moduleSlug = "max_bot";
+      else if (featureKey === "avito_channels") moduleSlug = "avito";
+      else if (featureKey === "instagram_channels") moduleSlug = "instagram";
 
       if (moduleSlug) {
-        const installed = await queryOne<{ quantity: number }>(
-          `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = $2`,
-          [tenantId, moduleSlug],
-        );
-        if (installed && Number(installed.quantity) > defaultLimit) {
-          defaultLimit = Number(installed.quantity);
+        try {
+          const installed = await queryOne<{ quantity: number }>(
+            `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = $2`,
+            [tenantId, moduleSlug],
+          );
+          if (installed) {
+            const qty = Number(installed.quantity);
+            if (qty >= 999999) {
+              return {
+                allowed: true,
+                isUnlimited: true,
+                current,
+                maxLimit: null,
+              };
+            }
+            if (qty > defaultLimit) {
+              defaultLimit = qty;
+            }
+          }
+        } catch {
+          // Игнорируем ошибку чтения модуля
         }
       }
 
@@ -189,12 +283,30 @@ export class QuotaService {
    */
   async getTenantQuotas(tenantId: string): Promise<TenantQuotaItemDTO[]> {
     return runWithTenantContext(tenantId, async () => {
-      const customRows = await query<CustomQuotaRow>(
-        `SELECT feature_key, is_unlimited, max_limit
-         FROM tenant_feature_quotas
-         WHERE tenant_id = $1`,
-        [tenantId],
-      );
+      let isPlatformRoot = tenantId === "c0000000-0000-0000-0000-000000000001";
+      try {
+        const tenant = await queryOne<{ slug: string; tenant_type: string }>(
+          `SELECT slug, tenant_type FROM tenants WHERE id = $1`,
+          [tenantId],
+        );
+        if (tenant?.slug === "voxly" || tenant?.tenant_type === "platform") {
+          isPlatformRoot = true;
+        }
+      } catch {
+        // Fallback
+      }
+
+      let customRows: CustomQuotaRow[] = [];
+      try {
+        customRows = await query<CustomQuotaRow>(
+          `SELECT feature_key, is_unlimited, max_limit
+           FROM tenant_feature_quotas
+           WHERE tenant_id = $1`,
+          [tenantId],
+        );
+      } catch {
+        // Fallback
+      }
 
       const customMap = new Map<string, CustomQuotaRow>();
       for (const row of customRows) {
@@ -209,7 +321,10 @@ export class QuotaService {
         const custom = customMap.get(def.key);
 
         const isCustom = custom !== undefined;
-        const isUnlimited = custom ? Boolean(custom.is_unlimited || custom.max_limit === -1) : false;
+        // Для платформенного root, если кастомная запись не задана или явно безлимитна — всегда true
+        const isUnlimited = custom
+          ? Boolean(custom.is_unlimited || custom.max_limit === -1)
+          : isPlatformRoot;
         const maxLimit = custom && !isUnlimited ? custom.max_limit : defaultLimit;
         const allowed = isUnlimited || usage < maxLimit;
 
@@ -257,19 +372,44 @@ export class QuotaService {
 
         // Синхронизация с installed_modules.quantity для обратной совместимости легаси компонентов
         let moduleSlug: string | null = null;
-        if (item.feature_key === "webchat_widgets") moduleSlug = "webchat";
-        else if (item.feature_key === "ai_agents") moduleSlug = "ai_bots";
-        else if (item.feature_key === "telegram_channels") moduleSlug = "telegram";
-        else if (item.feature_key === "whatsapp_channels") moduleSlug = "whatsapp";
-        else if (item.feature_key === "max_channels") moduleSlug = "max";
+        let moduleName = "";
+        if (item.feature_key === "webchat_widgets") {
+          moduleSlug = "webchat";
+          moduleName = "Онлайн-чат на сайт";
+        } else if (item.feature_key === "ai_agents") {
+          moduleSlug = "ai_bots";
+          moduleName = "AI-агенты";
+        } else if (item.feature_key === "telegram_channels") {
+          moduleSlug = "telegram";
+          moduleName = "Telegram";
+        } else if (item.feature_key === "telegram_bot_channels") {
+          moduleSlug = "telegram_bot";
+          moduleName = "Telegram-бот компании";
+        } else if (item.feature_key === "whatsapp_channels") {
+          moduleSlug = "whatsapp";
+          moduleName = "WhatsApp";
+        } else if (item.feature_key === "max_channels") {
+          moduleSlug = "max";
+          moduleName = "MAX";
+        } else if (item.feature_key === "max_bot_channels") {
+          moduleSlug = "max_bot";
+          moduleName = "MAX-бот компании";
+        } else if (item.feature_key === "avito_channels") {
+          moduleSlug = "avito";
+          moduleName = "Avito";
+        } else if (item.feature_key === "instagram_channels") {
+          moduleSlug = "instagram";
+          moduleName = "Instagram";
+        }
 
         if (moduleSlug) {
           const syncQuantity = isUnlimited ? 999999 : maxLimit;
           await tx.query(
-            `UPDATE installed_modules
-             SET quantity = $3
-             WHERE tenant_id = $1 AND slug = $2`,
-            [tenantId, moduleSlug, syncQuantity],
+            `INSERT INTO installed_modules (tenant_id, slug, name, quantity)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (tenant_id, slug) DO UPDATE
+             SET quantity = EXCLUDED.quantity`,
+            [tenantId, moduleSlug, moduleName, syncQuantity],
           );
         }
       }

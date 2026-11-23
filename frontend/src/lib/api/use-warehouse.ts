@@ -27,6 +27,9 @@ export interface WarehouseItemDTO {
   totalStock: number;
   reservedStock: number;
   availableStock: number;
+  reserved?: boolean;
+  status?: "reserved" | "in_stock" | "out_of_stock";
+  stockStatus?: "reserved" | "in_stock" | "out_of_stock";
   price?: number;
   quantity?: number;
   models?: WarehouseItemModelDTO[];
@@ -289,6 +292,8 @@ export interface WarehousePaginationParams {
   search?: string;
   category?: string;
   brand?: string;
+  model_ids?: string[];
+  modelIds?: string[];
   all?: boolean;
 }
 
@@ -298,6 +303,8 @@ export function useWarehouse(params?: WarehousePaginationParams) {
   const search = params?.search;
   const category = params?.category;
   const brand = params?.brand;
+  const modelIds = params?.model_ids ?? params?.modelIds;
+  const modelIdsKey = (modelIds ?? []).slice().sort().join(",");
   const all = params?.all;
 
   return useQuery({
@@ -309,6 +316,7 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       search ?? "",
       category ?? "",
       brand ?? "",
+      modelIdsKey,
       Boolean(all),
     ],
     queryFn: async (): Promise<PaginatedWarehouseResponse> => {
@@ -327,6 +335,9 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       }
       if (brand && brand.trim()) {
         q.set("brand", brand.trim());
+      }
+      if (modelIds && modelIds.length > 0) {
+        q.set("model_ids", modelIds.join(","));
       }
 
       const qs = q.toString();
@@ -482,6 +493,20 @@ export function useCreatePurchaseRequest() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+    },
+  });
+}
+
+export function useBulkCreatePurchaseRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { itemIds: string[]; comment?: string; status?: string; repair_order_id?: string; deal_id?: string }) => {
+      const res = await apiClient.post<PurchaseRequestDTO[]>("/api/v1/purchase-requests", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
     },
   });
 }

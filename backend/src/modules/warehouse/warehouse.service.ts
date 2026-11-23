@@ -1,5 +1,5 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
-import { query, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
+import { query, queryOne, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import {
   type AggregatedPurchaseRequestDTO,
   type BulkDeleteWarehouseItemsPayload,
@@ -255,13 +255,20 @@ export class WarehouseService {
   async listItems(
     tenantId: string,
     search?: string,
-    options?: { page?: number; limit?: number; all?: boolean; category?: string; brand?: string },
+    options?: {
+      page?: number;
+      limit?: number;
+      all?: boolean;
+      category?: string;
+      brand?: string;
+      modelIds?: string[];
+    },
   ): Promise<PaginatedWarehouseItemsDTO> {
     const page = Math.max(1, options?.page ?? 1);
     const limit = options?.limit ?? 25;
     const all = Boolean(options?.all);
 
-    const params: (string | number)[] = [tenantId];
+    const params: (string | number | string[])[] = [tenantId];
     let searchFilter = "";
 
     if (search && search.trim()) {
@@ -275,6 +282,16 @@ export class WarehouseService {
     if (options?.brand && options.brand.trim()) {
       params.push(options.brand.trim());
       searchFilter += ` AND i.brand = $${params.length}`;
+    }
+    const modelIds = (options?.modelIds ?? []).filter((id) => typeof id === "string" && id.trim().length > 0);
+    if (modelIds.length > 0) {
+      params.push(modelIds);
+      searchFilter += ` AND EXISTS (
+        SELECT 1 FROM warehouse_item_models wim
+        WHERE wim.tenant_id = i.tenant_id
+          AND wim.item_id = i.id
+          AND wim.model_id = ANY($${params.length}::uuid[])
+      )`;
     }
 
     const settings = await this.getSettings(tenantId);
@@ -346,7 +363,7 @@ export class WarehouseService {
 
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
-                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                i.min_stock, i.retail_price, i.cost_price, COALESCE(i.reserved, false) AS reserved, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
                 COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
                 COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
@@ -396,6 +413,13 @@ export class WarehouseService {
         const avgBatchCostPrice =
           totalStock > 0 ? Math.round((stockValuation / totalStock) * 100) / 100 : costPrice;
         const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+        const isReserved = reserved > 0 || Boolean(r.reserved);
+        const status: "reserved" | "in_stock" | "out_of_stock" = isReserved
+          ? "reserved"
+          : available > 0
+            ? "in_stock"
+            : "out_of_stock";
+
         return {
           id: r.id,
           sku: r.sku,
@@ -415,6 +439,9 @@ export class WarehouseService {
           quantity: totalStock,
           reservedStock: reserved,
           availableStock: available,
+          reserved: isReserved,
+          status,
+          stockStatus: status,
           models,
           modelIds: models.map((m) => m.id),
           modelNames: models.map((m) => m.name),
@@ -443,7 +470,7 @@ export class WarehouseService {
     return withTenant(tenantId, async (tx) => {
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
-                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                i.min_stock, i.retail_price, i.cost_price, COALESCE(i.reserved, false) AS reserved, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
                 COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
                 COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
@@ -492,6 +519,12 @@ export class WarehouseService {
       const avgBatchCostPrice =
         total > 0 ? Math.round((stockValuation / total) * 100) / 100 : costPrice;
       const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+      const isReserved = reserved > 0 || Boolean(r.reserved);
+      const status: "reserved" | "in_stock" | "out_of_stock" = isReserved
+        ? "reserved"
+        : available > 0
+          ? "in_stock"
+          : "out_of_stock";
 
       return {
         id: r.id,
@@ -512,6 +545,9 @@ export class WarehouseService {
         quantity: total,
         reservedStock: reserved,
         availableStock: available,
+        reserved: isReserved,
+        status,
+        stockStatus: status,
         models,
         modelIds: models.map((m) => m.id),
         modelNames: models.map((m) => m.name),
@@ -525,9 +561,9 @@ export class WarehouseService {
     const row = await withTenant(tenantId, async (tx) => {
       const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
         `INSERT INTO warehouse_items
-           (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, created_at, updated_at`,
+           (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, reserved)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, reserved, created_at, updated_at`,
         [
           tenantId,
           payload.sku ?? "",
@@ -538,6 +574,7 @@ export class WarehouseService {
           payload.min_stock ?? 0,
           payload.retail_price ?? 0,
           payload.cost_price ?? 0,
+          Boolean(payload.reserved),
         ],
       );
 
@@ -574,6 +611,7 @@ export class WarehouseService {
     if (payload.min_stock !== undefined) add("min_stock", payload.min_stock);
     if (payload.retail_price !== undefined) add("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) add("cost_price", payload.cost_price);
+    if (payload.reserved !== undefined) add("reserved", Boolean(payload.reserved));
 
     await withTenant(tenantId, async (tx) => {
       if (fields.length > 0) {
@@ -1764,6 +1802,67 @@ export class WarehouseService {
       createdAt: toIso(row.created_at),
       updatedAt: toIso(row.updated_at),
     };
+  }
+
+  async isReserved(tenantId: string, itemId: string): Promise<boolean> {
+    const row = await queryOne<{ count: string | number }>(
+      `SELECT count(*)::int AS count
+       FROM warehouse_reservations
+       WHERE tenant_id = $1 AND item_id = $2 AND status = 'reserved'`,
+      [tenantId, itemId],
+    );
+    return Number(row?.count ?? 0) > 0;
+  }
+
+  async createBulkPurchaseRequests(
+    tenantId: string,
+    userId: string | null,
+    payload: {
+      itemIds: string[];
+      status?: string;
+      comment?: string;
+      repair_order_id?: string;
+      deal_id?: string;
+    },
+  ): Promise<PurchaseRequestDTO[]> {
+    const uniqueIds = Array.from(new Set(payload.itemIds.filter(Boolean)));
+    const results: PurchaseRequestDTO[] = [];
+
+    for (const itemId of uniqueIds) {
+      const item = await this.getItem(tenantId, itemId);
+      if (!item) continue;
+
+      const neededQty =
+        item.reservedStock > 0
+          ? item.reservedStock
+          : item.availableStock < 0
+            ? Math.abs(item.availableStock)
+            : 1;
+
+      const created = await this.createPurchaseRequest(tenantId, userId, {
+        item_id: item.id,
+        item_name: item.name,
+        sku: item.sku,
+        quantity: neededQty,
+        unit: item.unit || "шт",
+        estimated_price: item.costPrice > 0 ? item.costPrice : item.retailPrice,
+        comment: payload.comment || "Сформировано из массовых действий склада",
+        repair_order_id: payload.repair_order_id,
+        deal_id: payload.deal_id,
+      });
+
+      if (payload.status && payload.status !== "pending") {
+        const validStatus = payload.status as PurchaseRequestStatus;
+        await this.updatePurchaseRequest(tenantId, created.id, {
+          status: validStatus,
+        });
+        created.status = validStatus;
+      }
+
+      results.push(created);
+    }
+
+    return results;
   }
 
   async updatePurchaseRequest(

@@ -35,6 +35,9 @@ import {
   Filter,
   Lock,
   Unlock,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -66,9 +69,12 @@ import {
   useDeletePurchaseRequest,
   useExportWarehouseItems,
   useBulkDeleteWarehouseItems,
+  useBulkCreatePurchaseRequests,
   useWarehouseCategories,
   useWarehouseBrands,
+  useWarehouseModels,
   type WarehouseItemDTO,
+  type WarehouseItemModelDTO,
   type WarehouseBatchDTO,
   type WarehouseMovementDTO,
   type PurchaseRequestDTO,
@@ -149,9 +155,23 @@ function WarehouseContent() {
 
   const categoryParam = searchParams.get("category") ?? "";
   const brandParam = searchParams.get("brand") ?? "";
+  const modelIdsParam = searchParams.get("model_ids") || searchParams.get("models") || "";
+
+  const initialModelIds = useMemo(() => {
+    if (!modelIdsParam) return [];
+    return modelIdsParam
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [modelIdsParam]);
 
   const [selectedCategory, setSelectedCategory] = useState<string>(categoryParam);
   const [selectedBrand, setSelectedBrand] = useState<string>(brandParam);
+  const [selectedModelIds, setSelectedModelIds] = useState<string[]>(initialModelIds);
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  useClickOutside(modelDropdownRef, () => setModelDropdownOpen(false), modelDropdownOpen);
 
   useEffect(() => {
     setSelectedCategory(categoryParam);
@@ -161,6 +181,10 @@ function WarehouseContent() {
     setSelectedBrand(brandParam);
   }, [brandParam]);
 
+  useEffect(() => {
+    setSelectedModelIds(initialModelIds);
+  }, [initialModelIds]);
+
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
   useClickOutside(filterPopoverRef, () => setFilterPopoverOpen(false), filterPopoverOpen);
@@ -169,14 +193,36 @@ function WarehouseContent() {
 
   const { data: warehouseCategoriesList = [] } = useWarehouseCategories();
   const { data: warehouseBrandsList = [] } = useWarehouseBrands();
+  const { data: allWarehouseModels = [] } = useWarehouseModels();
 
-  const activeFiltersCount = (selectedCategory ? 1 : 0) + (selectedBrand ? 1 : 0);
+  const availableModels = useMemo(() => {
+    if (!selectedBrand) return allWarehouseModels;
+    return allWarehouseModels.filter(
+      (m) => (m.brandName || "").trim().toLowerCase() === selectedBrand.trim().toLowerCase(),
+    );
+  }, [allWarehouseModels, selectedBrand]);
+
+  const filteredModelsForPicker = useMemo(() => {
+    const q = modelSearchQuery.trim().toLowerCase();
+    if (!q) return availableModels;
+    return availableModels.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        (m.brandName && m.brandName.toLowerCase().includes(q)),
+    );
+  }, [availableModels, modelSearchQuery]);
+
+  const activeFiltersCount =
+    (selectedCategory ? 1 : 0) +
+    (selectedBrand ? 1 : 0) +
+    (selectedModelIds.length > 0 ? 1 : 0);
 
   const updateUrl = (updates: {
     page?: number;
     limit?: number;
     category?: string;
     brand?: string;
+    model_ids?: string[];
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (updates.page !== undefined) {
@@ -199,14 +245,48 @@ function WarehouseContent() {
         params.delete("brand");
       }
     }
+    if (updates.model_ids !== undefined) {
+      if (updates.model_ids.length > 0) {
+        params.set("model_ids", updates.model_ids.join(","));
+      } else {
+        params.delete("model_ids");
+        params.delete("models");
+      }
+    }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
   const handleClearFilters = () => {
     setSelectedCategory("");
     setSelectedBrand("");
+    setSelectedModelIds([]);
+    setModelDropdownOpen(false);
     setFilterPopoverOpen(false);
-    updateUrl({ page: 1, category: "", brand: "" });
+    updateUrl({ page: 1, category: "", brand: "", model_ids: [] });
+  };
+
+  const handleToggleModel = (modelId: string) => {
+    const next = selectedModelIds.includes(modelId)
+      ? selectedModelIds.filter((id) => id !== modelId)
+      : [...selectedModelIds, modelId];
+    setSelectedModelIds(next);
+    updateUrl({
+      page: 1,
+      category: selectedCategory,
+      brand: selectedBrand,
+      model_ids: next,
+    });
+  };
+
+  const handleRemoveModel = (modelId: string) => {
+    const next = selectedModelIds.filter((id) => id !== modelId);
+    setSelectedModelIds(next);
+    updateUrl({
+      page: 1,
+      category: selectedCategory,
+      brand: selectedBrand,
+      model_ids: next,
+    });
   };
 
   const handleSearchChange = (newVal: string) => {
@@ -263,11 +343,86 @@ function WarehouseContent() {
     search: searchQuery,
     category: selectedCategory || undefined,
     brand: selectedBrand || undefined,
+    model_ids: selectedModelIds.length > 0 ? selectedModelIds : undefined,
   });
 
   const items = warehouseData?.items ?? [];
   const meta = warehouseData?.meta ?? { total: 0, page: 1, limit: 25, pages: 0 };
   const filteredItems = items;
+
+  type ItemSortField =
+    | "sku"
+    | "name"
+    | "category"
+    | "brand"
+    | "totalStock"
+    | "reservedStock"
+    | "availableStock"
+    | "costPrice"
+    | "retailPrice";
+  type SortDirection = "asc" | "desc";
+
+  const [sortField, setSortField] = useState<ItemSortField | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  const handleSort = (field: ItemSortField) => {
+    if (sortField === field) {
+      if (sortDirection === "asc") {
+        setSortDirection("desc");
+      } else {
+        setSortField(null);
+        setSortDirection("asc");
+      }
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortedItems = useMemo(() => {
+    if (!sortField) return filteredItems;
+    return [...filteredItems].sort((a, b) => {
+      const aVal = a[sortField];
+      const bVal = b[sortField];
+
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        const cmp = aVal.localeCompare(bVal, "ru", { sensitivity: "base" });
+        return sortDirection === "asc" ? cmp : -cmp;
+      }
+
+      const aNum = Number(aVal ?? 0);
+      const bNum = Number(bVal ?? 0);
+      return sortDirection === "asc" ? aNum - bNum : bNum - aNum;
+    });
+  }, [filteredItems, sortField, sortDirection]);
+
+  const bulkCreatePurchasesMutation = useBulkCreatePurchaseRequests();
+
+  const selectedItemsList = useMemo(() => {
+    return Array.from(selectedItemIds)
+      .map((id) => items.find((i) => i.id === id))
+      .filter((i): i is WarehouseItemDTO => Boolean(i));
+  }, [selectedItemIds, items]);
+
+  const hasReservedOrDeficit = useMemo(() => {
+    return selectedItemsList.some(
+      (item) => item.reservedStock > 0 || item.availableStock < 0 || item.status === "reserved",
+    );
+  }, [selectedItemsList]);
+
+  const handleBulkCreatePurchaseRequest = async () => {
+    if (selectedItemIds.size === 0) return;
+    try {
+      const res = await bulkCreatePurchasesMutation.mutateAsync({
+        itemIds: Array.from(selectedItemIds),
+        comment: "Сформировано из массовых действий склада",
+      });
+      toast.success(`Сформировано заявок на закупку: ${res.length}`);
+      setSelectedItemIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось сформировать заявку на закупку");
+    }
+  };
 
   const { data: batches = [], isLoading: isBatchesLoading } = useWarehouseBatches();
   const { data: movements = [], isLoading: isMovementsLoading } = useWarehouseMovements();
@@ -291,10 +446,10 @@ function WarehouseContent() {
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
 
   const handleToggleSelectAll = () => {
-    if (selectedItemIds.size === filteredItems.length && filteredItems.length > 0) {
+    if (selectedItemIds.size === sortedItems.length && sortedItems.length > 0) {
       setSelectedItemIds(new Set());
     } else {
-      setSelectedItemIds(new Set(filteredItems.map((i) => i.id)));
+      setSelectedItemIds(new Set(sortedItems.map((i) => i.id)));
     }
   };
 
@@ -1033,7 +1188,7 @@ function WarehouseContent() {
                 </button>
 
                 {filterPopoverOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 z-30 w-72 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                  <div className="absolute left-0 top-full mt-1.5 z-30 w-80 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
                     <div className="flex items-center justify-between pb-2 border-b border-[#f0f0f0]">
                       <span className="text-xs font-semibold text-[#111111]">
                         Фильтры склада
@@ -1042,7 +1197,7 @@ function WarehouseContent() {
                         <button
                           type="button"
                           onClick={handleClearFilters}
-                          className="text-[11px] text-[#4a38f5] hover:underline"
+                          className="text-[11px] text-[#4a38f5] hover:underline cursor-pointer"
                         >
                           Сбросить
                         </button>
@@ -1059,9 +1214,9 @@ function WarehouseContent() {
                           onChange={(e) => {
                             const val = e.target.value;
                             setSelectedCategory(val);
-                            updateUrl({ page: 1, category: val, brand: selectedBrand });
+                            updateUrl({ page: 1, category: val, brand: selectedBrand, model_ids: selectedModelIds });
                           }}
-                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
                         >
                           <option value="">Все категории</option>
                           {warehouseCategoriesList.map((cat) => (
@@ -1081,9 +1236,9 @@ function WarehouseContent() {
                           onChange={(e) => {
                             const val = e.target.value;
                             setSelectedBrand(val);
-                            updateUrl({ page: 1, category: selectedCategory, brand: val });
+                            updateUrl({ page: 1, category: selectedCategory, brand: val, model_ids: selectedModelIds });
                           }}
-                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
                         >
                           <option value="">Все бренды</option>
                           {warehouseBrandsList.map((b) => (
@@ -1094,11 +1249,154 @@ function WarehouseContent() {
                         </select>
                       </div>
 
+                      {/* Фильтр: Подходит к моделям */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-[11px] font-medium text-[#666666]">
+                            Подходит к моделям
+                          </label>
+                          {selectedModelIds.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedModelIds([]);
+                                updateUrl({
+                                  page: 1,
+                                  category: selectedCategory,
+                                  brand: selectedBrand,
+                                  model_ids: [],
+                                });
+                              }}
+                              className="text-[10px] text-[#888888] hover:text-[#111111] transition-colors cursor-pointer"
+                            >
+                              Очистить ({selectedModelIds.length})
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Чипы выбранных моделей внутри поповера */}
+                        {selectedModelIds.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-1.5 max-h-24 overflow-y-auto pr-0.5">
+                            {selectedModelIds.map((id) => {
+                              const modelObj = allWarehouseModels.find((m) => m.id === id);
+                              const modelName = modelObj ? modelObj.name : id;
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-1.5 py-0.5 text-[11px] font-medium text-[#4a38f5]"
+                                >
+                                  <span className="truncate max-w-[140px]">{modelName}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveModel(id)}
+                                    className="hover:text-rose-600 transition-colors cursor-pointer"
+                                    title="Удалить"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Кнопка-селектор моделей */}
+                        <div className="relative" ref={modelDropdownRef}>
+                          <button
+                            type="button"
+                            onClick={() => setModelDropdownOpen((prev) => !prev)}
+                            className={cn(
+                              "h-8 w-full rounded-[6px] border bg-white px-2.5 text-xs text-left flex items-center justify-between transition-colors cursor-pointer",
+                              modelDropdownOpen
+                                ? "border-[#4a38f5] ring-1 ring-[#4a38f5]/20"
+                                : "border-[#e5e5e5] hover:border-[#cccccc]",
+                            )}
+                          >
+                            <span className={selectedModelIds.length > 0 ? "text-[#111111] font-medium truncate" : "text-[#888888] truncate"}>
+                              {selectedModelIds.length === 0
+                                ? "Все модели"
+                                : `Выбрано: ${selectedModelIds.length} модел${selectedModelIds.length === 1 ? "ь" : selectedModelIds.length < 5 ? "и" : "ей"}`}
+                            </span>
+                            <ChevronDown className={cn("h-3.5 w-3.5 text-[#888888] shrink-0 transition-transform", modelDropdownOpen && "rotate-180")} />
+                          </button>
+
+                          {modelDropdownOpen && (
+                            <div className="absolute left-0 right-0 top-full mt-1 z-40 rounded-[8px] border border-[#e5e5e5] bg-white p-2 shadow-lg animate-in fade-in zoom-in-95 duration-100">
+                              <div className="relative mb-2">
+                                <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-[#888888]" />
+                                <input
+                                  type="text"
+                                  value={modelSearchQuery}
+                                  onChange={(e) => setModelSearchQuery(e.target.value)}
+                                  placeholder="Поиск по моделям..."
+                                  className="h-7 w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] pl-7 pr-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:bg-white focus:outline-none"
+                                />
+                                {modelSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setModelSearchQuery("")}
+                                    className="absolute right-2 top-2 text-[#888888] hover:text-[#111111] cursor-pointer"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="max-h-48 overflow-y-auto space-y-0.5 pr-0.5">
+                                {filteredModelsForPicker.length === 0 ? (
+                                  <div className="py-3 text-center text-xs text-[#888888]">
+                                    {allWarehouseModels.length === 0
+                                      ? "В справочнике пока нет моделей"
+                                      : "Модели не найдены"}
+                                  </div>
+                                ) : (
+                                  filteredModelsForPicker.map((m) => {
+                                    const isSelected = selectedModelIds.includes(m.id);
+                                    return (
+                                      <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => handleToggleModel(m.id)}
+                                        className={cn(
+                                          "flex w-full items-center justify-between rounded-[4px] px-2 py-1.5 text-xs text-left transition-colors cursor-pointer",
+                                          isSelected
+                                            ? "bg-[#4a38f5]/10 text-[#4a38f5] font-medium"
+                                            : "text-[#111111] hover:bg-[#f5f5f5]",
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                                          <div
+                                            className={cn(
+                                              "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors",
+                                              isSelected
+                                                ? "border-[#4a38f5] bg-[#4a38f5] text-white"
+                                                : "border-[#cccccc] bg-white",
+                                            )}
+                                          >
+                                            {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                                          </div>
+                                          <span className="truncate">{m.name}</span>
+                                        </div>
+                                        {m.brandName && (
+                                          <span className="shrink-0 rounded bg-[#f0f0f0] px-1.5 py-0.2 text-[10px] text-[#666666]">
+                                            {m.brandName}
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="pt-2 flex items-center justify-end gap-2 border-t border-[#f0f0f0]">
                         <button
                           type="button"
                           onClick={() => setFilterPopoverOpen(false)}
-                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer"
                         >
                           Готово
                         </button>
@@ -1151,9 +1449,9 @@ function WarehouseContent() {
                 type="button"
                 onClick={() => {
                   setSelectedCategory("");
-                  updateUrl({ page: 1, category: "", brand: selectedBrand });
+                  updateUrl({ page: 1, category: "", brand: selectedBrand, model_ids: selectedModelIds });
                 }}
-                className="hover:text-[#3d2ee0]"
+                className="hover:text-[#3d2ee0] cursor-pointer"
                 title="Удалить фильтр"
               >
                 <X className="h-3 w-3" />
@@ -1167,19 +1465,40 @@ function WarehouseContent() {
                 type="button"
                 onClick={() => {
                   setSelectedBrand("");
-                  updateUrl({ page: 1, category: selectedCategory, brand: "" });
+                  updateUrl({ page: 1, category: selectedCategory, brand: "", model_ids: selectedModelIds });
                 }}
-                className="hover:text-[#3d2ee0]"
+                className="hover:text-[#3d2ee0] cursor-pointer"
                 title="Удалить фильтр"
               >
                 <X className="h-3 w-3" />
               </button>
             </span>
           )}
+          {selectedModelIds.length > 0 &&
+            selectedModelIds.map((id) => {
+              const modelObj = allWarehouseModels.find((m) => m.id === id);
+              const modelName = modelObj ? modelObj.name : id;
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs text-[#4a38f5] font-medium"
+                >
+                  <span>Модель: {modelName}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveModel(id)}
+                    className="hover:text-[#3d2ee0] cursor-pointer"
+                    title="Удалить фильтр"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
           <button
             type="button"
             onClick={handleClearFilters}
-            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1"
+            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1 cursor-pointer"
           >
             Сбросить все
           </button>
@@ -1202,43 +1521,169 @@ function WarehouseContent() {
                   <th className="w-[38px] px-3 py-2.5 text-center">
                     <input
                       type="checkbox"
-                      checked={filteredItems.length > 0 && selectedItemIds.size === filteredItems.length}
+                      checked={sortedItems.length > 0 && selectedItemIds.size === sortedItems.length}
                       onChange={handleToggleSelectAll}
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                     />
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
-                    Артикул
+                  <th
+                    onClick={() => handleSort("sku")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "sku" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по артикулу"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Артикул</span>
+                      {sortField === "sku" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Наименование
+                  <th
+                    onClick={() => handleSort("name")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "name" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по наименованию"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Наименование</span>
+                      {sortField === "name" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
-                    Категория
+                  <th
+                    onClick={() => handleSort("category")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "category" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по категории"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Категория</span>
+                      {sortField === "category" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Бренд
+                  <th
+                    onClick={() => handleSort("brand")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "brand" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по бренду"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Бренд</span>
+                      {sortField === "brand" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
-                    Физический
+                  <th
+                    onClick={() => handleSort("totalStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "totalStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по физическому остатку"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Физический</span>
+                      {sortField === "totalStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
-                    В резерве
+                  <th
+                    onClick={() => handleSort("reservedStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "reservedStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по количеству в резерве"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>В резерве</span>
+                      {sortField === "reservedStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
-                    Доступно
+                  <th
+                    onClick={() => handleSort("availableStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "availableStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по доступному остатку"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Доступно</span>
+                      {sortField === "availableStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Себестоимость
+                  <th
+                    onClick={() => handleSort("costPrice")}
+                    className={cn(
+                      "px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "costPrice" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по себестоимости"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <span>Себестоимость</span>
+                      {sortField === "costPrice" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Розница
+                  <th
+                    onClick={() => handleSort("retailPrice")}
+                    className={cn(
+                      "px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "retailPrice" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по розничной цене"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <span>Розница</span>
+                      {sortField === "retailPrice" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
                   <th className="px-4 py-2.5 w-[90px]" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
-                {filteredItems.map((item) => {
+                {sortedItems.map((item) => {
                   const isOutOfStock = item.availableStock <= 0;
                   const isLowStock = item.availableStock > 0 && item.availableStock <= item.minStock;
                   const isSelected = selectedItemIds.has(item.id);
@@ -2409,6 +2854,30 @@ function WarehouseContent() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleBulkCreatePurchaseRequest}
+              disabled={!hasReservedOrDeficit || bulkCreatePurchasesMutation.isPending}
+              className={cn(
+                "flex h-7 items-center gap-1.5 rounded-[6px] px-3 text-xs font-medium shadow-xs transition-colors",
+                hasReservedOrDeficit && !bulkCreatePurchasesMutation.isPending
+                  ? "bg-amber-600 text-white hover:bg-amber-700 cursor-pointer"
+                  : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed",
+              )}
+              title={
+                !hasReservedOrDeficit
+                  ? "Кнопка активна только для позиций со статусом «В резерве» или дефицитом"
+                  : "Сформировать заявку на закупку для выбранных позиций"
+              }
+            >
+              {bulkCreatePurchasesMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShoppingCart className="h-3.5 w-3.5" />
+              )}
+              Сформировать заявку
+            </button>
+
             <button
               type="button"
               onClick={handleBulkEditClick}

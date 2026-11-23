@@ -20,6 +20,7 @@ export const createWarehouseItemSchema = z.object({
   min_stock: z.number().nonnegative().default(0),
   retail_price: z.number().nonnegative().default(0),
   cost_price: z.number().nonnegative().default(0),
+  reserved: z.boolean().optional(),
   model_ids: z.array(z.string().uuid()).optional(),
   models: z.array(z.string()).optional(),
 });
@@ -186,6 +187,7 @@ export interface WarehouseItemRow {
   cost_price: string | number;
   total_stock?: string | number;
   reserved_stock?: string | number;
+  reserved?: boolean | string | number | null;
   stock_valuation?: string | number;
   fifo_cost_price?: string | number | null;
   active_batches_count?: string | number;
@@ -224,6 +226,9 @@ export interface WarehouseItemDTO {
   quantity?: number;
   reservedStock: number;
   availableStock: number;
+  reserved?: boolean;
+  status?: "reserved" | "in_stock" | "out_of_stock";
+  stockStatus?: "reserved" | "in_stock" | "out_of_stock";
   models?: WarehouseItemModelDTO[];
   modelIds?: string[];
   modelNames?: string[];
@@ -233,6 +238,25 @@ export interface WarehouseItemDTO {
 
 export const WAREHOUSE_LIMITS = [25, 50, 75, 100, 150, 200, 250] as const;
 export type WarehouseLimit = (typeof WAREHOUSE_LIMITS)[number];
+
+const modelIdsPreprocessor = (v: unknown): string[] | undefined => {
+  if (!v) return undefined;
+  if (Array.isArray(v)) {
+    const list = v
+      .flatMap((item) => (typeof item === "string" ? item.split(",") : String(item)))
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return list.length > 0 ? list : undefined;
+  }
+  if (typeof v === "string") {
+    const list = v
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return list.length > 0 ? list : undefined;
+  }
+  return undefined;
+};
 
 export const warehousePaginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -246,6 +270,8 @@ export const warehousePaginationQuerySchema = z.object({
   search: z.string().optional(),
   category: z.string().optional(),
   brand: z.string().optional(),
+  model_ids: z.preprocess(modelIdsPreprocessor, z.array(z.string().uuid()).optional()),
+  modelIds: z.preprocess(modelIdsPreprocessor, z.array(z.string().uuid()).optional()),
   all: z.preprocess((v) => v === "true" || v === true, z.boolean().optional()),
 });
 export type WarehousePaginationQuery = z.infer<typeof warehousePaginationQuerySchema>;

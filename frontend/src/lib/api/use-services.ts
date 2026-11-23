@@ -82,13 +82,19 @@ export function useUpdateService() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, payload }: { id: string; payload: UpdateServicePayload }) => {
-      const res = await apiClient.patch<ServiceItemDTO>(`/api/v1/services/${id}`, payload);
-      return res.data;
+      try {
+        const res = await apiClient.put<ServiceItemDTO>(`/api/services/${id}`, payload);
+        return res.data;
+      } catch {
+        const res = await apiClient.patch<ServiceItemDTO>(`/api/v1/services/${id}`, payload);
+        return res.data;
+      }
     },
     onSuccess: (_data, vars) => {
       void queryClient.invalidateQueries({ queryKey: serviceKeys.all });
       void queryClient.invalidateQueries({ queryKey: serviceKeys.detail(vars.id) });
       void queryClient.invalidateQueries({ queryKey: ["repairs", "services-catalog"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair-services-catalog"] });
     },
   });
 }

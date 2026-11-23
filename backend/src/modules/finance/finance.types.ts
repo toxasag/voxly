@@ -124,7 +124,7 @@ export const bulkDeleteInvoicesSchema = z.object({
 });
 
 export const markInvoicePaidSchema = z.object({
-  account_id: accountIdSchema,
+  account_id: optionalUuid,
   occurred_at: isoDate.optional(),
   description: z.string().max(500).optional().or(z.literal("")),
 });
@@ -158,7 +158,7 @@ export const createInvoiceFromActsSchema = z.object({
 });
 
 export const sendInvoiceSchema = z.object({
-  channel_type: z.enum(["telegram", "whatsapp", "all"]).default("all"),
+  channel_type: z.enum(["telegram", "whatsapp", "max", "all"]).default("all"),
 });
 
 export const bulkTransactionsSchema = z.object({

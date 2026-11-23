@@ -14,6 +14,7 @@ import {
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
 import { useCreatePart, useDeletePart } from "@/lib/api/use-repairs";
+import { PartAddModal } from "./PartAddModal";
 import { cn } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
@@ -21,6 +22,7 @@ interface PartsTableProps {
   orderId?: string;
   items: PartItem[];
   onChange?: (items: PartItem[]) => void;
+  onDraftStateChange?: (draftLabel: string | null) => void;
 }
 
 function formatCost(amount: number): string {
@@ -31,7 +33,7 @@ function formatCost(amount: number): string {
   }).format(amount);
 }
 
-export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
+export function PartsTable({ orderId, items, onChange, onDraftStateChange }: PartsTableProps) {
   const [newName, setNewName] = useState("");
   const [newArticle, setNewArticle] = useState("");
   const [newQty, setNewQty] = useState("1");
@@ -41,8 +43,33 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [addToPurchaseRequest, setAddToPurchaseRequest] = useState(false);
+  const [partAddModalOpen, setPartAddModalOpen] = useState(false);
 
   const comboboxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!onDraftStateChange) return;
+    const trimmedName = newName.trim();
+    const trimmedArticle = newArticle.trim();
+    const hasDraft = Boolean(
+      trimmedName ||
+        selectedWarehouseItem !== null ||
+        trimmedArticle ||
+        newRetail.trim() ||
+        newCostPrice.trim(),
+    );
+    onDraftStateChange(
+      hasDraft
+        ? trimmedName || selectedWarehouseItem?.name || trimmedArticle || "Новая запчасть"
+        : null,
+    );
+  }, [newName, newArticle, newRetail, newCostPrice, selectedWarehouseItem, onDraftStateChange]);
+
+  useEffect(() => {
+    return () => {
+      onDraftStateChange?.(null);
+    };
+  }, [onDraftStateChange]);
 
   const { data: warehouseItems = [], isLoading: isWarehouseLoading } = useWarehouseItems();
   const { data: warehouseSettings } = useWarehouseSettings();
@@ -172,11 +199,17 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
     [orderId, deletePartMutation, items, onChange],
   );
 
-  const handleCreatePurchase = async (partName: string, sku: string, qty: number, estPrice: number) => {
+  const handleCreatePurchase = async (
+    partName: string,
+    sku: string,
+    qty: number,
+    estPrice: number,
+    itemId?: string,
+  ) => {
     try {
       await createPurchaseMutation.mutateAsync({
         repair_order_id: orderId,
-        item_id: selectedWarehouseItem?.id,
+        item_id: itemId || (selectedWarehouseItem?.name === partName ? selectedWarehouseItem.id : undefined),
         item_name: partName,
         sku: sku || "Б/А",
         quantity: qty > 0 ? qty : 1,
@@ -213,9 +246,19 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-[#888888]">{items.length} позиций</span>
           {orderId && (
-            <span className="flex items-center gap-1 rounded-[4px] bg-[#f0f0f0] px-2 py-0.5 text-[11px] text-[#666666]">
-              <Boxes className="h-3 w-3 text-[#4a38f5]" /> Авторезерв со склада
-            </span>
+            <>
+              <button
+                type="button"
+                onClick={() => setPartAddModalOpen(true)}
+                className="flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-0.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 hover:border-[#4a38f5]/30 transition-colors cursor-pointer shadow-2xs"
+                title="Добавить запчасть в наряд"
+              >
+                <Plus className="h-3 w-3" /> Добавить запчасть
+              </button>
+              <span className="flex items-center gap-1 rounded-[4px] bg-[#f0f0f0] px-2 py-0.5 text-[11px] text-[#666666]">
+                <Boxes className="h-3 w-3 text-[#4a38f5]" /> Авторезерв со склада
+              </span>
+            </>
           )}
         </div>
       </div>
@@ -242,7 +285,7 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
               <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
                 Наценка
               </th>
-              <th className="px-4 py-2.5 w-[80px]" />
+              <th className="px-4 py-2.5 w-[160px] text-right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#f0f0f0]">
@@ -253,10 +296,23 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
               const markupPct = itemTotalCost > 0 ? Math.round((margin / itemTotalCost) * 100) : 0;
               const allocations = item.batch_allocations ?? [];
 
+              const whItem = item.warehouse_item_id
+                ? warehouseItems.find((w) => w.id === item.warehouse_item_id)
+                : warehouseItems.find((w) => w.name.toLowerCase().trim() === item.name.toLowerCase().trim());
+              const isOutOfStock = whItem
+                ? (whItem.availableStock <= 0 || whItem.totalStock <= 0)
+                : (item.status === "needs_purchase" || item.status === "out_of_stock");
+              const purchaseReq = purchaseRequests.find(
+                (pr) =>
+                  (item.warehouse_item_id && pr.itemId === item.warehouse_item_id) ||
+                  pr.itemName.toLowerCase().trim() === item.name.toLowerCase().trim(),
+              );
+              const hasPurchase = !!purchaseReq;
+
               return (
                 <tr key={item.id} className="transition-colors hover:bg-[#f5f5f5]">
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-[13px] font-medium text-[#111111]">{item.name}</p>
                       {item.warehouse_item_id && (
                         <span className="inline-flex items-center rounded-[4px] bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 border border-sky-200">
@@ -266,6 +322,11 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                       {item.status === "reserved" && (
                         <span className="inline-flex items-center rounded-[4px] bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 border border-amber-200">
                           Резерв
+                        </span>
+                      )}
+                      {isOutOfStock && (
+                        <span className="inline-flex items-center rounded-[4px] bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 border border-rose-200">
+                          Нет в наличии
                         </span>
                       )}
                     </div>
@@ -314,11 +375,31 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {orderId && (
+                    <div className="flex items-center justify-end gap-1.5">
+                      {orderId && hasPurchase && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-[4px] bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 border border-sky-200"
+                          title={`Заявка создана: статус ${purchaseReq.status}`}
+                        >
+                          <ShoppingCart className="h-3 w-3 text-sky-600" />
+                          В закупке
+                        </span>
+                      )}
+                      {orderId && !hasPurchase && isOutOfStock && (
                         <button
                           type="button"
-                          onClick={() => handleCreatePurchase(item.name, item.article, item.quantity, item.cost_price)}
+                          onClick={() => handleCreatePurchase(item.name, item.article, item.quantity, item.cost_price, item.warehouse_item_id || whItem?.id)}
+                          className="flex items-center gap-1 rounded-[4px] bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+                          title="Сформировать заявку на закупку (детали нет в наличии)"
+                        >
+                          <ShoppingCart className="h-3 w-3 text-amber-700" />
+                          Отметить для заказа
+                        </button>
+                      )}
+                      {orderId && !hasPurchase && !isOutOfStock && (
+                        <button
+                          type="button"
+                          onClick={() => handleCreatePurchase(item.name, item.article, item.quantity, item.cost_price, item.warehouse_item_id || whItem?.id)}
                           className="rounded p-1 text-[#888888] hover:text-[#4a38f5] hover:bg-slate-100 transition-colors"
                           title="Создать заявку на закупку"
                         >
@@ -430,10 +511,27 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
                   </div>
                 )}
                 {!isWarehouseLoading && filteredWarehouseItems.length === 0 && (
-                  <div className="px-2.5 py-2 text-xs text-[#888888]">
-                    {warehouseItems.length === 0
-                      ? "Склад пока пуст. Введите название и параметры вручную."
-                      : "На складе позиций не найдено. Можно добавить как свободную деталь."}
+                  <div className="p-2 space-y-1.5">
+                    <div className="text-xs text-[#888888]">
+                      {warehouseItems.length === 0
+                        ? "Склад пока пуст. Запчасть можно добавить вручную или через форму."
+                        : "На складе позиций не найдено."}
+                    </div>
+                    {newName.trim().length > 0 && orderId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCatalogOpen(false);
+                          setPartAddModalOpen(true);
+                        }}
+                        className="flex w-full items-center gap-1.5 rounded-[6px] bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-2.5 py-1.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors text-left cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Добавить «<span className="font-semibold">{newName.trim()}</span>» через форму
+                        </span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -631,6 +729,25 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
             })}
           </div>
         </div>
+      )}
+
+      {orderId && (
+        <PartAddModal
+          open={partAddModalOpen}
+          onClose={() => setPartAddModalOpen(false)}
+          orderId={orderId}
+          initialName={newName}
+          initialArticle={newArticle}
+          onSuccess={() => {
+            setNewName("");
+            setNewArticle("");
+            setNewQty("1");
+            setNewRetail("");
+            setNewCostPrice("");
+            setSelectedWarehouseItem(null);
+            setAddToPurchaseRequest(false);
+          }}
+        />
       )}
     </div>
   );

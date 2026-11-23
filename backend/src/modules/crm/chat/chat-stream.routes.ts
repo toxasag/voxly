@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticatePlugin } from "../../../plugins/authenticate.js";
 import { registerSseStream } from "../../../infrastructure/sse-registry.js";
+import { corsOriginMatcher } from "../../../config/env.js";
 import { chatEventBus, type ChatStreamEvent } from "./chat-events.js";
 import { query } from "../../../db/client.js";
 import { DealsService } from "../deals/deals.service.js";
@@ -42,6 +43,7 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
 
   const dealsService = new DealsService();
+  const isAllowedOrigin = corsOriginMatcher();
 
   app.get<{ Querystring: StreamQuery }>(
     "/crm/chat/stream",
@@ -50,16 +52,33 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
       const tenantId = request.tenant_id;
       const dealId = request.query.dealId;
 
-      reply.raw.setHeader("Content-Type", "text/event-stream");
-      reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
-      reply.raw.setHeader("Connection", "keep-alive");
-      reply.raw.setHeader("X-Accel-Buffering", "no");
+      const origin = request.headers.origin;
+      const headers: Record<string, string> = {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      };
+      if (origin && isAllowedOrigin(origin)) {
+        headers["Access-Control-Allow-Origin"] = origin;
+        headers["Access-Control-Allow-Credentials"] = "true";
+        headers["Vary"] = "Origin";
+      }
 
-      // Начальный ping
+      // Перехватываем сокет у Fastify: иначе возврат из async-хендлера немедленно
+      // закроет поток или пропустит CORS-заголовки при записи в reply.raw.
+      reply.hijack();
+      reply.raw.writeHead(200, headers);
+      reply.raw.flushHeaders?.();
       reply.raw.write(`: connected\n\n`);
 
       const onEvent = (event: ChatStreamEvent) => {
-        reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        if (reply.raw.destroyed || reply.raw.writableEnded) return;
+        try {
+          reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          // ignore broken pipe; close listener cleans up
+        }
       };
 
       const unsubscribe = dealId
@@ -69,19 +88,24 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
       const unregisterStream = registerSseStream(reply.raw);
 
       const pingInterval = setInterval(() => {
-        if (!reply.raw.destroyed) {
-          reply.raw.write(`: ping\n\n`);
+        if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+          try {
+            reply.raw.write(`: ping\n\n`);
+          } catch {
+            // ignore broken pipe
+          }
         }
       }, 15_000);
       pingInterval.unref?.();
 
-      request.raw.on("close", () => {
+      const cleanup = () => {
         clearInterval(pingInterval);
         unsubscribe();
         unregisterStream();
-      });
+      };
 
-      return reply;
+      request.raw.once("close", cleanup);
+      reply.raw.once("close", cleanup);
     },
   );
 

@@ -55,9 +55,10 @@ interface RepairsTableProps {
   error?: Error | null;
 }
 
-// 4 стандартизированных рабочих статуса + таб «Все»
+// Рабочие статусы + «Все» и «В работе» (все статусы, кроме «Выдан»)
 const STATUS_TABS: { value: RepairFilterStatus; label: string }[] = [
   { value: "all", label: "Все" },
+  { value: "active", label: "В работе" },
   { value: "intake", label: "Принят" },
   { value: "waiting_parts", label: "Заказ запчастей" },
   { value: "ready", label: "Готов" },

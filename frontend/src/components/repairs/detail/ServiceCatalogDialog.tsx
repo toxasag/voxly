@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
-import { X, Search, Plus, Trash2, BookOpen, Loader2 } from "lucide-react";
+import { X, Search, Plus, Trash2, BookOpen, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 import {
@@ -10,6 +10,8 @@ import {
   useDeleteRepairServiceFromCatalog,
   type RepairServiceCatalogItemDTO,
 } from "@/lib/api/use-repairs";
+import { EditServiceModal } from "@/components/services/EditServiceModal";
+import type { ServiceItemDTO } from "@/lib/api/use-services";
 
 interface ServiceCatalogDialogProps {
   open: boolean;
@@ -37,6 +39,7 @@ export function ServiceCatalogDialog({
   const [newDescription, setNewDescription] = useState("");
   const [newPrice, setNewPrice] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingService, setEditingService] = useState<ServiceItemDTO | null>(null);
 
   const { data: services = [], isLoading } = useRepairServicesCatalog();
   const addMutation = useAddRepairServiceToCatalog();
@@ -242,7 +245,7 @@ export function ServiceCatalogDialog({
                       : "Цена не указана"}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   {onSelectService && (
                     <button
                       type="button"
@@ -257,9 +260,31 @@ export function ServiceCatalogDialog({
                   )}
                   <button
                     type="button"
+                    onClick={() =>
+                      setEditingService({
+                        id: service.id,
+                        name: service.name,
+                        description: service.description ?? "",
+                        price: service.defaultPrice ?? 0,
+                        defaultPrice: service.defaultPrice ?? 0,
+                        unit: service.unit ?? "усл",
+                        durationMinutes: service.durationMinutes ?? null,
+                        createdAt: service.createdAt,
+                      })
+                    }
+                    aria-label={`Редактировать услугу ${service.name}`}
+                    title="Редактировать услугу"
+                    className="rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] hover:text-[#4a38f5] transition-colors cursor-pointer flex items-center gap-1"
+                  >
+                    <Pencil className="h-3 w-3 text-[#666666]" />
+                    <span>Редактировать</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void handleDelete(service.id, service.name)}
                     disabled={deletingId === service.id}
                     title="Удалить из справочника"
+                    aria-label={`Удалить услугу ${service.name}`}
                     className="rounded-[6px] p-1.5 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-40"
                   >
                     {deletingId === service.id ? (
@@ -289,6 +314,13 @@ export function ServiceCatalogDialog({
           </button>
         </div>
       </div>
+
+      {/* Edit Service Modal */}
+      <EditServiceModal
+        open={Boolean(editingService)}
+        onClose={() => setEditingService(null)}
+        service={editingService}
+      />
     </div>
   );
 }

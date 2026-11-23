@@ -40,6 +40,11 @@ import {
   type MascotId,
 } from "./InteractiveMascot";
 import { CreatePhotoMascotModal } from "./CreatePhotoMascotModal";
+import {
+  WidgetSettings,
+  getTypingEffectFromStorage,
+  setTypingEffectInStorage,
+} from "@/components/widgets/WidgetSettings";
 
 export type WebchatAttentionEffect = "none" | "shimmer" | "pulse" | "glow" | "bounce";
 
@@ -218,6 +223,9 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
     typeof initialCreds.statusText === "string" && initialCreds.statusText.trim().length > 0
       ? initialCreds.statusText.trim()
       : "Онлайн",
+  );
+  const [typingEffectEnabled, setTypingEffectEnabled] = useState<boolean>(() =>
+    getTypingEffectFromStorage(),
   );
 
   const initialCustomDirs =
@@ -1817,6 +1825,19 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             </div>
           </div>
 
+          {/* 5.5 Типинг-эффект (посимвольное появление текста) */}
+          <div className="rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+            <WidgetSettings
+              typingEffectEnabled={typingEffectEnabled}
+              onTypingEffectChange={(val) => {
+                setTypingEffectEnabled(val);
+                setTypingEffectInStorage(val);
+              }}
+              language={locale === "en" ? "en" : "ru"}
+              className="border-none p-0 shadow-none"
+            />
+          </div>
+
           {/* 6. Переход в мессенджеры (Telegram, WhatsApp, MAX) */}
           <div className="rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs">
             <div className="flex items-center justify-between">
@@ -2550,6 +2571,9 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                             <p className="mb-0.5 text-[10px] font-semibold text-[#888888]">{consultantName}</p>
                           )}
                           <div
+                            role="status"
+                            aria-live="polite"
+                            aria-label="typing effect"
                             className={cn(
                               "max-w-[90%] rounded-2xl rounded-tl-sm p-3 leading-relaxed shadow-sm",
                               isDark
@@ -2557,7 +2581,15 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                                 : "bg-[#f5f5f5] text-[#111111] border border-[#e5e5e5]",
                             )}
                           >
-                            {greeting}
+                            <span>{greeting}</span>
+                            {typingEffectEnabled && (
+                              <span
+                                aria-hidden="true"
+                                className="inline-block w-[2px] h-[1.1em] ml-0.5 bg-[#111111] dark:bg-white animate-pulse align-middle font-mono font-bold select-none"
+                              >
+                                |
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

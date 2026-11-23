@@ -129,10 +129,12 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.get("/", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const modelIds = query.model_ids ?? query.modelIds;
     const result = await warehouseService.listItems(tenant_id, query.search, {
       page: query.page,
       limit: query.limit,
       all: query.all,
+      modelIds,
     });
     return reply.send(result);
   });
@@ -141,12 +143,14 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.get("/items", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const modelIds = query.model_ids ?? query.modelIds;
     const result = await warehouseService.listItems(tenant_id, query.search, {
       page: query.page,
       limit: query.limit,
       all: query.all,
       category: query.category,
       brand: query.brand,
+      modelIds,
     });
     return reply.send(result);
   });
@@ -418,6 +422,32 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const { status } = request.query as { status?: string };
     const list = await warehouseService.listAggregatedPurchaseRequests(tenant_id, status);
     return reply.send({ data: list });
+  });
+
+  // Создание заявок на закупку (одиночное или массовое по массиву itemIds)
+  app.post("/purchase-requests", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const userId = request.authUser?.id ?? null;
+    const body = request.body as Record<string, unknown>;
+
+    if (Array.isArray(body?.itemIds) && body.itemIds.length > 0) {
+      const created = await warehouseService.createBulkPurchaseRequests(
+        tenant_id,
+        userId,
+        {
+          itemIds: body.itemIds as string[],
+          status: typeof body.status === "string" ? body.status : undefined,
+          comment: typeof body.comment === "string" ? body.comment : undefined,
+          repair_order_id: typeof body.repair_order_id === "string" ? body.repair_order_id : undefined,
+          deal_id: typeof body.deal_id === "string" ? body.deal_id : undefined,
+        },
+      );
+      return reply.status(201).send({ data: created });
+    }
+
+    const parsed = createPurchaseRequestSchema.parse(request.body);
+    const created = await warehouseService.createPurchaseRequest(tenant_id, userId, parsed);
+    return reply.status(201).send({ data: created });
   });
 
   // Создание заявки на закупку

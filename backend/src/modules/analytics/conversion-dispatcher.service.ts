@@ -99,6 +99,14 @@ function extractAttribution(
     (sourceMetadata.yclid as string) ||
     null;
 
+  const gclid =
+    (dealCustomFields.gclid as string) ||
+    (metaClickIds.gclid as string) ||
+    (contactCustomFields.gclid as string) ||
+    (sourceMetadata.gclid as string) ||
+    ((sourceMetadata.form_data as Record<string, unknown> | undefined)?.gclid as string) ||
+    null;
+
   const clientId =
     (dealCustomFields.client_id as string) ||
     (dealCustomFields.ga_client_id as string) ||
@@ -142,7 +150,7 @@ function extractAttribution(
     (sourceMetadata.page_url as string) ||
     null;
 
-  return { ymUid, yclid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl };
+  return { ymUid, yclid, gclid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl };
 }
 
 export class ConversionDispatcherService {
@@ -369,7 +377,7 @@ export class ConversionDispatcherService {
       const sourceMetadata =
         deal.source_metadata && typeof deal.source_metadata === "object" ? deal.source_metadata : {};
 
-      const { ymUid, yclid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl } =
+      const { ymUid, yclid, gclid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl } =
         extractAttribution(dealCustomFields, contactCustomFields, sourceMetadata);
 
       let eventName = overrideEventName;
@@ -401,6 +409,7 @@ export class ConversionDispatcherService {
         clientId,
         ymUid,
         yclid,
+        gclid,
         yandexuid,
         gaId,
         fbId,

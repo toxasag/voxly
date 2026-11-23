@@ -388,7 +388,7 @@ export interface UpdateInvoicePayload {
 }
 
 export interface MarkInvoicePaidPayload {
-  account_id: string;
+  account_id?: string;
   occurred_at?: string;
   description?: string;
 }
@@ -729,6 +729,8 @@ export function useMarkInvoicePaid(): UseMutationResult<InvoiceDTO, ApiClientErr
     onSuccess: (invoice) => {
       queryClient.setQueryData(financeKeys.invoiceDetail(invoice.id), invoice);
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
     },
   });
 }
@@ -762,7 +764,7 @@ export interface BatchPaymentPayload {
 }
 
 export interface SendInvoicePayload {
-  channel_type: "telegram" | "whatsapp" | "all";
+  channel_type: "telegram" | "whatsapp" | "max" | "all";
 }
 
 export function useRepairInvoices(repairOrderId: string | null): UseQueryResult<InvoiceDTO[], ApiClientError> {
@@ -825,12 +827,14 @@ export function useBatchPayment(): UseMutationResult<
 export function useSendInvoice(): UseMutationResult<
   { success: boolean; channels: string[]; message: string },
   ApiClientError,
-  { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+  { id: string; channel_type: SendInvoicePayload["channel_type"] }
 > {
+  const queryClient = useQueryClient();
+
   return useMutation<
     { success: boolean; channels: string[]; message: string },
     ApiClientError,
-    { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+    { id: string; channel_type: SendInvoicePayload["channel_type"] }
   >({
     mutationFn: async ({ id, channel_type }) => {
       const res = await apiClient.post<{ success: boolean; channels: string[]; message: string }>(
@@ -838,6 +842,10 @@ export function useSendInvoice(): UseMutationResult<
         { channel_type },
       );
       return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }

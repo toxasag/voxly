@@ -8,6 +8,7 @@ import { pluralRu } from "../../lib/string.utils.js";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { decryptSecret, encryptSecret } from "../../services/credentials-cipher.js";
+import { quotaService } from "../quotas/quota.service.js";
 import {
   TelegramMtprotoService,
   TelegramPasswordRequiredError,
@@ -779,6 +780,11 @@ export class TelegramAuthService {
   }
 
   private async assertQuotaAvailable(tenantId: string): Promise<void> {
+    const quota = await quotaService.checkQuota(tenantId, "telegram_channels");
+    if (quota.isUnlimited) {
+      return;
+    }
+
     const module = await queryOne<{ quantity: number }>(
       `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = 'telegram'`,
       [tenantId],
@@ -794,11 +800,12 @@ export class TelegramAuthService {
       [tenantId],
     );
 
-    if (Number(used?.total ?? 0) >= module.quantity) {
+    const effectiveLimit = quota.maxLimit ?? module.quantity;
+    if (Number(used?.total ?? 0) >= effectiveLimit) {
       throw new AppError(
         409,
         "CHANNEL_LIMIT_REACHED",
-        `По тарифу оплачено ${module.quantity} ${pluralConnections(module.quantity)}. Увеличьте количество в маркетплейсе.`,
+        `По тарифу оплачено ${effectiveLimit} ${pluralConnections(effectiveLimit)}. Увеличьте количество в маркетплейсе.`,
       );
     }
   }

@@ -221,6 +221,18 @@ export class TelegramService {
   }
 
   /**
+   * Получение токена созданного управляемого бота через Bot API (Bot Management Mode).
+   * Метод getManagedBotToken принимает user_id (id бота).
+   */
+  async getManagedBotToken(botId: number | string): Promise<string | null> {
+    const res = await this.call("getManagedBotToken", { user_id: Number(botId) });
+    if (res.ok && typeof res.result === "string") {
+      return res.result;
+    }
+    return null;
+  }
+
+  /**
    * Регистрирует webhook. Вызывается на старте, чтобы адрес не оставался
    * указывающим на снятый сервис: у бота был прописан URL удалённого легаси-стека,
    * и Telegram доставлял обновления в 404.
@@ -228,7 +240,7 @@ export class TelegramService {
   async setWebhook(url: string, secret: string | undefined): Promise<TelegramResponse> {
     return this.call("setWebhook", {
       url,
-      allowed_updates: ["message"],
+      allowed_updates: ["message", "managed_bot"],
       // Старые обновления, скопившиеся пока webhook был битым, отбрасываем:
       // среди них нет ничего, что стоило бы обрабатывать сейчас.
       drop_pending_updates: true,
