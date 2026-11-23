@@ -24,6 +24,14 @@ import {
   Check,
   Users,
   SlidersHorizontal,
+  Globe,
+  MessageSquare,
+  Send,
+  Hash,
+  ShoppingBag,
+  Camera,
+  GitMerge,
+  Infinity as InfinityIcon,
 } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import {
@@ -83,6 +91,44 @@ const PARTNER_PRICE_PRESETS = [
   { label: "4 900 ₽/мес (Партнёр PRO)", value: 4900, defaultPlanName: "Партнёр PRO" },
 ];
 
+function getQuotaIcon(featureKey: string) {
+  switch (featureKey) {
+    case "webchat_widgets":
+      return MessageSquare;
+    case "site_integrations":
+      return Globe;
+    case "ai_agents":
+      return Bot;
+    case "telegram_channels":
+      return Send;
+    case "telegram_bot_channels":
+      return Bot;
+    case "whatsapp_channels":
+      return Phone;
+    case "max_channels":
+      return Hash;
+    case "max_bot_channels":
+      return Bot;
+    case "avito_channels":
+      return ShoppingBag;
+    case "instagram_channels":
+      return Camera;
+    case "custom_pipelines":
+      return GitMerge;
+    default:
+      return SlidersHorizontal;
+  }
+}
+
+const CATEGORY_ORDER = ["widgets", "ai", "channels", "crm"] as const;
+
+const CATEGORY_TITLES: Record<string, string> = {
+  widgets: "Виджеты и сайты",
+  ai: "AI и боты",
+  channels: "Каналы связи и мессенджеры",
+  crm: "CRM и воронки",
+};
+
 export function TenantManageModal({
   open,
   tenant,
@@ -107,6 +153,10 @@ export function TenantManageModal({
   const [requireTelegramAuth, setRequireTelegramAuth] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  const isPlatformRoot =
+    tenant?.slug === "voxly" ||
+    tenant?.id === "c0000000-0000-0000-0000-000000000001";
+
   const { data: quotasData, isLoading: quotasLoading } = useAdminTenantQuotas(
     open && tenant ? tenant.id : null,
   );
@@ -121,17 +171,44 @@ export function TenantManageModal({
       const initial: Record<string, { is_unlimited: boolean; max_limit: number }> = {};
       for (const q of quotasData) {
         initial[q.feature_key] = {
-          is_unlimited: q.is_unlimited,
+          is_unlimited: isPlatformRoot ? true : q.is_unlimited,
           max_limit: q.max_limit > 0 ? q.max_limit : q.default_limit,
         };
       }
       setQuotasState(initial);
     }
+  }, [quotasData, isPlatformRoot]);
+
+  const handleEnableAllUnlimited = useCallback(() => {
+    if (!quotasData) return;
+    setQuotasState((prev) => {
+      const next = { ...prev };
+      for (const q of quotasData) {
+        const prevLimit = prev[q.feature_key]?.max_limit;
+        next[q.feature_key] = {
+          is_unlimited: true,
+          max_limit: prevLimit && prevLimit > 0 ? prevLimit : q.default_limit,
+        };
+      }
+      return next;
+    });
+    toast.success("Включён безлимит для всех функций");
   }, [quotasData]);
 
-  const isPlatformRoot =
-    tenant?.slug === "voxly" ||
-    tenant?.id === "c0000000-0000-0000-0000-000000000001";
+  const handleResetToDefaultQuotas = useCallback(() => {
+    if (!quotasData) return;
+    setQuotasState((prev) => {
+      const next = { ...prev };
+      for (const q of quotasData) {
+        next[q.feature_key] = {
+          is_unlimited: false,
+          max_limit: q.default_limit,
+        };
+      }
+      return next;
+    });
+    toast.info("Квоты сброшены к значениям по умолчанию");
+  }, [quotasData]);
 
   const availablePartners = useMemo(() => {
     return (allTenants || []).filter(
@@ -806,20 +883,50 @@ export function TenantManageModal({
 
         {/* Секция: Индивидуальные квоты и лимиты функций (Entitlements) */}
         <div className="rounded-[10px] border border-[#e5e5e5] p-4 space-y-3 bg-white">
-          <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#f0f0f0] pb-2">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="h-4 w-4 text-[#4a38f5]" />
               <h3 className="text-xs font-semibold uppercase tracking-wider text-[#111111]">
                 Индивидуальные квоты и лимиты функций
               </h3>
+              <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
+                Entitlements
+              </span>
             </div>
-            <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-medium text-[#4a38f5]">
-              Entitlements
-            </span>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleEnableAllUnlimited}
+                className="flex items-center gap-1 rounded-[6px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2 py-1 text-[11px] font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors"
+                title="Установить безлимит для всех каналов и функций"
+              >
+                <InfinityIcon className="h-3.5 w-3.5" />
+                <span>Снять все лимиты</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleResetToDefaultQuotas}
+                className="rounded-[6px] px-1.5 py-1 text-[11px] text-[#888888] hover:text-[#111111] transition-colors"
+                title="Сбросить все квоты к базовым тарифам"
+              >
+                Сброс
+              </button>
+            </div>
           </div>
+
           <p className="text-[11px] text-[#666666]">
             Настройте персональные ограничения на количество онлайн-виджетов, AI-ботов и каналов для данного клиента (неограниченно или фиксированное число).
           </p>
+
+          {isPlatformRoot && (
+            <div className="flex items-center gap-2.5 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-2.5 text-xs text-[#4a38f5]">
+              <Sparkles className="h-4 w-4 shrink-0 text-[#4a38f5]" />
+              <span>
+                <strong>Главный портал платформы (Root):</strong> для этого портала все лимиты и ограничения каналов связи отключены (полный безлимит).
+              </span>
+            </div>
+          )}
 
           {quotasLoading ? (
             <div className="flex items-center justify-center py-6 text-xs text-[#888888]">
@@ -827,85 +934,106 @@ export function TenantManageModal({
               Загрузка лимитов...
             </div>
           ) : (
-            <div className="space-y-2.5">
-              {(quotasData ?? []).map((quota) => {
-                const currentSetting = quotasState[quota.feature_key] ?? {
-                  is_unlimited: quota.is_unlimited,
-                  max_limit: quota.max_limit > 0 ? quota.max_limit : quota.default_limit,
-                };
+            <div className="space-y-4">
+              {CATEGORY_ORDER.map((catKey) => {
+                const categoryQuotas = (quotasData ?? []).filter((q) => q.category === catKey);
+                if (categoryQuotas.length === 0) return null;
 
                 return (
-                  <div
-                    key={quota.feature_key}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-[#111111]">
-                          {quota.name}
-                        </span>
-                        <span
-                          className={cn(
-                            "rounded-[4px] px-1.5 py-0.2 text-[10px] font-medium border",
-                            quota.allowed
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border-rose-200 bg-rose-50 text-rose-700",
-                          )}
-                        >
-                          Использовано: {quota.current_usage}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-[11px] text-[#666666] truncate">
-                        {quota.description}
-                      </p>
+                  <div key={catKey} className="space-y-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#888888] px-1">
+                      {CATEGORY_TITLES[catKey] ?? catKey}
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-[#111111]">
-                        <input
-                          type="checkbox"
-                          checked={currentSetting.is_unlimited}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setQuotasState((prev) => {
-                              const prevLimit = prev[quota.feature_key]?.max_limit;
-                              const validLimit = prevLimit && prevLimit > 0 ? prevLimit : quota.default_limit;
-                              return {
-                                ...prev,
-                                [quota.feature_key]: {
-                                  is_unlimited: checked,
-                                  max_limit: validLimit,
-                                },
-                              };
-                            });
-                          }}
-                          className="h-4 w-4 rounded border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5]"
-                        />
-                        <span>Безлимитно</span>
-                      </label>
+                    <div className="space-y-2">
+                      {categoryQuotas.map((quota) => {
+                        const IconComponent = getQuotaIcon(quota.feature_key);
+                        const currentSetting = quotasState[quota.feature_key] ?? {
+                          is_unlimited: quota.is_unlimited,
+                          max_limit: quota.max_limit > 0 ? quota.max_limit : quota.default_limit,
+                        };
 
-                      {!currentSetting.is_unlimited && (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min={1}
-                            max={10000}
-                            value={currentSetting.max_limit > 0 ? currentSetting.max_limit : quota.default_limit}
-                            onChange={(e) => {
-                              const val = Math.max(1, parseInt(e.target.value, 10) || 1);
-                              setQuotasState((prev) => ({
-                                ...prev,
-                                [quota.feature_key]: {
-                                  is_unlimited: false,
-                                  max_limit: val,
-                                },
-                              }));
-                            }}
-                            className="h-7 w-16 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-center text-xs font-mono font-medium text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                          />
-                          <span className="text-[11px] text-[#888888]">шт.</span>
-                        </div>
-                      )}
+                        return (
+                          <div
+                            key={quota.feature_key}
+                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors hover:border-[#cccccc]"
+                          >
+                            <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#4a38f5]">
+                                <IconComponent className="h-3.5 w-3.5" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold text-[#111111]">
+                                    {quota.name}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "rounded-[4px] px-1.5 py-0.2 text-[10px] font-medium border",
+                                      quota.allowed
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : "border-rose-200 bg-rose-50 text-rose-700",
+                                    )}
+                                  >
+                                    Использовано: {quota.current_usage}
+                                  </span>
+                                </div>
+                                <p className="mt-0.5 text-[11px] text-[#666666] truncate">
+                                  {quota.description}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-[#111111]">
+                                <input
+                                  type="checkbox"
+                                  checked={currentSetting.is_unlimited}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setQuotasState((prev) => {
+                                      const prevLimit = prev[quota.feature_key]?.max_limit;
+                                      const validLimit = prevLimit && prevLimit > 0 ? prevLimit : quota.default_limit;
+                                      return {
+                                        ...prev,
+                                        [quota.feature_key]: {
+                                          is_unlimited: checked,
+                                          max_limit: validLimit,
+                                        },
+                                      };
+                                    });
+                                  }}
+                                  className="h-4 w-4 rounded border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5]"
+                                />
+                                <span>Безлимитно</span>
+                              </label>
+
+                              {!currentSetting.is_unlimited && (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={10000}
+                                    value={currentSetting.max_limit > 0 ? currentSetting.max_limit : quota.default_limit}
+                                    onChange={(e) => {
+                                      const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                                      setQuotasState((prev) => ({
+                                        ...prev,
+                                        [quota.feature_key]: {
+                                          is_unlimited: false,
+                                          max_limit: val,
+                                        },
+                                      }));
+                                    }}
+                                    className="h-7 w-16 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-center text-xs font-mono font-medium text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                                  />
+                                  <span className="text-[11px] text-[#888888]">шт.</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
