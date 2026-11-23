@@ -18,6 +18,7 @@ import {
   type ChatMessage as LlmChatMessage,
 } from "../../../services/chat.service.js";
 import { KnowledgeBaseService } from "../../ai/knowledge.service.js";
+import { MaxBridgeService } from "../../channels/max-bridge.service.js";
 
 // ---------------------------------------------------------------------------
 // Отправка ответа менеджера в канал клиента.
@@ -65,7 +66,31 @@ export class DealMessagingService {
     private readonly log: Logger | null = null,
     private readonly chat: ChatProvider = new GatewayChatProvider(),
     private readonly knowledge: KnowledgeBaseService = new KnowledgeBaseService(),
+    private readonly maxBridge: MaxBridgeService = new MaxBridgeService(),
   ) {}
+
+  private isMaxBridgeAccount(acc: {
+    channel: string;
+    credentials?: Record<string, unknown> | null;
+  }): boolean {
+    if (acc.channel !== "max" && acc.channel !== "rumax") return false;
+    const provider = acc.credentials?.provider ?? acc.credentials?.adapter;
+    return (
+      provider !== "native-ts" &&
+      provider !== "ts" &&
+      provider !== "green-api" &&
+      provider !== "greenapi"
+    );
+  }
+
+  private async getLiveMaxBotIds(
+    accounts: Array<{ channel: string; credentials?: Record<string, unknown> | null }>,
+  ): Promise<Set<string> | null> {
+    if (!accounts.some((a) => this.isMaxBridgeAccount(a))) {
+      return null;
+    }
+    return this.maxBridge.getLiveBotIds();
+  }
 
   /**
    * Возвращает список доступных аккаунтов («Пишем от:») для сделки с учетом контактных данных клиента.
@@ -104,10 +129,19 @@ export class DealMessagingService {
       custom_fields: null,
     };
 
-    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
-      `SELECT id, channel, label
+    const accounts = await query<{
+      id: string;
+      channel: string;
+      label?: string;
+      name?: string;
+      status?: string;
+      credentials?: Record<string, unknown> | null;
+    }>(
+      `SELECT id, channel, label, status, credentials
        FROM channel_accounts
-       WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+       WHERE tenant_id = $1
+         AND deleted_at IS NULL
+         AND (status = 'connected' OR (channel = 'max' AND status = 'error'))
        ORDER BY created_at ASC`,
       [tenantId],
     );
@@ -122,11 +156,9 @@ export class DealMessagingService {
     const lastAccId = lastMsgAccountRow[0]?.channel_account_id;
     const lastChannel = lastMsgAccountRow[0]?.channel;
 
-    const matchedByAccount = lastAccId ? accounts.find((a) => a.id === lastAccId) : undefined;
-    const matchedByChannel = lastChannel ? accounts.find((a) => a.channel === lastChannel) : undefined;
-    const defaultAccountId = matchedByAccount?.id ?? matchedByChannel?.id ?? accounts[0]?.id;
+    const liveMaxBotIds = await this.getLiveMaxBotIds(accounts);
 
-    return accounts.map((acc) => {
+    const options = accounts.map((acc) => {
       let available = false;
       let unavailableReason: string | undefined;
 
@@ -161,6 +193,15 @@ export class DealMessagingService {
         available = true;
       }
 
+      if (available && this.isMaxBridgeAccount(acc)) {
+        const isSessionDead =
+          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+        if (isSessionDead) {
+          available = false;
+          unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";
+        }
+      }
+
       let channelPrefix = acc.channel.toUpperCase();
       if (acc.channel === "max" || acc.channel === "rumax") channelPrefix = "MAX";
       else if (acc.channel === "telegram") channelPrefix = "Telegram";
@@ -179,9 +220,31 @@ export class DealMessagingService {
         accountName: accountLabel,
         available,
         unavailableReason,
-        isDefault: acc.id === defaultAccountId,
+        isDefault: false,
       };
     });
+
+    const matchedAvailableAccount = lastAccId
+      ? options.find((o) => o.channelAccountId === lastAccId && o.available)
+      : undefined;
+    const matchedAvailableChannel = lastChannel
+      ? options.find((o) => o.channel === lastChannel && o.available)
+      : undefined;
+    const firstAvailable = options.find((o) => o.available);
+    const fallbackAny =
+      (lastAccId ? options.find((o) => o.channelAccountId === lastAccId) : undefined) ??
+      (lastChannel ? options.find((o) => o.channel === lastChannel) : undefined) ??
+      options[0];
+    const defaultAccountId =
+      matchedAvailableAccount?.channelAccountId ??
+      matchedAvailableChannel?.channelAccountId ??
+      firstAvailable?.channelAccountId ??
+      fallbackAny?.channelAccountId;
+
+    return options.map((opt) => ({
+      ...opt,
+      isDefault: opt.channelAccountId === defaultAccountId,
+    }));
   }
 
   /**
@@ -357,14 +420,33 @@ export class DealMessagingService {
         : row.channel_account_id;
 
     // Write-First fallback: если переписка ещё не велась, берём первый активный аккаунт этого канала
+    // Для MAX при нескольких подключённых аккаунтах предпочитаем аккаунт с живой сессией в max-bridge.
     if (!channelAccountId) {
-      const fallbackAccount = await query<{ id: string }>(
-        `SELECT id FROM channel_accounts
+      const fallbackAccounts = await query<{
+        id: string;
+        channel?: string;
+        credentials?: Record<string, unknown> | null;
+      }>(
+        `SELECT id, channel, credentials FROM channel_accounts
          WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL
-         ORDER BY created_at ASC LIMIT 1`,
+         ORDER BY created_at ASC`,
         [tenantId, payload.channel],
       );
-      channelAccountId = fallbackAccount[0]?.id ?? null;
+      if (payload.channel === "max" && fallbackAccounts.length > 1) {
+        const liveMaxBotIds = await this.getLiveMaxBotIds(
+          fallbackAccounts.map((a) => ({ channel: a.channel ?? "max", credentials: a.credentials })),
+        );
+        const healthy = liveMaxBotIds
+          ? fallbackAccounts.find(
+              (a) =>
+                !this.isMaxBridgeAccount({ channel: a.channel ?? "max", credentials: a.credentials }) ||
+                liveMaxBotIds.has(a.id),
+            )
+          : undefined;
+        channelAccountId = healthy?.id ?? fallbackAccounts[0]?.id ?? null;
+      } else {
+        channelAccountId = fallbackAccounts[0]?.id ?? null;
+      }
     }
 
     if (channelAccountId === null || channelAccountId.length === 0) return null;
@@ -680,10 +762,19 @@ export class DealMessagingService {
       socials: [],
     };
 
-    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
-      `SELECT id, channel, label
+    const accounts = await query<{
+      id: string;
+      channel: string;
+      label?: string;
+      name?: string;
+      status?: string;
+      credentials?: Record<string, unknown> | null;
+    }>(
+      `SELECT id, channel, label, status, credentials
        FROM channel_accounts
-       WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+       WHERE tenant_id = $1
+         AND deleted_at IS NULL
+         AND (status = 'connected' OR (channel = 'max' AND status = 'error'))
        ORDER BY created_at ASC`,
       [tenantId],
     );
@@ -706,11 +797,9 @@ export class DealMessagingService {
     const lastAccId = lastMsgAccountRow[0]?.channel_account_id;
     const lastChannel = lastMsgAccountRow[0]?.channel;
 
-    const matchedByAccount = lastAccId ? accounts.find((a) => a.id === lastAccId) : undefined;
-    const matchedByChannel = lastChannel ? accounts.find((a) => a.channel === lastChannel) : undefined;
-    const defaultAccountId = matchedByAccount?.id ?? matchedByChannel?.id ?? accounts[0]?.id;
+    const liveMaxBotIds = await this.getLiveMaxBotIds(accounts);
 
-    return accounts.map((acc) => {
+    const options = accounts.map((acc) => {
       let available = false;
       let unavailableReason: string | undefined;
 
@@ -737,6 +826,15 @@ export class DealMessagingService {
         available = true;
       }
 
+      if (available && this.isMaxBridgeAccount(acc)) {
+        const isSessionDead =
+          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+        if (isSessionDead) {
+          available = false;
+          unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";
+        }
+      }
+
       let channelPrefix = acc.channel.toUpperCase();
       if (acc.channel === "max" || acc.channel === "rumax") channelPrefix = "MAX";
       else if (acc.channel === "telegram") channelPrefix = "Telegram";
@@ -755,9 +853,31 @@ export class DealMessagingService {
         accountName: accountLabel,
         available,
         unavailableReason,
-        isDefault: acc.id === defaultAccountId,
+        isDefault: false,
       };
     });
+
+    const matchedAvailableAccount = lastAccId
+      ? options.find((o) => o.channelAccountId === lastAccId && o.available)
+      : undefined;
+    const matchedAvailableChannel = lastChannel
+      ? options.find((o) => o.channel === lastChannel && o.available)
+      : undefined;
+    const firstAvailable = options.find((o) => o.available);
+    const fallbackAny =
+      (lastAccId ? options.find((o) => o.channelAccountId === lastAccId) : undefined) ??
+      (lastChannel ? options.find((o) => o.channel === lastChannel) : undefined) ??
+      options[0];
+    const defaultAccountId =
+      matchedAvailableAccount?.channelAccountId ??
+      matchedAvailableChannel?.channelAccountId ??
+      firstAvailable?.channelAccountId ??
+      fallbackAny?.channelAccountId;
+
+    return options.map((opt) => ({
+      ...opt,
+      isDefault: opt.channelAccountId === defaultAccountId,
+    }));
   }
 
   /**

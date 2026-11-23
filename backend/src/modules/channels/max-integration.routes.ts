@@ -6,7 +6,7 @@ import QRCode from "qrcode";
 import { getEnv } from "../../config/env.js";
 import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
-import { MaxBridgeService } from "./max-bridge.service.js";
+import { MaxBridgeService, invalidateMaxBridgeLiveBotsCache } from "./max-bridge.service.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
 import { isBannedName } from "../crm/channel-identity.js";
@@ -961,6 +961,7 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
         return inserted.id;
       });
 
+      invalidateMaxBridgeLiveBotsCache();
       return reply.send({ ok: true, botId });
     });
 
