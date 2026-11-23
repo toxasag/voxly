@@ -203,6 +203,7 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND channel = 'whatsapp'
+           AND delivery_status <> 'failed'
            AND (
              ($3::text IS NOT NULL AND metadata->>'external_message_id' = $3)
              OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
@@ -425,6 +426,8 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
       text = isDocument ? "Документ" : isImage ? "Изображение" : "Вложение";
     }
 
+    const externalMessageId = typeof key?.id === "string" && key.id.trim().length > 0 ? key.id.trim() : undefined;
+
     if (fromMe) {
       await runWithTenantContext(account.tenant_id, () =>
         crm.processNativeOutbound({
@@ -437,6 +440,7 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
           senderName: "Менеджер",
           attachment: attachmentUrl,
           attachmentType: attachmentType,
+          externalMessageId,
           pauseMinutes: 60,
         }),
       );
@@ -458,6 +462,7 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
         attachment: attachmentUrl,
         attachmentType: attachmentType,
         deliveryStatus: attachmentUrl ? "received" : "neutral",
+        externalMessageId,
         profile: {
           firstName: pushName || undefined,
           phone: phoneE164,

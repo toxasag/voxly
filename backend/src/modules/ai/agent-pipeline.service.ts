@@ -533,12 +533,42 @@ export class AgentPipelineService {
       wc?.consultant_source === "chat_widget" ||
       wc?.consultantSource === "chat_widget";
 
+    if (isWidgetSource && !widgetConsultantName) {
+      try {
+        const webchatAcc = await queryOne<{ label: string; credentials: Record<string, unknown> }>(
+          `SELECT label, credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL
+           ORDER BY CASE WHEN status = 'connected' THEN 0 ELSE 1 END, created_at ASC
+           LIMIT 1`,
+          [input.tenantId],
+        );
+        if (webchatAcc?.credentials && typeof webchatAcc.credentials === "object") {
+          const creds = webchatAcc.credentials;
+          if (typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0) {
+            widgetConsultantName = creds.consultantName.trim();
+          } else if (typeof creds.botName === "string" && creds.botName.trim().length > 0) {
+            widgetConsultantName = creds.botName.trim();
+          } else if (webchatAcc.label && webchatAcc.label.trim().length > 0) {
+            widgetConsultantName = webchatAcc.label.trim();
+          }
+
+          if (typeof creds.consultantRole === "string" && creds.consultantRole.trim().length > 0) {
+            widgetConsultantRole = creds.consultantRole.trim();
+          } else if (typeof creds.title === "string" && creds.title.trim().length > 0) {
+            widgetConsultantRole = creds.title.trim();
+          }
+        }
+      } catch (err) {
+        this.log.warn({ err, tenantId: input.tenantId }, "Failed to fetch webchat account for widget consultant");
+      }
+    }
+
     const effectiveConsultantName = isWidgetSource
       ? (widgetConsultantName || agent.consultant_name || wc?.consultantName || "Консультант")
       : (agent.consultant_name || wc?.consultantName || widgetConsultantName || "Консультант");
 
     const effectiveConsultantRole = isWidgetSource
-      ? (widgetConsultantRole || agent.consultant_role || wc?.consultantRole || "менеджер")
+      ? (widgetConsultantRole || agent.consultant_role || wc?.consultantRole || "Онлайн-консультант")
       : (agent.consultant_role || wc?.consultantRole || widgetConsultantRole || "менеджер");
 
     const variables: Record<string, string> = {
@@ -1084,15 +1114,51 @@ export class AgentPipelineService {
       (tenantRow?.name && tenantRow.name.trim().length > 0 ? tenantRow.name.trim() : null) ||
       "Компания";
 
-    const effectiveConsultantName =
-      agent.consultant_name ||
-      wc?.consultantName ||
-      "Консультант";
+    const isWidgetSource =
+      agent.consultant_source === "chat_widget" ||
+      wc?.consultant_source === "chat_widget" ||
+      wc?.consultantSource === "chat_widget";
 
-    const effectiveConsultantRole =
-      agent.consultant_role ||
-      wc?.consultantRole ||
-      "менеджер";
+    let widgetConsultantName: string | undefined;
+    let widgetConsultantRole: string | undefined;
+
+    if (isWidgetSource) {
+      try {
+        const webchatAcc = await queryOne<{ label: string; credentials: Record<string, unknown> }>(
+          `SELECT label, credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL
+           ORDER BY CASE WHEN status = 'connected' THEN 0 ELSE 1 END, created_at ASC
+           LIMIT 1`,
+          [input.tenantId],
+        );
+        if (webchatAcc?.credentials && typeof webchatAcc.credentials === "object") {
+          const creds = webchatAcc.credentials;
+          if (typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0) {
+            widgetConsultantName = creds.consultantName.trim();
+          } else if (typeof creds.botName === "string" && creds.botName.trim().length > 0) {
+            widgetConsultantName = creds.botName.trim();
+          } else if (webchatAcc.label && webchatAcc.label.trim().length > 0) {
+            widgetConsultantName = webchatAcc.label.trim();
+          }
+
+          if (typeof creds.consultantRole === "string" && creds.consultantRole.trim().length > 0) {
+            widgetConsultantRole = creds.consultantRole.trim();
+          } else if (typeof creds.title === "string" && creds.title.trim().length > 0) {
+            widgetConsultantRole = creds.title.trim();
+          }
+        }
+      } catch (err) {
+        this.log.warn({ err, tenantId: input.tenantId }, "Failed to fetch webchat account for widget consultant in test chat");
+      }
+    }
+
+    const effectiveConsultantName = isWidgetSource
+      ? (widgetConsultantName || agent.consultant_name || wc?.consultantName || "Консультант")
+      : (agent.consultant_name || wc?.consultantName || widgetConsultantName || "Консультант");
+
+    const effectiveConsultantRole = isWidgetSource
+      ? (widgetConsultantRole || agent.consultant_role || wc?.consultantRole || "Онлайн-консультант")
+      : (agent.consultant_role || wc?.consultantRole || widgetConsultantRole || "менеджер");
 
     const variables: Record<string, string> = {
       "tenant.name": effectiveTenantName,

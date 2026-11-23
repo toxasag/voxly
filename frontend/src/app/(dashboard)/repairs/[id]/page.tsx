@@ -1,19 +1,20 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { useParams, notFound } from "next/navigation";
+import { useParams, useRouter, notFound } from "next/navigation";
 import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase,
-  AlertCircle, ExternalLink, Clock, ShieldCheck, Users, NotebookPen,
-  SlidersHorizontal, Smartphone, Tag, Layers, Cpu, Bug, Flag,
+  AlertCircle, ExternalLink, Clock, Users, NotebookPen,
+  SlidersHorizontal, Smartphone, Tag, Layers, Cpu, Bug, Flag, PackagePlus,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { RepairStatusStepper } from "@/components/repairs/detail/RepairStatusStepper";
 import { WorkItemsTable } from "@/components/repairs/detail/WorkItemsTable";
 import { PartsTable } from "@/components/repairs/detail/PartsTable";
+import { PartAddModal } from "@/components/repairs/detail/PartAddModal";
 import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
 import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { PrintDocumentModal } from "@/components/repairs/PrintDocumentModal";
@@ -21,12 +22,12 @@ import { PrintTemplateSettingsDrawer } from "@/components/repairs/PrintTemplateS
 import { usePrintTemplates } from "@/lib/api/use-print-templates";
 import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerModal";
 import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
-import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { RepairNotesSection } from "@/components/repairs/RepairNotesSection";
 import { DictionarySelectField } from "@/components/repairs/DictionarySelectField";
 import { TagPill, type TagColor } from "@/components/ui/tag";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Guard } from "@/components/shared/Guard";
 import { isModuleInstalled } from "@/lib/context/tenant";
 import { useAuth } from "@/lib/auth/use-auth";
@@ -51,11 +52,11 @@ type DetailTab = "details" | "notes" | "work_parts" | "history" | "finance" | "c
 
 const TABS: { key: DetailTab; label: string; icon: typeof FileText }[] = [
   { key: "details", label: "Данные заказа", icon: FileText },
-  { key: "notes", label: "Заметки", icon: NotebookPen },
   { key: "work_parts", label: "Работы и запчасти", icon: Wrench },
-  { key: "history", label: "История", icon: History },
   { key: "finance", label: "Финансы", icon: Receipt },
   { key: "chat", label: "Чат", icon: MessageCircle },
+  { key: "notes", label: "Заметки", icon: NotebookPen },
+  { key: "history", label: "История", icon: History },
 ];
 
 function formatDate(iso: string): string {
@@ -101,10 +102,70 @@ function getStatusBadge(status: string): { label: string; color: TagColor } {
 
 export default function RepairDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { tenant } = useAuth();
   const displayTenant = tenant ?? { tenantName: "", plan: "", installedModules: [] };
   const hasFinance = isModuleInstalled(displayTenant.installedModules, "finance");
   const [tab, setTab] = useState<DetailTab>("details");
+  const [unsavedWorkDraft, setUnsavedWorkDraft] = useState<string | null>(null);
+  const [unsavedPartDraft, setUnsavedPartDraft] = useState<string | null>(null);
+  const [pendingLeaveAction, setPendingLeaveAction] = useState<
+    { type: "tab"; targetTab: DetailTab } | { type: "back" } | null
+  >(null);
+
+  const hasUnsavedWorkOrPartDraft =
+    tab === "work_parts" && Boolean(unsavedWorkDraft || unsavedPartDraft);
+
+  const unsavedDraftList = useMemo(() => {
+    const labels: string[] = [];
+    if (unsavedWorkDraft) labels.push(`работа «${unsavedWorkDraft}»`);
+    if (unsavedPartDraft) labels.push(`запчасть «${unsavedPartDraft}»`);
+    return labels.join(" и ");
+  }, [unsavedWorkDraft, unsavedPartDraft]);
+
+  const handleSelectTab = useCallback(
+    (nextTab: DetailTab) => {
+      if (nextTab === tab) return;
+      if (hasUnsavedWorkOrPartDraft && nextTab !== "work_parts") {
+        setPendingLeaveAction({ type: "tab", targetTab: nextTab });
+        return;
+      }
+      setTab(nextTab);
+    },
+    [tab, hasUnsavedWorkOrPartDraft],
+  );
+
+  const handleBackClick = useCallback(
+    (e: React.MouseEvent<HTMLAnchorElement>) => {
+      if (!hasUnsavedWorkOrPartDraft) return;
+      e.preventDefault();
+      setPendingLeaveAction({ type: "back" });
+    },
+    [hasUnsavedWorkOrPartDraft],
+  );
+
+  const handleConfirmLeaveWorkParts = useCallback(() => {
+    const action = pendingLeaveAction;
+    setPendingLeaveAction(null);
+    setUnsavedWorkDraft(null);
+    setUnsavedPartDraft(null);
+    if (!action) return;
+    if (action.type === "tab") {
+      setTab(action.targetTab);
+    } else if (action.type === "back") {
+      router.push("/repairs");
+    }
+  }, [pendingLeaveAction, router]);
+
+  useEffect(() => {
+    if (!hasUnsavedWorkOrPartDraft) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedWorkOrPartDraft]);
 
   const { data: detail, isLoading, isError, error, refetch: refetchRepair } = useRepair(params.id);
   const { data: works = [] } = useRepairWorks(params.id);
@@ -143,9 +204,9 @@ export default function RepairDetailPage() {
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printModalSlug, setPrintModalSlug] = useState<string>("work_order");
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
-  const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  const [partAddModalOpen, setPartAddModalOpen] = useState(false);
 
   const openPrintTemplate = useCallback((slugOrId: string) => {
     setPrintModalSlug(slugOrId);
@@ -249,7 +310,6 @@ export default function RepairDetailPage() {
 
   useEffect(() => {
     if (detail && !isLoading) {
-      setInvoiceCreateOpen(false);
       syncFormFromDetail();
     }
   }, [detail, isLoading, syncFormFromDetail]);
@@ -529,6 +589,7 @@ export default function RepairDetailPage() {
           <div className="flex items-center gap-3">
             <Link
               href="/repairs"
+              onClick={handleBackClick}
               className="flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[13px] text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -584,6 +645,15 @@ export default function RepairDetailPage() {
             )}
             <button
               type="button"
+              onClick={() => setPartAddModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+              title="Добавить запчасть в наряд"
+            >
+              <PackagePlus className="h-3.5 w-3.5" />
+              Добавить запчасть
+            </button>
+            <button
+              type="button"
               onClick={() => setSettingsDrawerOpen(true)}
               className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] shadow-2xs hover:text-[#4a38f5] hover:bg-[#fafafa] transition-colors cursor-pointer"
               title="Настройки шаблонов и реквизитов"
@@ -591,16 +661,6 @@ export default function RepairDetailPage() {
               <SlidersHorizontal className="h-3.5 w-3.5 text-[#4a38f5]" />
               Настроить
             </button>
-            {hasFinance && (
-              <button
-                type="button"
-                onClick={() => setInvoiceCreateOpen(true)}
-                className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
-              >
-                <Receipt className="h-3.5 w-3.5" />
-                Создать счёт
-              </button>
-            )}
             {ticket.status === "ready" && (
               <button
                 type="button"
@@ -887,7 +947,7 @@ export default function RepairDetailPage() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => setTab("notes")}
+                          onClick={() => handleSelectTab("notes")}
                           className="text-[10px] text-[#854d0e] hover:underline cursor-pointer"
                         >
                           Все заметки
@@ -1239,7 +1299,7 @@ export default function RepairDetailPage() {
                   <button
                     key={t.key}
                     type="button"
-                    onClick={() => setTab(t.key)}
+                    onClick={() => handleSelectTab(t.key)}
                     className={cn(
                       "flex items-center gap-1.5 rounded-[8px] px-3 py-2 text-xs font-medium transition-colors cursor-pointer",
                       tab === t.key
@@ -1327,85 +1387,7 @@ export default function RepairDetailPage() {
                     </div>
                   </div>
 
-                  {/* Блок 2: Документооборот и гарантия */}
-                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
-                    <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#f0f0f0]">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="h-4 w-4 text-[#4a38f5]" />
-                        <h3 className="text-[13px] font-semibold text-[#111111]">
-                          Документооборот и гарантия
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSettingsDrawerOpen(true)}
-                        className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/5 transition-colors cursor-pointer"
-                        title="Настроить печатные бланки и реквизиты"
-                      >
-                        <SlidersHorizontal className="h-3.5 w-3.5" />
-                        Настроить бланки
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
-                        Печатные формы
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {visiblePrintTemplates.length > 0 ? (
-                          visiblePrintTemplates.map((tpl) => (
-                            <button
-                              key={tpl.id}
-                              type="button"
-                              onClick={() => openPrintTemplate(tpl.slug || tpl.id)}
-                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                            >
-                              <FileText className="h-3.5 w-3.5 text-[#666666] shrink-0" />
-                              <span>{tpl.name}</span>
-                            </button>
-                          ))
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => openPrintTemplate("work_order")}
-                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                            >
-                              <FileText className="h-3.5 w-3.5 text-[#666666]" />
-                              Акт приема-передачи оборудования
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openPrintTemplate("completion_act")}
-                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                            >
-                              <FileText className="h-3.5 w-3.5 text-[#666666]" />
-                              Акт выполненных работ
-                            </button>
-                          </>
-                        )}
-                        {hasFinance && (
-                          <button
-                            type="button"
-                            onClick={() => setInvoiceCreateOpen(true)}
-                            className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
-                          >
-                            <Receipt className="h-3.5 w-3.5" />
-                            Счёт на оплату
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-[6px] bg-[#fafafa] p-3 border border-[#f0f0f0] space-y-1.5 text-xs">
-                      <span className="font-semibold text-[#111111] block">Условия гарантийного обслуживания</span>
-                      <p className="text-[#666666] leading-relaxed text-[11px]">
-                        Гарантийный срок на произведённые работы составляет 30 календарных дней с момента выдачи оборудования. Гарантия на установленные оригинальные запасные части предоставляется в соответствии с регламентом производителя.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Блок 3: Связанная сделка CRM */}
+                  {/* Блок 2: Связанная сделка CRM */}
                   <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
                     <div className="flex items-center justify-between pb-3 border-b border-[#f0f0f0]">
                       <div className="flex items-center gap-2">
@@ -1566,8 +1548,17 @@ export default function RepairDetailPage() {
               {/* Вкладка 2: Работы и запчасти */}
               {tab === "work_parts" && (
                 <div className="space-y-6">
-                  <WorkItemsTable orderId={ticket.id} items={ticket.work_items} />
-                  <PartsTable orderId={ticket.id} items={ticket.parts_used} onChange={() => {}} />
+                  <WorkItemsTable
+                    orderId={ticket.id}
+                    items={ticket.work_items}
+                    onDraftStateChange={setUnsavedWorkDraft}
+                  />
+                  <PartsTable
+                    orderId={ticket.id}
+                    items={ticket.parts_used}
+                    onChange={() => {}}
+                    onDraftStateChange={setUnsavedPartDraft}
+                  />
                 </div>
               )}
 
@@ -1732,7 +1723,7 @@ export default function RepairDetailPage() {
 
               {/* Вкладка 4: Финансы (агрегация работ/запчастей + создание счета) */}
               {tab === "finance" && (
-                <div className="space-y-6 max-w-3xl">
+                <div className="space-y-6 w-full max-w-6xl">
                   <FinancialSummary
                     repairOrderId={ticket.id}
                     workItems={ticket.work_items}
@@ -1808,24 +1799,24 @@ export default function RepairDetailPage() {
         currentCompanyId={ticket.company_id}
         onSelect={handleSelectCompany}
       />
-      <InvoiceCreateModal
-        open={invoiceCreateOpen}
-        onClose={() => setInvoiceCreateOpen(false)}
-        onSubmit={() => setInvoiceCreateOpen(false)}
-        prefilled={[
-          ...ticket.work_items.map((wi) => ({
-            description: wi.description,
-            unit_price: wi.cost,
-            source: "repair_work" as const,
-            source_label: ticket.ticket_number,
-          })),
-          ...ticket.parts_used.map((pi) => ({
-            description: pi.name,
-            unit_price: pi.retail_price,
-            source: "repair_part" as const,
-            source_label: ticket.ticket_number,
-          })),
-        ]}
+      <PartAddModal
+        open={partAddModalOpen}
+        onClose={() => setPartAddModalOpen(false)}
+        orderId={ticket.id}
+      />
+      <ConfirmDialog
+        open={pendingLeaveAction !== null}
+        onClose={() => setPendingLeaveAction(null)}
+        onConfirm={handleConfirmLeaveWorkParts}
+        title="Позиция не добавлена в заказ"
+        description={
+          unsavedDraftList
+            ? `Вы выбрали ${unsavedDraftList}, но не нажали кнопку «+» для добавления. Если уйти сейчас, эти данные не сохранятся.`
+            : "Вы ввели работу или запчасть, но не нажали кнопку «+» для добавления. Уйти без сохранения?"
+        }
+        cancelLabel="Вернуться и нажать «+»"
+        confirmLabel="Уйти без сохранения"
+        variant="destructive"
       />
     </Guard>
   );

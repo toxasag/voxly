@@ -27,6 +27,9 @@ export interface WarehouseItemDTO {
   totalStock: number;
   reservedStock: number;
   availableStock: number;
+  reserved?: boolean;
+  status?: "reserved" | "in_stock" | "out_of_stock";
+  stockStatus?: "reserved" | "in_stock" | "out_of_stock";
   price?: number;
   quantity?: number;
   models?: WarehouseItemModelDTO[];
@@ -39,6 +42,7 @@ export interface WarehouseItemDTO {
 export interface WarehouseBatchDTO {
   id: string;
   itemId: string;
+  supplierOrderId?: string | null;
   itemName?: string;
   batchNumber: string;
   supplierName: string;
@@ -288,6 +292,8 @@ export interface WarehousePaginationParams {
   search?: string;
   category?: string;
   brand?: string;
+  model_ids?: string[];
+  modelIds?: string[];
   all?: boolean;
 }
 
@@ -297,6 +303,8 @@ export function useWarehouse(params?: WarehousePaginationParams) {
   const search = params?.search;
   const category = params?.category;
   const brand = params?.brand;
+  const modelIds = params?.model_ids ?? params?.modelIds;
+  const modelIdsKey = (modelIds ?? []).slice().sort().join(",");
   const all = params?.all;
 
   return useQuery({
@@ -308,6 +316,7 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       search ?? "",
       category ?? "",
       brand ?? "",
+      modelIdsKey,
       Boolean(all),
     ],
     queryFn: async (): Promise<PaginatedWarehouseResponse> => {
@@ -326,6 +335,9 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       }
       if (brand && brand.trim()) {
         q.set("brand", brand.trim());
+      }
+      if (modelIds && modelIds.length > 0) {
+        q.set("model_ids", modelIds.join(","));
       }
 
       const qs = q.toString();
@@ -408,12 +420,15 @@ export function useUpdateWarehouseItem() {
 export function useDeleteWarehouseItem() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.delete<{ success: boolean }>(`/api/v1/warehouse/items/${id}`);
+    mutationFn: async (arg: string | { id: string; force?: boolean }) => {
+      const id = typeof arg === "string" ? arg : arg.id;
+      const force = typeof arg === "string" ? false : Boolean(arg.force);
+      const url = force ? `/api/v1/warehouse/items/${id}?force=true` : `/api/v1/warehouse/items/${id}`;
+      const res = await apiClient.delete<{ success: boolean }>(url);
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
     },
   });
 }
@@ -478,6 +493,20 @@ export function useCreatePurchaseRequest() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+    },
+  });
+}
+
+export function useBulkCreatePurchaseRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { itemIds: string[]; comment?: string; status?: string; repair_order_id?: string; deal_id?: string }) => {
+      const res = await apiClient.post<PurchaseRequestDTO[]>("/api/v1/purchase-requests", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
     },
   });
 }
@@ -621,9 +650,8 @@ export function useDeleteSupplierOrder() {
       return true;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
-      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
     },
   });
 }
@@ -876,7 +904,9 @@ export function useBulkUpdateWarehouseItems() {
 export function useBulkDeleteWarehouseItems() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: BulkDeleteWarehouseItemsPayload): Promise<{ deletedCount: number; errors?: string[] }> => {
+    mutationFn: async (
+      payload: BulkDeleteWarehouseItemsPayload & { force?: boolean },
+    ): Promise<{ deletedCount: number; errors?: string[] }> => {
       const res = await apiClient.post<{ deletedCount: number; errors?: string[] }>(
         "/api/v1/warehouse/items/bulk-delete",
         payload,
@@ -884,7 +914,7 @@ export function useBulkDeleteWarehouseItems() {
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
     },
   });
 }
@@ -1023,6 +1053,134 @@ export function useDeleteWarehouseModel() {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "models"] });
       void queryClient.invalidateQueries({ queryKey: ["repair-order", "dictionaries"] });
       void queryClient.invalidateQueries({ queryKey: ["dictionaries"] });
+    },
+  });
+}
+
+
+// ---------------------------------------------------------------------------
+// Редактирование и удаление партий, движений, массовые операции
+// ---------------------------------------------------------------------------
+
+export interface UpdateWarehouseBatchPayload {
+  batch_number?: string;
+  supplier_name?: string;
+  purchase_price?: number;
+  initial_quantity?: number;
+  remaining_quantity?: number;
+  received_at?: string;
+}
+
+export interface UpdateWarehouseMovementPayload {
+  description?: string;
+  quantity?: number;
+  cost_price?: number;
+}
+
+export function useUpdateWarehouseBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: UpdateWarehouseBatchPayload }) => {
+      const res = await apiClient.patch<WarehouseBatchDTO>(`/api/v1/warehouse/batches/${id}`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+    },
+  });
+}
+
+export function useDeleteWarehouseBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete<{ deleted: boolean; id: string }>(`/api/v1/warehouse/batches/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteWarehouseBatches() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiClient.post<{ deletedCount: number }>("/api/v1/warehouse/batches/bulk-delete", { ids });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+    },
+  });
+}
+
+export function useUpdateWarehouseMovement() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: UpdateWarehouseMovementPayload }) => {
+      const res = await apiClient.patch<WarehouseMovementDTO>(`/api/v1/warehouse/movements/${id}`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+    },
+  });
+}
+
+export function useDeleteWarehouseMovement() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete<{ deleted: boolean; id: string }>(`/api/v1/warehouse/movements/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteWarehouseMovements() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiClient.post<{ deletedCount: number }>("/api/v1/warehouse/movements/bulk-delete", { ids });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+    },
+  });
+}
+
+export function useBulkDeletePurchaseRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiClient.post<{ deletedCount: number }>("/api/v1/warehouse/purchases/bulk-delete", { ids });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteSupplierOrders() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiClient.post<{ deletedCount: number; rolledBackBatchesCount: number }>(
+        "/api/v1/warehouse/supplier-orders/bulk-delete",
+        { ids },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
     },
   });
 }

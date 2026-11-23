@@ -136,6 +136,12 @@ describe("agent-reply - interpolatePromptVariables", () => {
     expect(result).toBe("Ты — Дмитрий, ведущий специалист компании АвтоТехСервис. Профиль: оказание профильных услуг и консультация клиентов.");
   });
 
+  it("подставляет Консультант по умолчанию, если consultant.name не передан", () => {
+    const template = "Ты — {{consultant.name}}.";
+    const result = interpolatePromptVariables(template, {});
+    expect(result).toBe("Ты — Консультант.");
+  });
+
   it("содержит правильный текст для website_context и reviews_and_reputation в SAFE_DEFAULTS", () => {
     expect(SAFE_DEFAULTS["website_context"]).toBe(
       "Опирайся исключительно на факты из блока <retrieved_facts>, передаваемого вместе с запросом клиента.",

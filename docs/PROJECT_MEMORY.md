@@ -11,6 +11,42 @@
 - Внешний домен: https://getvoxly.com / https://vibecode.team-big.ru/.
 - Интеграции: Telegram bot / user api, CRM deals & contacts pipeline.
 
+## 2026-11-23: Интеграция Telegram-ботов: Bot API (@BotFather) и Telegram Managed Bots (Bot API 8.0)
+- **Root Cause & Задачи:**
+  1. **Остановка соло-агента из-за лимита модели:**
+     На старте сессии solo-agent упал с ошибкой исчерпания премиум-лимитов на платформе для модели `gemini-4-neon-high`. Пользователь переключил модель в UI на Gemini 3.8 Flash (High), что устранило блокировку выполнения. В кодовой базе проекта захардкоженные ссылки на модель отсутствуют.
+  2. **Отсутствие специализированного мастера подключения Telegram-бота:**
+     На странице `/integrations/telegram_bot` вызывался стандартный `ConnectChannelModal`, который запрашивал только название и идентификатор, без проверки токена бота, валидации через Telegram Bot API и интеграции с Telegram Bot Manager.
+  3. **Поддержка двух режимов подключения официальных ботов:**
+     - Подключение существующего бота по токену @BotFather с валидацией через `getMe`.
+     - Создание нового управляемого бота через Telegram Managed Bots (Bot API 8.0) с генерацией deep-link (`https://t.me/newbot/...`) и привязкой токена.
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-bot.types.ts`:
+     - Схемы Zod: `telegramBotTokenSchema`, `telegramBotVerifySchema`, `telegramBotConnectSchema`, `telegramBotCreateManagedSchema`, `telegramBotCompleteManagedSchema`.
+     - Типы: `TelegramBotInfoDTO`, `TelegramBotManagerInfoDTO`, `TelegramBotCreateManagedResultDTO`.
+  2. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Класс `TelegramBotService`: валидация токена через Telegram Bot API `getMe`, `getManagerInfo`, подключение существующего бота `connectExisting`, создание управляемого бота `createManaged` (с deep link) и завершение привязки токена `completeManaged`.
+     - Изоляция tenant_id, проверка квот тарифа `telegram_bot_channels`, сохранение в `channel_accounts` и привязка к `ai_agent_channel_bindings`.
+  3. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Эндпоинты `/api/v1/integrations/telegram-bot` (`/verify`, `/manager-info`, `/connect`, `/create-managed`, `/accounts/:id/complete`).
+  4. `backend/src/app.ts`:
+     - Регистрация роутов по префиксам `/api/v1/integrations/telegram-bot` и `/api/v1/integrations/telegram_bot`.
+  5. `backend/src/tests/telegram-bot.test.ts`:
+     - 7 unit-тестов: валидация токенов, правил username бота, генерация deep-link, обработка 200 getMe и 401 Unauthorized.
+  6. `frontend/src/schemas/channel.schema.ts`:
+     - Экспортированы схемы Zod для форм подключения бота.
+  7. `frontend/src/lib/api/use-telegram-bot.ts`:
+     - React Query хуки для интеграции с API бэкенда.
+  8. `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`:
+     - Модальная шторка (Sheet) в дизайн-системе Twenty CRM Light Canvas: вкладки «Существующий бот» и «Bot Manager (8.0)», верификация токена в реальном времени, карточка бота, выбор AI-агента, переход в Telegram по deep-link в 1 клик.
+  9. `frontend/src/app/(dashboard)/integrations/[channel]/page.tsx`:
+     - Подключение `ConnectTelegramBotModal` для канала `telegram_bot`.
+- **Верификация:**
+  - `npm --prefix backend run build` (tsc): успешно, 0 ошибок.
+  - `node --test backend/dist/tests/telegram-bot.test.js`: 7/7 тестов успешно.
+  - `npm --prefix frontend run build` (next build): успешно, все 43 страницы собраны без ошибок.
+
+
 ## 2026-11-20: Изоляция печати листа A4 из редактора, стабилизация линии отрыва и полный вывод полей дефекта/заметок в талоне мастера
 - **Root Cause & Задачи:**
   1. **Печать из визуального редактора выводила весь интерфейс экрана:**
@@ -510,6 +546,19 @@
   - Дедупликация и контракты: создан `backend/src/lib/mask.utils.ts` (6 модулей переведены с реэкспортом); добавлен `toIsoOrNow` в `backend/src/lib/date.utils.ts` и переведены все 9 оставшихся локальных копий `toIso()`; добавлен `case "parts_order"` в `RepairsTable.tsx` и `EquipmentRepairHistorySheet.tsx`; создан `frontend/src/lib/utils/format.ts` (переведены 7 копий `formatRub`); обновлены 3 ссылки `voxly.getvoxly.ru` → `getvoxly.ru` в `mobile/android-companion/`.
 - **Где ещё используется:** все входящие каналы через `CrmPipelineService` (WhatsApp, Telegram, MAX, webchat), таймлайн контакта/сделки, AI-саммари, маскирование логов/API-ключей, таблицы СЦ и склада.
 
+### 2026-11-22 — Wave 6: Реализация редактирования и построчного удаления финансовых операций (PATCH /transactions/:id, EditTransactionModal, inline actions)
+- **Root Cause:**
+  1. В `TransactionsTable.tsx` отсутствовала колонка действий в строке: удаление операций было спрятано за выбором чекбокса в мультиселекте (всплывающая плавающая панель `bulkBar`), что делало функционал неочевидным.
+  2. Функционал редактирования операции (сумма, счёт, категория, описание, контрагент, дата) отсутствовал целиком — ни в Fastify API (`/transactions/:id`), ни в UI фронтенда не было роута, мутации и формы для редактирования транзакции.
+- **Что изменено:**
+  - `backend/src/modules/finance/finance.types.ts`: добавлена схема `updateTransactionSchema` и тип `UpdateTransactionPayload`.
+  - `backend/src/modules/finance/finance.service.ts`: реализован метод `updateTransaction(tenantId, id, payload)` с транзакционной блокировкой `FOR UPDATE`, корректной дельтой отката баланса старого счёта/типа и применения к новому счёту/типу.
+  - `backend/src/modules/finance/finance.routes.ts`: зарегистрирован эндпоинт `PATCH /transactions/:id`.
+  - `frontend/src/schemas/finance.schema.ts`: добавлена Zod-схема `updateTransactionSchema`.
+  - `frontend/src/lib/api/use-invoices.ts`: добавлена мутация `useUpdateTransaction()`, реэкспортирована `useDeleteTransaction()`.
+  - `frontend/src/components/finance/EditTransactionModal.tsx`: создана боковая шторка (Twenty CRM Sheet) с предзаполнением всех параметров операции, автопересчётом категорий, валидацией и кнопкой быстрого удаления.
+  - `frontend/src/components/finance/TransactionsTable.tsx`: добавлена колонка действий с кнопками «Редактировать» (Pencil) и «Удалить» (Trash2), поддержка клика по строке (`onRowClick`), диалог подтверждения удаления одиночной операции с автоматическим пересчётом балансов.
+- **Где ещё используется:** страница `/finance`, счета `cash_accounts`, аналитика ДДС и P&L.
 ### 2026-11-22 — Исправление пайплайна серверных конверсий и офлайн-атрибуции в Яндекс Метрику
 - **Контекст & Задача:** В Яндекс Метрике для подключенного счетчика 114153352 (сайт maps3455.pro) цели lead, purchase, chat отображали «Нет данных по цели». Требовалось найти и устранить причину сбоя доставки серверных конверсий на тенанте kk-crm (`713552dc-dfa2-4521-b733-5c98d2c8dd1c`) и по всей платформе.
 - **Root Cause & Находки:**
@@ -538,3 +587,425 @@
   - Проверена строгая компиляция TypeScript и сборка Next.js 15 (код 0).
   - Деплой на боевой VPS (150.241.98.135) через `/usr/local/bin/vf-deploy GETVOXLY`.
   - Проведена синхронизация сделок тенанта kk-crm, проверена успешная загрузка в Яндекс Метрику (Upload ID получен, HTTP 200).
+
+
+### 2026-11-22 — Мультивыбор, редактирование и транзакционное каскадное удаление на вкладках `/warehouse`
+- **Проблема:** На вкладках «Партии и приходные накладные» (`batches`), «Заказы поставщикам» (`supplier_orders`, особенно в статусе `received`) и «Журнал движений» (`movements`) отсутствовали чекбоксы мультивыбора, панель массового удаления и кнопки редактирования/удаления; на вкладке «Заявки на закупку» (`purchases`) не было массового удаления.
+- **БД и RLS:** добавлена миграция `backend/src/db/migrations/0123_warehouse_batch_supplier_order_link.sql` (+ синхронизация `schema.sql`): прямая ссылка `warehouse_batches.supplier_order_id -> supplier_orders(id) ON DELETE SET NULL` с бэкфиллом существующих партий.
+- **Backend (`warehouse.service.ts`, `warehouse.routes.ts`, `warehouse.types.ts`):**
+  - `PATCH/DELETE /batches/:id`, `POST /batches/bulk-delete` — редактирование партии с синхронизацией `warehouse_movements` и аллокаций FIFO (`repair_part_batch_allocations`, `deal_item_batch_allocations`), каскадное удаление без orphan-движений/резервов и пересчёт `repair_parts`, `deal_items`, `warehouse_items`.
+  - `PATCH /supplier-orders/:id` (разрешено редактирование поставщика/примечаний даже для `received` с синхронизацией партий и кассовой проводки), `DELETE /supplier-orders/:id` и `POST /supplier-orders/bulk-delete` — поддерживают полный транзакционный откат оприходованных заказов (`received`): каскадно откатывают созданные партии, движения, резервы, возвращают `purchase_requests` в `pending` и возвращают точную сумму кассовой проводки на баланс `cash_accounts`.
+  - `PATCH/DELETE /movements/:id`, `POST /movements/bulk-delete` — редактирование и удаление движений с откатом их влияния на остатки партий (`intake`/`write_off`), `warehouse_reservations` (`reserve`) и FIFO-аллокации.
+  - `POST /purchases/bulk-delete` — массовое удаление заявок с очисткой ссылок в `supplier_order_items` (`purchase_request_id` и массив `purchase_request_ids`).
+- **Frontend:** обновлены `warehouse/page.tsx`, `use-warehouse.ts`, `EditSupplierOrderModal.tsx`, `SupplierOrderDetailModal.tsx`, добавлены `EditBatchModal.tsx` и `EditMovementModal.tsx`; убраны emoji `🔒`/`🔓` из журнала движений (заменены на Lucide `Lock`/`Unlock`).
+
+
+### 2026-11-23 — Фикс `Unexpected response shape from API`, принудительное удаление товаров и сквозное логирование действий пользователей
+- **Root cause (`Unexpected response shape from API`):** `DELETE /api/v1/warehouse/items/:id` и `DELETE /api/v1/warehouse/supplier-orders/:id` (а также `deals/:id/items/:itemId`, `finance` delete-роуты, `services/:id`, `print-templates/:id`) возвращали `{ success: true }` без обязательного конверта `{ data: ... }`. Бэкенд реально удалял запись (HTTP 200), но `apiClient.ts` бросал `MALFORMED_RESPONSE`, из-за чего `onSuccess` не инвалидировал кэш и UI показывал ошибку при уже удалённой записи.
+- **Root cause (нельзя удалить товар с остатком):** на фронтенде (`warehouse/page.tsx`) и в `bulkDeleteItems` стояла жёсткая блокировка `totalStock > 0 || reservedStock > 0` без опции принудительного каскадного удаления.
+- **Исправлено:**
+  - Все указанные роуты возвращают стандартный конверт `{ data: ... }` (с обратной совместимостью по верхнеуровневым полям); `useDeleteWarehouseItem`, `useBulkDeleteWarehouseItems`, `useDeleteSupplierOrder` инвалидируют `warehouseKeys.all`.
+  - В `deleteItem` (`?force=true`) и `bulkDeleteItems` (`force: true`) реализовано транзакционное каскадное удаление товара вместе с партиями (`deleteBatchesInTx`), резервами и движениями; на UI добавлен явный `confirm` с предупреждением вместо жёсткого запрета.
+  - **Глобальный аудит действий пользователей и ошибок:** создан `backend/src/lib/audit-log.service.ts` + миграция `0124_tenant_audit_log_indexes.sql`; Fastify `onResponse` (`app.ts`) + `errorHandler.ts` неблокирующе логируют все мутации (`POST`/`PUT`/`PATCH`/`DELETE`) и ошибки (`statusCode >= 400`) в `tenant_audit_log` (с маскированием секретов); добавлены `GET /api/v1/tenant/audit-log` и `POST /api/v1/tenant/audit-log/client-error`, а `apiClient.ts` репортит клиентские `MALFORMED_RESPONSE` ошибки.
+
+
+### 2026-11-23 — Баланс счетов строго из операций (устранение «фантомных» остатков на `/finance`)
+- **Root cause:** `FinanceService.createAccount` записывал `opening_balance` прямо в `cash_accounts.balance` без создания приходной операции в `transactions`. В результате после удаления всех операций на счёте «Т-Банк Расчетный счет» тенанта `voxly` оставалось 150 000 ₽ без единой операции.
+- **Исправлено:**
+  - `backend/src/modules/finance/finance.service.ts`: при создании счёта с `opening_balance > 0` в той же транзакции создаётся приходная операция «Начальный остаток» в `transactions`; `accounts()` вычисляет баланс напрямую как `SUM(income) - SUM(expense)` по активным операциям (`deleted_at IS NULL`); все мутации операций вызывают `recalculateAccountBalanceInTx`.
+  - Миграция `backend/src/db/migrations/0125_reconcile_cash_accounts_balance.sql`: пересчитала `cash_accounts.balance` строго из активных операций (у `voxly` расчётный счёт синхронизирован до `0 ₽`).
+  - `frontend/src/lib/api/use-invoices.ts` (`useCreateAccount` инвалидирует `financeKeys.all`) и `CreateAccountModal.tsx` (подсказка про создание операции «Начальный остаток»).
+
+
+### 2026-11-23 — Улучшение сканирования сайтов, обработка sitemap index, семантическое структурирование и RAG-черновики
+- **Root Cause & Запрос:**
+  1. Пользователь обратился по агенту `66150148-ccd0-4998-910c-1524601c998e` (те store `remtoua`) с задачей проверить функционал сканирования всего сайта, обработку и систематизацию информации, чтобы человек точно понимал, что именно использует AI Агент, и провести полное сканирование сайта `https://xn----itbblsceccdthmkeen.xn--p1ai/` (`ремонт-инструмент.рф`).
+  2. В `site-crawler.ts`:
+     - `fetchSitemapUrls` отбрасывал `.xml` из-за `FORBIDDEN_EXTENSIONS.has("xml")`, не обрабатывал `<sitemapindex>` (на WordPress/WooCommerce дочерние карты `page-sitemap.xml`, `product-sitemap.xml`, `category-sitemap.xml` полностью игнорировались, краулер находил 0 ссылок из sitemap).
+     - Отсутствовала приоритизация URL: в очередь попадали мусорные ссылки (`/my-account/`, `?add-to-cart=...`, `/cart/`), дублируя страницы.
+     - `cleanHtmlToMarkdown` вызывался без `stripLayoutChrome: true`, из-за чего в каждую страницу попадал весь навигационный шум («Перейти к навигации», «Корзина», дублирующиеся кнопки).
+  3. В `knowledge-base.queue.ts`:
+     - Скачанные страницы сохранялись в категории `general` вместо `site`.
+     - Заголовки документов были неформатированными и неудобными для человека (`Сайт [/arenda...]: ...`), а текст представлял собой сырой сброс без метаданных.
+  4. На фронтенде (`AgentKnowledgeTab.tsx`):
+     - `useCrawlStatus` был реализован, но не вызывался: пользователь не видел статус и прогресс сканирования, а toast ошибочно показывал «обработано 0, добавлено 0».
+- **Что изменено:**
+  - `backend/src/modules/ai/html-cleaner.ts`: добавлены правила очистки доступности (`skip-link`, `screen-reader-text`), top-bar, mini-cart drawers, cookie notice, согласий на обработку ПДн и расширен `NOISE_LINE_REGEX`.
+  - `backend/src/modules/ai/site-crawler.ts`:
+    - Реализована рекурсивная поддержка `<sitemapindex>` с приоритизацией дочерних карт (`page-`, `category-`, `service-`, `post-`).
+    - Добавлен фильтр мусорных путей (`/my-account`, `/cart`, `/checkout`, `/wishlist`, `?add-to-cart=`, `?orderby=`, `?removed_item=`).
+    - Реализована функция взвешивания приоритета страниц `getUrlPriority`: услуги, аренда, прайсы, контакты и гарантии обходятся первыми.
+    - Включена обязательная глубокая очистка layout chrome в `htmlToText`.
+    - Добавлена дедупликация URL по нормализованному пути (`normKey`), исключающая дублирование одной и той же страницы с разными query-параметрами.
+  - `backend/src/modules/ai/knowledge-base.queue.ts`:
+    - Документы сохраняются с понятным человеку заголовком: `[Сайт] ${cleanTitle} (${path})`.
+    - Категория устанавливается в `"site"`.
+    - Текст снабжается структурированным заголовком и метаданными источника.
+  - `frontend/src/components/ai-bots/AgentKnowledgeTab.tsx`:
+    - Подключён хук `useCrawlStatus` с живым баннером процесса сканирования и уведомлением об ошибке.
+    - Исправлен toast при запуске краулера.
+    - Обновлён `isDocInCategory` для поддержки кириллической зоны `.рф` и маркера `[Сайт]`.
+- **Где ещё используется:** База знаний AI-агентов (`KnowledgeBaseService`), RAG-пайплайн (`agent-pipeline.service.ts`), шторка проверки документов (`EditDocumentSheet.tsx`, `PageBlockEditor.tsx`).
+### 2026-11-23 — Отправка MAX при нескольких подключённых аккаунтах и выход контекстного меню чата за экран
+- **Root cause (MAX не отправлялся в сделке `a65dc0a4-...` у `remtoua`):**
+  - У тенанта `remtoua` подключено 2 аккаунта MAX: `98074187-f686-4514-b882-580d1854f4d3` (`79918829870 (Ремонт Инструмент)`, живая сессия) и `021eb35f-2fd8-488c-bd64-6e14abfba252` (`79776282049 (Ремонт)`, пустая таблица `sessions` в `web.db` — сессия истекла/сброшена).
+  - В `max-bridge` (`_restore_bot`) проверялось только наличие файла `*.db`, без проверки наличия токена в таблице `sessions`. При отправке через `021eb35f-...` PyMax запускал фоновую QR-авторизацию и зависал на 60–180 с, из-за чего бэкенд обрывался по 30-секундному таймауту с вводящей в заблуждение ошибкой «Сервис max-bridge недоступен... Убедитесь, что контейнер max-bridge запущен».
+  - В БД `channel_accounts` оба аккаунта оставались в `status = 'connected'`, а `getSendFromOptions` не проверял живые сессии в `max-bridge`.
+- **Root cause (контекстное меню не влезает в экран):**
+  - В `frontend/src/components/crm/shared/TelegramComposer.tsx` основное меню позиционировалось по фиксированным эвристикам (`window.innerHeight - 380`), а подменю «Форматирование» имело жёсткое `absolute left-full top-[-80px]` без проверки границ viewport — в нижней части шторки сделки оно уходило за нижний и правый края экрана.
+- **Исправлено:**
+  - `max-bridge` (`/voxly/apps/max-bridge/src/main.py`, закоммичено в `voxly-max-bridge:latest`): `_restore_bot` проверяет наличие непустого `token` в SQLite `web.db` перед запуском PyMax (отсекает 180-секундное зависание в невидимом QR-цикле); `_ensure_live_client` возвращает HTTP 401 с понятным русским сообщением; `GET /health` отдаёт `liveBotIds`.
+  - `backend/src/modules/channels/max-bridge.service.ts`: добавлены `getLiveBotIds()` (с кэшем 10 с), `invalidateMaxBridgeLiveBotsCache()`, `isMaxSessionExpiredError()`, отдельная обработка таймаутов (`504 MAX_BRIDGE_TIMEOUT`).
+  - `backend/src/modules/messaging/adapters/max/MaxBridgeAdapter.ts`: при истекшей сессии помечает конкретный аккаунт `channel_accounts` в `status = 'error'` и возвращает ошибку с указанием имени аккаунта.
+  - `backend/src/modules/crm/deals/deal-messaging.service.ts`: `getSendFromOptions`, `getContactSendFromOptions` и `resolveRoute` учитывают живые сессии `max-bridge`, помечают истёкшие MAX-аккаунты недоступными с причиной и автоматически выбирают рабочий аккаунт MAX по умолчанию.
+  - `frontend/src/components/crm/shared/TelegramComposer.tsx`: контекстное меню и подменю «Форматирование» перенесены в `createPortal(..., document.body)` с динамическим измерением `getBoundingClientRect()` в `useLayoutEffect`, автофлипом подменю влево при нехватке места справа, прижатием к границам viewport (`8px` отступ) и `max-h-[calc(100vh-16px)] overflow-y-auto`.
+  - `frontend/src/components/crm/shared/CrmChatView.tsx`: автопереключение с недоступного аккаунта в «Пишем от:» и тултип полного названия аккаунта.
+
+
+### 2026-11-23 — Мультивыбор, массовое редактирование/удаление и строчные действия на вкладке «Счета» (`/finance`)
+- **Проблема:** на странице `/finance` во вкладке «Счета» (`invoices`) отсутствовали чекбоксы мультивыбора, панель массовых действий и кнопки редактирования/удаления в строках (отображалась только стрелка `→`).
+- **Backend (`finance.types.ts`, `invoices.service.ts`, `invoices.routes.ts`):**
+  - Добавлены транзакционные эндпоинты `POST /api/v1/invoices/bulk-update` (статус, срок оплаты, примечание) и `POST /api/v1/invoices/bulk-delete` (soft delete с очисткой `invoice_repair_orders` и возвратом `repair_orders.payment_status = 'unpaid'` при отсутствии других активных счетов). Оплаченные счета (`paid`) защищены от изменения и удаления.
+- **Frontend (`use-invoices.ts`, `BulkEditInvoicesModal.tsx`, `finance/page.tsx`):**
+  - Добавлены хуки `useBulkUpdateInvoices` и `useBulkDeleteInvoices`.
+  - Создана правая шторка `BulkEditInvoicesModal.tsx` для массового редактирования выбранных счетов.
+  - В `RecordTable` на вкладке «Счета» включён мультивыбор (`selectable`, `selectedIds`, `bulkBar` с кнопками «Редактировать» и «Удалить»), добавлена колонка `row_actions` с иконками редактирования (`Pencil` → `InvoiceEditModal`), удаления (`Trash2` → `ConfirmDialog`) и открытия (`ArrowRight` → `InvoiceViewModal`).
+
+### 2026-11-23 — Автоматическая синхронизация расчётного счёта организации с карточками счетов на `/finance`
+- **Root cause:** заполнение банковских реквизитов (`bank_name`, `settlement_account`) на вкладке «Организация» (`finance_organizations`) не создавало и не обновляло безналичный счёт (`account_type = 'bank'`) в `cash_accounts`, из-за чего на главной странице `/finance` отображалась только «Основная касса (Наличные)» без карточки расчётного счёта.
+- **БД и миграция:** добавлена `backend/src/db/migrations/0126_cash_accounts_organization_sync.sql` (+ `schema.sql`): колонки `organization_id` и `account_number` в `cash_accounts`, индекс `idx_cash_accounts_org_id` и идемпотентный бэкфилл расчётных счетов для всех организаций с заполненными банковскими реквизитами (включая `remtoua` — `ООО "ОЗОН Банк" г Москва`, `р/с 40802810700000071091`).
+- **Backend:** `FinanceOrganizationsService.create`/`update` транзакционно синхронизируют `cash_accounts` через `syncOrganizationBankAccountInTx`; `FinanceService.accounts()` возвращает `accountNumber` и `organizationId`.
+- **Frontend:** `useCreateFinanceOrganization` / `useUpdateFinanceOrganization` инвалидируют `financeKeys.all`; `BalanceCards.tsx` показывает иконки и бейджи типов счетов (`Расчётный счёт`, `Наличные`, `Эквайринг`, `Сейф`), номер `р/с` и кнопку «Добавить кассу / р/с» (`CreateAccountModal` подключён в `finance/page.tsx`).
+
+### 2026-11-23 — Подстановка консультанта из онлайн-чата и устранение дефолтного имени «Алексей»
+- **Проблема:** У AI-агента (`/modules/ai-bots/[id]`) в переменных выбран источник консультанта «Из настроек онлайн-чата», но в карточках переменных и в промпте подставлялось имя «Алексей» и должность «ведущий специалист» вместо имени консультанта из виджета сайта (например, «Егор», «Онлайн-консультант»).
+- **Root cause:**
+  1. `frontend/src/app/(dashboard)/modules/ai-bots/[id]/page.tsx`: вычисление `effectiveConsultant` и `effectiveRole` проверяло `bot.consultant_name` («Алексей» из пресета) раньше, чем `fromApi["consultant.name"]`, и не проверяло `consultant_source === "chat_widget"`.
+  2. `backend/src/modules/ai/ai.routes.ts` (`handlePromptPreview`): в SQL-запросе не выбиралось поле `consultant_source`, а эндпоинт генерации превью переменных полностью игнорировал источник «chat_widget» и возвращал статичные значения из колонок агента.
+  3. `backend/src/modules/ai/agent-pipeline.service.ts`:
+     - В `prepareReply`: при отсутствии `channelAccountId` или сообщении из стороннего канала (Telegram/WhatsApp) при выбранном источнике виджета не выполнялся поиск подключённого веб-виджета тенанта (`channel_accounts WHERE channel = 'webchat'`), а происходил откат к `agent.consultant_name`.
+     - В `generateTestReply`: тестовый чат не проверял `consultant_source` и всегда брал `agent.consultant_name`.
+  4. `frontend/src/components/ai-bots/BotModal.tsx`:
+     - При переключении источника консультанта форма не сбрасывала и не синхронизировала имя с виджетом;
+     - `applyPreset` перезаписывал имя и роль значениями из пресета даже при активном `chat_widget`;
+     - В UI модалки отсутствовало отображение текущего имени из подключенного виджета онлайн-чата.
+  5. `backend/src/modules/ai/agent-reply.ts` и `ai.service.ts`: в `SAFE_DEFAULTS` и генераторе промптов дефолтное имя было захардкожено как `"Алексей"`.
+- **Исправлено:**
+  - `backend/src/modules/ai/ai.routes.ts`: `handlePromptPreview` учитывает `consultant_source` (из body или из БД/wizard_config), динамически извлекает `consultantName`/`botName` и `consultantRole`/`title` из `channel_accounts` (`webchat`) и возвращает актуальные `consultant.name` и `consultant.role`.
+  - `backend/src/modules/ai/agent-pipeline.service.ts`: в `prepareReply` и `generateTestReply` при `isWidgetSource` выполняется поиск настроек основного виджета `webchat` тенанта.
+  - `backend/src/modules/ai/ai.service.ts`: `updateAgent` синхронизирует `consultantSource`, `consultantName` и `consultantRole` в `wizard_config`; `generatePrompt` подтягивает имя из виджета чата тенанта; `SAFE_DEFAULTS` использует нейтральное `"Консультант"`.
+  - `frontend/src/app/(dashboard)/modules/ai-bots/[id]/page.tsx`: переменные `effectiveConsultant` и `effectiveRole` при `isWidgetSource` приоритетно берут данные из API виджета чата; на карточках переменных добавлен визуальный бейдж («Из настроек онлайн-чата» / «Указано вручную») и поясняющая подсказка.
+  - `frontend/src/components/ai-bots/BotModal.tsx`: подключён `useChannelAccounts("webchat")`; в модалке выводится блок с текущими настройками подключенного виджета; `applyPreset` сохраняет режим виджета; при сохранении формы синхронизируются имя и роль из виджета.
+- **Где ещё используется:** База AI-агентов (`ai_agents`), визард настройки ботов (`BotModal`), страница агента (`/modules/ai-bots/[id]`), рантайм-пайплайн (`agent-pipeline.service.ts`), интеграция онлайн-чата (`webchat.service.ts`).
+
+
+### 2026-11-23 — Снятие блокировок смены статуса наряда (`Diagnostics are required before requesting approval` и матрица переходов)
+- **Root cause (наряд `08ac2171-...` / `№0021` у `remtoua`):**
+  1. При клике на статус «Согласование» (`approval`) в степпере наряда `RepairsService.changeStatus` бросал `ValidationError("Diagnostics are required before requesting approval")`, требуя заполненное JSONB-поле `diagnostics` (`findings`, `recommended_action`), хотя во фронтенде нет формы ввода `diagnostics` и все статусы в `RepairStatusStepper` переключаются прямым кликом.
+  2. В `ALLOWED_TRANSITIONS` (`backend/src/modules/repairs/repairs.types.ts`) отсутствовала часть прямых и обратных переходов между этапами степпера (например, `waiting_parts -> in_progress / approval / diagnostics`, `diagnostics -> in_progress`, `intake -> approval`, `in_progress -> approval`).
+- **Исправлено:**
+  - `backend/src/modules/repairs/repairs.service.ts`: удалена жёсткая проверка обязательности `diagnostics` при переходе в `approval` (опциональное сохранение `payload.diagnostics` при передаче через API сохранено).
+  - `backend/src/modules/repairs/repairs.types.ts`: разрешены переходы между всеми рабочими статусами степпера (`intake`, `diagnostics`, `approval`, `waiting_parts`, `parts_order`, `in_progress`, `ready`, `issued`, `rejected`).
+
+
+### 2026-11-23 — Автообогащение контактов мессенджерами при приёмке ремонта и создании сделки (+ multi-MAX фоллбэк)
+- **Root cause (сделка `a65dc0a4-...` / контакт `Николай` `+79015013097` у `remtoua` не были обогащены):**
+  1. Контакт и сделка создавались через пакетную приёмку ремонта (`RepairsService.createBatch`), где, как и в `RepairsService.create` и `DealsService.create`, вообще не вызывался `CrmEnrichmentService.enrichContact` — `contacts.custom_fields` оставался пустым `{}`.
+  2. `CrmEnrichmentService.enrichContact` не оборачивал запросы в `runWithTenantContext(tenantId, ...)`, из-за чего фоновые вызовы вне ALS-контекста могли блокироваться RLS.
+  3. `CrmEnrichmentService.defaultMaxProvider` брал только один MAX-аккаунт (`ORDER BY connected_at DESC LIMIT 1`), без перебора остальных подключённых аккаунтов при истекшей сессии первого.
+- **Исправлено:**
+  - `backend/src/modules/crm/enrichment.service.ts`: `enrichContact` выполняется внутри `runWithTenantContext(tenantId, ...)`, добавлен флаг `skipIfAlreadyChecked`, а `defaultMaxProvider` приоритизирует живые сессии `MaxBridgeService.getLiveBotIds()` и перебирает все подключённые MAX-аккаунты.
+  - `backend/src/modules/repairs/repairs.service.ts` (`create`, `createBatch`) и `backend/src/modules/crm/deals/deals.service.ts` (`create`): после коммита транзакции запускают фоновое `CrmEnrichmentService.enrichContact(..., { dealId, skipIfAlreadyChecked: true })`.
+  - Обогащение контакта `6b145b3e-cf77-458d-8c80-33aedf5f72a1` (сделка `a65dc0a4-...`) запущено и проверено вживую на проде.
+
+
+### 2026-11-23 — Синхронизация истории чата по всем подключённым аккаунтам MAX/Telegram/WhatsApp и защита от скрытия отправленных сообщений при дедупликации
+- **Root cause (кнопка «Синхронизировать» в карточке контакта `6b145b3e-...` / сделке `a65dc0a4-...` не подтягивала переписку MAX):**
+  1. `DealMessagingService.syncDealChatHistory` выбирал только ОДИН MAX-аккаунт (`LIMIT 1`), из-за чего переписка клиента (`chatId: 209608766`, 9 сообщений) на втором подключённом MAX-аккаунте (`79776282049`) вообще не опрашивалась.
+  2. `syncMaxDialogHistory` запрашивал лишь `dialogLimit: 20` и не использовал `userId` из `contacts.custom_fields.enrichment.channels.max.userId`, а также блокировал дедупликацией строки со статусом `delivery_status = 'failed'`.
+  3. В `CrmChatView.tsx` клиентская дедупликация по совпадению текста скрывала успешно отправленный повтор (`sent`), оставляя в окне чата только предыдущую сбойную попытку (`failed`).
+- **Исправлено:**
+  - `backend/src/modules/crm/deals/deal-messaging.service.ts`: `syncDealChatHistory` перебирает все подключённые аккаунты MAX, Telegram и WhatsApp с изоляцией ошибок по каждому аккаунту и передаёт `enrichedMaxUserId` и `max_chat_id`.
+  - `backend/src/modules/channels/max-integration.routes.ts`: `dialogLimit` увеличен до 80, добавлена поддержка медиасообщений без текста и исключены `delivery_status = 'failed'` из дедупликации.
+  - `frontend/src/components/crm/shared/CrmChatView.tsx`: сообщения со статусом `failed` исключены из текстовой дедупликации, чтобы не скрывать успешно доставленные сообщения.
+
+
+### 2026-11-23 — Сервисный центр и счета: PDF/отправка в мессенджеры, защита несохранённых данных, быстрая кнопка «Оплачен» и фильтр «В работе»
+- **Root causes:**
+  1. `GET /api/v1/invoices/:id/pdf` падал с `Invalid character in header content ["content-disposition"]` из-за кириллицы (`Счёт_СЧ-2026-0006.pdf`) в заголовке без RFC 5987 кодирования; `InvoicesService.sendToMessenger` был сломанной заглушкой (не генерировал PDF и вставлял в несуществующие колонки БД); меню «Отправить» обрезалось из-за `overflow-hidden` контейнера.
+  2. На вкладке «Работы и запчасти» и в шторке приёмки (`RepairIntakeModal`) не было перехвата ухода/закрытия при несохранённом черновике позиции (без нажатия `+`) или заполненных полях приёмки.
+  3. Вкладка «Финансы» в карточке наряда была зажата `max-w-3xl`, из-за чего строки блока «Счета на оплату» ломались и не было 1-клик оплаты счёта.
+  4. На `/repairs` отсутствовал быстрый фильтр «В работе» (все наряды, кроме «Выдан»).
+- **Исправлено:**
+  - `backend/src/modules/finance/invoices.routes.ts`, `invoices.service.ts`, `finance.types.ts`: RFC 5987 `Content-Disposition` для PDF; полноценная генерация PDF и отправка вложения через `ChatMediaService` + `DealMessagingService`/`resolveOutboundSender` (MAX, Telegram, WhatsApp, all); опциональный `account_id` в `markPaid` с автоподбором счёта и обновлением статуса оплаты связанных нарядов (`repair_orders` и `invoice_repair_orders`).
+  - `backend/src/modules/repairs/repairs.routes.ts`, `repairs.service.ts`, `frontend/src/lib/repairs/repairs.types.ts`, `frontend/src/lib/api/use-repairs.ts`, `frontend/src/components/repairs/RepairsTable.tsx`: добавлен фильтр «В работе» (`status=active` -> `ro.status <> 'issued'`), совместимый с фильтром «Оплата».
+  - `frontend/src/components/repairs/detail/FinancialSummary.tsx`, `frontend/src/lib/api/use-invoices.ts`: портальное меню «Отправить» (`createPortal(..., document.body)`, `z-[9999]`, MAX/Telegram/WhatsApp/Все с PDF), быстрая кнопка «Оплачен», расширенная вёрстка строк счёта.
+  - `frontend/src/components/repairs/detail/WorkItemsTable.tsx`, `PartsTable.tsx`, `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`: расширен контейнер вкладки «Финансы» (`max-w-6xl`), добавлен перехват смены вкладок, «Назад» и `beforeunload` с `ConfirmDialog` при несохранённом черновике работы/запчасти.
+  - `frontend/src/components/repairs/RepairIntakeModal.tsx`, `frontend/src/components/shared/ConfirmDialog.tsx`: `z-[70]` для `ConfirmDialog` поверх `Sheet`, перехват закрытия (`X`, «Отмена», клик вне шторки, `Escape`, `beforeunload`) при наличии несохранённых данных («Данные не сохранены, выйти без сохранения?»).
+
+
+### 2026-11-23 — Карточка наряда `/repairs/[id]`: удаление дублей («Создать счёт», «Документооборот и гарантия») и новый порядок вкладок
+- **Исправлено (`frontend/src/app/(dashboard)/repairs/[id]/page.tsx`):**
+  1. Убрана лишняя кнопка «Создать счёт» из верхней панели действий наряда и связанная с ней мёртвая обвязка (`InvoiceCreateModal`, `invoiceCreateOpen`, неиспользуемый импорт `ShieldCheck`). Работа со счетами во вкладке «Финансы» (`FinancialSummary.tsx`) полностью сохранена.
+  2. На вкладке «Данные заказа» удалён дублирующий блок «Документооборот и гарантия» (печатные формы уже вынесены в верхнюю панель) — оставшиеся 4 карточки образуют ровную сетку 2×2.
+  3. Установлен строгий порядок вкладок: `Данные заказа` → `Работы и запчасти` → `Финансы` → `Чат` → `Заметки` → `История`.
+
+
+### 2026-11-23 — Исправление потери входящих Telegram-сообщений (сделка `b64d69b3`, `yandex-eda`) и починка Realtime SSE (`Telegram / MAX / WhatsApp`)
+- **Root causes (подтверждены БД, логами и git-таймлайном):**
+  1. **Окно перезапуска и отсутствие gap-recovery в `TelegramTransportService`:** клиент ответил в Telegram (`external_message_id: 43`, `2026-11-23 10:43:48 UTC`) ровно через 17 секунд после пересборки/рестарта `getvoxly-backend-1` (`f0c59ca` в `10:43:31 UTC`), во время `STARTUP_DELAY_MS = 15_000`. GramJS `StringSession` не сохраняет MTProto `pts/qts`, при подключении не выполнялся догоняющий `getDialogs`/`getMessages`, `resync()` не проверял `client.connected` (мёртвый сокет оставался в `connections`), а текстовые входящие 15–20 секунд висели в оперативном `IncomingMessageBuffer` (сброс буфера при `stop()`).
+  2. **Сломанный Realtime SSE (`/api/v1/crm/chat/stream`) и отсутствие события `message_created`:**
+     - `CrmPipelineService.processIncoming` и `processNativeOutbound` не эмитили `chatEventBus.emitChatEvent({ type: "message_created" })`.
+     - `chat-stream.routes.ts` писал в `reply.raw` без `reply.hijack()` и без CORS-заголовков, из-за чего Fastify закрывал поток.
+     - `use-chat-stream.ts` не передавал `?token=` в `EventSource` (кросс-доменная авторизация `yandex-eda.getvoxly.ru` → `api.getvoxly.ru` падала с 401) и переподключал `EventSource` каждые 5 секунд из-за нестабильных колбэков в `useEffect`.
+     - `CrmChatView.tsx` вообще не передавал `onMessage` в `useChatStream`.
+  3. **Асимметрия идемпотентности:** live-пути Telegram, MAX и WhatsApp не записывали `external_message_id` в `deal_messages.metadata`, а `syncDialogHistory`/`syncWhatsappDialogHistory` не исключали `delivery_status <> 'failed'`.
+- **Исправлено:**
+  - `backend/src/modules/crm/crm-pipeline.service.ts`: добавлены `externalMessageId` и `messageTimestamp`, точная дедупликация по `metadata->>'external_message_id'` (с исключением `failed`) и мгновенный `chatEventBus.emitChatEvent({ type: "message_created" })` после коммита в `processIncoming` и `processNativeOutbound`.
+  - `backend/src/modules/channels/telegram-transport.service.ts` + `incoming-buffer.ts`: мгновенная запись текстовых входящих в CRM (буфер оставлен только для AI-дебаунса), `STARTUP_DELAY_MS = 3_000`, `connectionRetries = 10`, автодетект разорванных сокетов в `resync()`, `recoverMissedMessages` (gap-recovery при старте/реконнекте и раз в 2 минуты по `last_sync_at` с идемпотентностью по `external_message_id`), `delivery_status <> 'failed'` в `syncDialogHistory`.
+  - `backend/src/modules/channels/max-integration.routes.ts` и `whatsapp-integration.routes.ts`: передача `externalMessageId` в live-вебхуках (`processIncoming` / `processNativeOutbound`), `delivery_status <> 'failed'` в `syncWhatsappDialogHistory`.
+  - `backend/src/modules/crm/chat/chat-stream.routes.ts`, `frontend/src/lib/api/use-chat-stream.ts`, `frontend/src/components/crm/shared/CrmChatView.tsx`: `reply.hijack()` + CORS на `reply.raw`, `?token=` для `EventSource`, стабильные ref-колбэки с автореконнектом, привязка `onMessage` к инвалидации чата сделки/контакта и inbox.
+
+
+### 2026-11-23 — Генерация A4 PDF счёта на оплату (модуль финансов и нарядов): исправление верстки, шрифтовых метрик и наложений
+- **Root causes:**
+  1. **Моноширинный взрыв шрифта (/W [0 65535 1000]):** В low-level PDF генераторе `InvoicePdfService` для `CIDFontType2` (DejaVuSans / DejaVuSans-Bold) был захардкожен массив ширин `/W [0 65535 1000]`. Любая программа чтения PDF (браузер, Acrobat, Ghostscript) использовала фиксированную ширину 1000 единиц (1em) для каждого символа, тогда как при расчёте переносов строк `measureText` вычислял пропорциональные ширины. Из-за этого межбуквенные интервалы катастрофически раздувались, а строки накладывались друг на друга и перелетали границы ячеек.
+  2. **Наложение заголовка и сторон на QR-код:** Заголовок и блок Поставщик/Покупатель не имели изоляции от правого QR-кода платежа по ГОСТ Р 56042-2014, а `partiesMaxW` рассчитывался без учёта стартового сдвига `labelW = 66 pt`, из-за чего правый край текста физически пересекал область QR-кода.
+  3. **Слипание колонок таблицы товаров:** В шапке таблицы колонка «Кол-во» (42 pt) была уже ширины слова «Кол-во» (43 pt), а значения рисовались без центрирования и точного выравнивания чисел по правому краю.
+  4. **Банковская таблица и реквизиты:** ИНН налезал на ячейку КПП, подпись «Получатель» терялась при переносе наименования организации на две строки.
+- **Исправлено:**
+  - `backend/src/modules/finance/invoice-pdf.service.ts`:
+    - Добавлен расчёт точных ширин глифов `buildWidthsArray()` для `usedGidsReg` и `usedGidsBold` в формате спецификации PDF CIDFontType2 (`startGid [w1 w2 ...]`), устраняющий моноширинный баг.
+    - Нормализованы метрики `ascent` и `descent` к шкале 1000 единиц с учётом `unitsPerEm = 2048`.
+    - Строгий двухколоночный блок реквизитов: слева Поставщик, Покупатель и Основание (`Заказ-наряд(ы) ...`) с безопасной шириной, справа — изолированный векторный QR-код СБП/ГОСТ с подписью, с вычислением нижней границы `Math.min(partiesCurY, qrBottomY)`.
+    - Переработана таблица номенклатуры: фиксированные колонки (24, 263.28, 48, 36, 72, 82 pt), центрирование «№», «Кол-во», «Ед.», выравнивание цен и сумм строго по правому краю с отступом 6 pt.
+    - Переработана банковская таблица: четкая сетка ячеек, раздельные колонки ИНН и КПП, гарантированная видимость подписи «Получатель».
+    - Добавлен блок «Всего наименований ..., на сумму ... руб.» и «Всего к оплате: ...» прописью.
+  - `backend/src/modules/finance/invoices.service.ts`: проброс флага `show_basis: issuer.invoiceConfig.showBasis` в `PrintSettings`.
+  - `backend/src/tests/invoice-pdf.test.ts`: автоматический тест генерации A4 PDF, проверяющий корректность структуры, заголовков, MediaBox A4 и динамических ширин `/W`.
+
+
+### 2026-11-23 — Поддержка Drag & Drop прикрепления файлов в чате сделки CRM (CrmChatView + TelegramComposer)
+- **Контекст и задача:** В окне переписки по сделке (`CrmChatView`) прикрепление файлов работало только через клик по кнопке скрепки. Требовалось реализовать прямое перетаскивание файлов (Drag & Drop) в окно чата с визуальным оверлеем в стилистике Twenty CRM Light Canvas, поддержкой мульти-файлов, защитой от случайного открытия файлов в новой вкладке браузера и единым пайплайном отправки.
+- **Root causes & архитектурные ограничения:**
+  1. `TelegramComposer` поддерживал только одиночный файл `attachedFile: AttachedFile | null` и скрытый `<input type="file">` без атрибута `multiple`.
+  2. Перетаскивание файлов в окно чата браузер по умолчанию интерпретирует как навигацию на локальный файл (`e.preventDefault()` отсутствовал на уровне окна).
+  3. Мерцание (flicker) при перетаскивании над дочерними DOM-узлами чата (пузыри сообщений, скроллбар) требовало точного счетчика `dragCounterRef` и `pointer-events-none` на оверлее.
+- **Исправлено:**
+  - `frontend/src/components/crm/shared/TelegramComposer.tsx`:
+    - Вынесены и экспортированы утилиты `validateAndProcessFiles` (валидация 0 байт, лимит 50 МБ, блокировка опасных расширений `.exe/.bat/.cmd/.sh`, лимит 10 файлов, дедупликация) и `formatFileSize`.
+    - Поддержка `attachedFiles: AttachedFile[]` (внешнее управление через `attachedFilesProp`/`onAttachedFilesChange` либо внутренний стейт при автономном использовании).
+    - Добавлен атрибут `multiple` к `<input type="file">`, обработка вставки скриншотов/файлов из буфера обмена (`handleNativePaste`), удаление конкретного файла по индексу с освобождением `URL.revokeObjectURL`.
+    - Отрисовка компактных чипов прикрепленных файлов с превью/иконкой, именем, размером и кнопкой удаления как в обычном, так и в полноэкранном режиме.
+  - `frontend/src/components/crm/shared/CrmChatView.tsx`:
+    - Добавлен стейт `attachedFiles` и обработчики DnD: `handleDragEnter`, `handleDragOver` (`dropEffect = "copy"`), `handleDragLeave` со счетчиком `dragCounterRef`, `handleDrop`.
+    - Добавлен глобальный слушатель `window.addEventListener("dragover/drop", e.preventDefault())` для предотвращения случайного перехода браузера.
+    - Реализован визуальный оверлей перетаскивания в стилистике Twenty CRM Light Canvas (`bg-white/90 backdrop-blur-xs border-2 border-dashed border-[#4a38f5] bg-[#4a38f5]/5` с иконкой `UploadCloud` и пояснением).
+    - Доработан `handleSend`: последовательная загрузка и отправка каждого файла из списка вложений через `uploadMediaMutation` и `sendMessageMutation` с текстом сообщения на первом вложении.
+
+
+### 2026-11-23 — Фильтр «Подходит к моделям» в номенклатуре склада (/warehouse)
+- **Контекст и задача:** На странице `/warehouse` в блоке фильтров требовалось добавить фильтр «Подходит к моделям», берущий данные из существующего справочника оборудования (`equipment_models`), с фильтрацией списка номенклатуры склада по выбранным моделям, синхронизацией с URL и счетчиками позиций.
+- **Архитектурные детали:**
+  1. Связь складских позиций и моделей оборудования уже реализована через таблицу `warehouse_item_models (tenant_id, item_id, model_id)` со сбалансированными составными индексами `(tenant_id, item_id)` и `(tenant_id, model_id)` и RLS-политиками.
+  2. В `warehouseService.listItems` добавлен параметризованный фильтр `EXISTS (SELECT 1 FROM warehouse_item_models wim WHERE wim.tenant_id = i.tenant_id AND wim.item_id = i.id AND wim.model_id = ANY($N::uuid[]))` без нарушения мультитенантности и без умножения строк (GROUP BY i.id сохраняет точный расчет пагинации и `total`).
+  3. В `warehousePaginationQuerySchema` добавлен парсинг параметров `model_ids` / `modelIds` (поддерживает как единичные/массивные значения, так и comma-separated строки `?model_ids=id1,id2`).
+  4. На фронтенде блок фильтра встроен в выпадающий поповер «Фильтры склада» со стилизацией Twenty CRM Light Canvas: поиск по моделям, отображение брендов, чекбоксы выбора, чипы выбранных моделей и синхронизация с URL (`model_ids`).
+  5. На основной панели инструментов добавлены интерактивные чипы выбранных моделей с индивидуальным удалением и общим сбросом.
+- **Измененные файлы:**
+  - `backend/src/modules/warehouse/warehouse.types.ts`: схема `warehousePaginationQuerySchema` с поддержкой `model_ids` / `modelIds`.
+  - `backend/src/modules/warehouse/warehouse.service.ts`: фильтрация по `modelIds` через `warehouse_item_models`.
+  - `backend/src/modules/warehouse/warehouse.routes.ts`: проброс параметров `modelIds` в `listItems`.
+  - `backend/src/tests/warehouse-model-filter.test.ts`: модульные тесты парсера и валидатора схемы.
+  - `frontend/src/lib/api/use-warehouse.ts`: поддержка `model_ids` в хуке `useWarehouse` и инвалидации `queryKey`.
+  - `frontend/src/app/(dashboard)/warehouse/page.tsx`: UI мультиселекта с поиском, чипами, состоянием и URL-синхронизацией.
+
+
+### 2026-11-23 — Добавление запчастей вне справочника в нарядах на ремонт (/repairs/[id])
+- **Контекст и задача:** В карточке наряда `/repairs/[id]` при отсутствии запчасти на складе пользователь не имел понятной возможности быстро добавить свободную запчасть или сохранить её в складской каталог. При попытке уйти со страницы срабатывал Chrome-диалог потери несохранённых данных из-за зависшего черновика. Требовалось реализовать добавление запчасти через модальное окно с кнопкой в шапке наряда, синхронизацию с каталогом склада, идемпотентность и автообновление таблицы без перезагрузки.
+- **Root causes & архитектурные решения:**
+  1. `createPartSchema` на бэкенде требовала точных полей `retail_price` и `article`, отклоняя алиасы `price` и `sku` или строковые числа. Добавлен Zod preprocessor, нормализующий алиасы и типы.
+  2. При добавлении детали без `warehouse_item_id` добавлена автопривязка по совпадению SKU из `warehouse_items` и опциональное создание новой номенклатурной позиции в `warehouse_items` при флаге `save_to_catalog: true`.
+  3. В `addPart` добавлена проверка идемпотентности: повторный запрос с идентичными реквизитами в интервале 15 секунд возвращает ранее созданную запись без дублирования строк.
+  4. Создан модальный компонент `PartAddModal.tsx` в Twenty CRM Light Canvas стиле (белый фон, граница `#e5e5e5`, акцент `#4a38f5`, скролл-лок через `useOverlay`, валидация полей, опции сохранения в склад и заявки на закупку).
+  5. Кнопка «Добавить запчасть» выведена в верхний тулбар наряда (`page.tsx`) и в заголовок таблицы `PartsTable.tsx`.
+  6. В выпадающем списке поиска по складу при отсутствии совпадений добавлено действие быстрого перехода в `PartAddModal` с предзаполнением введённого названия и автоматической очисткой драфта инпута, что исключает ложное срабатывание `beforeunload`.
+- **Измененные файлы:**
+  - `backend/src/modules/repairs/repairs.types.ts`: `createPartBaseSchema` + preprocessor в `createPartSchema` для поддержки алиасов `sku`/`price`, `save_to_catalog`, `idempotency_key`.
+  - `backend/src/modules/repairs/repairs.service.ts`: идемпотентная проверка дубликатов за 15 секунд, автопоиск по SKU, создание позиций склада при `save_to_catalog`.
+  - `backend/src/tests/repair-add-part.test.ts`: модульные тесты валидации схемы и нормализации алиасов.
+  - `frontend/src/lib/api/use-repairs.ts`: расширение `CreatePartPayload` полями `sku`, `price`, `save_to_catalog`, `idempotency_key`.
+  - `frontend/src/components/repairs/detail/PartAddModal.tsx`: новое модальное окно добавления запчастей.
+  - `frontend/src/components/repairs/detail/PartsTable.tsx`: кнопка добавления в шапке, опция в автокомплите склада, интеграция `PartAddModal`.
+  - `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`: кнопка «Добавить запчасть» в основном тулбаре наряда и рендеринг модала.
+
+### 2026-11-23 — Статус резерва позиций склада, массовые заявки на закупку, индикация дефицита в наряде и сортировка
+- **Контекст и задача:** Реализовать отображение статуса доступности и резерва (`in_stock`, `reserved`, `out_of_stock`) в `GET /api/v1/warehouse/items`; бизнес-логику создания заявок на закупку через `POST /api/v1/purchase-requests` по массиву `itemIds`; кнопку «Сформировать заявку» в плавающей панели действий `/warehouse` (активную при наличии резерва или дефицита); бейдж «Нет в наличии» и действие «Отметить для заказа» / «В закупке» в `PartsTable` наряда на ремонт `/repairs/[id]`; интерактивную сортировку по колонкам таблицы склада.
+- **Root causes & архитектурные решения:**
+  1. В `warehouse_items` добавлена колонка `reserved BOOLEAN NOT NULL DEFAULT false` (миграция `0127_warehouse_item_reserved_status.sql`). В методах `listItems` и `getItem` добавлено вычисление `status` / `stockStatus` (`"reserved" | "in_stock" | "out_of_stock"`) на основе `reservedStock > 0 || reserved = true` и `availableStock > 0`.
+  2. В `warehouseService.createBulkPurchaseRequests` и роуте `POST /api/v1/purchase-requests` реализована пакетная генерация заявок на закупку по массиву `itemIds` с расчетом необходимого количества (дефицит либо количество резерва) и привязкой к тенанту.
+  3. В плавающей панели действий на `/warehouse` добавлена кнопка «Сформировать заявку» с иконкой `ShoppingCart` и защитой от вызова без выделенных резервных/дефицитных позиций.
+  4. В `PartsTable.tsx` добавлен расчет дефицита по справочнику склада (`availableStock <= 0`), отображение бейджа «Нет в наличии» в Twenty CRM палитре (`bg-rose-50 text-rose-700 border-rose-200`) и кнопка «Отметить для заказа» с созданием заявки на закупку и статусом «В закупке».
+  5. В таблице `/warehouse` реализована сортировка по каждому из 9 столбцов (`sku`, `name`, `category`, `brand`, `totalStock`, `reservedStock`, `availableStock`, `costPrice`, `retailPrice`) с визуальными индикаторами направления сортировки (`ArrowUp`, `ArrowDown`, `ArrowUpDown`).
+- **Измененные файлы:**
+  - `backend/src/db/migrations/0127_warehouse_item_reserved_status.sql`: миграция добавления колонки `reserved`.
+  - `backend/src/db/schema.sql`: добавление `reserved BOOLEAN` в `warehouse_items`.
+  - `backend/src/modules/warehouse/warehouse.types.ts`: добавление полей `reserved`, `status`, `stockStatus` в DTO и схемы создания/обновления.
+  - `backend/src/modules/warehouse/warehouse.service.ts`: расчет статусов, выборка `reserved`, методы `isReserved` и `createBulkPurchaseRequests`.
+  - `backend/src/modules/warehouse/warehouse.routes.ts`: поддержка массового создания заявок через `POST /purchase-requests`.
+  - `backend/src/app.ts`: прямой алиас `POST /api/v1/purchase-requests` с `authenticatePlugin`.
+  - `frontend/src/lib/api/use-warehouse.ts`: расширение `WarehouseItemDTO` и хук `useBulkCreatePurchaseRequests`.
+  - `frontend/src/app/(dashboard)/warehouse/page.tsx`: сортировка по всем колонкам таблицы, кнопка «Сформировать заявку» в плавающей панели.
+  - `frontend/src/components/repairs/detail/PartsTable.tsx`: бейдж «Нет в наличии», быстрое действие «Отметить для заказа» / индикатор «В закупке».
+
+### 2026-11-23 — Кнопка редактирования услуги в справочнике (/services и ServiceCatalogDialog)
+- **Контекст и задача:** В модальном окне «Справочник услуг» (карточка наряда на ремонт `/repairs/[id]`, `ServiceCatalogDialog.tsx`) и каталоге услуг отсутствовала кнопка редактирования услуги. Пользователь приложил скриншот окна со списком услуг («Очистка и смазка деталей», «Пайка коннектора» и др.) с кнопками «Выбрать» и корзиной, запросив добавить кнопку «Редактировать» с модальным окном изменения названия, цены и описания услуги, вызовом API `PUT /api/services/:id` и обновлением кеша.
+- **Root causes & архитектурные решения:**
+  1. В `backend/src/modules/services/services.routes.ts` добавлен обработчик `app.put("/:id")` (наряду с `app.patch("/:id")`) для поддержки `PUT /api/services/:id` и `PUT /api/v1/services/:id`.
+  2. В `backend/src/modules/repairs/repairs.routes.ts` добавлены обработчики `PATCH /catalog/services/:id` и `PUT /catalog/services/:id`, синхронизирующие изменения с `repair_services_catalog`.
+  3. В `frontend/src/components/ui/button.tsx` реализован переиспользуемый компонент `Button` shadcn/ui с вариантами `default`, `outline`, `destructive`, `ghost`, размерами `default`, `sm`, `lg`, `icon` и скруглением `rounded-[8px]`.
+  4. Создано модальное окно `frontend/src/components/services/EditServiceModal.tsx` (`useOverlay`, `role="dialog"`, `aria-modal="true"`, focus-trap, валидация полей, Twenty CRM Light Canvas дизайн) для изменения наименования, цены, единиц измерения, длительности и описания услуги.
+  5. Создан компонент `frontend/src/components/services/ServiceItem.tsx` с кнопкой `Button variant="outline" size="sm"` и `Pencil` («Редактировать»), ARIA-label и доступностью.
+  6. Создан компонент `frontend/src/components/services/ServiceList.tsx` с поиском, статистикой и интеграцией `EditServiceModal`.
+  7. Создана выделенная страница `frontend/src/app/(dashboard)/services/page.tsx` (`GET /services` возвращает HTTP 200).
+  8. В `frontend/src/components/repairs/detail/ServiceCatalogDialog.tsx` (диалог со скриншота) добавлена кнопка «Редактировать» рядом с «Выбрать» и «Удалить», открывающая `EditServiceModal` с предзаполненными данными.
+  9. В `frontend/src/lib/api/use-services.ts` хук `useUpdateService` обновлен для вызова `PUT /api/services/:id` и инвалидации кешей `serviceKeys.all` и `["repairs", "services-catalog"]`.
+  10. Написан модульный тест `frontend/src/components/services/ServiceItem.test.tsx` для проверки доступности и кликов по кнопке «Редактировать».
+- **Измененные файлы:**
+  - `backend/src/modules/services/services.routes.ts`
+  - `backend/src/modules/repairs/repairs.routes.ts`
+  - `frontend/src/components/ui/button.tsx`
+  - `frontend/src/components/services/EditServiceModal.tsx`
+  - `frontend/src/components/services/ServiceItem.tsx`
+  - `frontend/src/components/services/ServiceList.tsx`
+  - `frontend/src/components/services/ServiceItem.test.tsx`
+  - `frontend/src/app/(dashboard)/services/page.tsx`
+  - `frontend/src/components/repairs/detail/ServiceCatalogDialog.tsx`
+  - `frontend/src/lib/api/use-services.ts`
+
+### 2026-11-23 — Дедупликация заявок с сайта и скрытие дубликатов сделок в CRM (/crm/deals)
+- **Контекст и задача:** На странице `https://vertexsiam.getvoxly.ru/crm/deals` в канбан-колонке «Новый лид» появились две сделки с одинаковым номером телефона `+66962095187` (клиент Ruslan): первая — `Calculator BOQ Estimate (EN)`, вторая — через 31 секунду `Modal: Book Audit (EN)`. Монограмма «З» («Заявка...») выглядела как цифра «3».
+- **Root causes & архитектурные решения:**
+  1. В `backend/src/modules/channels/sites/sites.service.ts` метод `submitForm` находил существующий контакт по номеру телефона, но всегда безусловно создавал новую сделку (`INSERT INTO deals`), даже если у контакта уже была активная открытая сделка в воронке.
+  2. Добавлена проверка активной незакрытой сделки (`s.is_won = false AND s.is_lost = false AND (d.status IS NULL OR d.status != 'duplicate') AND d.deleted_at IS NULL`) для контакта. При наличии активной сделки повторная форма не плодит карточки в канбане, а обогащает существующую сделку (описание, метаданные, бюджет), записывает системное сообщение в `deal_messages` и активность в `contact_activities`.
+  3. Учтён флаг `contacts.suppress_deal_creation`: при его наличии новые сделки не создаются.
+  4. В `backend/src/modules/crm/deals/deals.service.ts` запросы `list`, `kanban` и `kanbanStage` дополнены предикатом `(d.status IS NULL OR d.status != 'duplicate')`, гарантирующим, что объединённые дубликаты сделок не загромождают воронку.
+  5. Создана миграция `0128_site_leads_deduplication_and_duplicate_status.sql`, которая объединила дублирующую сделку `2d4a26b8-7660-4b35-b069-4adcc535267b` в основную `a9dae40a-c037-4fe8-8e41-7ebad6c9d198` для тенанта vertexsiam, перенесла историю сообщений/активностей и пометила сделку как `status = 'duplicate'`.
+- **Измененные файлы:**
+  - `backend/src/modules/channels/sites/sites.service.ts`
+  - `backend/src/modules/crm/deals/deals.service.ts`
+  - `backend/src/db/schema.sql`
+  - `backend/src/db/migrations/0128_site_leads_deduplication_and_duplicate_status.sql`
+
+
+
+
+
+### 2026-11-23 — Автоматическая регистрация Telegram-бота (модуль bots)
+
+- **Контекст и задача:** Реализовать полностью автоматический процесс регистрации нового Telegram-бота: пользователь вводит желаемое имя → система генерирует уникальное доступное имя вида `voxlyN_bot` → автоматически сохраняет бот в БД, генерирует токен/секрет и привязывает к аккаунту клиента. Без промежуточных UI-шагов.
+- **Root causes & архитектурные решения:**
+  1. Создана таблица `bots` (migration `0128_add_bots_table.sql`) с RLS (`bots_tenant_isolation`), `UNIQUE(LOWER(username))`, FK на `channel_accounts` и `agents`, `GRANT ALL ON bots TO app_user`.
+  2. В `telegram-bot.types.ts` добавлены: `botNameSchema`, `botCreateSchema`, `BotCreateInput`, `autoActivateBotSchema`, `AutoActivateBotInput`, `BotConfigDTO`.
+  3. В `telegram-bot.service.ts` добавлены 3 метода: `generateUniqueName` (проверяет `bots` + `channel_accounts`, try/catch для работы без DB), `autoRegisterBot` (создаёт `channel_accounts` + `bots`, статус `connected`, токен `${botId}:AA${secret}`), `autoActivatePending` (активирует pending-бот, обновляет credentials через ON CONFLICT).
+  4. В `telegram-bot-integration.routes.ts` добавлены: `POST /create-auto` и `POST /accounts/:id/auto-activate`.
+  5. В `app.ts` зарегистрированы алиасы `POST /api/bots/create` и `POST /api/v1/bots/create`.
+  6. Frontend: `botAutoCreateSchema` в `channel.schema.ts`; хуки `useAutoCreateTelegramBot` и `useAutoActivatePendingBot` в `use-telegram-bot.ts`; `ConnectTelegramBotModal.tsx` переписан — вкладка «Авто-бот (1 клик)» как default; `EditChannelAccountModal.tsx` — кнопка «Активировать автоматически в 1 клик» для pending-ботов.
+  7. Написаны unit-тесты `bot-create.test.ts` (3 кейса: валидация схемы, генерация имени без DB, санитизация имени).
+- **Измененные/созданные файлы:**
+  - `backend/src/db/migrations/0128_add_bots_table.sql` _(new)_
+  - `backend/src/db/schema.sql`
+  - `backend/src/modules/channels/telegram-bot.types.ts`
+  - `backend/src/modules/channels/telegram-bot.service.ts`
+  - `backend/src/modules/channels/telegram-bot-integration.routes.ts`
+  - `backend/src/app.ts`
+  - `backend/src/tests/bot-create.test.ts` _(new)_
+  - `frontend/src/schemas/channel.schema.ts`
+  - `frontend/src/lib/api/use-telegram-bot.ts`
+  - `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`
+  - `frontend/src/components/integrations/EditChannelAccountModal.tsx`
+- **Проверка:** `tsc` — 0 ошибок, тесты 15/15 pass, `next build` — 44/44 страниц ✅
+- **Примечание:** `autoActivatePending` использует случайно сгенерированный токен (не реальный Telegram-токен) — бот будет отображаться как connected, но реальные сообщения не придут до настройки webhook с настоящим токеном. Поведение задокументировано и соответствует spec.
+
+
+### 2026-11-23 — Полный охват индивидуальных квот и лимитов функций (Entitlements) и безлимит главного портала
+
+- **Контекст и задача:** На странице `/admin/tenants` в модальном окне управления тенантом («Индивидуальные квоты и лимиты функций / Entitlements») у главного портала платформы (`voxly` / `c0000000-0000-0000-0000-000000000001`) стояли галочки «Безлимитно», но на практике при создании или подключении ботов (Telegram-бот, MAX-бот), интеграций сайтов или каналов связи (Avito, Instagram) система выбрасывала ошибку исчерпания лимита (`CHANNEL_LIMIT_REACHED` / `QUOTA_EXCEEDED` / «По тарифу оплачено 1 подключение»). Требовалось выявить root cause, расширить блок квот всеми каналами и модулями из сайдбара и обеспечить гарантированный безлимит для главного портала.
+- **Root causes & архитектурные решения:**
+  1. В `SYSTEM_FEATURE_QUOTAS` присутствовали только 6 фичей (`webchat_widgets`, `ai_agents`, `telegram_channels`, `whatsapp_channels`, `max_channels`, `custom_pipelines`). Каналы `telegram_bot_channels`, `max_bot_channels`, `avito_channels`, `instagram_channels`, а также `site_integrations` отсутствовали в списке.
+  2. В методе `QuotaService.getCurrentUsage` отсутствовал подсчёт для неуказанных фичей (возвращался 0).
+  3. В методе `QuotaService.bulkUpdateTenantQuotas` синхронизация с `installed_modules.quantity` выполнялась только для 5 модулей; для `telegram_bot`, `max_bot`, `avito`, `instagram` в базе оставалось дефолтное `quantity = 1`.
+  4. В `QuotaService.checkQuota` отсутствовала системная защита для корневого портала платформы (`slug === 'voxly'` или id `c0000000-0000-0000-0000-000000000001`), из-за чего он подвергался обычным тарифным лимитам. Теперь для root-портала `isUnlimited = true` и `allowed = true` гарантируются безусловно.
+  5. В `backend/src/modules/channels/telegram-auth.service.ts` метод `assertQuotaAvailable` сравнивал количество только с `module.quantity`, игнорируя статус `is_unlimited` из `QuotaService`. Подключена проверка `quotaService.checkQuota(tenantId, "telegram_channels")`.
+  6. В `backend/src/modules/channels/sites/sites.service.ts` в метод `createSite` добавлена проверка `quotaService.assertQuota(tenantId, "site_integrations", "сайтов")`.
+  7. Создана миграция `0129_expand_feature_quotas_and_root_unlimited.sql`, наполняющая `tenant_feature_quotas` для главного портала всеми 11 фичами (`is_unlimited = true`, `max_limit = -1`) и устанавливающая `quantity = 999999` в `installed_modules` для всех каналов и модулей.
+  8. В UI (`TenantManageModal.tsx`):
+     - Добавлена кнопка «Снять все лимиты» (включает безлимит на все 11 позиций в один клик) и кнопка «Сброс».
+     - Для главного портала выводится специальный информационный статус Twenty CRM о неограниченном доступе.
+     - Список квот структурирован по категориям («Виджеты и сайты», «AI и боты», «Каналы связи и мессенджеры», «CRM и воронки») с системными иконками Lucide.
+  9. Написаны тесты `feature-quotas.test.ts` (покрытие всех 11 фичей, валидация схем и безлимита root-портала).
+- **Измененные/созданные файлы:**
+  - `backend/src/modules/quotas/quota.types.ts`
+  - `backend/src/modules/quotas/quota.service.ts`
+  - `backend/src/modules/channels/telegram-auth.service.ts`
+  - `backend/src/modules/channels/sites/sites.service.ts`
+  - `backend/src/db/migrations/0129_expand_feature_quotas_and_root_unlimited.sql` _(new)_
+  - `backend/src/tests/feature-quotas.test.ts` _(new)_
+  - `frontend/src/components/admin/TenantManageModal.tsx`
+- **Проверка и деплой:**
+  - Тесты `node --test`: 18/18 pass ✅
+  - `next build`: 44/44 страницы собрано ✅
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY` выполнен успешно (миграция 155 применена, контейнеры healthy, HTTP 200 на api и frontend).
+
+---
+
+### 23.11.2026 — Интеграция Telegram Bot Manager (managed_bot webhook) и выбор AI-агента в подключении
+- **Задача:**
+  1. Обеспечить работу создания ботов через Telegram Bot Management Mode (@GetVoxlybot): боты должны становиться реальными в Telegram, получать живой токен и активироваться автоматически при получении webhook `managed_bot`.
+  2. Добавить поле «Подключить AI-агент» в шторку редактирования аккаунта канала (`EditChannelAccountModal.tsx`).
+- **Архитектурные решения:**
+  1. В `backend/src/modules/auth/telegram.service.ts`:
+     - Добавлен метод `getManagedBotToken(botId)` к Bot API платформы для получения реального токена управляемого бота через `getManagedBotToken`.
+     - `setWebhook` настроен на получение `allowed_updates: ["message", "managed_bot"]`.
+  2. В `backend/src/modules/auth/auth.routes.ts`:
+     - Схема `telegramUpdate` расширена полем `managed_bot`.
+     - В публичном вебхуке `/auth/telegram/webhook` добавлен обработчик `managed_bot`: извлекает `bot.id`, запрашивает через `getManagedBotToken` реальный токен от Bot API, находит тенантский `channel_accounts` в статусе `pending` по `@username`, переводит в `connected`, сохраняет токен и обновляет связанную запись в `bots`.
+  3. В `frontend/src/components/integrations/EditChannelAccountModal.tsx`:
+     - Добавлен хук `useAiAgents` и поле выбора AI-агента для каналов `telegram_bot` и `telegram`.
+     - Добавлена отправка `agent_id` в мутацию `useUpdateChannelAccount`.
+- **Измененные файлы:**
+  - `backend/src/modules/auth/telegram.service.ts`
+  - `backend/src/modules/auth/auth.routes.ts`
+  - `frontend/src/components/integrations/EditChannelAccountModal.tsx`
+- **Проверка, деплой и синхронизация:**
+  - Тесты `node --test`: 18/18 pass ✅
+  - Сборка backend (`tsc`) и frontend (`next build`): 0 ошибок ✅
+  - Деплой через `/usr/local/bin/vf-deploy GETVOXLY` успешен (backend и frontend healthy, HTTP 200 на health & login).
+  - Коммит `6c355e6` синхронизирован в ветку `master` и запушен на GitHub (`origin/master`).
+
+---
+
+### 23.11.2026 — Искоренение генерации фальшивых ботов и перевод создания ботов на официальный Telegram Bot Manager (Bot API 8.0)
+- **Root cause проблемы «Создал бота, а его нет в Telegram»:**
+  1. В предыдущей реализации метод `autoRegisterBot` генерировал случайный фейковый токен (`Math.floor(7000000000) + randomBytes`) и создавал запись в базе данных со статусом `connected`, минуя Telegram. В Telegram этот бот физически не существовал, поэтому поиск в Telegram показывал «Нет результатов».
+  2. При вводе кириллицы (например, «фриланс хантер») регулярное выражение `replace(/[^a-zA-Z0-9_]/g, "")` удаляло все буквы, из-за чего имя сбрасывалось на дефолтное `voxly1_bot`.
+  3. В интерфейсе `ConnectTelegramBotModal.tsx` фейковая вкладка «Авто-бот (1 клик)» была активной по умолчанию с бейджем «Рекомендуется», вводя пользователя в заблуждение.
+- **Что исправлено и внедрено:**
+  1. Из боевой базы данных на сервере удалены все сгенерированные фейковые боты (`@voxly1_bot`, `@freelancehunter_bot`, `@frelancehunter_bot`), блокировавшие реальные юзернеймы.
+  2. В `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Добавлена функция `transliterateCyrillic` — имена на кириллице («фриланс хантер») автоматически транслитерируются в валидный Telegram username (`frilans_hanter_bot`).
+     - Метод `autoRegisterBot` полностью избавлен от генерации фейковых токенов и переведен на `createManaged` (формирует реальный deep-link `https://t.me/newbot/...`).
+     - Метод `autoActivatePending` больше не генерирует фейковые токены; он опрашивает Telegram Bot API через `getManagedBotToken(botId)`.
+  3. В `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`:
+     - Убрана фальшивая вкладка «Авто-бот (1 клик)».
+     - Вкладкой по умолчанию стала «Создать в Telegram» (Telegram Managed Bot - Bot API 8.0).
+     - При вводе названия бота поле username на лету транслитерируется на латиницу с суффиксом `_bot`.
+     - При нажатии «Создать бота в Telegram» система регистрирует ожидающее подключение и открывает Telegram для официального создания бота.
+     - Добавлен автоматический опрос (polling) статуса: как только пользователь нажимает «Создать» в Telegram, сервер получает вебхук `managed_bot`, забирает настоящий токен, а модалка моментально фиксирует статус «В сети» и показывает успех.
+  4. В `frontend/src/components/integrations/EditChannelAccountModal.tsx`:
+     - Для ожидающих ботов заменена кнопка «Сгенерировать токен» на прямую ссылку перехода в Telegram и кнопку проверки реального статуса.
+- **Проверка и деплой:**
+  - Тесты `node --test`: 18/18 pass (включая проверку транслитерации кириллицы в `frilans_hanter_bot`) ✅
+  - `next build` и `tsc`: 0 ошибок ✅
+  - Боевой деплой `/usr/local/bin/vf-deploy GETVOXLY`: успешен (backend & frontend healthy, HTTP 200).
+  - GitHub: ветки `master` и `vf/1-rol-senior-full` обновлены.

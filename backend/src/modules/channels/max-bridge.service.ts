@@ -58,6 +58,21 @@ export interface MaxPrivateDialogsResponse {
   error?: string;
 }
 
+const LIVE_BOTS_CACHE_TTL_MS = 10_000;
+let liveBotsCache: { ids: Set<string>; expiresAt: number } | null = null;
+
+export function invalidateMaxBridgeLiveBotsCache(): void {
+  liveBotsCache = null;
+}
+
+export function isMaxSessionExpiredError(status?: number, errorText?: string): boolean {
+  if (status === 401 || status === 404) return true;
+  if (!errorText) return false;
+  return /session not connected|session not found|сессия max|qr-код|qr authentication|авторизац|не подключ/i.test(
+    errorText,
+  );
+}
+
 export class MaxBridgeService {
   private get baseUrl(): string {
     return getEnv().MAX_BRIDGE_URL.replace(/\/$/, "");
@@ -65,6 +80,39 @@ export class MaxBridgeService {
 
   private get serviceToken(): string | undefined {
     return getEnv().VOXLY_SERVICE_TOKEN;
+  }
+
+  /**
+   * Возвращает множество botId (UUID из channel_accounts), у которых прямо сейчас
+   * есть активная авторизованная сессия в max-bridge. Возвращает null, если
+   * max-bridge недоступен или его /health не отдаёт liveBotIds (безопасный фоллбэк).
+   */
+  async getLiveBotIds(): Promise<Set<string> | null> {
+    const now = Date.now();
+    if (liveBotsCache && liveBotsCache.expiresAt > now) {
+      return liveBotsCache.ids;
+    }
+
+    try {
+      const headers = new Headers();
+      if (this.serviceToken) {
+        headers.set("Authorization", `Bearer ${this.serviceToken}`);
+      }
+      const res = await fetch(`${this.baseUrl}/health`, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!res.ok) return null;
+      const json = (await res.json().catch(() => null)) as { liveBotIds?: unknown } | null;
+      if (!json || !Array.isArray(json.liveBotIds)) return null;
+
+      const ids = new Set(json.liveBotIds.filter((v): v is string => typeof v === "string"));
+      liveBotsCache = { ids, expiresAt: now + LIVE_BOTS_CACHE_TTL_MS };
+      return ids;
+    } catch {
+      return null;
+    }
   }
 
   private async bridgeFetch<T = Record<string, unknown>>(
@@ -89,6 +137,19 @@ export class MaxBridgeService {
       return { ok: res.ok, status: res.status, json };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const isTimeout =
+        (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) ||
+        /timeout|aborted/i.test(message);
+
+      if (isTimeout) {
+        invalidateMaxBridgeLiveBotsCache();
+        throw new AppError(
+          504,
+          "MAX_BRIDGE_TIMEOUT",
+          "Превышено время ожидания ответа от MAX — сессия этого аккаунта не отвечает или истекла. Переподключите аккаунт по QR-коду в разделе «Интеграции → MAX» или выберите другой аккаунт.",
+        );
+      }
+
       throw new AppError(
         503,
         "MAX_BRIDGE_UNAVAILABLE",
@@ -153,7 +214,7 @@ export class MaxBridgeService {
     mediaBase64?: string;
     fileName?: string;
     mimeType?: string;
-  }): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+  }): Promise<{ ok: boolean; messageId?: string; error?: string; status?: number; sessionExpired?: boolean }> {
     const target = (input.recipient || input.chatId || "").trim();
     let peerUserId = "";
     let resolvePhone: string | undefined;
@@ -199,7 +260,11 @@ export class MaxBridgeService {
 
     if (!res.ok) {
       const errorMsg = res.json?.error || res.json?.detail || "Ошибка отправки сообщения в max-bridge";
-      return { ok: false, error: errorMsg };
+      const sessionExpired = isMaxSessionExpiredError(res.status, errorMsg);
+      if (sessionExpired) {
+        invalidateMaxBridgeLiveBotsCache();
+      }
+      return { ok: false, error: errorMsg, status: res.status, sessionExpired };
     }
 
     return { ok: true, messageId: res.json?.messageId };

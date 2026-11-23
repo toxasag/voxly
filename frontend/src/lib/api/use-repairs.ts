@@ -2,13 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
 import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
-import type { RepairStatus, RepairPriority, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
+import type { RepairStatus, RepairFilterStatus, RepairPriority, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
 
 // ---------------------------------------------------------------------------
 // DTOs — mirror backend/src/modules/repairs/repairs.types.ts.
 // ---------------------------------------------------------------------------
 
-export type { RepairStatus, RepairPriority, RepairPaymentStatus };
+export type { RepairStatus, RepairFilterStatus, RepairPriority, RepairPaymentStatus };
 
 export interface EquipmentDTO {
   type: string;
@@ -283,7 +283,7 @@ export interface RepairsListResult {
 
 export interface RepairsQueryParams {
   dealId?: string;
-  status?: RepairStatus;
+  status?: RepairStatus | "active";
   paymentStatus?: RepairPaymentStatus;
   priority?: RepairPriority;
   masterId?: string;
@@ -435,10 +435,14 @@ export interface CreatePartPayload {
   status?: string;
   name: string;
   article?: string;
+  sku?: string;
   quantity?: number;
   retail_price: number;
+  price?: number;
   cost_price?: number;
   add_to_purchase_request?: boolean;
+  save_to_catalog?: boolean;
+  idempotency_key?: string;
 }
 
 export interface UpdatePartPayload {

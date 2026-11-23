@@ -162,6 +162,8 @@ export interface AccountDTO {
   id: string;
   name: string;
   accountType?: AccountType;
+  accountNumber?: string;
+  organizationId?: string | null;
   currency: string;
   balance: number;
   isDefault: boolean;
@@ -322,6 +324,22 @@ export interface CreateTransactionPayload {
   occurred_at?: string;
 }
 
+export interface UpdateTransactionPayload {
+  account_id?: string;
+  type?: TransactionType;
+  amount?: number;
+  currency?: string;
+  category_id?: string;
+  category_name?: string;
+  description?: string;
+  counterparty_name?: string;
+  counterparty_inn?: string;
+  deal_id?: string;
+  repair_order_id?: string;
+  invoice_id?: string;
+  occurred_at?: string;
+}
+
 export interface CreateInvoicePayload {
   issuer_organization_id?: string;
   company_id?: string;
@@ -370,7 +388,7 @@ export interface UpdateInvoicePayload {
 }
 
 export interface MarkInvoicePaidPayload {
-  account_id: string;
+  account_id?: string;
   occurred_at?: string;
   description?: string;
 }
@@ -527,7 +545,7 @@ export function useCreateAccount(): UseMutationResult<AccountDTO, ApiClientError
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -541,7 +559,7 @@ export function useTransfer(): UseMutationResult<{ from: AccountDTO; to: Account
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -552,6 +570,24 @@ export function useCreateTransaction(): UseMutationResult<TransactionDTO, ApiCli
   return useMutation<TransactionDTO, ApiClientError, CreateTransactionPayload>({
     mutationFn: async (payload) => {
       const res = await apiClient.post<TransactionDTO>("/api/v1/finance/transactions", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useUpdateTransaction(): UseMutationResult<
+  TransactionDTO,
+  ApiClientError,
+  { id: string; payload: UpdateTransactionPayload }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<TransactionDTO, ApiClientError, { id: string; payload: UpdateTransactionPayload }>({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.patch<TransactionDTO>(`/api/v1/finance/transactions/${id}`, payload);
       return res.data;
     },
     onSuccess: () => {
@@ -621,6 +657,67 @@ export function useDeleteInvoice(): UseMutationResult<{ success: boolean; id: st
   });
 }
 
+export interface BulkUpdateInvoicesPayload {
+  ids: string[];
+  status?: "draft" | "sent" | "overdue" | "cancelled";
+  due_date?: string;
+  notes?: string;
+}
+
+export function useBulkUpdateInvoices(): UseMutationResult<
+  { updated: number; skippedPaid: number; ids: string[] },
+  ApiClientError,
+  BulkUpdateInvoicesPayload
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { updated: number; skippedPaid: number; ids: string[] },
+    ApiClientError,
+    BulkUpdateInvoicesPayload
+  >({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ updated: number; skippedPaid: number; ids: string[] }>(
+        "/api/v1/invoices/bulk-update",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteInvoices(): UseMutationResult<
+  { deleted: number; skippedPaid: number; ids: string[] },
+  ApiClientError,
+  string[]
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { deleted: number; skippedPaid: number; ids: string[] },
+    ApiClientError,
+    string[]
+  >({
+    mutationFn: async (ids) => {
+      const res = await apiClient.post<{ deleted: number; skippedPaid: number; ids: string[] }>(
+        "/api/v1/invoices/bulk-delete",
+        { ids },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
 export function useMarkInvoicePaid(): UseMutationResult<InvoiceDTO, ApiClientError, { id: string; payload: MarkInvoicePaidPayload }> {
   const queryClient = useQueryClient();
 
@@ -632,6 +729,8 @@ export function useMarkInvoicePaid(): UseMutationResult<InvoiceDTO, ApiClientErr
     onSuccess: (invoice) => {
       queryClient.setQueryData(financeKeys.invoiceDetail(invoice.id), invoice);
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
     },
   });
 }
@@ -665,7 +764,7 @@ export interface BatchPaymentPayload {
 }
 
 export interface SendInvoicePayload {
-  channel_type: "telegram" | "whatsapp" | "all";
+  channel_type: "telegram" | "whatsapp" | "max" | "all";
 }
 
 export function useRepairInvoices(repairOrderId: string | null): UseQueryResult<InvoiceDTO[], ApiClientError> {
@@ -728,12 +827,14 @@ export function useBatchPayment(): UseMutationResult<
 export function useSendInvoice(): UseMutationResult<
   { success: boolean; channels: string[]; message: string },
   ApiClientError,
-  { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+  { id: string; channel_type: SendInvoicePayload["channel_type"] }
 > {
+  const queryClient = useQueryClient();
+
   return useMutation<
     { success: boolean; channels: string[]; message: string },
     ApiClientError,
-    { id: string; channel_type: "telegram" | "whatsapp" | "all" }
+    { id: string; channel_type: SendInvoicePayload["channel_type"] }
   >({
     mutationFn: async ({ id, channel_type }) => {
       const res = await apiClient.post<{ success: boolean; channels: string[]; message: string }>(
@@ -741,6 +842,10 @@ export function useSendInvoice(): UseMutationResult<
         { channel_type },
       );
       return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -914,6 +1019,7 @@ export function useCreateFinanceOrganization(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -934,6 +1040,7 @@ export function useUpdateFinanceOrganization(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }

@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { InvoicesService } from "./invoices.service.js";
 import {
+  bulkDeleteInvoicesSchema,
+  bulkUpdateInvoicesSchema,
   createInvoiceFromActsSchema,
   createInvoiceSchema,
   markInvoicePaidSchema,
@@ -47,9 +49,20 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
   app.get("/:id/pdf", { onRequest: read }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
     const { buffer, filename } = await s.getPdf(r.tenant_id, invoiceId);
+    const asciiFallback =
+      filename
+        .replace(/[^\x20-\x7E]/g, "_")
+        .replace(/["\\]/g, "")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "") || "invoice.pdf";
+    const safeAscii = asciiFallback.endsWith(".pdf") ? asciiFallback : `${asciiFallback}.pdf`;
+    const encodedUtf8 = encodeURIComponent(filename);
     return rep
       .header("Content-Type", "application/pdf")
-      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .header(
+        "Content-Disposition",
+        `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`,
+      )
       .send(buffer);
   });
 
@@ -75,6 +88,16 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
     return rep.status(201).send({ data: await s.fromRepairOrders(r.tenant_id, r.authUser.id, body) });
   });
 
+  app.post("/bulk-update", { onRequest: write }, async (r, rep) => {
+    const body = bulkUpdateInvoicesSchema.parse(r.body);
+    return rep.send({ data: await s.bulkUpdate(r.tenant_id, body) });
+  });
+
+  app.post("/bulk-delete", { onRequest: write }, async (r, rep) => {
+    const { ids } = bulkDeleteInvoicesSchema.parse(r.body);
+    return rep.send({ data: await s.bulkRemove(r.tenant_id, ids) });
+  });
+
   app.patch("/:id", { onRequest: write }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
     return rep.send({ data: await s.update(r.tenant_id, invoiceId, updateInvoiceSchema.parse(r.body)) });
@@ -87,7 +110,14 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
 
   app.post("/:id/pay", { onRequest: write }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
-    return rep.send({ data: await s.markPaid(r.tenant_id, r.authUser.id, invoiceId, markInvoicePaidSchema.parse(r.body)) });
+    return rep.send({
+      data: await s.markPaid(
+        r.tenant_id,
+        r.authUser.id,
+        invoiceId,
+        markInvoicePaidSchema.parse(r.body ?? {}),
+      ),
+    });
   });
 
   app.post("/:id/send", { onRequest: write }, async (r, rep) => {

@@ -206,6 +206,9 @@ export class DealsService {
     options: ListDealsOptions,
   ): Promise<{ items: DealDTO[]; total: number }> {
     const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    if (options.status !== "all") {
+      conditions.push("(d.status IS NULL OR d.status != 'duplicate')");
+    }
     const params: SqlParam[] = [tenantId];
 
     if (options.pipelineId !== undefined) {
@@ -346,6 +349,7 @@ export class DealsService {
        FROM deals d
        ${DEAL_LABEL_JOINS}
        WHERE d.tenant_id = $1 AND d.pipeline_id = $2 AND d.deleted_at IS NULL
+         AND (d.status IS NULL OR d.status != 'duplicate')
        ORDER BY d.position ASC, d.created_at DESC
        LIMIT $3`,
       [tenantId, pipelineId, maxDeals],
@@ -395,6 +399,17 @@ export class DealsService {
     void leadNotificationQueue.checkAndTriggerNotification(tenantId, created.id);
     void notificationQueue.dispatchLeadCreated({ tenantId, dealId: created.id });
     void conversionDispatcher.handleDealCreated({ tenantId, dealId: created.id });
+    if (created.contactId) {
+      const contactId = created.contactId;
+      void import("../enrichment.service.js")
+        .then(({ CrmEnrichmentService }) =>
+          new CrmEnrichmentService().enrichContact(tenantId, contactId, {
+            dealId: created.id,
+            skipIfAlreadyChecked: true,
+          }),
+        )
+        .catch(() => {});
+    }
     return created;
   }
 
@@ -1324,6 +1339,7 @@ export class DealsService {
        FROM deals d
        ${DEAL_LABEL_JOINS}
        WHERE d.tenant_id = $1 AND d.stage_id = $2 AND d.deleted_at IS NULL
+         AND (d.status IS NULL OR d.status != 'duplicate')
        ORDER BY d.position ASC, d.created_at DESC`,
       [tenantId, stageId],
     );

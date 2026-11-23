@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { servicesService } from "./services.service.js";
 import { createServiceSchema, updateServiceSchema } from "./services.types.js";
@@ -31,18 +31,21 @@ export async function servicesRoutes(app: FastifyInstance) {
     return reply.status(201).send({ data: item });
   });
 
-  app.patch("/:id", { onRequest: canWrite }, async (request, reply) => {
+  const handleUpdate = async (request: FastifyRequest, reply: FastifyReply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const body = updateServiceSchema.parse(request.body);
     const updated = await servicesService.update(tenant_id, id, body);
     return reply.send({ data: updated });
-  });
+  };
+
+  app.patch("/:id", { onRequest: canWrite }, handleUpdate);
+  app.put("/:id", { onRequest: canWrite }, handleUpdate);
 
   app.delete("/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const result = await servicesService.delete(tenant_id, id);
-    return reply.send(result);
+    return reply.send({ data: result, ...result });
   });
 }

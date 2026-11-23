@@ -9,11 +9,21 @@ import type {
   TransactionDTO,
   TransferPayload,
   UpdateCategoryPayload,
+  UpdateTransactionPayload,
 } from "./finance.types.js";
 import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 
-interface AccountRow { id: string; name: string; account_type?: string; currency: string; balance: string; is_default: boolean }
+interface AccountRow {
+  id: string;
+  name: string;
+  account_type?: string;
+  account_number?: string;
+  organization_id?: string | null;
+  currency: string;
+  balance: string;
+  is_default: boolean;
+}
 interface TxRow {
   id: string;
   direction: "income" | "expense";
@@ -35,40 +45,92 @@ const iso = (value: Date | string) => value instanceof Date ? value.toISOString(
 const blank = (v: string | undefined) => v === undefined || v === "" ? null : v;
 
 export class FinanceService {
+  /**
+   * Пересчитывает и фиксирует баланс счёта строго как сумму активных операций
+   * (SUM(income) - SUM(expense) WHERE deleted_at IS NULL).
+   */
+  private async recalculateAccountBalanceInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    accountId: string,
+  ): Promise<number> {
+    const row = await tx.queryOne<{ balance: string }>(
+      `UPDATE cash_accounts
+       SET balance = COALESCE((
+         SELECT SUM(CASE WHEN direction = 'income' THEN amount ELSE -amount END)
+         FROM transactions
+         WHERE tenant_id = $1 AND cash_account_id = $2 AND deleted_at IS NULL
+       ), 0)
+       WHERE tenant_id = $1 AND id = $2
+       RETURNING balance::text`,
+      [tenantId, accountId],
+    );
+    return Number(row?.balance ?? 0);
+  }
+
   async createAccount(
     tenantId: string,
     p: { name: string; account_type?: AccountType; currency: string; opening_balance: number; is_default: boolean },
   ): Promise<AccountDTO> {
     const accType = p.account_type ?? "cash";
-    const row = await queryOne<AccountRow>(
-      `INSERT INTO cash_accounts (tenant_id, name, account_type, currency, balance, is_default)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, name, account_type, currency, balance, is_default`,
-      [tenantId, p.name, accType, p.currency, p.opening_balance, p.is_default],
-    );
-    if (!row) throw new Error("Account creation failed");
-    return {
-      id: row.id,
-      name: row.name,
-      accountType: (row.account_type as AccountType) || "cash",
-      currency: row.currency,
-      balance: Number(row.balance),
-      isDefault: row.is_default,
-    };
+    const opening = Number(p.opening_balance ?? 0);
+
+    return withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOne<AccountRow>(
+        `INSERT INTO cash_accounts (tenant_id, name, account_type, currency, balance, is_default)
+         VALUES ($1, $2, $3, $4, 0, $5)
+         RETURNING id, name, account_type, currency, balance, is_default`,
+        [tenantId, p.name, accType, p.currency, p.is_default],
+      );
+      if (!row) throw new Error("Account creation failed");
+
+      let balance = 0;
+      if (opening > 0) {
+        await tx.query(
+          `INSERT INTO transactions
+             (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, occurred_at)
+           VALUES ($1, $2, NULL, 'Начальный остаток', $3, $4, 'income', $5, now())`,
+          [tenantId, row.id, opening, p.currency, `Начальный остаток при открытии счёта «${p.name}»`],
+        );
+        balance = await this.recalculateAccountBalanceInTx(tx, tenantId, row.id);
+      }
+
+      return {
+        id: row.id,
+        name: row.name,
+        accountType: (row.account_type as AccountType) || "cash",
+        currency: row.currency,
+        balance,
+        isDefault: row.is_default,
+      };
+    });
   }
 
   async accounts(tenantId: string): Promise<AccountDTO[]> {
     const rows = await query<AccountRow>(
-      `SELECT id, name, COALESCE(account_type, 'cash') AS account_type, currency, balance, is_default
-       FROM cash_accounts
-       WHERE tenant_id = $1 AND deleted_at IS NULL
-       ORDER BY is_default DESC, name`,
+      `SELECT a.id,
+              a.name,
+              COALESCE(a.account_type, 'cash') AS account_type,
+              COALESCE(a.account_number, '') AS account_number,
+              a.organization_id,
+              a.currency,
+              COALESCE((
+                SELECT SUM(CASE WHEN t.direction = 'income' THEN t.amount ELSE -t.amount END)
+                FROM transactions t
+                WHERE t.tenant_id = a.tenant_id AND t.cash_account_id = a.id AND t.deleted_at IS NULL
+              ), 0)::text AS balance,
+              a.is_default
+       FROM cash_accounts a
+       WHERE a.tenant_id = $1 AND a.deleted_at IS NULL
+       ORDER BY a.is_default DESC, a.created_at ASC, a.name`,
       [tenantId],
     );
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
       accountType: (r.account_type as AccountType) || "cash",
+      accountNumber: r.account_number || "",
+      organizationId: r.organization_id ?? null,
       currency: r.currency,
       balance: Number(r.balance),
       isDefault: r.is_default,
@@ -148,12 +210,9 @@ export class FinanceService {
         [tenantId, ids],
       );
 
-      for (const row of deleted) {
-        const sign = row.direction === "income" ? -1 : 1;
-        await tx.query(
-          `UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`,
-          [tenantId, row.cash_account_id, sign * Number(row.amount)],
-        );
+      const affectedAccountIds = Array.from(new Set(deleted.map((r) => r.cash_account_id)));
+      for (const accId of affectedAccountIds) {
+        await this.recalculateAccountBalanceInTx(tx, tenantId, accId);
       }
 
       return { count: deleted.length };
@@ -177,7 +236,6 @@ export class FinanceService {
 
       const results: TransactionDTO[] = [];
       for (const src of sources) {
-        const sign = src.direction === "income" ? 1 : -1;
         const row = await tx.queryOneOrThrow<TxRow>(
           `INSERT INTO transactions
              (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction,
@@ -204,10 +262,7 @@ export class FinanceService {
           ],
         );
 
-        await tx.query(
-          `UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`,
-          [tenantId, src.cash_account_id, sign * Number(src.amount)],
-        );
+        await this.recalculateAccountBalanceInTx(tx, tenantId, src.cash_account_id);
 
         results.push(this.toTx(row));
       }
@@ -325,12 +380,89 @@ export class FinanceService {
           p.occurred_at ?? null,
         ],
       );
-      await tx.query(`UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`, [
-        tenantId,
-        p.account_id,
-        sign * p.amount,
-      ]);
+      await this.recalculateAccountBalanceInTx(tx, tenantId, p.account_id);
       return this.toTx(row);
+    });
+  }
+
+  async updateTransaction(tenantId: string, id: string, p: UpdateTransactionPayload): Promise<TransactionDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const current = await tx.queryOne<TxRow>(
+        `SELECT t.id, t.direction, t.amount, t.currency, t.category_id, t.category_name, t.description,
+                COALESCE(t.counterparty_name, '') AS counterparty_name,
+                COALESCE(t.counterparty_inn, '') AS counterparty_inn,
+                t.cash_account_id, a.name AS account_name,
+                t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at
+         FROM transactions t
+         JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+         WHERE t.tenant_id = $1 AND t.id = $2 AND t.deleted_at IS NULL
+         FOR UPDATE`,
+        [tenantId, id],
+      );
+      if (!current) throw new NotFoundError("Transaction not found");
+
+      const newAccountId = p.account_id ?? current.cash_account_id;
+
+      if (newAccountId !== current.cash_account_id) {
+        const targetAcc = await this.account(tx, tenantId, newAccountId);
+        if (targetAcc.currency !== (p.currency ?? current.currency)) {
+          throw new ValidationError("Account currency differs from transaction currency");
+        }
+      }
+
+      const updated = await tx.queryOneOrThrow<TxRow>(
+        `UPDATE transactions
+         SET cash_account_id = COALESCE($3, cash_account_id),
+             direction = COALESCE($4, direction),
+             amount = COALESCE($5, amount),
+             currency = COALESCE($6, currency),
+             category_id = CASE WHEN $7::boolean THEN $8 ELSE category_id END,
+             category_name = COALESCE($9, category_name),
+             description = CASE WHEN $10::boolean THEN $11 ELSE description END,
+             counterparty_name = CASE WHEN $12::boolean THEN $13 ELSE counterparty_name END,
+             counterparty_inn = CASE WHEN $14::boolean THEN $15 ELSE counterparty_inn END,
+             deal_id = CASE WHEN $16::boolean THEN $17 ELSE deal_id END,
+             repair_order_id = CASE WHEN $18::boolean THEN $19 ELSE repair_order_id END,
+             invoice_id = CASE WHEN $20::boolean THEN $21 ELSE invoice_id END,
+             occurred_at = COALESCE($22::timestamptz, occurred_at)
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         RETURNING id, direction, amount, currency, category_id, category_name, description,
+                   COALESCE(counterparty_name, '') AS counterparty_name,
+                   COALESCE(counterparty_inn, '') AS counterparty_inn,
+                   cash_account_id, (SELECT name FROM cash_accounts WHERE id = cash_account_id) AS account_name,
+                   deal_id, repair_order_id, invoice_id, occurred_at`,
+        [
+          tenantId,
+          id,
+          p.account_id ?? null,
+          p.type ?? null,
+          p.amount !== undefined ? p.amount : null,
+          p.currency ?? null,
+          p.category_id !== undefined,
+          blank(p.category_id),
+          p.category_name ?? null,
+          p.description !== undefined,
+          p.description ?? "",
+          p.counterparty_name !== undefined,
+          p.counterparty_name ?? "",
+          p.counterparty_inn !== undefined,
+          p.counterparty_inn ?? "",
+          p.deal_id !== undefined,
+          blank(p.deal_id),
+          p.repair_order_id !== undefined,
+          blank(p.repair_order_id),
+          p.invoice_id !== undefined,
+          blank(p.invoice_id),
+          p.occurred_at ?? null,
+        ],
+      );
+
+      await this.recalculateAccountBalanceInTx(tx, tenantId, current.cash_account_id);
+      if (newAccountId !== current.cash_account_id) {
+        await this.recalculateAccountBalanceInTx(tx, tenantId, newAccountId);
+      }
+
+      return this.toTx(updated);
     });
   }
 
@@ -340,16 +472,6 @@ export class FinanceService {
       const to = await this.account(tx, tenantId, p.to_account_id);
       if (from.currency !== to.currency) throw new ValidationError("Cross-currency transfers are not supported");
       if (Number(from.balance) < p.amount) throw new AppError(409, "INSUFFICIENT_FUNDS", "Insufficient account balance");
-      await tx.query(`UPDATE cash_accounts SET balance = balance - $3 WHERE tenant_id = $1 AND id = $2`, [
-        tenantId,
-        from.id,
-        p.amount,
-      ]);
-      await tx.query(`UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`, [
-        tenantId,
-        to.id,
-        p.amount,
-      ]);
       const occurred = new Date().toISOString();
       for (const [accountId, direction, description] of [
         [from.id, "expense", `Transfer to ${to.name}`],
@@ -361,13 +483,15 @@ export class FinanceService {
           [tenantId, accountId, p.amount, from.currency, direction, p.description || description, occurred],
         );
       }
+      const fromBalance = await this.recalculateAccountBalanceInTx(tx, tenantId, from.id);
+      const toBalance = await this.recalculateAccountBalanceInTx(tx, tenantId, to.id);
       return {
         from: {
           id: from.id,
           name: from.name,
           accountType: (from.account_type as AccountType) || "cash",
           currency: from.currency,
-          balance: Number(from.balance) - p.amount,
+          balance: fromBalance,
           isDefault: from.is_default,
         },
         to: {
@@ -375,7 +499,7 @@ export class FinanceService {
           name: to.name,
           accountType: (to.account_type as AccountType) || "cash",
           currency: to.currency,
-          balance: Number(to.balance) + p.amount,
+          balance: toBalance,
           isDefault: to.is_default,
         },
       };
@@ -740,10 +864,7 @@ export class FinanceService {
       }
 
       if (totalPaid > 0) {
-        await tx.query(
-          `UPDATE cash_accounts SET balance = balance + $3 WHERE tenant_id = $1 AND id = $2`,
-          [tenantId, account.id, totalPaid],
-        );
+        await this.recalculateAccountBalanceInTx(tx, tenantId, account.id);
       }
 
       return { success: true, totalPaid, count: orders.length, transactionsCount };

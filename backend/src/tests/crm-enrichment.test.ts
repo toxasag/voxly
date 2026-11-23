@@ -9,6 +9,8 @@ vi.mock("../db/client.js", () => ({
   query: vi.fn(),
   transaction: async (fn: (tx: { query: typeof mockTxQuery }) => Promise<unknown>) =>
     fn({ query: mockTxQuery }),
+  runWithTenantContext: async (_tenantId: string, fn: () => Promise<unknown>) => fn(),
+  runWithPlatformScope: async (fn: () => Promise<unknown>) => fn(),
 }));
 
 describe("CrmEnrichmentService (Block 4.2 Cross-Channel Enrichment)", () => {

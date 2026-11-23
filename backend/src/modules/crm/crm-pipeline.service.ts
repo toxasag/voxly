@@ -64,6 +64,10 @@ export interface InboundMessageInput {
   attachment?: string | null;
   attachmentType?: string | null;
   deliveryStatus?: "neutral" | "pending" | "sent" | "failed" | "received";
+  /** Внешний ID сообщения у провайдера (Telegram/MAX/WhatsApp) для точной идемпотентности. */
+  externalMessageId?: string;
+  /** Исходное время сообщения на стороне мессенджера (используется при gap-recovery). */
+  messageTimestamp?: Date | string;
   /** Профиль из канала; без него имя контакта станет «Клиент». */
   profile?: ChannelProfile;
   /** Идентификатор и аналитика посетителя сайта */
@@ -110,6 +114,7 @@ export interface CrmPipelineResult {
   isNewDeal: boolean;
   isPersonal?: boolean;
   isBot?: boolean;
+  inboundMessageId?: string | null;
 }
 
 const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, telegram_username, socials, is_personal, custom_fields, messenger_id, messenger_name";
@@ -1067,27 +1072,65 @@ export class CrmPipelineService {
             : "Вложение"
           : "");
 
-      // Защита от дублирования сообщений при параллельной доставке вебхуков и повторах запросов клиентом
+      const externalMsgId =
+        input.externalMessageId?.trim() ||
+        (typeof input.sourceMetadata?.external_message_id === "string" ||
+        typeof input.sourceMetadata?.external_message_id === "number"
+          ? String(input.sourceMetadata.external_message_id).trim()
+          : null) ||
+        null;
+
+      const mergedMetadata: Record<string, unknown> = {
+        ...(input.sourceMetadata ?? {}),
+        ...(externalMsgId ? { external_message_id: externalMsgId } : {}),
+      };
+
+      const messageCreatedAtIso =
+        input.messageTimestamp instanceof Date
+          ? input.messageTimestamp.toISOString()
+          : typeof input.messageTimestamp === "string" && input.messageTimestamp.trim().length > 0
+            ? input.messageTimestamp
+            : null;
+
+      // Защита от дублирования сообщений: сначала точный ключ external_message_id, затем окно 60 сек по контенту/вложению
       const existingMsg = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND direction = 'inbound'
-           AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
            AND channel = $5
-           AND created_at > now() - interval '60 seconds'
+           AND delivery_status <> 'failed'
+           AND (
+             ($6::text IS NOT NULL AND metadata->>'external_message_id' = $6)
+             OR (
+               (content = $3 OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4))
+               AND (
+                 ($7::timestamptz IS NOT NULL AND created_at >= $7::timestamptz - interval '60 seconds' AND created_at <= $7::timestamptz + interval '60 seconds')
+                 OR ($7::timestamptz IS NULL AND created_at > now() - interval '60 seconds')
+               )
+             )
+           )
          LIMIT 1`,
-        [input.tenantId, dealId, contentText, input.attachment ?? null, input.channel],
+        [
+          input.tenantId,
+          dealId,
+          contentText,
+          input.attachment ?? null,
+          input.channel,
+          externalMsgId,
+          messageCreatedAtIso,
+        ],
       );
 
         // Вставляем входящее сообщение
         let inboundMessageId: string | null = null;
+        let inboundMessageCreatedAt: string | null = null;
         if (!existingMsg) {
           const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
-          const insertedMsg = await tx.queryOne<{ id: string }>(
+          const insertedMsg = await tx.queryOne<{ id: string; created_at: Date | string }>(
             `INSERT INTO deal_messages
-               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
-             RETURNING id`,
+               (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, COALESCE($13::timestamptz, now()))
+             RETURNING id, created_at`,
             [
               input.tenantId,
               dealId,
@@ -1100,11 +1143,16 @@ export class CrmPipelineService {
               deliveryStatus,
               input.attachment ?? null,
               input.attachmentType ?? null,
-              JSON.stringify(input.sourceMetadata ?? {}),
+              JSON.stringify(mergedMetadata),
+              messageCreatedAtIso,
             ],
           );
           if (insertedMsg?.id) {
             inboundMessageId = insertedMsg.id;
+            inboundMessageCreatedAt =
+              insertedMsg.created_at instanceof Date
+                ? insertedMsg.created_at.toISOString()
+                : String(insertedMsg.created_at);
           }
         }
 
@@ -1114,8 +1162,43 @@ export class CrmPipelineService {
           [dealId, input.tenantId],
         );
 
-        return { contactId, dealId, isNewContact, isNewDeal, inboundMessageId, inboundMessageContent: contentText };
+        return {
+          contactId,
+          dealId,
+          isNewContact,
+          isNewDeal,
+          inboundMessageId,
+          inboundMessageContent: contentText,
+          inboundMessageCreatedAt,
+        };
       });
+
+      // Пушим событие о новом входящем сообщении в SSE-шину сразу после коммита
+      if (result.inboundMessageId && result.dealId) {
+        chatEventBus.emitChatEvent({
+          type: "message_created",
+          tenantId: input.tenantId,
+          dealId: result.dealId,
+          data: {
+            id: result.inboundMessageId,
+            deal_id: result.dealId,
+            dealId: result.dealId,
+            channel_account_id: nullIfBlank(input.channelAccountId),
+            source: "client",
+            direction: "inbound",
+            sender_name: input.senderName,
+            senderName: input.senderName,
+            content: result.inboundMessageContent ?? "",
+            channel: input.channel,
+            attachment: input.attachment ?? null,
+            attachmentType: input.attachmentType ?? null,
+            delivery_status: input.deliveryStatus ?? (input.attachment ? "received" : "neutral"),
+            created_at: result.inboundMessageCreatedAt ?? new Date().toISOString(),
+            createdAt: result.inboundMessageCreatedAt ?? new Date().toISOString(),
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
 
       // Автоматический перевод иноязычного входящего сообщения запускается строго ПОСЛЕ коммита транзакции
       if (result.inboundMessageId && result.inboundMessageContent) {
@@ -1322,6 +1405,8 @@ export class CrmPipelineService {
     pauseMinutes?: number;
     attachment?: string | null;
     attachmentType?: string | null;
+    externalMessageId?: string;
+    messageTimestamp?: Date | string;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
     // Fallback через bridge для MAX выполняется вне открытой транзакции БД:
     // внешний HTTP-запрос никогда не удерживает коннект пула PostgreSQL.
@@ -1367,7 +1452,7 @@ export class CrmPipelineService {
       }
     }
 
-    return transaction(async (tx) => {
+    const txResult = await transaction(async (tx) => {
       let contact = await this.findContact(tx, input.tenantId, {
         tenantId: input.tenantId,
         channel: input.channel,
@@ -1462,16 +1547,41 @@ export class CrmPipelineService {
             : "Вложение"
           : "");
 
-      // Дедупликация исходящих сообщений в пределах 20 секунд (исключает дублирование при отправке из веб-CRM)
+      const externalMsgId = input.externalMessageId?.trim() || null;
+      const messageCreatedAtIso =
+        input.messageTimestamp instanceof Date
+          ? input.messageTimestamp.toISOString()
+          : typeof input.messageTimestamp === "string" && input.messageTimestamp.trim().length > 0
+            ? input.messageTimestamp
+            : null;
+
+      // Дедупликация исходящих сообщений: по external_message_id или в пределах 60 секунд (исключает дубли при отправке из веб-CRM)
       const existingOutbound = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND direction = 'outbound'
-           AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
            AND channel = $5
-           AND created_at >= now() - interval '20 seconds'
+           AND delivery_status <> 'failed'
+           AND (
+             ($6::text IS NOT NULL AND metadata->>'external_message_id' = $6)
+             OR (
+               (content = $3 OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4))
+               AND (
+                 ($7::timestamptz IS NOT NULL AND created_at >= $7::timestamptz - interval '60 seconds' AND created_at <= $7::timestamptz + interval '60 seconds')
+                 OR ($7::timestamptz IS NULL AND created_at >= now() - interval '60 seconds')
+               )
+             )
+           )
          ORDER BY created_at DESC LIMIT 1`,
-        [input.tenantId, activeDeal.id, contentText, input.attachment ?? null, input.channel],
+        [
+          input.tenantId,
+          activeDeal.id,
+          contentText,
+          input.attachment ?? null,
+          input.channel,
+          externalMsgId,
+          messageCreatedAtIso,
+        ],
       );
 
       if (existingOutbound) {
@@ -1479,6 +1589,9 @@ export class CrmPipelineService {
           dealId: activeDeal.id,
           messageId: existingOutbound.id,
           pausedUntil: null,
+          inserted: false,
+          contentText,
+          createdAt: null as string | null,
         };
       }
 
@@ -1501,11 +1614,11 @@ export class CrmPipelineService {
         [pauseMins.toString(), activeDeal.id, input.tenantId, "messenger_takeover"],
       );
 
-      const msgRes = await tx.queryOne<{ id: string }>(
+      const msgRes = await tx.queryOne<{ id: string; created_at: Date | string }>(
         `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
-         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent', $7, $8)
-         RETURNING id`,
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
+         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent', $7, $8, $9::jsonb, COALESCE($10::timestamptz, now()))
+         RETURNING id, created_at`,
         [
           input.tenantId,
           activeDeal.id,
@@ -1515,6 +1628,8 @@ export class CrmPipelineService {
           input.channel,
           input.attachment ?? null,
           input.attachmentType ?? null,
+          JSON.stringify(externalMsgId ? { external_message_id: externalMsgId } : {}),
+          messageCreatedAtIso,
         ],
       );
 
@@ -1522,8 +1637,48 @@ export class CrmPipelineService {
         dealId: activeDeal.id,
         messageId: msgRes?.id ?? null,
         pausedUntil: pauseRes?.paused_until ?? null,
+        inserted: Boolean(msgRes?.id),
+        contentText,
+        createdAt:
+          msgRes?.created_at instanceof Date
+            ? msgRes.created_at.toISOString()
+            : msgRes?.created_at
+              ? String(msgRes.created_at)
+              : null,
       };
     });
+
+    if (txResult.inserted && txResult.dealId && txResult.messageId) {
+      chatEventBus.emitChatEvent({
+        type: "message_created",
+        tenantId: input.tenantId,
+        dealId: txResult.dealId,
+        data: {
+          id: txResult.messageId,
+          deal_id: txResult.dealId,
+          dealId: txResult.dealId,
+          channel_account_id: nullIfBlank(input.channelAccountId),
+          source: "manager",
+          direction: "outbound",
+          sender_name: input.senderName ?? "Менеджер",
+          senderName: input.senderName ?? "Менеджер",
+          content: txResult.contentText ?? input.text,
+          channel: input.channel,
+          attachment: input.attachment ?? null,
+          attachmentType: input.attachmentType ?? null,
+          delivery_status: "sent",
+          created_at: txResult.createdAt ?? new Date().toISOString(),
+          createdAt: txResult.createdAt ?? new Date().toISOString(),
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return {
+      dealId: txResult.dealId,
+      messageId: txResult.messageId,
+      pausedUntil: txResult.pausedUntil,
+    };
   }
 
   /** То же для уже существующего контакта — из его записи, а не из профиля. */

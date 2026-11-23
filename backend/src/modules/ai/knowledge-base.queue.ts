@@ -241,13 +241,37 @@ export class KnowledgeBaseQueueService {
         let indexedCount = 0;
         for (const page of crawledPages) {
           try {
+            // Очищаем и форматируем заголовок для человека
+            const cleanTitle = page.title
+              .replace(/\s*[-–|]\s*(?:ремонт-инструмент\.рф|сервисный центр|москва).*$/i, "")
+              .trim() || page.path;
+
+            const isPricing =
+              page.path.includes("arenda") ||
+              page.path.includes("price") ||
+              page.path.includes("prajs") ||
+              page.path.includes("cena") ||
+              cleanTitle.toLowerCase().includes("аренда") ||
+              cleanTitle.toLowerCase().includes("прайс") ||
+              cleanTitle.toLowerCase().includes("стоимост") ||
+              cleanTitle.toLowerCase().includes("цена");
+
+            const filename = `[Сайт] ${cleanTitle} (${page.path})`;
+
+            const structuredDocText = [
+              `# ${cleanTitle}`,
+              `> **Источник:** ${page.url} | **Раздел:** ${page.path} | **Категория:** ${isPricing ? "Цены и аренда" : "Сайт компании"}`,
+              "",
+              page.text,
+            ].join("\n");
+
             await this.knowledgeService.createDraftDocument({
               tenantId,
               agentId: botId,
-              filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
-              mimeType: "text/html",
-              text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
-              category: "general",
+              filename,
+              mimeType: "text/markdown",
+              text: structuredDocText,
+              category: "site",
               sourceUrl: page.url,
             });
             indexedCount++;

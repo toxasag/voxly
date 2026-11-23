@@ -353,7 +353,7 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
       );
     }
 
-    return reply.send({ success: true, slug });
+    return reply.send({ data: { success: true, slug }, success: true, slug });
   });
 
   /**

@@ -48,6 +48,22 @@ export const createTransactionSchema = z.object({
   occurred_at: isoDate.optional(),
 });
 
+export const updateTransactionSchema = z.object({
+  account_id: accountIdSchema.optional(),
+  type: transactionTypeSchema.optional(),
+  amount: z.number().positive().optional(),
+  currency: z.string().length(3).optional(),
+  category_id: optionalUuid,
+  category_name: z.string().min(1).max(120).optional(),
+  description: z.string().max(500).optional().or(z.literal("")),
+  counterparty_name: z.string().max(200).optional().or(z.literal("")),
+  counterparty_inn: z.string().max(20).optional().or(z.literal("")),
+  deal_id: optionalUuid,
+  repair_order_id: optionalUuid,
+  invoice_id: optionalUuid,
+  occurred_at: isoDate.optional(),
+});
+
 export const pnlQuerySchema = z.object({
   from: isoDate.optional(),
   to: isoDate.optional(),
@@ -96,8 +112,19 @@ export const updateInvoiceSchema = z.object({
   line_items: z.array(invoiceItemSchema).min(1).max(100).optional(),
 });
 
+export const bulkUpdateInvoicesSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+  status: z.enum(["draft", "sent", "overdue", "cancelled"]).optional(),
+  due_date: isoDate.optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+export const bulkDeleteInvoicesSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+});
+
 export const markInvoicePaidSchema = z.object({
-  account_id: accountIdSchema,
+  account_id: optionalUuid,
   occurred_at: isoDate.optional(),
   description: z.string().max(500).optional().or(z.literal("")),
 });
@@ -131,7 +158,7 @@ export const createInvoiceFromActsSchema = z.object({
 });
 
 export const sendInvoiceSchema = z.object({
-  channel_type: z.enum(["telegram", "whatsapp", "all"]).default("all"),
+  channel_type: z.enum(["telegram", "whatsapp", "max", "all"]).default("all"),
 });
 
 export const bulkTransactionsSchema = z.object({
@@ -143,9 +170,12 @@ export type BulkTransactionsPayload = z.infer<typeof bulkTransactionsSchema>;
 export type CreateAccountPayload = z.infer<typeof createAccountSchema>;
 export type TransferPayload = z.infer<typeof transferSchema>;
 export type CreateTransactionPayload = z.infer<typeof createTransactionSchema>;
+export type UpdateTransactionPayload = z.infer<typeof updateTransactionSchema>;
 export type CreateInvoicePayload = z.infer<typeof createInvoiceSchema>;
 export type CreateInvoiceFromActsPayload = z.infer<typeof createInvoiceFromActsSchema>;
 export type UpdateInvoicePayload = z.infer<typeof updateInvoiceSchema>;
+export type BulkUpdateInvoicesPayload = z.infer<typeof bulkUpdateInvoicesSchema>;
+export type BulkDeleteInvoicesPayload = z.infer<typeof bulkDeleteInvoicesSchema>;
 export type MarkInvoicePaidPayload = z.infer<typeof markInvoicePaidSchema>;
 export type BatchPaymentPayload = z.infer<typeof batchPaymentSchema>;
 export type SendInvoicePayload = z.infer<typeof sendInvoiceSchema>;
@@ -157,6 +187,8 @@ export interface AccountDTO {
   id: string;
   name: string;
   accountType: AccountType;
+  accountNumber?: string;
+  organizationId?: string | null;
   currency: string;
   balance: number;
   isDefault: boolean;

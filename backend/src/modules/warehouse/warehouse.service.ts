@@ -1,5 +1,5 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
-import { query, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
+import { query, queryOne, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import {
   type AggregatedPurchaseRequestDTO,
   type BulkDeleteWarehouseItemsPayload,
@@ -29,7 +29,9 @@ import {
   type SupplierOrderStatus,
   type UpdatePurchaseRequestPayload,
   type UpdateSupplierOrderPayload,
+  type UpdateWarehouseBatchPayload,
   type UpdateWarehouseItemPayload,
+  type UpdateWarehouseMovementPayload,
   type UpdateWarehouseSettingsPayload,
   type WarehouseBatchDTO,
   type WarehouseBatchRow,
@@ -253,13 +255,20 @@ export class WarehouseService {
   async listItems(
     tenantId: string,
     search?: string,
-    options?: { page?: number; limit?: number; all?: boolean; category?: string; brand?: string },
+    options?: {
+      page?: number;
+      limit?: number;
+      all?: boolean;
+      category?: string;
+      brand?: string;
+      modelIds?: string[];
+    },
   ): Promise<PaginatedWarehouseItemsDTO> {
     const page = Math.max(1, options?.page ?? 1);
     const limit = options?.limit ?? 25;
     const all = Boolean(options?.all);
 
-    const params: (string | number)[] = [tenantId];
+    const params: (string | number | string[])[] = [tenantId];
     let searchFilter = "";
 
     if (search && search.trim()) {
@@ -273,6 +282,16 @@ export class WarehouseService {
     if (options?.brand && options.brand.trim()) {
       params.push(options.brand.trim());
       searchFilter += ` AND i.brand = $${params.length}`;
+    }
+    const modelIds = (options?.modelIds ?? []).filter((id) => typeof id === "string" && id.trim().length > 0);
+    if (modelIds.length > 0) {
+      params.push(modelIds);
+      searchFilter += ` AND EXISTS (
+        SELECT 1 FROM warehouse_item_models wim
+        WHERE wim.tenant_id = i.tenant_id
+          AND wim.item_id = i.id
+          AND wim.model_id = ANY($${params.length}::uuid[])
+      )`;
     }
 
     const settings = await this.getSettings(tenantId);
@@ -344,7 +363,7 @@ export class WarehouseService {
 
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
-                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                i.min_stock, i.retail_price, i.cost_price, COALESCE(i.reserved, false) AS reserved, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
                 COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
                 COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
@@ -394,6 +413,13 @@ export class WarehouseService {
         const avgBatchCostPrice =
           totalStock > 0 ? Math.round((stockValuation / totalStock) * 100) / 100 : costPrice;
         const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+        const isReserved = reserved > 0 || Boolean(r.reserved);
+        const status: "reserved" | "in_stock" | "out_of_stock" = isReserved
+          ? "reserved"
+          : available > 0
+            ? "in_stock"
+            : "out_of_stock";
+
         return {
           id: r.id,
           sku: r.sku,
@@ -413,6 +439,9 @@ export class WarehouseService {
           quantity: totalStock,
           reservedStock: reserved,
           availableStock: available,
+          reserved: isReserved,
+          status,
+          stockStatus: status,
           models,
           modelIds: models.map((m) => m.id),
           modelNames: models.map((m) => m.name),
@@ -441,7 +470,7 @@ export class WarehouseService {
     return withTenant(tenantId, async (tx) => {
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
-                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                i.min_stock, i.retail_price, i.cost_price, COALESCE(i.reserved, false) AS reserved, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
                 COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
                 COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
@@ -490,6 +519,12 @@ export class WarehouseService {
       const avgBatchCostPrice =
         total > 0 ? Math.round((stockValuation / total) * 100) / 100 : costPrice;
       const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+      const isReserved = reserved > 0 || Boolean(r.reserved);
+      const status: "reserved" | "in_stock" | "out_of_stock" = isReserved
+        ? "reserved"
+        : available > 0
+          ? "in_stock"
+          : "out_of_stock";
 
       return {
         id: r.id,
@@ -510,6 +545,9 @@ export class WarehouseService {
         quantity: total,
         reservedStock: reserved,
         availableStock: available,
+        reserved: isReserved,
+        status,
+        stockStatus: status,
         models,
         modelIds: models.map((m) => m.id),
         modelNames: models.map((m) => m.name),
@@ -523,9 +561,9 @@ export class WarehouseService {
     const row = await withTenant(tenantId, async (tx) => {
       const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
         `INSERT INTO warehouse_items
-           (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, created_at, updated_at`,
+           (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, reserved)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, reserved, created_at, updated_at`,
         [
           tenantId,
           payload.sku ?? "",
@@ -536,6 +574,7 @@ export class WarehouseService {
           payload.min_stock ?? 0,
           payload.retail_price ?? 0,
           payload.cost_price ?? 0,
+          Boolean(payload.reserved),
         ],
       );
 
@@ -572,6 +611,7 @@ export class WarehouseService {
     if (payload.min_stock !== undefined) add("min_stock", payload.min_stock);
     if (payload.retail_price !== undefined) add("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) add("cost_price", payload.cost_price);
+    if (payload.reserved !== undefined) add("reserved", Boolean(payload.reserved));
 
     await withTenant(tenantId, async (tx) => {
       if (fields.length > 0) {
@@ -722,8 +762,31 @@ export class WarehouseService {
     });
   }
 
-  async deleteItem(tenantId: string, itemId: string): Promise<boolean> {
+  async deleteItem(tenantId: string, itemId: string, force = false): Promise<boolean> {
     return withTenant(tenantId, async (tx) => {
+      if (force) {
+        const batches = await tx.query<{ id: string }>(
+          `SELECT id FROM warehouse_batches WHERE tenant_id = $1 AND item_id = $2`,
+          [tenantId, itemId],
+        );
+        if (batches.length > 0) {
+          await this.deleteBatchesInTx(
+            tx,
+            tenantId,
+            batches.map((b) => b.id),
+          );
+        }
+        // Дочищаем резервы и движения по товару, у которых batch_id = NULL
+        await tx.query(
+          `DELETE FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = $2`,
+          [tenantId, itemId],
+        );
+        await tx.query(
+          `DELETE FROM warehouse_movements WHERE tenant_id = $1 AND item_id = $2`,
+          [tenantId, itemId],
+        );
+      }
+
       const res = await tx.query(
         `UPDATE warehouse_items SET deleted_at = now()
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
@@ -877,7 +940,7 @@ export class WarehouseService {
     }
 
     const rows = await query<WarehouseBatchRow>(
-      `SELECT b.id, b.tenant_id, b.item_id, b.batch_number, b.supplier_name,
+      `SELECT b.id, b.tenant_id, b.item_id, b.supplier_order_id, b.batch_number, b.supplier_name,
               b.purchase_price, b.initial_quantity, b.remaining_quantity,
               b.received_at, b.created_at, i.name AS item_name
        FROM warehouse_batches b
@@ -890,6 +953,7 @@ export class WarehouseService {
     return rows.map((r) => ({
       id: r.id,
       itemId: r.item_id,
+      supplierOrderId: r.supplier_order_id ?? null,
       itemName: r.item_name,
       batchNumber: r.batch_number,
       supplierName: r.supplier_name,
@@ -899,6 +963,596 @@ export class WarehouseService {
       receivedAt: toIso(r.received_at),
       createdAt: toIso(r.created_at),
     }));
+  }
+
+  /**
+   * Пересчитывает себестоимость позиции наряда/сделки после изменения или удаления аллокаций партий.
+   */
+  private async recalculateAffectedCostEntitiesInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    repairPartIds: string[],
+    dealItemIds: string[],
+    warehouseItemIds: string[],
+  ): Promise<void> {
+    for (const partId of repairPartIds) {
+      const agg = await tx.queryOne<{ qty: string; cost: string; cnt: string }>(
+        `SELECT COALESCE(SUM(quantity), 0)::numeric(10,2)::text AS qty,
+                COALESCE(SUM(total_cost), 0)::numeric(12,2)::text AS cost,
+                COUNT(*)::text AS cnt
+         FROM repair_part_batch_allocations
+         WHERE tenant_id = $1 AND repair_part_id = $2`,
+        [tenantId, partId],
+      );
+      const cnt = Number(agg?.cnt ?? 0);
+      const qty = Number(agg?.qty ?? 0);
+      const cost = Number(agg?.cost ?? 0);
+      if (cnt > 0 && qty > 0) {
+        const unitCost = Math.round((cost / qty) * 100) / 100;
+        await tx.query(
+          `UPDATE repair_parts SET cost_price = $1 WHERE tenant_id = $2 AND id = $3`,
+          [unitCost, tenantId, partId],
+        );
+      } else {
+        await tx.query(
+          `UPDATE repair_parts
+           SET consumed_at = NULL, cost_source = 'manual'
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, partId],
+        );
+      }
+    }
+
+    for (const dealItemId of dealItemIds) {
+      const agg = await tx.queryOne<{ qty: string; cost: string; cnt: string }>(
+        `SELECT COALESCE(SUM(quantity), 0)::numeric(10,2)::text AS qty,
+                COALESCE(SUM(total_cost), 0)::numeric(12,2)::text AS cost,
+                COUNT(*)::text AS cnt
+         FROM deal_item_batch_allocations
+         WHERE tenant_id = $1 AND deal_item_id = $2`,
+        [tenantId, dealItemId],
+      );
+      const cnt = Number(agg?.cnt ?? 0);
+      const qty = Number(agg?.qty ?? 0);
+      const cost = Number(agg?.cost ?? 0);
+      if (cnt > 0 && qty > 0) {
+        const unitCost = Math.round((cost / qty) * 100) / 100;
+        await tx.query(
+          `UPDATE deal_items SET cost_price = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3`,
+          [unitCost, tenantId, dealItemId],
+        );
+      } else {
+        await tx.query(
+          `UPDATE deal_items
+           SET consumed_at = NULL, cost_source = 'manual', updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, dealItemId],
+        );
+      }
+    }
+
+    for (const itemId of warehouseItemIds) {
+      const latest = await tx.queryOne<{ purchase_price: string }>(
+        `SELECT purchase_price::text
+         FROM warehouse_batches
+         WHERE tenant_id = $1 AND item_id = $2
+         ORDER BY received_at DESC, created_at DESC
+         LIMIT 1`,
+        [tenantId, itemId],
+      );
+      if (latest) {
+        await tx.query(
+          `UPDATE warehouse_items SET cost_price = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3`,
+          [Number(latest.purchase_price), tenantId, itemId],
+        );
+      }
+    }
+  }
+
+  async updateBatch(
+    tenantId: string,
+    batchId: string,
+    payload: UpdateWarehouseBatchPayload,
+  ): Promise<WarehouseBatchDTO | null> {
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<WarehouseBatchRow>(
+        `SELECT * FROM warehouse_batches WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, batchId],
+      );
+      if (!existing) return null;
+
+      const batchNumber =
+        payload.batch_number !== undefined ? payload.batch_number.trim() : existing.batch_number;
+      const supplierName =
+        payload.supplier_name !== undefined ? payload.supplier_name.trim() : existing.supplier_name;
+      const purchasePrice =
+        payload.purchase_price !== undefined ? Number(payload.purchase_price) : Number(existing.purchase_price);
+      const initialQty =
+        payload.initial_quantity !== undefined
+          ? Number(payload.initial_quantity)
+          : Number(existing.initial_quantity);
+
+      let remainingQty =
+        payload.remaining_quantity !== undefined
+          ? Number(payload.remaining_quantity)
+          : Number(existing.remaining_quantity);
+
+      // Если изменили initial_quantity, но не передали remaining_quantity — сдвигаем остаток на дельту
+      if (payload.initial_quantity !== undefined && payload.remaining_quantity === undefined) {
+        const delta = initialQty - Number(existing.initial_quantity);
+        remainingQty = Math.max(0, Math.round((remainingQty + delta) * 100) / 100);
+      }
+      if (remainingQty > initialQty) {
+        remainingQty = initialQty;
+      }
+
+      const receivedAt =
+        payload.received_at && payload.received_at.trim()
+          ? new Date(payload.received_at).toISOString()
+          : existing.received_at instanceof Date
+            ? existing.received_at.toISOString()
+            : String(existing.received_at);
+
+      const updated = await tx.queryOneOrThrow<WarehouseBatchRow>(
+        `UPDATE warehouse_batches
+         SET batch_number = $3,
+             supplier_name = $4,
+             purchase_price = $5,
+             initial_quantity = $6,
+             remaining_quantity = $7,
+             received_at = $8
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING *`,
+        [
+          tenantId,
+          batchId,
+          batchNumber,
+          supplierName,
+          purchasePrice,
+          initialQty,
+          remainingQty,
+          receivedAt,
+        ],
+      );
+
+      // Синхронизируем движение прихода (intake) и цены во всех движениях этой партии
+      await tx.query(
+        `UPDATE warehouse_movements
+         SET quantity = $3, cost_price = $4
+         WHERE tenant_id = $1 AND batch_id = $2 AND type = 'intake'`,
+        [tenantId, batchId, initialQty, purchasePrice],
+      );
+
+      const priceChanged = purchasePrice !== Number(existing.purchase_price);
+      if (priceChanged) {
+        await tx.query(
+          `UPDATE warehouse_movements
+           SET cost_price = $3
+           WHERE tenant_id = $1 AND batch_id = $2`,
+          [tenantId, batchId, purchasePrice],
+        );
+
+        const rpRows = await tx.query<{ repair_part_id: string }>(
+          `UPDATE repair_part_batch_allocations
+           SET unit_cost = $3, total_cost = ROUND((quantity * $3)::numeric, 2)
+           WHERE tenant_id = $1 AND batch_id = $2
+           RETURNING repair_part_id`,
+          [tenantId, batchId, purchasePrice],
+        );
+
+        const diRows = await tx.query<{ deal_item_id: string }>(
+          `UPDATE deal_item_batch_allocations
+           SET unit_cost = $3, total_cost = ROUND((quantity * $3)::numeric, 2)
+           WHERE tenant_id = $1 AND batch_id = $2
+           RETURNING deal_item_id`,
+          [tenantId, batchId, purchasePrice],
+        );
+
+        await this.recalculateAffectedCostEntitiesInTx(
+          tx,
+          tenantId,
+          Array.from(new Set(rpRows.map((r) => r.repair_part_id))),
+          Array.from(new Set(diRows.map((r) => r.deal_item_id))),
+          [existing.item_id],
+        );
+      }
+
+      const itemRow = await tx.queryOne<{ name: string }>(
+        `SELECT name FROM warehouse_items WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, updated.item_id],
+      );
+
+      return {
+        id: updated.id,
+        itemId: updated.item_id,
+        supplierOrderId: updated.supplier_order_id ?? null,
+        itemName: itemRow?.name,
+        batchNumber: updated.batch_number,
+        supplierName: updated.supplier_name,
+        purchasePrice: Number(updated.purchase_price),
+        initialQuantity: Number(updated.initial_quantity),
+        remainingQuantity: Number(updated.remaining_quantity),
+        receivedAt: toIso(updated.received_at),
+        createdAt: toIso(updated.created_at),
+      };
+    });
+  }
+
+  /**
+   * Транзакционное удаление партий с полной очисткой связанных аллокаций, резервов и движений.
+   */
+  async deleteBatchesInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    batchIds: string[],
+  ): Promise<{ deletedCount: number }> {
+    const uniqueIds = Array.from(new Set(batchIds));
+    if (uniqueIds.length === 0) return { deletedCount: 0 };
+
+    const batches = await tx.query<{ id: string; item_id: string }>(
+      `SELECT id, item_id
+       FROM warehouse_batches
+       WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+       FOR UPDATE`,
+      [tenantId, uniqueIds],
+    );
+    if (batches.length === 0) return { deletedCount: 0 };
+    const existingIds = batches.map((b) => b.id);
+    const affectedItemIds = Array.from(new Set(batches.map((b) => b.item_id)));
+
+    // 1. Удаляем FIFO-аллокации нарядов и сделок, запоминая затронутые позиции для пересчёта
+    const deletedRpAllocs = await tx.query<{ repair_part_id: string }>(
+      `DELETE FROM repair_part_batch_allocations
+       WHERE tenant_id = $1 AND batch_id = ANY($2::uuid[])
+       RETURNING repair_part_id`,
+      [tenantId, existingIds],
+    );
+    const deletedDiAllocs = await tx.query<{ deal_item_id: string }>(
+      `DELETE FROM deal_item_batch_allocations
+       WHERE tenant_id = $1 AND batch_id = ANY($2::uuid[])
+       RETURNING deal_item_id`,
+      [tenantId, existingIds],
+    );
+
+    // 2. Удаляем резервы под эти партии и возвращаем статус зарезервированных деталей нарядов
+    const deletedReservations = await tx.query<{ repair_order_id: string; item_id: string }>(
+      `DELETE FROM warehouse_reservations
+       WHERE tenant_id = $1 AND batch_id = ANY($2::uuid[])
+       RETURNING repair_order_id, item_id`,
+      [tenantId, existingIds],
+    );
+    for (const resv of deletedReservations) {
+      const stillReserved = await tx.queryOne<{ cnt: string }>(
+        `SELECT COUNT(*)::text AS cnt
+         FROM warehouse_reservations
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'`,
+        [tenantId, resv.repair_order_id, resv.item_id],
+      );
+      if (Number(stillReserved?.cnt ?? 0) === 0) {
+        await tx.query(
+          `UPDATE repair_parts
+           SET status = 'ordered'
+           WHERE tenant_id = $1 AND repair_order_id = $2 AND warehouse_item_id = $3 AND status = 'reserved'`,
+          [tenantId, resv.repair_order_id, resv.item_id],
+        );
+      }
+    }
+
+    // 3. Удаляем все движения склада, привязанные к этим партиям (intake, reserve, write_off)
+    await tx.query(
+      `DELETE FROM warehouse_movements
+       WHERE tenant_id = $1 AND batch_id = ANY($2::uuid[])`,
+      [tenantId, existingIds],
+    );
+
+    // 4. Удаляем сами партии
+    const deletedBatches = await tx.query<{ id: string }>(
+      `DELETE FROM warehouse_batches
+       WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+       RETURNING id`,
+      [tenantId, existingIds],
+    );
+
+    // 5. Пересчитываем себестоимость/флаги затронутых позиций и номенклатуры
+    await this.recalculateAffectedCostEntitiesInTx(
+      tx,
+      tenantId,
+      Array.from(new Set(deletedRpAllocs.map((r) => r.repair_part_id))),
+      Array.from(new Set(deletedDiAllocs.map((r) => r.deal_item_id))),
+      affectedItemIds,
+    );
+
+    return { deletedCount: deletedBatches.length };
+  }
+
+  async deleteBatch(tenantId: string, batchId: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const { deletedCount } = await this.deleteBatchesInTx(tx, tenantId, [batchId]);
+      return deletedCount > 0;
+    });
+  }
+
+  async bulkDeleteBatches(tenantId: string, ids: string[]): Promise<{ deletedCount: number }> {
+    return withTenant(tenantId, async (tx) => {
+      return this.deleteBatchesInTx(tx, tenantId, ids);
+    });
+  }
+
+  async updateMovement(
+    tenantId: string,
+    movementId: string,
+    payload: UpdateWarehouseMovementPayload,
+  ): Promise<WarehouseMovementDTO | null> {
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<
+        WarehouseMovementRow & { repair_part_id?: string | null }
+      >(
+        `SELECT * FROM warehouse_movements WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, movementId],
+      );
+      if (!existing) return null;
+
+      const newQty =
+        payload.quantity !== undefined ? Number(payload.quantity) : Number(existing.quantity);
+      const newCost =
+        payload.cost_price !== undefined ? Number(payload.cost_price) : Number(existing.cost_price);
+      const newDesc =
+        payload.description !== undefined ? payload.description.trim() : existing.description;
+
+      const deltaQty = Math.round((newQty - Number(existing.quantity)) * 100) / 100;
+
+      // Корректируем связанную партию/резерв/аллокации при изменении количества или цены
+      if (existing.batch_id) {
+        if (existing.type === "intake") {
+          await tx.query(
+            `UPDATE warehouse_batches
+             SET initial_quantity = GREATEST(0, initial_quantity + $3),
+                 remaining_quantity = GREATEST(0, remaining_quantity + $3),
+                 purchase_price = $4
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, existing.batch_id, deltaQty, newCost],
+          );
+        } else if (
+          existing.type === "write_off" ||
+          existing.type === "consume" ||
+          existing.type === "repair_consumption"
+        ) {
+          if (deltaQty !== 0) {
+            await tx.query(
+              `UPDATE warehouse_batches
+               SET remaining_quantity = LEAST(initial_quantity, GREATEST(0, remaining_quantity - $3))
+               WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, existing.batch_id, deltaQty],
+            );
+          }
+          if (existing.repair_part_id) {
+            await tx.query(
+              `UPDATE repair_part_batch_allocations
+               SET quantity = $4, unit_cost = $5, total_cost = ROUND(($4 * $5)::numeric, 2)
+               WHERE tenant_id = $1 AND repair_part_id = $2 AND batch_id = $3`,
+              [tenantId, existing.repair_part_id, existing.batch_id, newQty, newCost],
+            );
+            await this.recalculateAffectedCostEntitiesInTx(tx, tenantId, [existing.repair_part_id], [], []);
+          }
+          if (existing.deal_item_id) {
+            await tx.query(
+              `UPDATE deal_item_batch_allocations
+               SET quantity = $4, unit_cost = $5, total_cost = ROUND(($4 * $5)::numeric, 2)
+               WHERE tenant_id = $1 AND deal_item_id = $2 AND batch_id = $3`,
+              [tenantId, existing.deal_item_id, existing.batch_id, newQty, newCost],
+            );
+            await this.recalculateAffectedCostEntitiesInTx(tx, tenantId, [], [existing.deal_item_id], []);
+          }
+        }
+      }
+
+      if (existing.type === "reserve" && existing.repair_order_id && deltaQty !== 0) {
+        await tx.query(
+          `UPDATE warehouse_reservations
+           SET quantity = GREATEST(0, quantity + $4), updated_at = now()
+           WHERE id = (
+             SELECT id FROM warehouse_reservations
+             WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'
+               AND ($5::uuid IS NULL OR batch_id = $5)
+             ORDER BY created_at DESC
+             LIMIT 1
+           )`,
+          [tenantId, existing.repair_order_id, existing.item_id, deltaQty, existing.batch_id],
+        );
+      }
+
+      await tx.query(
+        `UPDATE warehouse_movements
+         SET description = $3, quantity = $4, cost_price = $5
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, movementId, newDesc, newQty, newCost],
+      );
+
+      const refreshed = await tx.queryOne<WarehouseMovementRow>(
+        `SELECT m.id, m.tenant_id, m.item_id, m.batch_id, m.repair_order_id,
+                m.deal_id, m.deal_item_id,
+                m.type, m.quantity, m.cost_price, m.description, m.created_by, m.created_at,
+                i.name AS item_name,
+                ro.ticket_number AS repair_ticket_number,
+                d.title AS deal_title,
+                u.name AS created_by_name
+         FROM warehouse_movements m
+         JOIN warehouse_items i ON i.id = m.item_id AND i.tenant_id = m.tenant_id
+         LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+         LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+         LEFT JOIN users u ON u.id = m.created_by AND u.tenant_id = m.tenant_id
+         WHERE m.tenant_id = $1 AND m.id = $2`,
+        [tenantId, movementId],
+      );
+      if (!refreshed) return null;
+
+      return {
+        id: refreshed.id,
+        itemId: refreshed.item_id,
+        itemName: refreshed.item_name,
+        batchId: refreshed.batch_id,
+        repairOrderId: refreshed.repair_order_id,
+        repairTicketNumber: refreshed.repair_ticket_number,
+        dealId: refreshed.deal_id ?? null,
+        dealItemId: refreshed.deal_item_id ?? null,
+        dealTitle: refreshed.deal_title ?? null,
+        type: refreshed.type,
+        quantity: Number(refreshed.quantity),
+        costPrice: Number(refreshed.cost_price),
+        description: refreshed.description,
+        createdByName: refreshed.created_by_name,
+        createdAt: toIso(refreshed.created_at),
+      };
+    });
+  }
+
+  /**
+   * Транзакционное удаление записей журнала движений с откатом их влияния на партии, резервы и аллокации.
+   */
+  async deleteMovementsInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    movementIds: string[],
+  ): Promise<{ deletedCount: number }> {
+    const uniqueIds = Array.from(new Set(movementIds));
+    if (uniqueIds.length === 0) return { deletedCount: 0 };
+
+    const movements = await tx.query<
+      WarehouseMovementRow & { repair_part_id?: string | null }
+    >(
+      `SELECT *
+       FROM warehouse_movements
+       WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+       ORDER BY created_at DESC
+       FOR UPDATE`,
+      [tenantId, uniqueIds],
+    );
+    if (movements.length === 0) return { deletedCount: 0 };
+
+    const affectedRepairPartIds = new Set<string>();
+    const affectedDealItemIds = new Set<string>();
+    const affectedItemIds = new Set<string>();
+    const emptyBatchIdsToDelete = new Set<string>();
+
+    for (const m of movements) {
+      const qty = Number(m.quantity);
+      affectedItemIds.add(m.item_id);
+
+      if (m.type === "intake" && m.batch_id) {
+        const updatedBatch = await tx.queryOne<{ initial_quantity: string; remaining_quantity: string }>(
+          `UPDATE warehouse_batches
+           SET initial_quantity = GREATEST(0, initial_quantity - $3),
+               remaining_quantity = GREATEST(0, remaining_quantity - $3)
+           WHERE tenant_id = $1 AND id = $2
+           RETURNING initial_quantity::text, remaining_quantity::text`,
+          [tenantId, m.batch_id, qty],
+        );
+        if (updatedBatch && Number(updatedBatch.initial_quantity) <= 0) {
+          emptyBatchIdsToDelete.add(m.batch_id);
+        }
+      } else if (m.type === "reserve" && m.repair_order_id) {
+        await tx.query(
+          `DELETE FROM warehouse_reservations
+           WHERE id = (
+             SELECT id FROM warehouse_reservations
+             WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'
+               AND ($4::uuid IS NULL OR batch_id = $4)
+             ORDER BY created_at DESC
+             LIMIT 1
+           )`,
+          [tenantId, m.repair_order_id, m.item_id, m.batch_id],
+        );
+        const stillReserved = await tx.queryOne<{ cnt: string }>(
+          `SELECT COUNT(*)::text AS cnt
+           FROM warehouse_reservations
+           WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'`,
+          [tenantId, m.repair_order_id, m.item_id],
+        );
+        if (Number(stillReserved?.cnt ?? 0) === 0) {
+          await tx.query(
+            `UPDATE repair_parts
+             SET status = 'ordered'
+             WHERE tenant_id = $1 AND repair_order_id = $2 AND warehouse_item_id = $3 AND status = 'reserved'`,
+            [tenantId, m.repair_order_id, m.item_id],
+          );
+        }
+      } else if (
+        m.type === "write_off" ||
+        m.type === "consume" ||
+        m.type === "repair_consumption"
+      ) {
+        if (m.batch_id) {
+          await tx.query(
+            `UPDATE warehouse_batches
+             SET remaining_quantity = LEAST(initial_quantity, remaining_quantity + $3)
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, m.batch_id, qty],
+          );
+        }
+        if (m.repair_part_id) {
+          await tx.query(
+            `DELETE FROM repair_part_batch_allocations
+             WHERE id = (
+               SELECT id FROM repair_part_batch_allocations
+               WHERE tenant_id = $1 AND repair_part_id = $2
+                 AND (($3::uuid IS NULL AND batch_id IS NULL) OR batch_id = $3)
+               ORDER BY created_at DESC
+               LIMIT 1
+             )`,
+            [tenantId, m.repair_part_id, m.batch_id],
+          );
+          affectedRepairPartIds.add(m.repair_part_id);
+        }
+        if (m.deal_item_id) {
+          await tx.query(
+            `DELETE FROM deal_item_batch_allocations
+             WHERE id = (
+               SELECT id FROM deal_item_batch_allocations
+               WHERE tenant_id = $1 AND deal_item_id = $2
+                 AND (($3::uuid IS NULL AND batch_id IS NULL) OR batch_id = $3)
+               ORDER BY created_at DESC
+               LIMIT 1
+             )`,
+            [tenantId, m.deal_item_id, m.batch_id],
+          );
+          affectedDealItemIds.add(m.deal_item_id);
+        }
+      }
+    }
+
+    const deletedRows = await tx.query<{ id: string }>(
+      `DELETE FROM warehouse_movements
+       WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+       RETURNING id`,
+      [tenantId, movements.map((m) => m.id)],
+    );
+
+    if (emptyBatchIdsToDelete.size > 0) {
+      await this.deleteBatchesInTx(tx, tenantId, Array.from(emptyBatchIdsToDelete));
+    }
+
+    await this.recalculateAffectedCostEntitiesInTx(
+      tx,
+      tenantId,
+      Array.from(affectedRepairPartIds),
+      Array.from(affectedDealItemIds),
+      Array.from(affectedItemIds),
+    );
+
+    return { deletedCount: deletedRows.length };
+  }
+
+  async deleteMovement(tenantId: string, movementId: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const { deletedCount } = await this.deleteMovementsInTx(tx, tenantId, [movementId]);
+      return deletedCount > 0;
+    });
+  }
+
+  async bulkDeleteMovements(tenantId: string, ids: string[]): Promise<{ deletedCount: number }> {
+    return withTenant(tenantId, async (tx) => {
+      return this.deleteMovementsInTx(tx, tenantId, ids);
+    });
   }
 
   async listMovements(tenantId: string, limit: number = 100): Promise<WarehouseMovementDTO[]> {
@@ -1150,6 +1804,67 @@ export class WarehouseService {
     };
   }
 
+  async isReserved(tenantId: string, itemId: string): Promise<boolean> {
+    const row = await queryOne<{ count: string | number }>(
+      `SELECT count(*)::int AS count
+       FROM warehouse_reservations
+       WHERE tenant_id = $1 AND item_id = $2 AND status = 'reserved'`,
+      [tenantId, itemId],
+    );
+    return Number(row?.count ?? 0) > 0;
+  }
+
+  async createBulkPurchaseRequests(
+    tenantId: string,
+    userId: string | null,
+    payload: {
+      itemIds: string[];
+      status?: string;
+      comment?: string;
+      repair_order_id?: string;
+      deal_id?: string;
+    },
+  ): Promise<PurchaseRequestDTO[]> {
+    const uniqueIds = Array.from(new Set(payload.itemIds.filter(Boolean)));
+    const results: PurchaseRequestDTO[] = [];
+
+    for (const itemId of uniqueIds) {
+      const item = await this.getItem(tenantId, itemId);
+      if (!item) continue;
+
+      const neededQty =
+        item.reservedStock > 0
+          ? item.reservedStock
+          : item.availableStock < 0
+            ? Math.abs(item.availableStock)
+            : 1;
+
+      const created = await this.createPurchaseRequest(tenantId, userId, {
+        item_id: item.id,
+        item_name: item.name,
+        sku: item.sku,
+        quantity: neededQty,
+        unit: item.unit || "шт",
+        estimated_price: item.costPrice > 0 ? item.costPrice : item.retailPrice,
+        comment: payload.comment || "Сформировано из массовых действий склада",
+        repair_order_id: payload.repair_order_id,
+        deal_id: payload.deal_id,
+      });
+
+      if (payload.status && payload.status !== "pending") {
+        const validStatus = payload.status as PurchaseRequestStatus;
+        await this.updatePurchaseRequest(tenantId, created.id, {
+          status: validStatus,
+        });
+        created.status = validStatus;
+      }
+
+      results.push(created);
+    }
+
+    return results;
+  }
+
   async updatePurchaseRequest(
     tenantId: string,
     requestId: string,
@@ -1254,14 +1969,38 @@ export class WarehouseService {
   }
 
   async deletePurchaseRequest(tenantId: string, requestId: string): Promise<boolean> {
+    const { deletedCount } = await this.bulkDeletePurchaseRequests(tenantId, [requestId]);
+    return deletedCount > 0;
+  }
+
+  async bulkDeletePurchaseRequests(
+    tenantId: string,
+    requestIds: string[],
+  ): Promise<{ deletedCount: number }> {
+    const uniqueIds = Array.from(new Set(requestIds));
+    if (uniqueIds.length === 0) return { deletedCount: 0 };
+
     return withTenant(tenantId, async (tx) => {
+      // Очищаем ссылки в позициях заказов поставщикам (FK purchase_request_id + массив purchase_request_ids)
+      await tx.query(
+        `UPDATE supplier_order_items
+         SET purchase_request_id = CASE WHEN purchase_request_id = ANY($2::uuid[]) THEN NULL ELSE purchase_request_id END,
+             purchase_request_ids = ARRAY(
+               SELECT elem FROM unnest(COALESCE(purchase_request_ids, ARRAY[]::uuid[])) AS elem
+               WHERE NOT (elem = ANY($2::uuid[]))
+             )
+         WHERE tenant_id = $1
+           AND (purchase_request_id = ANY($2::uuid[]) OR purchase_request_ids && $2::uuid[])`,
+        [tenantId, uniqueIds],
+      );
+
       const deletedRows = await tx.query<{ id: string }>(
         `DELETE FROM purchase_requests
-         WHERE tenant_id = $1 AND id = $2
+         WHERE tenant_id = $1 AND id = ANY($2::uuid[])
          RETURNING id`,
-        [tenantId, requestId],
+        [tenantId, uniqueIds],
       );
-      return deletedRows.length > 0;
+      return { deletedCount: deletedRows.length };
     });
   }
 
@@ -1442,10 +2181,8 @@ export class WarehouseService {
       if (!order) {
         throw new Error("Заказ поставщику не найден");
       }
-      if (order.status === "received") {
-        throw new Error("Нельзя редактировать заказ, который уже оприходован на склад");
-      }
 
+      const isReceived = order.status === "received";
       const updates: string[] = [];
       const params: (string | number | null)[] = [tenantId, id];
 
@@ -1461,12 +2198,14 @@ export class WarehouseService {
         params.push(payload.notes);
         updates.push(`notes = $${params.length}`);
       }
-      if (payload.status !== undefined) {
+      if (payload.status !== undefined && !isReceived) {
         params.push(payload.status);
         updates.push(`status = $${params.length}`);
       }
 
-      if (payload.items && payload.items.length > 0) {
+      let newTotalAmount = Number(order.total_amount);
+
+      if (!isReceived && payload.items && payload.items.length > 0) {
         await tx.query(
           `DELETE FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
           [tenantId, id],
@@ -1526,6 +2265,7 @@ export class WarehouseService {
           );
         }
 
+        newTotalAmount = totalAmount;
         params.push(totalAmount);
         updates.push(`total_amount = $${params.length}`);
       }
@@ -1537,55 +2277,161 @@ export class WarehouseService {
         params,
       );
 
+      // Синхронизируем поставщика в связанных партиях (для received)
+      if (isReceived && payload.supplier_name !== undefined && payload.supplier_name !== order.supplier_name) {
+        await tx.query(
+          `UPDATE warehouse_batches
+           SET supplier_name = $3
+           WHERE tenant_id = $1
+             AND (supplier_order_id = $2 OR (batch_number = $4 AND supplier_name = $5))`,
+          [tenantId, id, payload.supplier_name, order.order_number, order.supplier_name],
+        );
+      }
+
+      // Синхронизируем кассовую проводку, если заказ уже был оплачен
+      if (order.finance_transaction_id) {
+        const txRow = await tx.queryOne<{ amount: string; cash_account_id: string | null }>(
+          `SELECT amount::text, cash_account_id FROM transactions WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, order.finance_transaction_id],
+        );
+        if (txRow) {
+          const oldAmount = Number(txRow.amount);
+          const diffAmount = Math.round((newTotalAmount - oldAmount) * 100) / 100;
+          await tx.query(
+            `UPDATE transactions
+             SET amount = $3,
+                 counterparty_name = COALESCE($4, counterparty_name)
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, order.finance_transaction_id, newTotalAmount, payload.supplier_name ?? null],
+          );
+          if (diffAmount !== 0 && (txRow.cash_account_id || order.cash_account_id)) {
+            await tx.query(
+              `UPDATE cash_accounts
+               SET balance = balance - $1
+               WHERE tenant_id = $2 AND id = $3`,
+              [diffAmount, tenantId, txRow.cash_account_id || order.cash_account_id],
+            );
+          }
+        }
+      }
+
       const refreshed = await this.getSupplierOrder(tenantId, id);
       return refreshed!;
     });
   }
 
-  async deleteSupplierOrder(tenantId: string, id: string): Promise<boolean> {
-    return withTenant(tenantId, async (tx) => {
-      const order = await tx.queryOne<SupplierOrderRow>(
-        `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
-        [tenantId, id],
+  /**
+   * Транзакционное удаление заказов поставщикам (включая оприходованные `received`):
+   * 1. Находит и каскадно откатывает все созданные заказом партии (`deleteBatchesInTx` -> движения, резервы, аллокации).
+   * 2. Возвращает связанные заявки на закупку в статус `pending`.
+   * 3. Удаляет связанную кассовую проводку и возвращает точную сумму на баланс счёта.
+   * 4. Удаляет позиции и сам заказ.
+   */
+  async deleteSupplierOrdersInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<{ deletedCount: number; rolledBackBatchesCount: number }> {
+    const uniqueIds = Array.from(new Set(orderIds));
+    if (uniqueIds.length === 0) return { deletedCount: 0, rolledBackBatchesCount: 0 };
+
+    const orders = await tx.query<SupplierOrderRow>(
+      `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = ANY($2::uuid[]) FOR UPDATE`,
+      [tenantId, uniqueIds],
+    );
+    if (orders.length === 0) return { deletedCount: 0, rolledBackBatchesCount: 0 };
+
+    let rolledBackBatchesCount = 0;
+
+    for (const order of orders) {
+      // 1. Откатываем все партии, созданные этим заказом (по прямому FK и по историческому совпадению номера)
+      const linkedBatches = await tx.query<{ id: string }>(
+        `SELECT id
+         FROM warehouse_batches
+         WHERE tenant_id = $1
+           AND (
+             supplier_order_id = $2
+             OR (supplier_order_id IS NULL AND batch_number <> '' AND batch_number = $3 AND supplier_name = $4)
+           )`,
+        [tenantId, order.id, order.order_number, order.supplier_name],
       );
-      if (!order) {
-        throw new Error("Заказ поставщику не найден");
-      }
-      if (order.status === "received") {
-        throw new Error("Нельзя удалить заказ, который уже оприходован на склад");
+      if (linkedBatches.length > 0) {
+        const res = await this.deleteBatchesInTx(
+          tx,
+          tenantId,
+          linkedBatches.map((b) => b.id),
+        );
+        rolledBackBatchesCount += res.deletedCount;
       }
 
-      // Возвращаем связанные заявки на закупку в статус 'pending'
+      // 2. Возвращаем связанные заявки на закупку в статус 'pending'
       await tx.query(
         `UPDATE purchase_requests
          SET status = 'pending', supplier_order_id = NULL, updated_at = now()
-         WHERE tenant_id = $1 AND supplier_order_id = $2`,
-        [tenantId, id],
+         WHERE tenant_id = $1
+           AND (
+             supplier_order_id = $2
+             OR id IN (
+               SELECT purchase_request_id FROM supplier_order_items
+               WHERE tenant_id = $1 AND supplier_order_id = $2 AND purchase_request_id IS NOT NULL
+             )
+             OR id IN (
+               SELECT unnest(COALESCE(purchase_request_ids, ARRAY[]::uuid[]))
+               FROM supplier_order_items
+               WHERE tenant_id = $1 AND supplier_order_id = $2
+             )
+           )`,
+        [tenantId, order.id],
       );
 
-      // Если была создана кассовая проводка, удаляем её и возвращаем баланс
-      if (order.finance_transaction_id && order.cash_account_id) {
-        await tx.query(
-          `DELETE FROM transactions WHERE tenant_id = $1 AND id = $2`,
+      // 3. Если была создана кассовая проводка — удаляем её и возвращаем точную сумму транзакции на счёт
+      if (order.finance_transaction_id) {
+        const txRow = await tx.queryOne<{ amount: string; cash_account_id: string | null }>(
+          `DELETE FROM transactions
+           WHERE tenant_id = $1 AND id = $2
+           RETURNING amount::text, cash_account_id`,
           [tenantId, order.finance_transaction_id],
         );
-        await tx.query(
-          `UPDATE cash_accounts SET balance = balance + $1 WHERE tenant_id = $2 AND id = $3`,
-          [order.total_amount, tenantId, order.cash_account_id],
-        );
+        const refundAmount = txRow ? Number(txRow.amount) : Number(order.total_amount);
+        const targetAccountId = txRow?.cash_account_id || order.cash_account_id;
+        if (targetAccountId && refundAmount > 0) {
+          await tx.query(
+            `UPDATE cash_accounts SET balance = balance + $1 WHERE tenant_id = $2 AND id = $3`,
+            [refundAmount, tenantId, targetAccountId],
+          );
+        }
       }
+    }
 
-      // Удаляем позиции и сам заказ
-      await tx.query(
-        `DELETE FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
-        [tenantId, id],
-      );
-      await tx.query(
-        `DELETE FROM supplier_orders WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, id],
-      );
+    const existingIds = orders.map((o) => o.id);
+    await tx.query(
+      `DELETE FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = ANY($2::uuid[])`,
+      [tenantId, existingIds],
+    );
+    const deletedOrders = await tx.query<{ id: string }>(
+      `DELETE FROM supplier_orders WHERE tenant_id = $1 AND id = ANY($2::uuid[]) RETURNING id`,
+      [tenantId, existingIds],
+    );
 
+    return { deletedCount: deletedOrders.length, rolledBackBatchesCount };
+  }
+
+  async deleteSupplierOrder(tenantId: string, id: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const { deletedCount } = await this.deleteSupplierOrdersInTx(tx, tenantId, [id]);
+      if (deletedCount === 0) {
+        throw new Error("Заказ поставщику не найден");
+      }
       return true;
+    });
+  }
+
+  async bulkDeleteSupplierOrders(
+    tenantId: string,
+    ids: string[],
+  ): Promise<{ deletedCount: number; rolledBackBatchesCount: number }> {
+    return withTenant(tenantId, async (tx) => {
+      return this.deleteSupplierOrdersInTx(tx, tenantId, ids);
     });
   }
 
@@ -1838,15 +2684,16 @@ export class WarehouseService {
           [price, tenantId, itemId],
         );
 
-        // Создаем партию на ВСЕ поступившее количество
+        // Создаем партию на ВСЕ поступившее количество с прямой связью на заказ поставщику
         const batch = await tx.queryOneOrThrow<WarehouseBatchRow>(
           `INSERT INTO warehouse_batches
-             (tenant_id, item_id, batch_number, supplier_name, purchase_price, initial_quantity, remaining_quantity)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+             (tenant_id, item_id, supplier_order_id, batch_number, supplier_name, purchase_price, initial_quantity, remaining_quantity)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING *`,
           [
             tenantId,
             itemId,
+            order.id,
             order.order_number,
             order.supplier_name,
             price,
@@ -3001,6 +3848,37 @@ export class WarehouseService {
     }
 
     return withTenant(tenantId, async (tx) => {
+      if (payload.force) {
+        const batches = await tx.query<{ id: string }>(
+          `SELECT id FROM warehouse_batches WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
+          [tenantId, payload.ids],
+        );
+        if (batches.length > 0) {
+          await this.deleteBatchesInTx(
+            tx,
+            tenantId,
+            batches.map((b) => b.id),
+          );
+        }
+        await tx.query(
+          `DELETE FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
+          [tenantId, payload.ids],
+        );
+        await tx.query(
+          `DELETE FROM warehouse_movements WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
+          [tenantId, payload.ids],
+        );
+
+        const res = await tx.query<{ id: string }>(
+          `UPDATE warehouse_items
+           SET deleted_at = now()
+           WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+           RETURNING id`,
+          [tenantId, payload.ids],
+        );
+        return { deletedCount: res.length };
+      }
+
       const itemsWithStock = await tx.query<{ id: string; name: string; total_stock: string }>(
         `SELECT i.id, i.name, COALESCE(SUM(b.remaining_quantity), 0) AS total_stock
          FROM warehouse_items i
@@ -3016,10 +3894,11 @@ export class WarehouseService {
 
       let deletedCount = 0;
       if (deletableIds.length > 0) {
-        const res = await tx.query(
+        const res = await tx.query<{ id: string }>(
           `UPDATE warehouse_items
            SET deleted_at = now()
-           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
+           RETURNING id`,
           [tenantId, deletableIds],
         );
         deletedCount = res.length;

@@ -3,11 +3,13 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Paperclip,
   Smile,
@@ -21,6 +23,7 @@ import {
   FileText,
   Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const POPULAR_EMOJIS = [
@@ -36,10 +39,67 @@ export interface AttachedFile {
   previewUrl?: string;
 }
 
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+export function validateAndProcessFiles(
+  incomingFiles: FileList | File[],
+  existingFiles: AttachedFile[] = [],
+): { validFiles: AttachedFile[]; error?: string } {
+  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+  const MAX_FILES = 10;
+  const BLOCKED_EXTENSIONS = new Set([
+    "exe", "bat", "cmd", "sh", "bin", "msi", "dll", "com", "vbs", "ps1", "scr", "jar", "apk"
+  ]);
+
+  const filesArray = Array.from(incomingFiles);
+  if (filesArray.length === 0) return { validFiles: [] };
+
+  if (existingFiles.length + filesArray.length > MAX_FILES) {
+    return {
+      validFiles: [],
+      error: `Можно прикрепить не более ${MAX_FILES} файлов одновременно`,
+    };
+  }
+
+  const valid: AttachedFile[] = [];
+
+  for (const file of filesArray) {
+    if (file.size === 0) {
+      return { validFiles: [], error: `Файл "${file.name}" пуст` };
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return { validFiles: [], error: `Файл "${file.name}" превышает лимит 50 МБ` };
+    }
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    if (BLOCKED_EXTENSIONS.has(ext)) {
+      return { validFiles: [], error: `Файлы типа .${ext} запрещены из соображений безопасности` };
+    }
+    const isDup =
+      existingFiles.some((f) => f.name === file.name && f.size === file.size) ||
+      valid.some((f) => f.name === file.name && f.size === file.size);
+    if (!isDup) {
+      const isImg = file.type.startsWith("image/");
+      const previewUrl = isImg ? URL.createObjectURL(file) : undefined;
+      valid.push({
+        file,
+        name: file.name,
+        size: file.size,
+        previewUrl,
+      });
+    }
+  }
+
+  return { validFiles: valid };
+}
+
 export interface TelegramComposerProps {
   value: string;
   onChange: (val: string) => void;
-  onSend: (file?: AttachedFile) => void;
+  onSend: (files?: AttachedFile | AttachedFile[]) => void;
   onFocus?: () => void;
   isSending?: boolean;
   onAiDraft?: () => void;
@@ -47,6 +107,8 @@ export interface TelegramComposerProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  attachedFiles?: AttachedFile[];
+  onAttachedFilesChange?: (files: AttachedFile[]) => void;
 }
 
 interface ContextMenuPosition {
@@ -286,26 +348,60 @@ export function TelegramComposer({
   placeholder = "Сообщение...",
   className,
   disabled = false,
+  attachedFiles: attachedFilesProp,
+  onAttachedFilesChange,
 }: TelegramComposerProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const fullscreenEditorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const formattingTriggerRef = useRef<HTMLDivElement>(null);
+  const formattingSubmenuRef = useRef<HTMLDivElement>(null);
 
   const lastSerializedValueRef = useRef<string>(value);
   const savedRangeRef = useRef<Range | null>(null);
 
   const isFirstRenderRef = useRef(true);
 
-  const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
+  const [internalAttachedFiles, setInternalAttachedFiles] = useState<AttachedFile[]>([]);
+  const isControlled = attachedFilesProp !== undefined;
+  const filesToUse = isControlled ? (attachedFilesProp ?? []) : internalAttachedFiles;
+
+  const updateAttachedFiles = useCallback(
+    (next: AttachedFile[]) => {
+      if (isControlled) {
+        onAttachedFilesChange?.(next);
+      } else {
+        setInternalAttachedFiles(next);
+      }
+    },
+    [isControlled, onAttachedFilesChange],
+  );
+
+  const handleFiles = useCallback(
+    (incoming: FileList | File[]) => {
+      const { validFiles, error } = validateAndProcessFiles(incoming, filesToUse);
+      if (error) {
+        toast.error(error);
+        return;
+      }
+      if (validFiles.length > 0) {
+        updateAttachedFiles([...filesToUse, ...validFiles]);
+      }
+    },
+    [filesToUse, updateAttachedFiles],
+  );
+
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const prevIsFullscreenRef = useRef(isFullscreen);
   const [hasContent, setHasContent] = useState<boolean>(Boolean(value.trim()));
 
-  // Контекстное меню
+  // Контекстное меню и позиционирование с защитой от выхода за границы экрана
   const [contextMenuPos, setContextMenuPos] = useState<ContextMenuPosition | null>(null);
+  const [adjustedMenuPos, setAdjustedMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [isFormattingSubmenuOpen, setIsFormattingSubmenuOpen] = useState(false);
+  const [submenuPos, setSubmenuPos] = useState<{ left: number; top: number } | null>(null);
 
   // Возвращает активный элемент редактора (основной или полноэкранный)
   const getTargetEditor = useCallback((): HTMLDivElement | null => {
@@ -402,9 +498,14 @@ export function TelegramComposer({
   // Закрытие контекстного меню при клике снаружи или Escape
   useEffect(() => {
     const handleClickOutside = (e: globalThis.MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const inMain = contextMenuRef.current?.contains(target) ?? false;
+      const inSubmenu = formattingSubmenuRef.current?.contains(target) ?? false;
+      if (!inMain && !inSubmenu) {
         setContextMenuPos(null);
+        setAdjustedMenuPos(null);
         setIsFormattingSubmenuOpen(false);
+        setSubmenuPos(null);
       }
     };
 
@@ -412,7 +513,9 @@ export function TelegramComposer({
       if (e.key === "Escape") {
         if (contextMenuPos) {
           setContextMenuPos(null);
+          setAdjustedMenuPos(null);
           setIsFormattingSubmenuOpen(false);
+          setSubmenuPos(null);
         } else if (isFullscreen) {
           setIsFullscreen(false);
         } else if (showEmojiPicker) {
@@ -421,22 +524,79 @@ export function TelegramComposer({
       }
     };
 
+    const handleViewportResize = () => {
+      if (contextMenuPos) {
+        setContextMenuPos(null);
+        setAdjustedMenuPos(null);
+        setIsFormattingSubmenuOpen(false);
+        setSubmenuPos(null);
+      }
+    };
+
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleKeyDownGlobal);
+    window.addEventListener("resize", handleViewportResize);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleKeyDownGlobal);
+      window.removeEventListener("resize", handleViewportResize);
     };
   }, [contextMenuPos, isFullscreen, showEmojiPicker]);
+
+  // Динамическое позиционирование основного контекстного меню внутри viewport
+  useLayoutEffect(() => {
+    if (!contextMenuPos || !contextMenuRef.current) {
+      setAdjustedMenuPos(null);
+      return;
+    }
+    const pad = 8;
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    const maxLeft = Math.max(pad, window.innerWidth - rect.width - pad);
+    const maxTop = Math.max(pad, window.innerHeight - rect.height - pad);
+    const left = Math.max(pad, Math.min(contextMenuPos.x, maxLeft));
+    const top = Math.max(pad, Math.min(contextMenuPos.y, maxTop));
+    setAdjustedMenuPos({ left, top });
+  }, [contextMenuPos]);
+
+  // Динамическое позиционирование подменю «Форматирование» внутри viewport (флип влево + сдвиг вверх)
+  useLayoutEffect(() => {
+    if (
+      !isFormattingSubmenuOpen ||
+      !adjustedMenuPos ||
+      !contextMenuRef.current ||
+      !formattingTriggerRef.current ||
+      !formattingSubmenuRef.current
+    ) {
+      setSubmenuPos(null);
+      return;
+    }
+    const pad = 8;
+    const mainRect = contextMenuRef.current.getBoundingClientRect();
+    const triggerRect = formattingTriggerRef.current.getBoundingClientRect();
+    const subRect = formattingSubmenuRef.current.getBoundingClientRect();
+
+    let left = mainRect.right - 2;
+    if (left + subRect.width > window.innerWidth - pad) {
+      left = mainRect.left - subRect.width + 2;
+    }
+    const maxLeft = Math.max(pad, window.innerWidth - subRect.width - pad);
+    left = Math.max(pad, Math.min(left, maxLeft));
+
+    let top = triggerRect.top - 6;
+    const maxTop = Math.max(pad, window.innerHeight - subRect.height - pad);
+    top = Math.max(pad, Math.min(top, maxTop));
+
+    setSubmenuPos({ left, top });
+  }, [isFormattingSubmenuOpen, adjustedMenuPos]);
 
   // Правый клик -> вызов кастомного контекстного меню
   const handleContextMenu = (e: MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     saveSelection();
-    const x = Math.min(e.clientX, window.innerWidth - 240);
-    const y = Math.min(e.clientY, window.innerHeight - 380);
-    setContextMenuPos({ x, y });
+    setAdjustedMenuPos(null);
+    setSubmenuPos(null);
     setIsFormattingSubmenuOpen(false);
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
   };
 
   /**
@@ -778,7 +938,7 @@ export function TelegramComposer({
     const isEnterSend = e.key === "Enter" && !e.shiftKey && !isFullscreen;
     if (isEnterSend) {
       e.preventDefault();
-      if (value.trim() || attachedFile) {
+      if (value.trim() || filesToUse.length > 0) {
         handleSendAction();
       }
       return;
@@ -912,8 +1072,13 @@ export function TelegramComposer({
     }
   };
 
-  // Вставка текста из буфера обмена (очистка от лишних стилей)
+  // Вставка текста из буфера обмена (очистка от лишних стилей) либо файлов/скриншотов
   const handleNativePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+      e.preventDefault();
+      handleFiles(e.clipboardData.files);
+      return;
+    }
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain");
     if (text) {
@@ -923,34 +1088,30 @@ export function TelegramComposer({
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const isImg = file.type.startsWith("image/");
-    const previewUrl = isImg ? URL.createObjectURL(file) : undefined;
-
-    setAttachedFile({
-      file,
-      name: file.name,
-      size: file.size,
-      previewUrl,
-    });
-  };
-
-  const removeAttachedFile = () => {
-    if (attachedFile?.previewUrl) {
-      URL.revokeObjectURL(attachedFile.previewUrl);
+    if (e.target.files && e.target.files.length > 0) {
+      handleFiles(e.target.files);
     }
-    setAttachedFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
+  const removeAttachedFile = (index: number) => {
+    const fileToRemove = filesToUse[index];
+    if (fileToRemove?.previewUrl) {
+      URL.revokeObjectURL(fileToRemove.previewUrl);
+    }
+    const next = filesToUse.filter((_, i) => i !== index);
+    updateAttachedFiles(next);
+    if (fileInputRef.current && next.length === 0) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   const handleSendAction = () => {
-    if (disabled || isSending || (!value.trim() && !attachedFile)) return;
-    onSend(attachedFile ?? undefined);
-    setAttachedFile(null);
+    if (disabled || isSending || (!value.trim() && filesToUse.length === 0)) return;
+    onSend(filesToUse.length === 1 ? filesToUse[0] : filesToUse);
+    updateAttachedFiles([]);
     lastSerializedValueRef.current = "";
     if (editorRef.current) {
       editorRef.current.innerHTML = "";
@@ -981,37 +1142,43 @@ export function TelegramComposer({
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
+        multiple
         className="hidden"
       />
 
-      {/* Полоса прикрепленного файла над полем ввода */}
-      {attachedFile && (
-        <div className="mb-2 flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 text-xs">
-          {attachedFile.previewUrl ? (
-            <img
-              src={attachedFile.previewUrl}
-              alt="Вложение"
-              className="h-10 w-10 rounded-[6px] object-cover border border-[#e5e5e5]"
-            />
-          ) : (
-            <div className="flex h-10 w-10 items-center justify-center rounded-[6px] bg-[#f0f0f0] text-[#666666]">
-              <FileText className="h-5 w-5" />
+      {/* Полоса прикрепленных файлов над полем ввода */}
+      {filesToUse.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5 px-1">
+          {filesToUse.map((file, idx) => (
+            <div
+              key={`${file.name}-${file.size}-${idx}`}
+              className="flex max-w-[260px] items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-1.5 text-xs transition-colors hover:border-[#d4d4d4]"
+            >
+              {file.previewUrl ? (
+                <img
+                  src={file.previewUrl}
+                  alt={file.name}
+                  className="h-8 w-8 shrink-0 rounded-[6px] object-cover border border-[#e5e5e5]"
+                />
+              ) : (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[#f0f0f0] text-[#666666]">
+                  <FileText className="h-4 w-4" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-[#111111] text-[12px]">{file.name}</p>
+                <p className="text-[10px] text-[#888888]">{formatFileSize(file.size)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeAttachedFile(idx)}
+                className="shrink-0 rounded p-1 text-[#888888] hover:bg-[#eaeaea] hover:text-rose-600 transition-colors cursor-pointer"
+                title="Удалить файл"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
-          )}
-          <div className="flex-1 truncate">
-            <p className="font-medium text-[#111111] truncate">{attachedFile.name}</p>
-            <p className="text-[11px] text-[#888888]">
-              {Math.round(attachedFile.size / 1024)} КБ
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={removeAttachedFile}
-            className="p-1 text-[#888888] hover:text-rose-600 transition-colors"
-            title="Удалить файл"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          ))}
         </div>
       )}
 
@@ -1118,7 +1285,7 @@ export function TelegramComposer({
 
         {/* Кнопка действия: Микрофон (если пусто) или Самолётик (если введен текст/файл) */}
         <div className="shrink-0">
-          {hasContent || attachedFile ? (
+          {hasContent || filesToUse.length > 0 ? (
             <button
               type="button"
               onClick={handleSendAction}
@@ -1144,91 +1311,129 @@ export function TelegramComposer({
         </div>
       </div>
 
-      {/* КАСТОМНОЕ КОНТЕКСТНОЕ МЕНЮ С ФОРМАТИРОВАНИЕМ */}
-      {contextMenuPos && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 min-w-[210px] rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 shadow-2xl text-[13px] text-[#111111]"
-          style={{ top: contextMenuPos.y, left: contextMenuPos.x }}
-        >
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleUndo}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Отменить</span>
-            <span className="text-[11px] text-[#888888]">⌘Z</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleRedo}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Повторить</span>
-            <span className="text-[11px] text-[#888888]">⇧⌘Z</span>
-          </button>
-
-          <div className="my-1 border-t border-[#f0f0f0]" />
-
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleCut}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Вырезать</span>
-            <span className="text-[11px] text-[#888888]">⌘X</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleCopy}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Копировать</span>
-            <span className="text-[11px] text-[#888888]">⌘C</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void handlePasteAction()}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Вставить</span>
-            <span className="text-[11px] text-[#888888]">⌘V</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleDelete}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Удалить</span>
-          </button>
-
-          <div className="my-1 border-t border-[#f0f0f0]" />
-
-          {/* Пункт с подменю «Форматирование >» */}
-          <div
-            className="relative"
-            onMouseEnter={() => setIsFormattingSubmenuOpen(true)}
-          >
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setIsFormattingSubmenuOpen((v) => !v)}
-              className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+      {/* КАСТОМНОЕ КОНТЕКСТНОЕ МЕНЮ С ФОРМАТИРОВАНИЕМ (в портале с защитой от выхода за viewport) */}
+      {contextMenuPos &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <>
+            <div
+              ref={contextMenuRef}
+              className="fixed z-[9999] max-h-[calc(100vh-16px)] min-w-[210px] overflow-y-auto rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 text-[13px] text-[#111111] shadow-2xl select-none"
+              style={{
+                top: adjustedMenuPos?.top ?? contextMenuPos.y,
+                left: adjustedMenuPos?.left ?? contextMenuPos.x,
+                visibility: adjustedMenuPos ? "visible" : "hidden",
+              }}
             >
-              <span>Форматирование</span>
-              <ChevronRight className="h-4 w-4 text-[#888888]" />
-            </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleUndo}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Отменить</span>
+                <span className="text-[11px] text-[#888888]">⌘Z</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleRedo}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Повторить</span>
+                <span className="text-[11px] text-[#888888]">⇧⌘Z</span>
+              </button>
 
-            {/* Подменю форматирования */}
+              <div className="my-1 border-t border-[#f0f0f0]" />
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleCut}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Вырезать</span>
+                <span className="text-[11px] text-[#888888]">⌘X</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleCopy}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Копировать</span>
+                <span className="text-[11px] text-[#888888]">⌘C</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={() => void handlePasteAction()}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Вставить</span>
+                <span className="text-[11px] text-[#888888]">⌘V</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleDelete}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Удалить</span>
+              </button>
+
+              <div className="my-1 border-t border-[#f0f0f0]" />
+
+              {/* Пункт с подменю «Форматирование >» */}
+              <div
+                ref={formattingTriggerRef}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(true)}
+              >
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setIsFormattingSubmenuOpen((v) => !v)}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer",
+                    isFormattingSubmenuOpen && "bg-[#f5f5f5]"
+                  )}
+                >
+                  <span>Форматирование</span>
+                  <ChevronRight className="h-4 w-4 text-[#888888]" />
+                </button>
+              </div>
+
+              <div className="my-1 border-t border-[#f0f0f0]" />
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleSelectAll}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Выбрать всё</span>
+                <span className="text-[11px] text-[#888888]">⌘A</span>
+              </button>
+            </div>
+
+            {/* Подменю форматирования — отдельный fixed-блок с автофлипом и скроллом внутри viewport */}
             {isFormattingSubmenuOpen && (
               <div
-                className="absolute left-full top-[-80px] z-50 min-w-[210px] rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 shadow-2xl text-[13px] text-[#111111]"
+                ref={formattingSubmenuRef}
+                style={{
+                  top: submenuPos?.top ?? adjustedMenuPos?.top ?? contextMenuPos.y,
+                  left: submenuPos?.left ?? adjustedMenuPos?.left ?? contextMenuPos.x,
+                  visibility: submenuPos ? "visible" : "hidden",
+                }}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(true)}
+                className="fixed z-[10000] max-h-[calc(100vh-16px)] min-w-[215px] overflow-y-auto rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 text-[13px] text-[#111111] shadow-2xl select-none"
               >
                 <button
                   type="button"
@@ -1321,28 +1526,16 @@ export function TelegramComposer({
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={clearFormatting}
-                  className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] text-[#888888] hover:text-[#111111] cursor-pointer"
+                  className="flex w-full items-center justify-between px-3 py-1.5 text-[#888888] hover:bg-[#f5f5f5] hover:text-[#111111] cursor-pointer"
                 >
                   <span>Без форматирования</span>
                   <span className="text-[11px] text-[#888888]">⇧⌘N</span>
                 </button>
               </div>
             )}
-          </div>
-
-          <div className="my-1 border-t border-[#f0f0f0]" />
-
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleSelectAll}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Выбрать всё</span>
-            <span className="text-[11px] text-[#888888]">⌘A</span>
-          </button>
-        </div>
-      )}
+          </>,
+          document.body
+        )}
 
       {/* ПОЛНОЭКРАННЫЙ РЕЖИМ РЕДАКТИРОВАНИЯ (Fullscreen Overlay) */}
       {isFullscreen && (
@@ -1497,6 +1690,42 @@ export function TelegramComposer({
             />
           </div>
 
+          {/* Прикрепленные файлы в полноэкранном режиме */}
+          {filesToUse.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#f0f0f0] pt-2">
+              {filesToUse.map((file, idx) => (
+                <div
+                  key={`fs-${file.name}-${file.size}-${idx}`}
+                  className="flex max-w-[260px] items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-1.5 text-xs"
+                >
+                  {file.previewUrl ? (
+                    <img
+                      src={file.previewUrl}
+                      alt={file.name}
+                      className="h-8 w-8 shrink-0 rounded-[6px] object-cover border border-[#e5e5e5]"
+                    />
+                  ) : (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[#f0f0f0] text-[#666666]">
+                      <FileText className="h-4 w-4" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-[#111111] text-[12px]">{file.name}</p>
+                    <p className="text-[10px] text-[#888888]">{formatFileSize(file.size)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachedFile(idx)}
+                    className="shrink-0 rounded p-1 text-[#888888] hover:bg-[#eaeaea] hover:text-rose-600 transition-colors cursor-pointer"
+                    title="Удалить файл"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Нижняя панель действий полноэкранного режима */}
           <div className="flex items-center justify-between border-t border-[#e5e5e5] pt-3 mt-4">
             <span className="text-xs text-[#888888]">
@@ -1514,7 +1743,7 @@ export function TelegramComposer({
               <button
                 type="button"
                 onClick={handleSendAction}
-                disabled={disabled || isSending || (!value.trim() && !attachedFile)}
+                disabled={disabled || isSending || (!value.trim() && filesToUse.length === 0)}
                 className="flex h-9 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-40 cursor-pointer"
               >
                 {isSending ? (

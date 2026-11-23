@@ -1,6 +1,7 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError, type ZodIssue } from "zod";
 import type { ApiError } from "../types/index.js";
+import { setRequestAuditError } from "../lib/audit-log.service.js";
 
 export class AppError extends Error {
   public readonly statusCode: number;
@@ -160,6 +161,11 @@ export function errorHandler(
       error: { code: "INTERNAL_SERVER_ERROR", message: "Internal server error" },
     };
   }
+
+  setRequestAuditError(request, {
+    code: payload.error.code,
+    message: statusCode >= 500 && error.message ? error.message : payload.error.message,
+  });
 
   if (statusCode >= 500) {
     request.log.error(error);

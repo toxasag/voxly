@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { query, queryOne, withTenant, runWithPlatformScope, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError, AppError } from "../../../plugins/errorHandler.js";
+import { quotaService } from "../../quotas/quota.service.js";
 import { normalizePhoneToE164 } from "../../crm/contacts/dedupe.service.js";
 import { leadNotificationQueue } from "../../crm/leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
@@ -80,6 +81,8 @@ export class SitesService {
     payload: CreateSitePayload,
     apiBase?: string,
   ): Promise<SiteIntegrationDTO> {
+    await quotaService.assertQuota(tenantId, "site_integrations", "сайтов");
+
     const token = crypto.randomBytes(24).toString("hex");
 
     let targetPipelineId = payload.target_pipeline_id || null;
@@ -604,12 +607,6 @@ export class SitesService {
         ? `Заявка с сайта (${site.name}): ${rawFormName}`
         : `Заявка с сайта: ${site.name}`;
 
-      const first = await tx.queryOne<{ position: number | null }>(
-        `SELECT MIN(position) AS position FROM deals
-         WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL`,
-        [site.tenant_id, stageId],
-      );
-
       const dealSourceMetadata = {
         channel: "site",
         site_id: site.id,
@@ -627,37 +624,162 @@ export class SitesService {
         form_data: rawPayload,
       };
 
-      // 7. Создание сделки
-      const deal = await tx.queryOneOrThrow<DealRow>(
-        `INSERT INTO deals
-           (tenant_id, pipeline_id, stage_id, contact_id, title, description,
-            budget, currency, custom_fields, source_metadata, position, created_by, owner_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $12)
-         RETURNING *`,
-        [
-          site.tenant_id,
-          pipelineId,
-          stageId,
-          contactId,
-          dealTitle,
-          description,
-          budget,
-          "RUB",
-          JSON.stringify(extraFields),
-          JSON.stringify(dealSourceMetadata),
-          (first?.position ?? 1) - 1,
-          systemUserId,
-        ],
-      );
+      // 7. Поиск существующей активной сделки контакта или создание новой (дедупликация)
+      let deal: DealRow | null = null;
+      let isNewDeal = false;
 
-      await tx.query(
-        `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
-         VALUES ($1, $2, NULL, $3, $4)`,
-        [site.tenant_id, deal.id, stageId, systemUserId],
-      );
+      if (contactId) {
+        const activeDeal = await tx.queryOne<DealRow>(
+          `SELECT d.*
+           FROM deals d
+           JOIN stages s ON s.id = d.stage_id
+           WHERE d.tenant_id = $1
+             AND d.contact_id = $2
+             AND (d.status IS NULL OR d.status != 'duplicate')
+             AND d.deleted_at IS NULL
+             AND s.is_won = false
+             AND s.is_lost = false
+           ORDER BY (CASE WHEN d.pipeline_id = $3 THEN 0 ELSE 1 END), d.created_at DESC
+           LIMIT 1`,
+          [site.tenant_id, contactId, pipelineId],
+        );
+
+        if (activeDeal) {
+          deal = activeDeal;
+        }
+      }
+
+      if (deal) {
+        // Обогащаем существующую активную сделку данными повторной заявки
+        const appendedDescription = deal.description && deal.description.trim()
+          ? `${deal.description.trim()}\n\n---\nПовторная заявка с формы «${rawFormName || "Форма"}»:\n${description}`
+          : description;
+
+        await tx.query(
+          `UPDATE deals
+           SET description = $1,
+               source_metadata = COALESCE(source_metadata, '{}'::jsonb) || $2::jsonb,
+               custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $3::jsonb,
+               budget = CASE WHEN $4::numeric > 0 AND (budget IS NULL OR budget = 0) THEN $4::numeric ELSE budget END,
+               updated_at = now()
+           WHERE id = $5 AND tenant_id = $6`,
+          [
+            appendedDescription,
+            JSON.stringify(dealSourceMetadata),
+            JSON.stringify(extraFields),
+            budget,
+            deal.id,
+            site.tenant_id,
+          ],
+        );
+
+        await tx.query(
+          `INSERT INTO deal_messages (
+            tenant_id, deal_id, source, direction, sender_name, content, channel,
+            delivery_status, created_at, metadata
+          ) VALUES ($1, $2, 'system', 'inbound', $3, $4, 'site', 'delivered', now(), $5::jsonb)`,
+          [
+            site.tenant_id,
+            deal.id,
+            site.name || "Сайт",
+            `Повторная заявка с формы «${rawFormName || "Заявка с сайта"}»:\n${description}`,
+            JSON.stringify({
+              site_id: site.id,
+              form_name: rawFormName,
+              page_url: pageUrl,
+              form_data: rawPayload,
+            }),
+          ],
+        );
+      } else {
+        const isSuppressed = existingContact?.suppress_deal_creation ?? false;
+        if (isSuppressed) {
+          if (contactId) {
+            await tx.query(
+              `INSERT INTO contact_activities (
+                tenant_id, contact_id, deal_id, activity_channel, activity_kind,
+                direction, title, author_id, author_name, occurred_at, payload
+              ) VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, now(), $9::jsonb)`,
+              [
+                site.tenant_id,
+                contactId,
+                "web_form",
+                "form_submission",
+                "inbound",
+                rawFormName ? `Заявка с формы «${rawFormName}»` : `Заявка с сайта «${site.name}»`,
+                systemUserId,
+                "Интеграция сайта",
+                JSON.stringify({
+                  domain: site.site_url || "",
+                  pageUrl: pageUrl || "",
+                  formName: rawFormName || "Заявка с сайта",
+                  formFields: rawPayload,
+                  touchpoints: {
+                    referrer: pageUrl || undefined,
+                    utmSource: utmSource || undefined,
+                    utmMedium: utmMedium || undefined,
+                    utmCampaign: utmCampaign || undefined,
+                    utmContent: utmContent || undefined,
+                    utmTerm: utmTerm || undefined,
+                  },
+                }),
+              ],
+            );
+          }
+
+          await tx.query(
+            `UPDATE site_integrations
+             SET leads_count = leads_count + 1,
+                 last_lead_at = now(),
+                 updated_at = now()
+             WHERE id = $1`,
+            [site.id],
+          );
+
+          return {
+            status: "ok",
+            contact_id: contactId ?? undefined,
+          };
+        }
+
+        isNewDeal = true;
+        const first = await tx.queryOne<{ position: number | null }>(
+          `SELECT MIN(position) AS position FROM deals
+           WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL`,
+          [site.tenant_id, stageId],
+        );
+
+        deal = await tx.queryOneOrThrow<DealRow>(
+          `INSERT INTO deals
+             (tenant_id, pipeline_id, stage_id, contact_id, title, description,
+              budget, currency, custom_fields, source_metadata, position, created_by, owner_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $12)
+           RETURNING *`,
+          [
+            site.tenant_id,
+            pipelineId,
+            stageId,
+            contactId,
+            dealTitle,
+            description,
+            budget,
+            "RUB",
+            JSON.stringify(extraFields),
+            JSON.stringify(dealSourceMetadata),
+            (first?.position ?? 1) - 1,
+            systemUserId,
+          ],
+        );
+
+        await tx.query(
+          `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+           VALUES ($1, $2, NULL, $3, $4)`,
+          [site.tenant_id, deal.id, stageId, systemUserId],
+        );
+      }
 
       // 8. Фиксация события в таймлайне активности клиента
-      if (contactId) {
+      if (contactId && deal) {
         await tx.query(
           `INSERT INTO contact_activities (
             tenant_id, contact_id, deal_id, activity_channel, activity_kind,
@@ -702,9 +824,13 @@ export class SitesService {
       );
 
       // 10. Асинхронные оповещения и отправка конверсий
-      void leadNotificationQueue.checkAndTriggerNotification(site.tenant_id, deal.id);
-      void notificationQueue.dispatchLeadCreated({ tenantId: site.tenant_id, dealId: deal.id });
-      void conversionDispatcher.handleDealCreated({ tenantId: site.tenant_id, dealId: deal.id });
+      if (deal) {
+        void leadNotificationQueue.checkAndTriggerNotification(site.tenant_id, deal.id);
+        if (isNewDeal) {
+          void notificationQueue.dispatchLeadCreated({ tenantId: site.tenant_id, dealId: deal.id });
+          void conversionDispatcher.handleDealCreated({ tenantId: site.tenant_id, dealId: deal.id });
+        }
+      }
 
       // 11. Автоматическое кросс-канальное обогащение контакта по номеру (Telegram, WhatsApp, MAX)
       if (contactId && canonicalPhone && canonicalPhone.replace(/\D/g, "").length >= 10) {
@@ -713,14 +839,14 @@ export class SitesService {
           .enrichContact(site.tenant_id, contactId, {
             phoneOverride: canonicalPhone,
             channels: ["telegram", "max", "whatsapp"],
-            dealId: deal.id,
+            dealId: deal?.id,
           })
           .catch(() => {});
       }
 
       return {
         status: "ok",
-        deal_id: deal.id,
+        deal_id: deal ? deal.id : undefined,
         contact_id: contactId ?? undefined,
       };
     });

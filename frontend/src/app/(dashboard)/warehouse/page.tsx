@@ -33,6 +33,11 @@ import {
   Edit2,
   SquarePen,
   Filter,
+  Lock,
+  Unlock,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -51,6 +56,12 @@ import {
   usePaySupplierOrder,
   useCreateReceiptFromSupplierOrder,
   useDeleteSupplierOrder,
+  useBulkDeleteSupplierOrders,
+  useDeleteWarehouseBatch,
+  useBulkDeleteWarehouseBatches,
+  useDeleteWarehouseMovement,
+  useBulkDeleteWarehouseMovements,
+  useBulkDeletePurchaseRequests,
   useWarehouseSettings,
   useUpdateWarehouseSettings,
   useDeleteWarehouseItem,
@@ -58,9 +69,14 @@ import {
   useDeletePurchaseRequest,
   useExportWarehouseItems,
   useBulkDeleteWarehouseItems,
+  useBulkCreatePurchaseRequests,
   useWarehouseCategories,
   useWarehouseBrands,
+  useWarehouseModels,
   type WarehouseItemDTO,
+  type WarehouseItemModelDTO,
+  type WarehouseBatchDTO,
+  type WarehouseMovementDTO,
   type PurchaseRequestDTO,
   type AggregatedPurchaseRequestDTO,
   type SupplierOrderDTO,
@@ -76,6 +92,8 @@ import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierO
 import { EditSupplierOrderModal } from "@/components/warehouse/EditSupplierOrderModal";
 import { SupplierOrderDetailModal } from "@/components/warehouse/SupplierOrderDetailModal";
 import { ReceiptSupplierOrderModal } from "@/components/warehouse/ReceiptSupplierOrderModal";
+import { EditBatchModal } from "@/components/warehouse/EditBatchModal";
+import { EditMovementModal } from "@/components/warehouse/EditMovementModal";
 import { ProductImportDialog } from "@/components/warehouse/ProductImportDialog";
 import { ProductBulkEditDialog } from "@/components/warehouse/ProductBulkEditDialog";
 import { EditItemModal } from "@/components/warehouse/EditItemModal";
@@ -137,9 +155,23 @@ function WarehouseContent() {
 
   const categoryParam = searchParams.get("category") ?? "";
   const brandParam = searchParams.get("brand") ?? "";
+  const modelIdsParam = searchParams.get("model_ids") || searchParams.get("models") || "";
+
+  const initialModelIds = useMemo(() => {
+    if (!modelIdsParam) return [];
+    return modelIdsParam
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [modelIdsParam]);
 
   const [selectedCategory, setSelectedCategory] = useState<string>(categoryParam);
   const [selectedBrand, setSelectedBrand] = useState<string>(brandParam);
+  const [selectedModelIds, setSelectedModelIds] = useState<string[]>(initialModelIds);
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  useClickOutside(modelDropdownRef, () => setModelDropdownOpen(false), modelDropdownOpen);
 
   useEffect(() => {
     setSelectedCategory(categoryParam);
@@ -149,6 +181,10 @@ function WarehouseContent() {
     setSelectedBrand(brandParam);
   }, [brandParam]);
 
+  useEffect(() => {
+    setSelectedModelIds(initialModelIds);
+  }, [initialModelIds]);
+
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
   useClickOutside(filterPopoverRef, () => setFilterPopoverOpen(false), filterPopoverOpen);
@@ -157,14 +193,36 @@ function WarehouseContent() {
 
   const { data: warehouseCategoriesList = [] } = useWarehouseCategories();
   const { data: warehouseBrandsList = [] } = useWarehouseBrands();
+  const { data: allWarehouseModels = [] } = useWarehouseModels();
 
-  const activeFiltersCount = (selectedCategory ? 1 : 0) + (selectedBrand ? 1 : 0);
+  const availableModels = useMemo(() => {
+    if (!selectedBrand) return allWarehouseModels;
+    return allWarehouseModels.filter(
+      (m) => (m.brandName || "").trim().toLowerCase() === selectedBrand.trim().toLowerCase(),
+    );
+  }, [allWarehouseModels, selectedBrand]);
+
+  const filteredModelsForPicker = useMemo(() => {
+    const q = modelSearchQuery.trim().toLowerCase();
+    if (!q) return availableModels;
+    return availableModels.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        (m.brandName && m.brandName.toLowerCase().includes(q)),
+    );
+  }, [availableModels, modelSearchQuery]);
+
+  const activeFiltersCount =
+    (selectedCategory ? 1 : 0) +
+    (selectedBrand ? 1 : 0) +
+    (selectedModelIds.length > 0 ? 1 : 0);
 
   const updateUrl = (updates: {
     page?: number;
     limit?: number;
     category?: string;
     brand?: string;
+    model_ids?: string[];
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (updates.page !== undefined) {
@@ -187,14 +245,48 @@ function WarehouseContent() {
         params.delete("brand");
       }
     }
+    if (updates.model_ids !== undefined) {
+      if (updates.model_ids.length > 0) {
+        params.set("model_ids", updates.model_ids.join(","));
+      } else {
+        params.delete("model_ids");
+        params.delete("models");
+      }
+    }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
   const handleClearFilters = () => {
     setSelectedCategory("");
     setSelectedBrand("");
+    setSelectedModelIds([]);
+    setModelDropdownOpen(false);
     setFilterPopoverOpen(false);
-    updateUrl({ page: 1, category: "", brand: "" });
+    updateUrl({ page: 1, category: "", brand: "", model_ids: [] });
+  };
+
+  const handleToggleModel = (modelId: string) => {
+    const next = selectedModelIds.includes(modelId)
+      ? selectedModelIds.filter((id) => id !== modelId)
+      : [...selectedModelIds, modelId];
+    setSelectedModelIds(next);
+    updateUrl({
+      page: 1,
+      category: selectedCategory,
+      brand: selectedBrand,
+      model_ids: next,
+    });
+  };
+
+  const handleRemoveModel = (modelId: string) => {
+    const next = selectedModelIds.filter((id) => id !== modelId);
+    setSelectedModelIds(next);
+    updateUrl({
+      page: 1,
+      category: selectedCategory,
+      brand: selectedBrand,
+      model_ids: next,
+    });
   };
 
   const handleSearchChange = (newVal: string) => {
@@ -215,13 +307,18 @@ function WarehouseContent() {
   const [selectedAggregatedIds, setSelectedAggregatedIds] = useState<Set<string>>(new Set());
   const [selectedPurchaseForEdit, setSelectedPurchaseForEdit] = useState<AggregatedPurchaseRequestDTO | null>(null);
 
-  // Модальные окна заказов поставщикам
+  // Модальные окна заказов поставщикам, партий и движений
   const [selectedOrderForEdit, setSelectedOrderForEdit] = useState<SupplierOrderDTO | null>(null);
   const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<SupplierOrderDTO | null>(null);
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<SupplierOrderDTO | null>(null);
+  const [selectedBatchForEdit, setSelectedBatchForEdit] = useState<WarehouseBatchDTO | null>(null);
+  const [selectedMovementForEdit, setSelectedMovementForEdit] = useState<WarehouseMovementDTO | null>(null);
 
-  // Выбор позиций для массовых действий и модалки
+  // Выбор записей для массовых действий на всех вкладках
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
+  const [selectedSupplierOrderIds, setSelectedSupplierOrderIds] = useState<Set<string>>(new Set());
+  const [selectedMovementIds, setSelectedMovementIds] = useState<Set<string>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
   const [editItemModalOpen, setEditItemModalOpen] = useState(false);
@@ -246,11 +343,86 @@ function WarehouseContent() {
     search: searchQuery,
     category: selectedCategory || undefined,
     brand: selectedBrand || undefined,
+    model_ids: selectedModelIds.length > 0 ? selectedModelIds : undefined,
   });
 
   const items = warehouseData?.items ?? [];
   const meta = warehouseData?.meta ?? { total: 0, page: 1, limit: 25, pages: 0 };
   const filteredItems = items;
+
+  type ItemSortField =
+    | "sku"
+    | "name"
+    | "category"
+    | "brand"
+    | "totalStock"
+    | "reservedStock"
+    | "availableStock"
+    | "costPrice"
+    | "retailPrice";
+  type SortDirection = "asc" | "desc";
+
+  const [sortField, setSortField] = useState<ItemSortField | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  const handleSort = (field: ItemSortField) => {
+    if (sortField === field) {
+      if (sortDirection === "asc") {
+        setSortDirection("desc");
+      } else {
+        setSortField(null);
+        setSortDirection("asc");
+      }
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortedItems = useMemo(() => {
+    if (!sortField) return filteredItems;
+    return [...filteredItems].sort((a, b) => {
+      const aVal = a[sortField];
+      const bVal = b[sortField];
+
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        const cmp = aVal.localeCompare(bVal, "ru", { sensitivity: "base" });
+        return sortDirection === "asc" ? cmp : -cmp;
+      }
+
+      const aNum = Number(aVal ?? 0);
+      const bNum = Number(bVal ?? 0);
+      return sortDirection === "asc" ? aNum - bNum : bNum - aNum;
+    });
+  }, [filteredItems, sortField, sortDirection]);
+
+  const bulkCreatePurchasesMutation = useBulkCreatePurchaseRequests();
+
+  const selectedItemsList = useMemo(() => {
+    return Array.from(selectedItemIds)
+      .map((id) => items.find((i) => i.id === id))
+      .filter((i): i is WarehouseItemDTO => Boolean(i));
+  }, [selectedItemIds, items]);
+
+  const hasReservedOrDeficit = useMemo(() => {
+    return selectedItemsList.some(
+      (item) => item.reservedStock > 0 || item.availableStock < 0 || item.status === "reserved",
+    );
+  }, [selectedItemsList]);
+
+  const handleBulkCreatePurchaseRequest = async () => {
+    if (selectedItemIds.size === 0) return;
+    try {
+      const res = await bulkCreatePurchasesMutation.mutateAsync({
+        itemIds: Array.from(selectedItemIds),
+        comment: "Сформировано из массовых действий склада",
+      });
+      toast.success(`Сформировано заявок на закупку: ${res.length}`);
+      setSelectedItemIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось сформировать заявку на закупку");
+    }
+  };
 
   const { data: batches = [], isLoading: isBatchesLoading } = useWarehouseBatches();
   const { data: movements = [], isLoading: isMovementsLoading } = useWarehouseMovements();
@@ -261,17 +433,23 @@ function WarehouseContent() {
   const deleteItemMutation = useDeleteWarehouseItem();
   const updatePurchaseMutation = useUpdatePurchaseRequest();
   const deletePurchaseMutation = useDeletePurchaseRequest();
+  const bulkDeletePurchasesMutation = useBulkDeletePurchaseRequests();
   const paySupplierOrderMutation = usePaySupplierOrder();
   const createReceiptMutation = useCreateReceiptFromSupplierOrder();
   const deleteSupplierOrderMutation = useDeleteSupplierOrder();
+  const bulkDeleteSupplierOrdersMutation = useBulkDeleteSupplierOrders();
+  const deleteBatchMutation = useDeleteWarehouseBatch();
+  const bulkDeleteBatchesMutation = useBulkDeleteWarehouseBatches();
+  const deleteMovementMutation = useDeleteWarehouseMovement();
+  const bulkDeleteMovementsMutation = useBulkDeleteWarehouseMovements();
   const exportMutation = useExportWarehouseItems();
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
 
   const handleToggleSelectAll = () => {
-    if (selectedItemIds.size === filteredItems.length && filteredItems.length > 0) {
+    if (selectedItemIds.size === sortedItems.length && sortedItems.length > 0) {
       setSelectedItemIds(new Set());
     } else {
-      setSelectedItemIds(new Set(filteredItems.map((i) => i.id)));
+      setSelectedItemIds(new Set(sortedItems.map((i) => i.id)));
     }
   };
 
@@ -301,10 +479,18 @@ function WarehouseContent() {
 
   const handleBulkDelete = async () => {
     if (selectedItemIds.size === 0) return;
-    if (!confirm(`Удалить выбранные позиции (${selectedItemIds.size} шт.) из номенклатуры?`)) return;
+    const selectedItems = filteredItems.filter((i) => selectedItemIds.has(i.id));
+    const hasStockItems = selectedItems.some((i) => i.totalStock > 0 || i.reservedStock > 0);
+    const confirmText = hasStockItems
+      ? `Среди выбранных позиций (${selectedItemIds.size} шт.) есть товары с ненулевым остатком или резервом. При удалении все их партии, резервы и движения будут очищены, а остатки пересчитаны. Удалить принудительно?`
+      : `Удалить выбранные позиции (${selectedItemIds.size} шт.) из номенклатуры?`;
+    if (!confirm(confirmText)) return;
 
     try {
-      const res = await bulkDeleteMutation.mutateAsync({ ids: Array.from(selectedItemIds) });
+      const res = await bulkDeleteMutation.mutateAsync({
+        ids: Array.from(selectedItemIds),
+        force: hasStockItems,
+      });
       if (res.errors && res.errors.length > 0) {
         toast.warning(`Удалено ${res.deletedCount} позиций. Предупреждение: ${res.errors[0]}`);
       } else {
@@ -343,6 +529,32 @@ function WarehouseContent() {
       );
     });
   }, [supplierOrders, supplierOrderStatusFilter, searchQuery]);
+
+  // Фильтрация партий
+  const filteredBatches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return batches;
+    return batches.filter(
+      (b) =>
+        (b.itemName || "").toLowerCase().includes(q) ||
+        (b.batchNumber || "").toLowerCase().includes(q) ||
+        (b.supplierName || "").toLowerCase().includes(q),
+    );
+  }, [batches, searchQuery]);
+
+  // Фильтрация движений
+  const filteredMovements = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return movements;
+    return movements.filter(
+      (m) =>
+        (m.itemName || "").toLowerCase().includes(q) ||
+        (m.description || "").toLowerCase().includes(q) ||
+        (m.repairTicketNumber || "").toLowerCase().includes(q) ||
+        (m.dealTitle || "").toLowerCase().includes(q) ||
+        (m.createdByName || "").toLowerCase().includes(q),
+    );
+  }, [movements, searchQuery]);
 
   // Статистика склада (приоритетно из серверного партионного агрегата по всему складу)
   const stats = useMemo(() => {
@@ -430,20 +642,25 @@ function WarehouseContent() {
   };
 
   const handleDeleteSupplierOrder = async (order: SupplierOrderDTO) => {
-    if (order.status === "received") {
-      toast.error("Нельзя удалить заказ, по которому уже оприходован товар на склад");
-      return;
-    }
-    if (
-      !confirm(
-        `Удалить заказ поставщику №${order.orderNumber}? Все заявки на закупку вернутся в статус «В ожидании», а оплата (если была) будет отменена.`,
-      )
-    ) {
+    const isReceived = order.status === "received";
+    const confirmMsg = isReceived
+      ? `Удалить оприходованный заказ №${order.orderNumber}? Все созданные им партии, движения прихода/резерва и кассовая оплата будут откачены, а заявки вернутся в «В ожидании».`
+      : `Удалить заказ поставщику №${order.orderNumber}? Все заявки на закупку вернутся в статус «В ожидании», а оплата (если была) будет отменена.`;
+    if (!confirm(confirmMsg)) {
       return;
     }
     try {
       await deleteSupplierOrderMutation.mutateAsync(order.id);
-      toast.success(`Заказ №${order.orderNumber} удален, заявки возвращены в очередь`);
+      toast.success(
+        isReceived
+          ? `Заказ №${order.orderNumber} и связанные партии удалены, остатки и касса пересчитаны`
+          : `Заказ №${order.orderNumber} удален, заявки возвращены в очередь`,
+      );
+      setSelectedSupplierOrderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(order.id);
+        return next;
+      });
       if (selectedOrderForDetail?.id === order.id) {
         setSelectedOrderForDetail(null);
       }
@@ -452,16 +669,139 @@ function WarehouseContent() {
     }
   };
 
-  const handleDeleteItem = async (item: WarehouseItemDTO) => {
-    if (item.totalStock > 0 || item.reservedStock > 0) {
-      toast.error(`Нельзя удалить товар с ненулевым остатком (в наличии: ${item.totalStock})`);
+  const handleBulkDeleteSupplierOrders = async () => {
+    if (selectedSupplierOrderIds.size === 0) return;
+    if (
+      !confirm(
+        `Удалить выбранные заказы поставщикам (${selectedSupplierOrderIds.size} шт.)? Связанные партии, движения и кассовые проводки будут откачены, а заявки вернутся в «В ожидании».`,
+      )
+    ) {
       return;
     }
-    if (!confirm(`Удалить товар «${item.name}» из номенклатуры?`)) return;
+    try {
+      const res = await bulkDeleteSupplierOrdersMutation.mutateAsync(Array.from(selectedSupplierOrderIds));
+      toast.success(
+        `Удалено заказов: ${res.deletedCount}${res.rolledBackBatchesCount > 0 ? ` (откачено партий: ${res.rolledBackBatchesCount})` : ""}`,
+      );
+      setSelectedSupplierOrderIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные заказы");
+    }
+  };
+
+  const handleDeleteBatch = async (batch: WarehouseBatchDTO) => {
+    if (
+      !confirm(
+        `Удалить партию ${batch.batchNumber || batch.id.slice(0, 8)} («${batch.itemName ?? "Товар"}»)? Связанные движения, резервы и FIFO-аллокации этой партии будут удалены, а остатки пересчитаны.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteBatchMutation.mutateAsync(batch.id);
+      toast.success("Партия и связанные движения удалены, остатки пересчитаны");
+      setSelectedBatchIds((prev) => {
+        const next = new Set(prev);
+        next.delete(batch.id);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить партию");
+    }
+  };
+
+  const handleBulkDeleteBatches = async () => {
+    if (selectedBatchIds.size === 0) return;
+    if (
+      !confirm(
+        `Удалить выбранные партии (${selectedBatchIds.size} шт.)? Все связанные движения, резервы и аллокации этих партий будут очищены.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await bulkDeleteBatchesMutation.mutateAsync(Array.from(selectedBatchIds));
+      toast.success(`Удалено партий: ${res.deletedCount}`);
+      setSelectedBatchIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные партии");
+    }
+  };
+
+  const handleDeleteMovement = async (movement: WarehouseMovementDTO) => {
+    if (
+      !confirm(
+        `Удалить запись движения по «${movement.itemName ?? "Товар"}» (${movement.quantity} шт.)? Влияние операции на остатки партии / резервы / списания будет откачено.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteMovementMutation.mutateAsync(movement.id);
+      toast.success("Запись движения удалена, остатки пересчитаны");
+      setSelectedMovementIds((prev) => {
+        const next = new Set(prev);
+        next.delete(movement.id);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить движение");
+    }
+  };
+
+  const handleBulkDeleteMovements = async () => {
+    if (selectedMovementIds.size === 0) return;
+    if (
+      !confirm(
+        `Удалить выбранные записи движений (${selectedMovementIds.size} шт.)? Влияние операций на остатки и резервы будет откачено.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await bulkDeleteMovementsMutation.mutateAsync(Array.from(selectedMovementIds));
+      toast.success(`Удалено записей движений: ${res.deletedCount}`);
+      setSelectedMovementIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные движения");
+    }
+  };
+
+  const handleBulkDeletePurchases = async () => {
+    if (selectedAggregatedIds.size === 0) return;
+    const allIds = filteredAggregatedPurchases
+      .filter((pr) => selectedAggregatedIds.has(pr.id))
+      .flatMap((pr) => (pr.requestIds && pr.requestIds.length > 0 ? pr.requestIds : [pr.id]));
+    if (allIds.length === 0) return;
+    if (!confirm(`Удалить выбранные заявки на закупку (${allIds.length} шт.)?`)) return;
+    try {
+      const res = await bulkDeletePurchasesMutation.mutateAsync(allIds);
+      toast.success(`Удалено заявок на закупку: ${res.deletedCount}`);
+      setSelectedAggregatedIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить заявки на закупку");
+    }
+  };
+
+  const handleDeleteItem = async (item: WarehouseItemDTO) => {
+    const hasStockOrReserve = item.totalStock > 0 || item.reservedStock > 0;
+    const confirmMsg = hasStockOrReserve
+      ? `У товара «${item.name}» есть остаток (${item.totalStock} ${item.unit}, в резерве: ${item.reservedStock}). При удалении будут очищены все его партии, резервы и движения, а остатки пересчитаны. Удалить принудительно?`
+      : `Удалить товар «${item.name}» из номенклатуры?`;
+    if (!confirm(confirmMsg)) return;
 
     try {
-      await deleteItemMutation.mutateAsync(item.id);
-      toast.success(`Товар «${item.name}» удален`);
+      await deleteItemMutation.mutateAsync({ id: item.id, force: hasStockOrReserve });
+      toast.success(
+        hasStockOrReserve
+          ? `Товар «${item.name}» и связанные партии/резервы удалены`
+          : `Товар «${item.name}» удален`,
+      );
+      setSelectedItemIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Ошибка при удалении товара");
     }
@@ -848,7 +1188,7 @@ function WarehouseContent() {
                 </button>
 
                 {filterPopoverOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 z-30 w-72 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                  <div className="absolute left-0 top-full mt-1.5 z-30 w-80 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
                     <div className="flex items-center justify-between pb-2 border-b border-[#f0f0f0]">
                       <span className="text-xs font-semibold text-[#111111]">
                         Фильтры склада
@@ -857,7 +1197,7 @@ function WarehouseContent() {
                         <button
                           type="button"
                           onClick={handleClearFilters}
-                          className="text-[11px] text-[#4a38f5] hover:underline"
+                          className="text-[11px] text-[#4a38f5] hover:underline cursor-pointer"
                         >
                           Сбросить
                         </button>
@@ -874,9 +1214,9 @@ function WarehouseContent() {
                           onChange={(e) => {
                             const val = e.target.value;
                             setSelectedCategory(val);
-                            updateUrl({ page: 1, category: val, brand: selectedBrand });
+                            updateUrl({ page: 1, category: val, brand: selectedBrand, model_ids: selectedModelIds });
                           }}
-                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
                         >
                           <option value="">Все категории</option>
                           {warehouseCategoriesList.map((cat) => (
@@ -896,9 +1236,9 @@ function WarehouseContent() {
                           onChange={(e) => {
                             const val = e.target.value;
                             setSelectedBrand(val);
-                            updateUrl({ page: 1, category: selectedCategory, brand: val });
+                            updateUrl({ page: 1, category: selectedCategory, brand: val, model_ids: selectedModelIds });
                           }}
-                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
                         >
                           <option value="">Все бренды</option>
                           {warehouseBrandsList.map((b) => (
@@ -909,11 +1249,154 @@ function WarehouseContent() {
                         </select>
                       </div>
 
+                      {/* Фильтр: Подходит к моделям */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-[11px] font-medium text-[#666666]">
+                            Подходит к моделям
+                          </label>
+                          {selectedModelIds.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedModelIds([]);
+                                updateUrl({
+                                  page: 1,
+                                  category: selectedCategory,
+                                  brand: selectedBrand,
+                                  model_ids: [],
+                                });
+                              }}
+                              className="text-[10px] text-[#888888] hover:text-[#111111] transition-colors cursor-pointer"
+                            >
+                              Очистить ({selectedModelIds.length})
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Чипы выбранных моделей внутри поповера */}
+                        {selectedModelIds.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-1.5 max-h-24 overflow-y-auto pr-0.5">
+                            {selectedModelIds.map((id) => {
+                              const modelObj = allWarehouseModels.find((m) => m.id === id);
+                              const modelName = modelObj ? modelObj.name : id;
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-1.5 py-0.5 text-[11px] font-medium text-[#4a38f5]"
+                                >
+                                  <span className="truncate max-w-[140px]">{modelName}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveModel(id)}
+                                    className="hover:text-rose-600 transition-colors cursor-pointer"
+                                    title="Удалить"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Кнопка-селектор моделей */}
+                        <div className="relative" ref={modelDropdownRef}>
+                          <button
+                            type="button"
+                            onClick={() => setModelDropdownOpen((prev) => !prev)}
+                            className={cn(
+                              "h-8 w-full rounded-[6px] border bg-white px-2.5 text-xs text-left flex items-center justify-between transition-colors cursor-pointer",
+                              modelDropdownOpen
+                                ? "border-[#4a38f5] ring-1 ring-[#4a38f5]/20"
+                                : "border-[#e5e5e5] hover:border-[#cccccc]",
+                            )}
+                          >
+                            <span className={selectedModelIds.length > 0 ? "text-[#111111] font-medium truncate" : "text-[#888888] truncate"}>
+                              {selectedModelIds.length === 0
+                                ? "Все модели"
+                                : `Выбрано: ${selectedModelIds.length} модел${selectedModelIds.length === 1 ? "ь" : selectedModelIds.length < 5 ? "и" : "ей"}`}
+                            </span>
+                            <ChevronDown className={cn("h-3.5 w-3.5 text-[#888888] shrink-0 transition-transform", modelDropdownOpen && "rotate-180")} />
+                          </button>
+
+                          {modelDropdownOpen && (
+                            <div className="absolute left-0 right-0 top-full mt-1 z-40 rounded-[8px] border border-[#e5e5e5] bg-white p-2 shadow-lg animate-in fade-in zoom-in-95 duration-100">
+                              <div className="relative mb-2">
+                                <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-[#888888]" />
+                                <input
+                                  type="text"
+                                  value={modelSearchQuery}
+                                  onChange={(e) => setModelSearchQuery(e.target.value)}
+                                  placeholder="Поиск по моделям..."
+                                  className="h-7 w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] pl-7 pr-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:bg-white focus:outline-none"
+                                />
+                                {modelSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setModelSearchQuery("")}
+                                    className="absolute right-2 top-2 text-[#888888] hover:text-[#111111] cursor-pointer"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="max-h-48 overflow-y-auto space-y-0.5 pr-0.5">
+                                {filteredModelsForPicker.length === 0 ? (
+                                  <div className="py-3 text-center text-xs text-[#888888]">
+                                    {allWarehouseModels.length === 0
+                                      ? "В справочнике пока нет моделей"
+                                      : "Модели не найдены"}
+                                  </div>
+                                ) : (
+                                  filteredModelsForPicker.map((m) => {
+                                    const isSelected = selectedModelIds.includes(m.id);
+                                    return (
+                                      <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => handleToggleModel(m.id)}
+                                        className={cn(
+                                          "flex w-full items-center justify-between rounded-[4px] px-2 py-1.5 text-xs text-left transition-colors cursor-pointer",
+                                          isSelected
+                                            ? "bg-[#4a38f5]/10 text-[#4a38f5] font-medium"
+                                            : "text-[#111111] hover:bg-[#f5f5f5]",
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                                          <div
+                                            className={cn(
+                                              "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors",
+                                              isSelected
+                                                ? "border-[#4a38f5] bg-[#4a38f5] text-white"
+                                                : "border-[#cccccc] bg-white",
+                                            )}
+                                          >
+                                            {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                                          </div>
+                                          <span className="truncate">{m.name}</span>
+                                        </div>
+                                        {m.brandName && (
+                                          <span className="shrink-0 rounded bg-[#f0f0f0] px-1.5 py-0.2 text-[10px] text-[#666666]">
+                                            {m.brandName}
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="pt-2 flex items-center justify-end gap-2 border-t border-[#f0f0f0]">
                         <button
                           type="button"
                           onClick={() => setFilterPopoverOpen(false)}
-                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer"
                         >
                           Готово
                         </button>
@@ -966,9 +1449,9 @@ function WarehouseContent() {
                 type="button"
                 onClick={() => {
                   setSelectedCategory("");
-                  updateUrl({ page: 1, category: "", brand: selectedBrand });
+                  updateUrl({ page: 1, category: "", brand: selectedBrand, model_ids: selectedModelIds });
                 }}
-                className="hover:text-[#3d2ee0]"
+                className="hover:text-[#3d2ee0] cursor-pointer"
                 title="Удалить фильтр"
               >
                 <X className="h-3 w-3" />
@@ -982,19 +1465,40 @@ function WarehouseContent() {
                 type="button"
                 onClick={() => {
                   setSelectedBrand("");
-                  updateUrl({ page: 1, category: selectedCategory, brand: "" });
+                  updateUrl({ page: 1, category: selectedCategory, brand: "", model_ids: selectedModelIds });
                 }}
-                className="hover:text-[#3d2ee0]"
+                className="hover:text-[#3d2ee0] cursor-pointer"
                 title="Удалить фильтр"
               >
                 <X className="h-3 w-3" />
               </button>
             </span>
           )}
+          {selectedModelIds.length > 0 &&
+            selectedModelIds.map((id) => {
+              const modelObj = allWarehouseModels.find((m) => m.id === id);
+              const modelName = modelObj ? modelObj.name : id;
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs text-[#4a38f5] font-medium"
+                >
+                  <span>Модель: {modelName}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveModel(id)}
+                    className="hover:text-[#3d2ee0] cursor-pointer"
+                    title="Удалить фильтр"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
           <button
             type="button"
             onClick={handleClearFilters}
-            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1"
+            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1 cursor-pointer"
           >
             Сбросить все
           </button>
@@ -1017,43 +1521,169 @@ function WarehouseContent() {
                   <th className="w-[38px] px-3 py-2.5 text-center">
                     <input
                       type="checkbox"
-                      checked={filteredItems.length > 0 && selectedItemIds.size === filteredItems.length}
+                      checked={sortedItems.length > 0 && selectedItemIds.size === sortedItems.length}
                       onChange={handleToggleSelectAll}
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                     />
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
-                    Артикул
+                  <th
+                    onClick={() => handleSort("sku")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "sku" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по артикулу"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Артикул</span>
+                      {sortField === "sku" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Наименование
+                  <th
+                    onClick={() => handleSort("name")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "name" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по наименованию"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Наименование</span>
+                      {sortField === "name" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
-                    Категория
+                  <th
+                    onClick={() => handleSort("category")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "category" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по категории"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Категория</span>
+                      {sortField === "category" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Бренд
+                  <th
+                    onClick={() => handleSort("brand")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "brand" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по бренду"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Бренд</span>
+                      {sortField === "brand" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
-                    Физический
+                  <th
+                    onClick={() => handleSort("totalStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "totalStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по физическому остатку"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Физический</span>
+                      {sortField === "totalStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
-                    В резерве
+                  <th
+                    onClick={() => handleSort("reservedStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "reservedStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по количеству в резерве"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>В резерве</span>
+                      {sortField === "reservedStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
-                    Доступно
+                  <th
+                    onClick={() => handleSort("availableStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "availableStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по доступному остатку"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Доступно</span>
+                      {sortField === "availableStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Себестоимость
+                  <th
+                    onClick={() => handleSort("costPrice")}
+                    className={cn(
+                      "px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "costPrice" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по себестоимости"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <span>Себестоимость</span>
+                      {sortField === "costPrice" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Розница
+                  <th
+                    onClick={() => handleSort("retailPrice")}
+                    className={cn(
+                      "px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "retailPrice" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по розничной цене"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <span>Розница</span>
+                      {sortField === "retailPrice" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
                   <th className="px-4 py-2.5 w-[90px]" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
-                {filteredItems.map((item) => {
+                {sortedItems.map((item) => {
                   const isOutOfStock = item.availableStock <= 0;
                   const isLowStock = item.availableStock > 0 && item.availableStock <= item.minStock;
                   const isSelected = selectedItemIds.has(item.id);
@@ -1205,10 +1835,61 @@ function WarehouseContent() {
       {/* Вкладка 2: Партии и приходные накладные */}
       {activeTab === "batches" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+          {selectedBatchIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
+              <div className="flex items-center gap-2 text-[#111111] font-medium">
+                <Check className="h-4 w-4 text-[#4a38f5]" />
+                <span>
+                  Выбрано партий: <b className="font-mono">{selectedBatchIds.size}</b>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedBatchIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteBatches}
+                  disabled={bulkDeleteBatchesMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeleteBatchesMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedBatchIds.size})
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-3 py-2.5 text-center w-[40px]">
+                    <input
+                      type="checkbox"
+                      aria-label="Выбрать все партии"
+                      checked={
+                        filteredBatches.length > 0 &&
+                        selectedBatchIds.size === filteredBatches.length
+                      }
+                      onChange={() => {
+                        if (selectedBatchIds.size === filteredBatches.length && filteredBatches.length > 0) {
+                          setSelectedBatchIds(new Set());
+                        } else {
+                          setSelectedBatchIds(new Set(filteredBatches.map((b) => b.id)));
+                        }
+                      }}
+                      className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Дата прихода
                   </th>
@@ -1227,53 +1908,100 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
                     Принято
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
+                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[95px]">
                     Остаток FIFO
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
+                    Действия
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
-                {batches.map((b) => (
-                  <tr key={b.id} className="transition-colors hover:bg-[#fafafa]">
-                    <td className="px-4 py-3">
-                      <span className="text-xs text-[#666666]">{formatDate(b.receivedAt)}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-xs font-semibold text-[#111111]">
-                        {b.batchNumber}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-[13px] font-medium text-[#111111]">
-                        {b.itemName ?? "Товар"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs text-[#666666]">{b.supplierName || "—"}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-[13px] text-[#111111]">
-                        {formatRub(b.purchasePrice)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className="font-mono text-xs text-[#666666]">{b.initialQuantity}</span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span
-                        className={cn(
-                          "font-mono text-xs font-semibold",
-                          b.remainingQuantity > 0 ? "text-emerald-700" : "text-[#888888]",
-                        )}
-                      >
-                        {b.remainingQuantity}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-                {batches.length === 0 && (
+                {filteredBatches.map((b) => {
+                  const isSelected = selectedBatchIds.has(b.id);
+                  return (
+                    <tr
+                      key={b.id}
+                      className={cn(
+                        "transition-colors hover:bg-[#fafafa]",
+                        isSelected && "bg-indigo-50/40",
+                      )}
+                    >
+                      <td className="px-3 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать партию ${b.batchNumber || b.id}`}
+                          checked={isSelected}
+                          onChange={() => {
+                            const next = new Set(selectedBatchIds);
+                            if (next.has(b.id)) next.delete(b.id);
+                            else next.add(b.id);
+                            setSelectedBatchIds(next);
+                          }}
+                          className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-[#666666]">{formatDate(b.receivedAt)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-xs font-semibold text-[#111111]">
+                          {b.batchNumber || "—"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-[13px] font-medium text-[#111111]">
+                          {b.itemName ?? "Товар"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-[#666666]">{b.supplierName || "—"}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="font-mono text-[13px] text-[#111111]">
+                          {formatRub(b.purchasePrice)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="font-mono text-xs text-[#666666]">{b.initialQuantity}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span
+                          className={cn(
+                            "font-mono text-xs font-semibold",
+                            b.remainingQuantity > 0 ? "text-emerald-700" : "text-[#888888]",
+                          )}
+                        >
+                          {b.remainingQuantity}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBatchForEdit(b)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                            title="Редактировать партию"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteBatch(b)}
+                            disabled={deleteBatchMutation.isPending}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
+                            title="Удалить партию и откатить связанные движения"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredBatches.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={9} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isBatchesLoading ? "Загрузка партий..." : "Партий пока не оприходовано."}
                     </td>
                   </tr>
@@ -1289,21 +2017,43 @@ function WarehouseContent() {
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
           {/* Тулбар мультиселекта */}
           {selectedAggregatedIds.size > 0 && (
-            <div className="flex items-center justify-between bg-sky-50 border-b border-sky-200 px-4 py-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-sky-50 border-b border-sky-200 px-4 py-2 text-xs">
               <div className="flex items-center gap-2 text-sky-900 font-medium">
                 <Check className="h-4 w-4 text-sky-700" />
                 <span>
-                  Выбрано позиций для заказа поставщику: <b>{selectedAggregatedIds.size}</b>
+                  Выбрано позиций: <b className="font-mono">{selectedAggregatedIds.size}</b>
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setCreateSupplierOrderModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
-              >
-                <Truck className="h-3.5 w-3.5" />
-                Сформировать заказ поставщику ({selectedAggregatedIds.size})
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedAggregatedIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeletePurchases}
+                  disabled={bulkDeletePurchasesMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeletePurchasesMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedAggregatedIds.size})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateSupplierOrderModalOpen(true)}
+                  className="flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#3d2ee0] shadow-xs transition-colors cursor-pointer"
+                >
+                  <Truck className="h-3.5 w-3.5" />
+                  Сформировать заказ поставщику ({selectedAggregatedIds.size})
+                </button>
+              </div>
             </div>
           )}
 
@@ -1500,10 +2250,64 @@ function WarehouseContent() {
       {/* Вкладка 4: Заказы поставщикам */}
       {activeTab === "supplier_orders" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+          {selectedSupplierOrderIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
+              <div className="flex items-center gap-2 text-[#111111] font-medium">
+                <Check className="h-4 w-4 text-[#4a38f5]" />
+                <span>
+                  Выбрано заказов: <b className="font-mono">{selectedSupplierOrderIds.size}</b>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSupplierOrderIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteSupplierOrders}
+                  disabled={bulkDeleteSupplierOrdersMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeleteSupplierOrdersMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedSupplierOrderIds.size})
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-3 py-2.5 text-center w-[40px]">
+                    <input
+                      type="checkbox"
+                      aria-label="Выбрать все заказы поставщикам"
+                      checked={
+                        filteredSupplierOrders.length > 0 &&
+                        selectedSupplierOrderIds.size === filteredSupplierOrders.length
+                      }
+                      onChange={() => {
+                        if (
+                          selectedSupplierOrderIds.size === filteredSupplierOrders.length &&
+                          filteredSupplierOrders.length > 0
+                        ) {
+                          setSelectedSupplierOrderIds(new Set());
+                        } else {
+                          setSelectedSupplierOrderIds(new Set(filteredSupplierOrders.map((o) => o.id)));
+                        }
+                      }}
+                      className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
                     Номер
                   </th>
@@ -1522,7 +2326,7 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Оплата / Приход
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[260px]">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[280px]">
                     Действия
                   </th>
                 </tr>
@@ -1540,13 +2344,34 @@ function WarehouseContent() {
 
                   const isPaid = order.status === "paid" || order.status === "received";
                   const isReceived = order.status === "received";
+                  const isSelected = selectedSupplierOrderIds.has(order.id);
 
                   return (
                     <tr
                       key={order.id}
                       onClick={() => setSelectedOrderForDetail(order)}
-                      className="transition-colors hover:bg-[#fafafa] cursor-pointer"
+                      className={cn(
+                        "transition-colors hover:bg-[#fafafa] cursor-pointer",
+                        isSelected && "bg-indigo-50/40",
+                      )}
                     >
+                      <td
+                        className="px-3 py-3 text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать заказ ${order.orderNumber}`}
+                          checked={isSelected}
+                          onChange={() => {
+                            const next = new Set(selectedSupplierOrderIds);
+                            if (next.has(order.id)) next.delete(order.id);
+                            else next.add(order.id);
+                            setSelectedSupplierOrderIds(next);
+                          }}
+                          className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs font-bold text-[#111111]">
                           {order.orderNumber}
@@ -1615,17 +2440,15 @@ function WarehouseContent() {
                             <Eye className="h-3.5 w-3.5" />
                           </button>
 
-                          {/* Кнопка Редактировать */}
-                          {!isReceived && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditModal(order)}
-                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors"
-                              title="Редактировать заказ"
-                            >
-                              <Edit2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          {/* Кнопка Редактировать — доступна для всех заказов */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditModal(order)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] shadow-2xs transition-colors cursor-pointer"
+                            title="Редактировать заказ"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
 
                           {/* Кнопка Оплачено */}
                           {!isPaid && order.status !== "cancelled" && (
@@ -1633,7 +2456,7 @@ function WarehouseContent() {
                               type="button"
                               onClick={() => handlePayOrder(order)}
                               disabled={paySupplierOrderMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 h-7 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-emerald-600 px-2.5 h-7 text-xs font-medium text-white hover:bg-emerald-700 shadow-xs transition-colors cursor-pointer"
                               title="Оплатить заказ поставщику (создать расходный ордер в кассе)"
                             >
                               <CreditCard className="h-3 w-3" />
@@ -1647,7 +2470,7 @@ function WarehouseContent() {
                               type="button"
                               onClick={() => handleOpenReceiptModal(order)}
                               disabled={createReceiptMutation.isPending}
-                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 h-7 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 h-7 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors cursor-pointer"
                               title="Оприходовать заказ на склад"
                             >
                               <ArrowDownToLine className="h-3 w-3" />
@@ -1662,18 +2485,20 @@ function WarehouseContent() {
                             </span>
                           )}
 
-                          {/* Кнопка Удалить */}
-                          {!isReceived && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSupplierOrder(order)}
-                              disabled={deleteSupplierOrderMutation.isPending}
-                              className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 shadow-xs transition-colors"
-                              title="Удалить заказ поставщику"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          {/* Кнопка Удалить — доступна для всех заказов (для оприходованных откатывает партии и кассу) */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSupplierOrder(order)}
+                            disabled={deleteSupplierOrderMutation.isPending}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                            title={
+                              isReceived
+                                ? "Удалить заказ и откатить связанные партии, движения и оплату"
+                                : "Удалить заказ поставщику"
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1681,7 +2506,7 @@ function WarehouseContent() {
                 })}
                 {filteredSupplierOrders.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isSupplierOrdersLoading
                         ? "Загрузка заказов поставщикам..."
                         : "Заказов поставщикам пока нет. Выберите заявки на закупку и нажмите «Сформировать заказ поставщику»."}
@@ -1694,23 +2519,77 @@ function WarehouseContent() {
         </div>
       )}
 
-      {/* Вкладка 4: Журнал движений */}
+      {/* Вкладка 5: Журнал движений */}
       {activeTab === "movements" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+          {selectedMovementIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
+              <div className="flex items-center gap-2 text-[#111111] font-medium">
+                <Check className="h-4 w-4 text-[#4a38f5]" />
+                <span>
+                  Выбрано движений: <b className="font-mono">{selectedMovementIds.size}</b>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedMovementIds(new Set())}
+                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выбор
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteMovements}
+                  disabled={bulkDeleteMovementsMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {bulkDeleteMovementsMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Удалить выбранные ({selectedMovementIds.size})
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                  <th className="px-3 py-2.5 text-center w-[40px]">
+                    <input
+                      type="checkbox"
+                      aria-label="Выбрать все движения"
+                      checked={
+                        filteredMovements.length > 0 &&
+                        selectedMovementIds.size === filteredMovements.length
+                      }
+                      onChange={() => {
+                        if (
+                          selectedMovementIds.size === filteredMovements.length &&
+                          filteredMovements.length > 0
+                        ) {
+                          setSelectedMovementIds(new Set());
+                        } else {
+                          setSelectedMovementIds(new Set(filteredMovements.map((m) => m.id)));
+                        }
+                      }}
+                      className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Дата и время
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Товар
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[140px]">
+                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
                     Тип операции
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
+                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[95px]">
                     Кол-во
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
@@ -1719,22 +2598,47 @@ function WarehouseContent() {
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
                     Инициатор
                   </th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
+                    Действия
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
-                {movements.map((m) => {
+                {filteredMovements.map((m) => {
                   const typeMap: Record<string, { label: string; color: string; sign: string }> = {
                     intake: { label: "Приход", color: "bg-emerald-50 text-emerald-700 border-emerald-200", sign: "+" },
-                    reserve: { label: "Резерв", color: "bg-amber-50 text-amber-700 border-amber-200", sign: "🔒" },
-                    release: { label: "Снятие резерва", color: "bg-sky-50 text-sky-700 border-sky-200", sign: "🔓" },
+                    reserve: { label: "Резерв", color: "bg-amber-50 text-amber-700 border-amber-200", sign: "lock" },
+                    release: { label: "Снятие резерва", color: "bg-sky-50 text-sky-700 border-sky-200", sign: "unlock" },
+                    write_off: { label: "Списание FIFO", color: "bg-rose-50 text-rose-700 border-rose-200", sign: "-" },
                     repair_consumption: { label: "Списание по наряду", color: "bg-rose-50 text-rose-700 border-rose-200", sign: "-" },
                     consume: { label: "Списание", color: "bg-rose-50 text-rose-700 border-rose-200", sign: "-" },
                     adjustment: { label: "Корректировка", color: "bg-neutral-100 text-neutral-700 border-neutral-300", sign: "±" },
                   };
                   const t = typeMap[m.type] ?? { label: m.type, color: "bg-gray-100 text-gray-700 border-gray-200", sign: "" };
+                  const isSelected = selectedMovementIds.has(m.id);
 
                   return (
-                    <tr key={m.id} className="transition-colors hover:bg-[#fafafa]">
+                    <tr
+                      key={m.id}
+                      className={cn(
+                        "transition-colors hover:bg-[#fafafa]",
+                        isSelected && "bg-indigo-50/40",
+                      )}
+                    >
+                      <td className="px-3 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать движение ${m.itemName ?? m.id}`}
+                          checked={isSelected}
+                          onChange={() => {
+                            const next = new Set(selectedMovementIds);
+                            if (next.has(m.id)) next.delete(m.id);
+                            else next.add(m.id);
+                            setSelectedMovementIds(next);
+                          }}
+                          className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#666666]">{formatDate(m.createdAt)}</span>
                       </td>
@@ -1754,8 +2658,15 @@ function WarehouseContent() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className="font-mono text-[13px] font-semibold text-[#111111]">
-                          {t.sign} {m.quantity}
+                        <span className="inline-flex items-center justify-center gap-1 font-mono text-[13px] font-semibold text-[#111111]">
+                          {t.sign === "lock" ? (
+                            <Lock className="h-3 w-3 text-amber-600" />
+                          ) : t.sign === "unlock" ? (
+                            <Unlock className="h-3 w-3 text-sky-600" />
+                          ) : (
+                            <span>{t.sign}</span>
+                          )}
+                          <span>{m.quantity}</span>
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -1782,12 +2693,33 @@ function WarehouseContent() {
                       <td className="px-4 py-3">
                         <span className="text-xs text-[#888888]">{m.createdByName || "Система"}</span>
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMovementForEdit(m)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                            title="Редактировать запись движения"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMovement(m)}
+                            disabled={deleteMovementMutation.isPending}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-[6px] border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
+                            title="Удалить запись движения и откатить остатки/резерв"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
-                {movements.length === 0 && (
+                {filteredMovements.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isMovementsLoading ? "Загрузка движений..." : "Журнал движений пуст."}
                     </td>
                   </tr>
@@ -1899,6 +2831,18 @@ function WarehouseContent() {
         allRequests={purchaseRequests}
       />
 
+      <EditBatchModal
+        open={Boolean(selectedBatchForEdit)}
+        onClose={() => setSelectedBatchForEdit(null)}
+        batch={selectedBatchForEdit}
+      />
+
+      <EditMovementModal
+        open={Boolean(selectedMovementForEdit)}
+        onClose={() => setSelectedMovementForEdit(null)}
+        movement={selectedMovementForEdit}
+      />
+
       {/* Floating Action Bar при выборе позиций */}
       {selectedItemIds.size > 0 && activeTab === "items" && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-2xl border border-[#e5e5e5] bg-white px-5 py-3 shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
@@ -1910,6 +2854,30 @@ function WarehouseContent() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleBulkCreatePurchaseRequest}
+              disabled={!hasReservedOrDeficit || bulkCreatePurchasesMutation.isPending}
+              className={cn(
+                "flex h-7 items-center gap-1.5 rounded-[6px] px-3 text-xs font-medium shadow-xs transition-colors",
+                hasReservedOrDeficit && !bulkCreatePurchasesMutation.isPending
+                  ? "bg-amber-600 text-white hover:bg-amber-700 cursor-pointer"
+                  : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed",
+              )}
+              title={
+                !hasReservedOrDeficit
+                  ? "Кнопка активна только для позиций со статусом «В резерве» или дефицитом"
+                  : "Сформировать заявку на закупку для выбранных позиций"
+              }
+            >
+              {bulkCreatePurchasesMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShoppingCart className="h-3.5 w-3.5" />
+              )}
+              Сформировать заявку
+            </button>
+
             <button
               type="button"
               onClick={handleBulkEditClick}

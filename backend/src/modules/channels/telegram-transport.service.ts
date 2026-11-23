@@ -51,26 +51,28 @@ import { chatEventBus } from "../crm/chat/chat-events.js";
 
 /** Таймаут подключения к Telegram, как в `TelegramMtprotoService`. */
 const CONNECTION_TIMEOUT_MS = 20_000;
-const CONNECTION_RETRIES = 3;
+const CONNECTION_RETRIES = 10;
 
 /**
- * Задержка первого подъёма сессий после старта процесса.
- *
- * Не сразу: миграции в entrypoint только что завершились, и нагружать старт
- * подключением к Telegram по всем аккаунтам одновременно с прогревом приложения
- * незачем. Плюс healthcheck успевает пройти до первой сетевой операции.
+ * Короткая задержка первого подъёма сессий после старта процесса:
+ * достаточно для старта HTTP-сервера, при этом минимизирует окно рестарта.
  */
-const STARTUP_DELAY_MS = 15_000;
+const STARTUP_DELAY_MS = 3_000;
 
 /**
- * Периодическая сверка списка аккаунтов.
- *
- * Аккаунт могли подключить или отключить после старта процесса. Опрос раз в
- * минуту вместо подписки на изменения в БД: LISTEN/NOTIFY потребовал бы
- * отдельного соединения из пула, а задержка до минуты для подключения канала
- * незаметна.
+ * Периодическая сверка списка аккаунтов и проверка живости сокетов.
  */
 const RESYNC_INTERVAL_MS = 60_000;
+
+/**
+ * Периодический догоняющий проход (gap-recovery) по последним личным диалогам.
+ * Закрывает любые пропуски MTProto-апдейтов при рестарте контейнера,
+ * реконнекте сокета или сетевых провалах, т.к. StringSession не хранит pts/qts.
+ */
+const GAP_RECOVERY_INTERVAL_MS = 120_000;
+const GAP_RECOVERY_MAX_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+const GAP_RECOVERY_DEFAULT_LOOKBACK_MS = 30 * 60 * 1000;
+const GAP_RECOVERY_OVERLAP_MS = 120_000;
 
 interface Logger {
   info: (obj: object, message: string) => void;
@@ -84,6 +86,7 @@ interface AccountRow {
   label: string;
   credentials: { session?: string } | null;
   credentials_encrypted: boolean;
+  last_sync_at?: Date | string | null;
 }
 
 interface ActiveConnection {
@@ -92,10 +95,13 @@ interface ActiveConnection {
   client: TelegramClient;
   /** Снятие обработчика при отключении аккаунта. */
   detach: () => void;
+  /** Время последнего успешного прохода gap-recovery. */
+  lastGapRecoveryAt: number;
 }
 
 export class TelegramTransportService {
   private readonly connections = new Map<string, ActiveConnection>();
+  private readonly recoveringAccounts = new Set<string>();
   private readonly buffer: IncomingMessageBuffer;
   /** Профили собеседников: имя не меняется каждое сообщение. */
   private readonly profiles = new ChannelProfileCache();
@@ -248,7 +254,7 @@ export class TelegramTransportService {
       // `runWithTenantContext`.
       accounts = await runWithPlatformScope(() =>
         query<AccountRow>(
-          `SELECT id, tenant_id, label, credentials, credentials_encrypted
+          `SELECT id, tenant_id, label, credentials, credentials_encrypted, last_sync_at
            FROM channel_accounts
            WHERE channel = 'telegram'
              AND status = 'connected'
@@ -276,10 +282,29 @@ export class TelegramTransportService {
       this.log.info({ accountId }, "Telegram account disconnected from transport");
     }
 
-    // Подключаем новые.
+    // Подключаем новые, переподключаем отвалившиеся сокеты и запускаем периодический gap-recovery.
     for (const account of accounts) {
-      if (this.connections.has(account.id)) continue;
       if (this.stopped) return;
+
+      const existing = this.connections.get(account.id);
+      if (existing) {
+        if (!existing.client.connected) {
+          this.log.warn(
+            { accountId: account.id, label: account.label },
+            "Telegram MTProto socket disconnected — reattaching and running gap-recovery",
+          );
+          existing.detach();
+          await this.destroy(existing.client);
+          this.connections.delete(account.id);
+          await this.attach(account);
+          continue;
+        }
+
+        if (Date.now() - existing.lastGapRecoveryAt >= GAP_RECOVERY_INTERVAL_MS) {
+          void this.recoverMissedMessages(account, existing, null);
+        }
+        continue;
+      }
 
       await this.attach(account);
     }
@@ -327,6 +352,7 @@ export class TelegramTransportService {
     try {
       client = new TelegramClient(new StringSession(sessionState), apiId, apiHash, {
         connectionRetries: CONNECTION_RETRIES,
+        autoReconnect: true,
         timeout: Math.floor(CONNECTION_TIMEOUT_MS / 1000),
         deviceModel: "GETVOXLY CRM",
         systemVersion: "1.0",
@@ -358,12 +384,15 @@ export class TelegramTransportService {
       const messageFilter = new NewMessage({});
       client.addEventHandler(handler, messageFilter);
 
-      this.connections.set(account.id, {
+      const previousLastSyncAt = account.last_sync_at ? new Date(account.last_sync_at) : null;
+      const connection: ActiveConnection = {
         accountId: account.id,
         tenantId: account.tenant_id,
         client,
         detach: () => client?.removeEventHandler(handler, messageFilter),
-      });
+        lastGapRecoveryAt: Date.now(),
+      };
+      this.connections.set(account.id, connection);
 
       // Запись — в контексте арендатора: `WITH CHECK` политики не содержит
       // `platform_scope()`, поэтому в platform-scope этот UPDATE не затронул бы
@@ -376,6 +405,11 @@ export class TelegramTransportService {
         { accountId: account.id, label: account.label },
         "Telegram account attached to transport",
       );
+
+      // Догоняющая синхронизация сразу после подключения/реконнекта:
+      // подтягивает сообщения, пришедшие во время деплоя/перезапуска/разрыва сокета,
+      // и одновременно прогревает кэш access_hash сущностей GramJS.
+      void this.recoverMissedMessages(account, connection, previousLastSyncAt);
     } catch (error) {
       this.log.error(
         { error, accountId: account.id },
@@ -383,6 +417,199 @@ export class TelegramTransportService {
       );
 
       if (client !== null) await this.destroy(client);
+    }
+  }
+
+  /**
+   * Догоняющая синхронизация пропущенных личных сообщений Telegram (gap-recovery).
+   *
+   * Запускается после старта/реконнекта и периодически раз в 2 минуты.
+   * Опирается на `external_message_id` для строгой идемпотентности без дублей.
+   */
+  private async recoverMissedMessages(
+    account: AccountRow,
+    connection: ActiveConnection,
+    previousLastSyncAt: Date | null,
+  ): Promise<void> {
+    if (this.stopped || !connection.client.connected) return;
+    if (this.recoveringAccounts.has(account.id)) return;
+    this.recoveringAccounts.add(account.id);
+
+    const nowMs = Date.now();
+    const minAllowedMs = nowMs - GAP_RECOVERY_MAX_LOOKBACK_MS;
+    const catchUpSinceMs =
+      previousLastSyncAt && Number.isFinite(previousLastSyncAt.getTime())
+        ? Math.max(minAllowedMs, previousLastSyncAt.getTime() - GAP_RECOVERY_OVERLAP_MS)
+        : Math.max(minAllowedMs, nowMs - (previousLastSyncAt === null ? 10 * 60 * 1000 : GAP_RECOVERY_DEFAULT_LOOKBACK_MS));
+
+    const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
+    const systemBotUsername = (process.env.TELEGRAM_AUTH_BOT_USERNAME || "GetVoxlybot")
+      .trim()
+      .toLowerCase()
+      .replace(/^@/, "");
+
+    let recoveredCount = 0;
+
+    try {
+      const dialogs = await connection.client.getDialogs({ limit: 40 });
+
+      for (const dialog of dialogs) {
+        if (this.stopped || !connection.client.connected) break;
+        if (!dialog.isUser) continue;
+
+        const entity = dialog.entity;
+        if (!(entity instanceof Api.User)) continue;
+        if (entity.bot || entity.self) continue;
+
+        const peerId = entity.id?.toString();
+        if (!peerId) continue;
+
+        const uname = entity.username?.trim().toLowerCase().replace(/^@/, "");
+        if (
+          (systemBotId && peerId === systemBotId) ||
+          (systemBotUsername && uname === systemBotUsername)
+        ) {
+          continue;
+        }
+
+        const dialogDateMs = typeof dialog.date === "number" ? dialog.date * 1000 : 0;
+        if (dialogDateMs > 0 && dialogDateMs < catchUpSinceMs) {
+          continue;
+        }
+
+        const profile: ChannelProfile = {
+          firstName: entity.firstName ?? undefined,
+          lastName: entity.lastName ?? undefined,
+          username: entity.username ?? undefined,
+          phone: entity.phone ?? undefined,
+          isBot: Boolean(entity.bot),
+        };
+        this.profiles.set(account.id, peerId, profile);
+
+        if (
+          isBotSender({
+            profile,
+            channel: "telegram",
+            chatId: peerId,
+            senderTelegramUsername: profile.username,
+            senderName: profile.firstName || peerId,
+            isBot: profile.isBot,
+          })
+        ) {
+          continue;
+        }
+
+        let msgs: Api.Message[] = [];
+        try {
+          const fetched = await connection.client.getMessages(entity, { limit: 15 });
+          msgs = [...fetched].reverse();
+        } catch (fetchErr) {
+          this.log.warn(
+            { err: fetchErr, accountId: account.id, peerId },
+            "Gap-recovery: failed to fetch messages for Telegram dialog",
+          );
+          continue;
+        }
+
+        for (const msg of msgs) {
+          if (typeof msg.id !== "number" || typeof msg.date !== "number") continue;
+          const msgDateMs = msg.date * 1000;
+          if (msgDateMs < catchUpSinceMs) continue;
+
+          const externalMsgId = String(msg.id);
+          const alreadyExists = await runWithTenantContext(account.tenant_id, () =>
+            queryOne<{ id: string }>(
+              `SELECT id FROM deal_messages
+               WHERE tenant_id = $1
+                 AND channel = 'telegram'
+                 AND delivery_status <> 'failed'
+                 AND metadata->>'external_message_id' = $2
+               LIMIT 1`,
+              [account.tenant_id, externalMsgId],
+            ),
+          ).catch(() => null);
+
+          if (alreadyExists) continue;
+
+          const text = typeof msg.message === "string" ? msg.message.trim() : "";
+          let mediaAttachment: { url: string; mimeType: string; filename: string } | null = null;
+          if (msg.media) {
+            mediaAttachment = await this.extractAndStoreMedia(connection.client, msg, account.tenant_id);
+          }
+
+          if (text.length === 0 && !mediaAttachment) continue;
+
+          const contentText =
+            text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
+          const msgDate = new Date(msgDateMs);
+
+          if (msg.out === true) {
+            await runWithTenantContext(account.tenant_id, () =>
+              this.crm.processNativeOutbound({
+                tenantId: account.tenant_id,
+                channel: "telegram",
+                channelAccountId: account.id,
+                chatId: peerId,
+                text: contentText,
+                senderName: "Менеджер",
+                pauseMinutes: 60,
+                attachment: mediaAttachment?.url ?? null,
+                attachmentType: mediaAttachment?.mimeType ?? null,
+                externalMessageId: externalMsgId,
+                messageTimestamp: msgDate,
+              }),
+            ).catch((err) => {
+              this.log.warn({ err, accountId: account.id, peerId, externalMsgId }, "Gap-recovery outbound failed");
+            });
+            continue;
+          }
+
+          const crmRes = await runWithTenantContext(account.tenant_id, () =>
+            this.crm.processIncoming({
+              tenantId: account.tenant_id,
+              channel: "telegram",
+              channelAccountId: account.id,
+              chatId: peerId,
+              text: contentText,
+              senderName: profile.firstName || peerId,
+              senderTelegramChatId: peerId,
+              senderTelegramUsername: profile.username,
+              senderPhone: profile.phone,
+              profile,
+              attachment: mediaAttachment?.url ?? null,
+              attachmentType: mediaAttachment?.mimeType ?? null,
+              externalMessageId: externalMsgId,
+              messageTimestamp: msgDate,
+            }),
+          ).catch((err) => {
+            this.log.warn({ err, accountId: account.id, peerId, externalMsgId }, "Gap-recovery inbound failed");
+            return null;
+          });
+
+          if (crmRes?.inboundMessageId) {
+            recoveredCount++;
+          }
+        }
+      }
+
+      connection.lastGapRecoveryAt = Date.now();
+      await runWithTenantContext(account.tenant_id, () =>
+        query(`UPDATE channel_accounts SET last_sync_at = now() WHERE id = $1`, [account.id]),
+      ).catch(() => {});
+
+      if (recoveredCount > 0) {
+        this.log.info(
+          { accountId: account.id, label: account.label, recoveredCount },
+          "Telegram gap-recovery imported missed incoming messages",
+        );
+      }
+    } catch (error) {
+      this.log.warn(
+        { error, accountId: account.id, label: account.label },
+        "Telegram gap-recovery failed",
+      );
+    } finally {
+      this.recoveringAccounts.delete(account.id);
     }
   }
 
@@ -622,6 +849,10 @@ export class TelegramTransportService {
         );
       }
 
+      const externalMessageId = typeof message.id === "number" ? String(message.id) : undefined;
+      const messageTimestamp =
+        typeof message.date === "number" ? new Date(message.date * 1000) : undefined;
+
       // M5.3: Зеркалирование нативных исходящих от оператора (fromMe / out)
       const isFromOperator = message.out === true;
       if (isFromOperator) {
@@ -639,6 +870,8 @@ export class TelegramTransportService {
               pauseMinutes: 60,
               attachment: mediaAttachment?.url ?? null,
               attachmentType: mediaAttachment?.mimeType ?? null,
+              externalMessageId,
+              messageTimestamp,
             }),
           ).catch((error) => {
             this.log.error(
@@ -692,6 +925,8 @@ export class TelegramTransportService {
             attachment: mediaAttachment.url,
             attachmentType: mediaAttachment.mimeType,
             sourceMetadata: combinedMetadata,
+            externalMessageId,
+            messageTimestamp,
           }),
         ).catch((error) => {
           this.log.error(
@@ -735,12 +970,84 @@ export class TelegramTransportService {
             peerId: senderId,
             text: effectiveText,
             sourceMetadata: combinedMetadata,
+            alreadyPersisted: Boolean(crmResult?.dealId),
+            dealId: crmResult?.dealId ?? null,
+            contactId: crmResult?.contactId ?? null,
           });
         }
         return;
       }
 
-      // Обычное текстовое входящее сообщение передаем в дебаунс-буфер
+      // Немедленно сохраняем текстовое входящее в CRM (с external_message_id и SSE-событием),
+      // чтобы оператор видел ответ клиента без 15-20с задержки и сообщение не терялось при рестарте.
+      // Дебаунс-буфер используется только для группировки реплик перед ответом AI-бота.
+      const profile = connection ? await this.fetchProfile(connection, senderId) : null;
+      if (
+        (profile && isBotSender({ profile, channel: "telegram", chatId })) ||
+        isBotSender({
+          channel: "telegram",
+          chatId,
+          senderTelegramUsername: profile?.username,
+          senderName: profile?.firstName || senderId,
+          isBot: profile?.isBot,
+        })
+      ) {
+        this.log.info(
+          { senderId, username: profile?.username, accountId: account.id },
+          `Skipping lead/contact creation: sender is a bot (@${(profile?.username || "").replace(/^@/, "")})`,
+        );
+        return;
+      }
+
+      const crmResult = await runWithTenantContext(account.tenant_id, () =>
+        this.crm.processIncoming({
+          tenantId: account.tenant_id,
+          channel: "telegram",
+          channelAccountId: account.id,
+          chatId,
+          text: effectiveText,
+          senderName: profile?.firstName || senderId,
+          senderTelegramChatId: senderId,
+          senderTelegramUsername: profile?.username,
+          senderPhone: contactCardPhone || profile?.phone,
+          profile: profile ?? undefined,
+          sourceMetadata: combinedMetadata,
+          externalMessageId,
+          messageTimestamp,
+        }),
+      ).catch((error) => {
+        this.log.error(
+          { error, accountId: account.id, chatId, externalMessageId },
+          "Failed to persist incoming Telegram text message",
+        );
+        return null;
+      });
+
+      if (crmResult?.isPersonal) {
+        this.log.info({ senderId }, "Personal Telegram contact message ignored by CRM");
+        return;
+      }
+
+      if (crmResult?.isBot) {
+        this.log.info({ senderId, username: profile?.username }, "Bot Telegram message ignored by CRM");
+        return;
+      }
+
+      if (crmResult?.dealId && crmResult.isNewDeal) {
+        void this.syncDialogHistory({
+          tenantId: account.tenant_id,
+          dealId: crmResult.dealId,
+          channelAccountId: account.id,
+          peerId: senderId,
+          username: profile?.username,
+          phone: profile?.phone,
+          limit: 50,
+        }).catch((err) => {
+          this.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync Telegram history for new deal");
+        });
+      }
+
+      // Передаём текст в дебаунс-буфер для AI-бота (без повторной записи в deal_messages)
       this.buffer.add({
         tenantId: account.tenant_id,
         channelAccountId: account.id,
@@ -748,6 +1055,9 @@ export class TelegramTransportService {
         peerId: senderId,
         text: effectiveText,
         sourceMetadata: combinedMetadata,
+        alreadyPersisted: Boolean(crmResult?.dealId),
+        dealId: crmResult?.dealId ?? null,
+        contactId: crmResult?.contactId ?? null,
       });
     } catch (error) {
       this.log.error({ error, accountId: account.id }, "Failed to handle incoming message");
@@ -794,59 +1104,61 @@ export class TelegramTransportService {
       return;
     }
 
-    // 2. Сохраняем входящее сообщение в CRM и получаем/создаём контакт и сделку.
-    let dealId: string | null = null;
-    let contactId: string | null = null;
+    // 2. Сохраняем входящее сообщение в CRM, если оно ещё не было сохранено мгновенно в onIncoming.
+    let dealId: string | null = batch.dealId ?? null;
+    let contactId: string | null = batch.contactId ?? null;
 
-    try {
-      const crmResult = await runWithTenantContext(batch.tenantId, () =>
-        this.crm.processIncoming({
-          tenantId: batch.tenantId,
-          channel: "telegram",
-          channelAccountId: batch.channelAccountId,
-          chatId: batch.chatId,
-          text: batch.text,
-          senderName: profile?.firstName || batch.peerId,
-          senderTelegramChatId: batch.peerId,
-          senderTelegramUsername: profile?.username,
-          senderPhone: profile?.phone,
-          profile: profile ?? undefined,
-          sourceMetadata: batch.sourceMetadata,
-        }),
-      );
+    if (!batch.alreadyPersisted || !dealId) {
+      try {
+        const crmResult = await runWithTenantContext(batch.tenantId, () =>
+          this.crm.processIncoming({
+            tenantId: batch.tenantId,
+            channel: "telegram",
+            channelAccountId: batch.channelAccountId,
+            chatId: batch.chatId,
+            text: batch.text,
+            senderName: profile?.firstName || batch.peerId,
+            senderTelegramChatId: batch.peerId,
+            senderTelegramUsername: profile?.username,
+            senderPhone: profile?.phone,
+            profile: profile ?? undefined,
+            sourceMetadata: batch.sourceMetadata,
+          }),
+        );
 
-      if (crmResult.isPersonal) {
-        this.log.info({ peerId: batch.peerId }, "Personal Telegram contact message ignored by CRM");
-        return;
+        if (crmResult.isPersonal) {
+          this.log.info({ peerId: batch.peerId }, "Personal Telegram contact message ignored by CRM");
+          return;
+        }
+
+        if (crmResult.isBot) {
+          this.log.info({ peerId: batch.peerId, username: profile?.username }, "Bot Telegram message ignored by CRM");
+          return;
+        }
+
+        dealId = crmResult.dealId;
+        contactId = crmResult.contactId;
+
+        // Фоновая синхронизация предшествующей истории переписки при создании сделки
+        if (crmResult.dealId && crmResult.isNewDeal) {
+          void this.syncDialogHistory({
+            tenantId: batch.tenantId,
+            dealId: crmResult.dealId,
+            channelAccountId: batch.channelAccountId,
+            peerId: batch.peerId,
+            username: profile?.username,
+            phone: profile?.phone,
+            limit: 50,
+          }).catch((err) => {
+            this.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync Telegram history for new deal");
+          });
+        }
+      } catch (error) {
+        this.log.error(
+          { error, chatId: batch.chatId, channelAccountId: batch.channelAccountId },
+          "Failed to process CRM pipeline for incoming batch",
+        );
       }
-
-      if (crmResult.isBot) {
-        this.log.info({ peerId: batch.peerId, username: profile?.username }, "Bot Telegram message ignored by CRM");
-        return;
-      }
-
-      dealId = crmResult.dealId;
-      contactId = crmResult.contactId;
-
-      // Фоновая синхронизация предшествующей истории переписки при создании сделки
-      if (crmResult.dealId && crmResult.isNewDeal) {
-        void this.syncDialogHistory({
-          tenantId: batch.tenantId,
-          dealId: crmResult.dealId,
-          channelAccountId: batch.channelAccountId,
-          peerId: batch.peerId,
-          username: profile?.username,
-          phone: profile?.phone,
-          limit: 50,
-        }).catch((err) => {
-          this.log.warn({ err, dealId: crmResult.dealId }, "Failed to sync Telegram history for new deal");
-        });
-      }
-    } catch (error) {
-      this.log.error(
-        { error, chatId: batch.chatId, channelAccountId: batch.channelAccountId },
-        "Failed to process CRM pipeline for incoming batch",
-      );
     }
 
     // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора или выключенном AI).
@@ -1536,11 +1848,12 @@ export class TelegramTransportService {
           const direction = isOutbound ? "outbound" : "inbound";
           const externalMsgId = String(msg.id);
 
-          // Проверяем наличие сообщения в сделке (дедупликация)
+          // Проверяем наличие сообщения в сделке (дедупликация; failed-строки не блокируют реальное сообщение)
           const existing = await queryOne<{ id: string }>(
             `SELECT id FROM deal_messages
              WHERE tenant_id = $1 AND deal_id = $2
                AND channel = 'telegram'
+               AND delivery_status <> 'failed'
                AND (
                  ($3::text IS NOT NULL AND metadata->>'external_message_id' = $3)
                  OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)

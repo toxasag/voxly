@@ -18,6 +18,7 @@ import {
   type ChatMessage as LlmChatMessage,
 } from "../../../services/chat.service.js";
 import { KnowledgeBaseService } from "../../ai/knowledge.service.js";
+import { MaxBridgeService } from "../../channels/max-bridge.service.js";
 
 // ---------------------------------------------------------------------------
 // Отправка ответа менеджера в канал клиента.
@@ -65,7 +66,31 @@ export class DealMessagingService {
     private readonly log: Logger | null = null,
     private readonly chat: ChatProvider = new GatewayChatProvider(),
     private readonly knowledge: KnowledgeBaseService = new KnowledgeBaseService(),
+    private readonly maxBridge: MaxBridgeService = new MaxBridgeService(),
   ) {}
+
+  private isMaxBridgeAccount(acc: {
+    channel: string;
+    credentials?: Record<string, unknown> | null;
+  }): boolean {
+    if (acc.channel !== "max" && acc.channel !== "rumax") return false;
+    const provider = acc.credentials?.provider ?? acc.credentials?.adapter;
+    return (
+      provider !== "native-ts" &&
+      provider !== "ts" &&
+      provider !== "green-api" &&
+      provider !== "greenapi"
+    );
+  }
+
+  private async getLiveMaxBotIds(
+    accounts: Array<{ channel: string; credentials?: Record<string, unknown> | null }>,
+  ): Promise<Set<string> | null> {
+    if (!accounts.some((a) => this.isMaxBridgeAccount(a))) {
+      return null;
+    }
+    return this.maxBridge.getLiveBotIds();
+  }
 
   /**
    * Возвращает список доступных аккаунтов («Пишем от:») для сделки с учетом контактных данных клиента.
@@ -104,10 +129,19 @@ export class DealMessagingService {
       custom_fields: null,
     };
 
-    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
-      `SELECT id, channel, label
+    const accounts = await query<{
+      id: string;
+      channel: string;
+      label?: string;
+      name?: string;
+      status?: string;
+      credentials?: Record<string, unknown> | null;
+    }>(
+      `SELECT id, channel, label, status, credentials
        FROM channel_accounts
-       WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+       WHERE tenant_id = $1
+         AND deleted_at IS NULL
+         AND (status = 'connected' OR (channel = 'max' AND status = 'error'))
        ORDER BY created_at ASC`,
       [tenantId],
     );
@@ -122,11 +156,9 @@ export class DealMessagingService {
     const lastAccId = lastMsgAccountRow[0]?.channel_account_id;
     const lastChannel = lastMsgAccountRow[0]?.channel;
 
-    const matchedByAccount = lastAccId ? accounts.find((a) => a.id === lastAccId) : undefined;
-    const matchedByChannel = lastChannel ? accounts.find((a) => a.channel === lastChannel) : undefined;
-    const defaultAccountId = matchedByAccount?.id ?? matchedByChannel?.id ?? accounts[0]?.id;
+    const liveMaxBotIds = await this.getLiveMaxBotIds(accounts);
 
-    return accounts.map((acc) => {
+    const options = accounts.map((acc) => {
       let available = false;
       let unavailableReason: string | undefined;
 
@@ -161,6 +193,15 @@ export class DealMessagingService {
         available = true;
       }
 
+      if (available && this.isMaxBridgeAccount(acc)) {
+        const isSessionDead =
+          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+        if (isSessionDead) {
+          available = false;
+          unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";
+        }
+      }
+
       let channelPrefix = acc.channel.toUpperCase();
       if (acc.channel === "max" || acc.channel === "rumax") channelPrefix = "MAX";
       else if (acc.channel === "telegram") channelPrefix = "Telegram";
@@ -179,9 +220,31 @@ export class DealMessagingService {
         accountName: accountLabel,
         available,
         unavailableReason,
-        isDefault: acc.id === defaultAccountId,
+        isDefault: false,
       };
     });
+
+    const matchedAvailableAccount = lastAccId
+      ? options.find((o) => o.channelAccountId === lastAccId && o.available)
+      : undefined;
+    const matchedAvailableChannel = lastChannel
+      ? options.find((o) => o.channel === lastChannel && o.available)
+      : undefined;
+    const firstAvailable = options.find((o) => o.available);
+    const fallbackAny =
+      (lastAccId ? options.find((o) => o.channelAccountId === lastAccId) : undefined) ??
+      (lastChannel ? options.find((o) => o.channel === lastChannel) : undefined) ??
+      options[0];
+    const defaultAccountId =
+      matchedAvailableAccount?.channelAccountId ??
+      matchedAvailableChannel?.channelAccountId ??
+      firstAvailable?.channelAccountId ??
+      fallbackAny?.channelAccountId;
+
+    return options.map((opt) => ({
+      ...opt,
+      isDefault: opt.channelAccountId === defaultAccountId,
+    }));
   }
 
   /**
@@ -357,14 +420,33 @@ export class DealMessagingService {
         : row.channel_account_id;
 
     // Write-First fallback: если переписка ещё не велась, берём первый активный аккаунт этого канала
+    // Для MAX при нескольких подключённых аккаунтах предпочитаем аккаунт с живой сессией в max-bridge.
     if (!channelAccountId) {
-      const fallbackAccount = await query<{ id: string }>(
-        `SELECT id FROM channel_accounts
+      const fallbackAccounts = await query<{
+        id: string;
+        channel?: string;
+        credentials?: Record<string, unknown> | null;
+      }>(
+        `SELECT id, channel, credentials FROM channel_accounts
          WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL
-         ORDER BY created_at ASC LIMIT 1`,
+         ORDER BY created_at ASC`,
         [tenantId, payload.channel],
       );
-      channelAccountId = fallbackAccount[0]?.id ?? null;
+      if (payload.channel === "max" && fallbackAccounts.length > 1) {
+        const liveMaxBotIds = await this.getLiveMaxBotIds(
+          fallbackAccounts.map((a) => ({ channel: a.channel ?? "max", credentials: a.credentials })),
+        );
+        const healthy = liveMaxBotIds
+          ? fallbackAccounts.find(
+              (a) =>
+                !this.isMaxBridgeAccount({ channel: a.channel ?? "max", credentials: a.credentials }) ||
+                liveMaxBotIds.has(a.id),
+            )
+          : undefined;
+        channelAccountId = healthy?.id ?? fallbackAccounts[0]?.id ?? null;
+      } else {
+        channelAccountId = fallbackAccounts[0]?.id ?? null;
+      }
     }
 
     if (channelAccountId === null || channelAccountId.length === 0) return null;
@@ -680,10 +762,19 @@ export class DealMessagingService {
       socials: [],
     };
 
-    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
-      `SELECT id, channel, label
+    const accounts = await query<{
+      id: string;
+      channel: string;
+      label?: string;
+      name?: string;
+      status?: string;
+      credentials?: Record<string, unknown> | null;
+    }>(
+      `SELECT id, channel, label, status, credentials
        FROM channel_accounts
-       WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+       WHERE tenant_id = $1
+         AND deleted_at IS NULL
+         AND (status = 'connected' OR (channel = 'max' AND status = 'error'))
        ORDER BY created_at ASC`,
       [tenantId],
     );
@@ -706,11 +797,9 @@ export class DealMessagingService {
     const lastAccId = lastMsgAccountRow[0]?.channel_account_id;
     const lastChannel = lastMsgAccountRow[0]?.channel;
 
-    const matchedByAccount = lastAccId ? accounts.find((a) => a.id === lastAccId) : undefined;
-    const matchedByChannel = lastChannel ? accounts.find((a) => a.channel === lastChannel) : undefined;
-    const defaultAccountId = matchedByAccount?.id ?? matchedByChannel?.id ?? accounts[0]?.id;
+    const liveMaxBotIds = await this.getLiveMaxBotIds(accounts);
 
-    return accounts.map((acc) => {
+    const options = accounts.map((acc) => {
       let available = false;
       let unavailableReason: string | undefined;
 
@@ -737,6 +826,15 @@ export class DealMessagingService {
         available = true;
       }
 
+      if (available && this.isMaxBridgeAccount(acc)) {
+        const isSessionDead =
+          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+        if (isSessionDead) {
+          available = false;
+          unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";
+        }
+      }
+
       let channelPrefix = acc.channel.toUpperCase();
       if (acc.channel === "max" || acc.channel === "rumax") channelPrefix = "MAX";
       else if (acc.channel === "telegram") channelPrefix = "Telegram";
@@ -755,9 +853,31 @@ export class DealMessagingService {
         accountName: accountLabel,
         available,
         unavailableReason,
-        isDefault: acc.id === defaultAccountId,
+        isDefault: false,
       };
     });
+
+    const matchedAvailableAccount = lastAccId
+      ? options.find((o) => o.channelAccountId === lastAccId && o.available)
+      : undefined;
+    const matchedAvailableChannel = lastChannel
+      ? options.find((o) => o.channel === lastChannel && o.available)
+      : undefined;
+    const firstAvailable = options.find((o) => o.available);
+    const fallbackAny =
+      (lastAccId ? options.find((o) => o.channelAccountId === lastAccId) : undefined) ??
+      (lastChannel ? options.find((o) => o.channel === lastChannel) : undefined) ??
+      options[0];
+    const defaultAccountId =
+      matchedAvailableAccount?.channelAccountId ??
+      matchedAvailableChannel?.channelAccountId ??
+      firstAvailable?.channelAccountId ??
+      fallbackAny?.channelAccountId;
+
+    return options.map((opt) => ({
+      ...opt,
+      isDefault: opt.channelAccountId === defaultAccountId,
+    }));
   }
 
   /**
@@ -945,22 +1065,23 @@ export class DealMessagingService {
 
     let totalSynced = 0;
 
-    // Синхронизация истории диалогов MAX
-    const maxAccount = await queryOne<{ id: string }>(
+    // Синхронизация истории диалогов по ВСЕМ подключённым аккаунтам MAX
+    const maxAccounts = await query<{ id: string }>(
       `SELECT id FROM channel_accounts
        WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-       LIMIT 1`,
+       ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    if (maxAccount) {
+    if (maxAccounts.length > 0) {
       const contact = await queryOne<{
         first_name: string;
-        last_name: string;
+        last_name: string | null;
         phone: string;
         socials?: ContactSocialJson[];
+        custom_fields?: Record<string, unknown> | null;
       }>(
-        `SELECT first_name, last_name, phone, socials FROM contacts
+        `SELECT first_name, last_name, phone, socials, custom_fields FROM contacts
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         [tenantId, deal.contact_id],
       );
@@ -968,31 +1089,50 @@ export class DealMessagingService {
       if (contact) {
         const { syncMaxDialogHistory } = await import("../../channels/max-integration.routes.js");
         const maxSocial = contact.socials?.find((s) => s.kind === "max")?.value;
-        const count = await syncMaxDialogHistory({
-          tenantId,
-          dealId,
-          channelAccountId: maxAccount.id,
-          peerId: maxSocial || contact.phone,
-          peerPhone: contact.phone,
-          peerUserId: maxSocial,
-          senderName: `${contact.first_name} ${contact.last_name}`.trim(),
-        });
-        totalSynced += count;
+        const cf = contact.custom_fields ?? {};
+        const maxChatId = typeof cf.max_chat_id === "string" ? cf.max_chat_id.trim() : "";
+        const enrichment = cf.enrichment as { channels?: { max?: { userId?: unknown } } } | undefined;
+        const enrichedMaxUserId =
+          typeof enrichment?.channels?.max?.userId === "string"
+            ? enrichment.channels.max.userId.trim()
+            : "";
+        const peerUserId = enrichedMaxUserId || maxSocial || undefined;
+        const senderName = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
+
+        for (const maxAccount of maxAccounts) {
+          try {
+            const count = await syncMaxDialogHistory({
+              tenantId,
+              dealId,
+              channelAccountId: maxAccount.id,
+              peerId: maxChatId || peerUserId || contact.phone,
+              peerPhone: contact.phone,
+              peerUserId,
+              senderName,
+            });
+            totalSynced += count;
+          } catch (err) {
+            this.log?.warn(
+              { err, dealId, channelAccountId: maxAccount.id },
+              "MAX history sync failed for account — continuing with remaining accounts",
+            );
+          }
+        }
       }
     }
 
-    // Синхронизация истории диалогов Telegram
-    const telegramAccount = await queryOne<{ id: string }>(
+    // Синхронизация истории диалогов по ВСЕМ подключённым аккаунтам Telegram
+    const telegramAccounts = await query<{ id: string }>(
       `SELECT id FROM channel_accounts
        WHERE tenant_id = $1 AND channel = 'telegram' AND status = 'connected' AND deleted_at IS NULL
-       LIMIT 1`,
+       ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    if (telegramAccount && deal.contact_id) {
+    if (telegramAccounts.length > 0 && deal.contact_id) {
       const contact = await queryOne<{
         first_name: string;
-        last_name: string;
+        last_name: string | null;
         phone: string;
         telegram_chat_id?: string | number | null;
         socials?: ContactSocialJson[];
@@ -1011,33 +1151,42 @@ export class DealMessagingService {
         if (peer) {
           const syncer = resolveTelegramHistorySyncer();
           if (syncer) {
-            const count = await syncer({
-              tenantId,
-              dealId,
-              channelAccountId: telegramAccount.id,
-              peerId: peer,
-              username: tgSocial ?? undefined,
-              phone: contact.phone ?? undefined,
-              limit: 50,
-            });
-            totalSynced += count;
+            for (const telegramAccount of telegramAccounts) {
+              try {
+                const count = await syncer({
+                  tenantId,
+                  dealId,
+                  channelAccountId: telegramAccount.id,
+                  peerId: peer,
+                  username: tgSocial ?? undefined,
+                  phone: contact.phone ?? undefined,
+                  limit: 50,
+                });
+                totalSynced += count;
+              } catch (err) {
+                this.log?.warn(
+                  { err, dealId, channelAccountId: telegramAccount.id },
+                  "Telegram history sync failed for account",
+                );
+              }
+            }
           }
         }
       }
     }
 
-    // Синхронизация истории диалогов WhatsApp
-    const whatsappAccount = await queryOne<{ id: string }>(
+    // Синхронизация истории диалогов по ВСЕМ подключённым аккаунтам WhatsApp
+    const whatsappAccounts = await query<{ id: string }>(
       `SELECT id FROM channel_accounts
        WHERE tenant_id = $1 AND channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL
-       LIMIT 1`,
+       ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    if (whatsappAccount && deal.contact_id) {
+    if (whatsappAccounts.length > 0 && deal.contact_id) {
       const contact = await queryOne<{
         first_name: string;
-        last_name: string;
+        last_name: string | null;
         phone: string;
       }>(
         `SELECT first_name, last_name, phone FROM contacts
@@ -1047,14 +1196,24 @@ export class DealMessagingService {
 
       if (contact && contact.phone) {
         const { syncWhatsappDialogHistory } = await import("../../channels/whatsapp-integration.routes.js");
-        const count = await syncWhatsappDialogHistory({
-          tenantId,
-          dealId,
-          channelAccountId: whatsappAccount.id,
-          phone: contact.phone,
-          senderName: `${contact.first_name} ${contact.last_name}`.trim(),
-        });
-        totalSynced += count;
+        const senderName = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
+        for (const whatsappAccount of whatsappAccounts) {
+          try {
+            const count = await syncWhatsappDialogHistory({
+              tenantId,
+              dealId,
+              channelAccountId: whatsappAccount.id,
+              phone: contact.phone,
+              senderName,
+            });
+            totalSynced += count;
+          } catch (err) {
+            this.log?.warn(
+              { err, dealId, channelAccountId: whatsappAccount.id },
+              "WhatsApp history sync failed for account",
+            );
+          }
+        }
       }
     }
 

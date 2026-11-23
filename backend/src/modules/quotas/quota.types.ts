@@ -9,6 +9,7 @@ export interface FeatureQuotaDefinition {
 }
 
 export const SYSTEM_FEATURE_QUOTAS: readonly FeatureQuotaDefinition[] = [
+  // 1. Виджеты и сайты
   {
     key: "webchat_widgets",
     name: "Онлайн-виджеты (WebChat)",
@@ -17,16 +18,34 @@ export const SYSTEM_FEATURE_QUOTAS: readonly FeatureQuotaDefinition[] = [
     category: "widgets",
   },
   {
+    key: "site_integrations",
+    name: "Сайты и формы сбора заявок",
+    description: "Количество подключенных внешних сайтов и вебхуков сбора заявок",
+    defaultLimit: 3,
+    category: "widgets",
+  },
+
+  // 2. AI и боты
+  {
     key: "ai_agents",
     name: "AI-агенты / боты",
     description: "Количество созданных AI-агентов для переписки и автоответов",
     defaultLimit: 2,
     category: "ai",
   },
+
+  // 3. Каналы связи и мессенджеры
   {
     key: "telegram_channels",
-    name: "Telegram-аккаунты",
-    description: "Количество подключенных аккаунтов или ботов Telegram",
+    name: "Telegram-аккаунты (User API)",
+    description: "Количество подключенных личных аккаунтов или номеров Telegram",
+    defaultLimit: 2,
+    category: "channels",
+  },
+  {
+    key: "telegram_bot_channels",
+    name: "Telegram-боты компании",
+    description: "Количество подключенных ботов Telegram через BotFather/API",
     defaultLimit: 2,
     category: "channels",
   },
@@ -39,11 +58,34 @@ export const SYSTEM_FEATURE_QUOTAS: readonly FeatureQuotaDefinition[] = [
   },
   {
     key: "max_channels",
-    name: "MAX-аккаунты",
+    name: "MAX-аккаунты (Профили)",
     description: "Количество подключенных аккаунтов мессенджера MAX",
     defaultLimit: 2,
     category: "channels",
   },
+  {
+    key: "max_bot_channels",
+    name: "MAX-боты компании",
+    description: "Количество подключенных ботов мессенджера MAX",
+    defaultLimit: 2,
+    category: "channels",
+  },
+  {
+    key: "avito_channels",
+    name: "Avito-аккаунты",
+    description: "Количество подключенных аккаунтов Авито для входящих сообщений",
+    defaultLimit: 2,
+    category: "channels",
+  },
+  {
+    key: "instagram_channels",
+    name: "Instagram-аккаунты",
+    description: "Количество подключенных Direct-аккаунтов Instagram",
+    defaultLimit: 2,
+    category: "channels",
+  },
+
+  // 4. CRM и воронки
   {
     key: "custom_pipelines",
     name: "Воронки продаж",
