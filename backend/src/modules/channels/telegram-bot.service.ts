@@ -962,6 +962,15 @@ export class TelegramBotService {
         if (log) {
           log.info({ accountId: acc.id, bot: acc.external_id, ok, webhookUrl }, "Telegram Bot webhook synchronized");
         }
+        if (!ok) {
+          setTimeout(() => {
+            void service.setWebhook(token, webhookUrl).then((retryOk) => {
+              if (log) {
+                log.info({ accountId: acc.id, bot: acc.external_id, ok: retryOk, webhookUrl }, "Telegram Bot webhook retry synchronized");
+              }
+            });
+          }, 45_000);
+        }
       }
     } catch (err) {
       if (log) {
