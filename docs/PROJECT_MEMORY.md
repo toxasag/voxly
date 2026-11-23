@@ -982,3 +982,30 @@
   - Сборка backend (`tsc`) и frontend (`next build`): 0 ошибок ✅
   - Деплой через `/usr/local/bin/vf-deploy GETVOXLY` успешен (backend и frontend healthy, HTTP 200 на health & login).
   - Коммит `6c355e6` синхронизирован в ветку `master` и запушен на GitHub (`origin/master`).
+
+---
+
+### 23.11.2026 — Искоренение генерации фальшивых ботов и перевод создания ботов на официальный Telegram Bot Manager (Bot API 8.0)
+- **Root cause проблемы «Создал бота, а его нет в Telegram»:**
+  1. В предыдущей реализации метод `autoRegisterBot` генерировал случайный фейковый токен (`Math.floor(7000000000) + randomBytes`) и создавал запись в базе данных со статусом `connected`, минуя Telegram. В Telegram этот бот физически не существовал, поэтому поиск в Telegram показывал «Нет результатов».
+  2. При вводе кириллицы (например, «фриланс хантер») регулярное выражение `replace(/[^a-zA-Z0-9_]/g, "")` удаляло все буквы, из-за чего имя сбрасывалось на дефолтное `voxly1_bot`.
+  3. В интерфейсе `ConnectTelegramBotModal.tsx` фейковая вкладка «Авто-бот (1 клик)» была активной по умолчанию с бейджем «Рекомендуется», вводя пользователя в заблуждение.
+- **Что исправлено и внедрено:**
+  1. Из боевой базы данных на сервере удалены все сгенерированные фейковые боты (`@voxly1_bot`, `@freelancehunter_bot`, `@frelancehunter_bot`), блокировавшие реальные юзернеймы.
+  2. В `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Добавлена функция `transliterateCyrillic` — имена на кириллице («фриланс хантер») автоматически транслитерируются в валидный Telegram username (`frilans_hanter_bot`).
+     - Метод `autoRegisterBot` полностью избавлен от генерации фейковых токенов и переведен на `createManaged` (формирует реальный deep-link `https://t.me/newbot/...`).
+     - Метод `autoActivatePending` больше не генерирует фейковые токены; он опрашивает Telegram Bot API через `getManagedBotToken(botId)`.
+  3. В `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`:
+     - Убрана фальшивая вкладка «Авто-бот (1 клик)».
+     - Вкладкой по умолчанию стала «Создать в Telegram» (Telegram Managed Bot - Bot API 8.0).
+     - При вводе названия бота поле username на лету транслитерируется на латиницу с суффиксом `_bot`.
+     - При нажатии «Создать бота в Telegram» система регистрирует ожидающее подключение и открывает Telegram для официального создания бота.
+     - Добавлен автоматический опрос (polling) статуса: как только пользователь нажимает «Создать» в Telegram, сервер получает вебхук `managed_bot`, забирает настоящий токен, а модалка моментально фиксирует статус «В сети» и показывает успех.
+  4. В `frontend/src/components/integrations/EditChannelAccountModal.tsx`:
+     - Для ожидающих ботов заменена кнопка «Сгенерировать токен» на прямую ссылку перехода в Telegram и кнопку проверки реального статуса.
+- **Проверка и деплой:**
+  - Тесты `node --test`: 18/18 pass (включая проверку транслитерации кириллицы в `frilans_hanter_bot`) ✅
+  - `next build` и `tsc`: 0 ошибок ✅
+  - Боевой деплой `/usr/local/bin/vf-deploy GETVOXLY`: успешен (backend & frontend healthy, HTTP 200).
+  - GitHub: ветки `master` и `vf/1-rol-senior-full` обновлены.
