@@ -112,6 +112,17 @@ export const updateInvoiceSchema = z.object({
   line_items: z.array(invoiceItemSchema).min(1).max(100).optional(),
 });
 
+export const bulkUpdateInvoicesSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+  status: z.enum(["draft", "sent", "overdue", "cancelled"]).optional(),
+  due_date: isoDate.optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+export const bulkDeleteInvoicesSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+});
+
 export const markInvoicePaidSchema = z.object({
   account_id: accountIdSchema,
   occurred_at: isoDate.optional(),
@@ -163,6 +174,8 @@ export type UpdateTransactionPayload = z.infer<typeof updateTransactionSchema>;
 export type CreateInvoicePayload = z.infer<typeof createInvoiceSchema>;
 export type CreateInvoiceFromActsPayload = z.infer<typeof createInvoiceFromActsSchema>;
 export type UpdateInvoicePayload = z.infer<typeof updateInvoiceSchema>;
+export type BulkUpdateInvoicesPayload = z.infer<typeof bulkUpdateInvoicesSchema>;
+export type BulkDeleteInvoicesPayload = z.infer<typeof bulkDeleteInvoicesSchema>;
 export type MarkInvoicePaidPayload = z.infer<typeof markInvoicePaidSchema>;
 export type BatchPaymentPayload = z.infer<typeof batchPaymentSchema>;
 export type SendInvoicePayload = z.infer<typeof sendInvoiceSchema>;

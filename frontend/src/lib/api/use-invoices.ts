@@ -655,6 +655,67 @@ export function useDeleteInvoice(): UseMutationResult<{ success: boolean; id: st
   });
 }
 
+export interface BulkUpdateInvoicesPayload {
+  ids: string[];
+  status?: "draft" | "sent" | "overdue" | "cancelled";
+  due_date?: string;
+  notes?: string;
+}
+
+export function useBulkUpdateInvoices(): UseMutationResult<
+  { updated: number; skippedPaid: number; ids: string[] },
+  ApiClientError,
+  BulkUpdateInvoicesPayload
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { updated: number; skippedPaid: number; ids: string[] },
+    ApiClientError,
+    BulkUpdateInvoicesPayload
+  >({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ updated: number; skippedPaid: number; ids: string[] }>(
+        "/api/v1/invoices/bulk-update",
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useBulkDeleteInvoices(): UseMutationResult<
+  { deleted: number; skippedPaid: number; ids: string[] },
+  ApiClientError,
+  string[]
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { deleted: number; skippedPaid: number; ids: string[] },
+    ApiClientError,
+    string[]
+  >({
+    mutationFn: async (ids) => {
+      const res = await apiClient.post<{ deleted: number; skippedPaid: number; ids: string[] }>(
+        "/api/v1/invoices/bulk-delete",
+        { ids },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
 export function useMarkInvoicePaid(): UseMutationResult<InvoiceDTO, ApiClientError, { id: string; payload: MarkInvoicePaidPayload }> {
   const queryClient = useQueryClient();
 
