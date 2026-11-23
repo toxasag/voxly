@@ -36,6 +36,7 @@ import {
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
 import { useAiModels, type AiModelItem } from "@/lib/api/use-ai-agents";
+import { useChannelAccounts } from "@/lib/api/use-channels";
 import {
   useAgentFeedbacks,
   useGeneratePrompt,
@@ -211,6 +212,26 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
     }
   };
 
+  const { data: webchatAccounts } = useChannelAccounts("webchat");
+  const primaryWebchat = webchatAccounts?.items?.[0];
+  const webchatCreds = (primaryWebchat?.credentials ?? {}) as Record<string, unknown>;
+  const webchatConsultantName =
+    (typeof webchatCreds.consultantName === "string" && webchatCreds.consultantName.trim().length > 0
+      ? webchatCreds.consultantName.trim()
+      : null) ||
+    (typeof webchatCreds.botName === "string" && webchatCreds.botName.trim().length > 0
+      ? webchatCreds.botName.trim()
+      : null) ||
+    (primaryWebchat?.label && primaryWebchat.label.trim().length > 0 ? primaryWebchat.label.trim() : null);
+  const webchatConsultantRole =
+    (typeof webchatCreds.consultantRole === "string" && webchatCreds.consultantRole.trim().length > 0
+      ? webchatCreds.consultantRole.trim()
+      : null) ||
+    (typeof webchatCreds.title === "string" && webchatCreds.title.trim().length > 0
+      ? webchatCreds.title.trim()
+      : null) ||
+    "Онлайн-консультант";
+
   const form = useForm<CreateBotPayload>({
     resolver: zodResolver(createBotSchema),
     defaultValues: DEFAULT_VALUES,
@@ -232,13 +253,28 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
     async (values: CreateBotPayload) => {
       try {
         const trimmedCompany = (values.company_name_override || "").trim();
+        const trimmedConsultantName = (values.consultant_name || "").trim();
+        const trimmedConsultantRole = (values.consultant_role || "").trim();
+        const isFromWidget = values.consultant_source === "chat_widget";
+
         const payload: CreateBotPayload = {
           ...values,
           company_name_override: trimmedCompany,
+          consultant_source: values.consultant_source,
+          consultant_name: isFromWidget && webchatConsultantName ? webchatConsultantName : trimmedConsultantName,
+          consultant_role: isFromWidget && webchatConsultantRole ? webchatConsultantRole : trimmedConsultantRole,
           wizard_config: {
             ...(values.wizard_config || {}),
             companyName: trimmedCompany,
             company_name_override: trimmedCompany,
+            consultantSource: values.consultant_source,
+            consultant_source: values.consultant_source,
+            consultantName: isFromWidget && webchatConsultantName
+              ? webchatConsultantName
+              : (values.wizard_config?.consultantName || trimmedConsultantName || "Консультант"),
+            consultantRole: isFromWidget && webchatConsultantRole
+              ? webchatConsultantRole
+              : (values.wizard_config?.consultantRole || trimmedConsultantRole || "специалист"),
           },
         };
         await onSubmit(payload);
@@ -247,7 +283,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
         toast.error(err instanceof Error ? err.message : "Не удалось сохранить бота");
       }
     },
-    [onClose, onSubmit],
+    [onClose, onSubmit, webchatConsultantName, webchatConsultantRole],
   );
 
   const onInvalid = useCallback((fieldErrors: FieldErrors<CreateBotPayload>) => {
@@ -352,12 +388,21 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
 
   const applyPreset = useCallback(
     (preset: IndustryPreset) => {
+      const currentConsultantSource = form.getValues("consultant_source") || "manual";
+      const isFromWidget = currentConsultantSource === "chat_widget";
+
       form.setValue(
         "wizard_config",
         {
           presetId: preset.id,
-          consultantName: preset.defaultConfig.consultantName,
-          consultantRole: preset.defaultConfig.consultantRole,
+          consultantSource: currentConsultantSource,
+          consultant_source: currentConsultantSource,
+          consultantName: isFromWidget && webchatConsultantName
+            ? webchatConsultantName
+            : preset.defaultConfig.consultantName,
+          consultantRole: isFromWidget && webchatConsultantRole
+            ? webchatConsultantRole
+            : preset.defaultConfig.consultantRole,
           businessNiche: preset.defaultConfig.businessNiche,
           clientProfile: preset.defaultConfig.clientProfile ?? "",
           targetAction: preset.defaultConfig.targetAction,
@@ -367,15 +412,20 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
         },
         { shouldValidate: true, shouldDirty: true },
       );
-      form.setValue("consultant_name", preset.defaultConfig.consultantName, { shouldDirty: true });
-      form.setValue("consultant_role", preset.defaultConfig.consultantRole, { shouldDirty: true });
+      if (!isFromWidget) {
+        form.setValue("consultant_name", preset.defaultConfig.consultantName, { shouldDirty: true });
+        form.setValue("consultant_role", preset.defaultConfig.consultantRole, { shouldDirty: true });
+      } else if (webchatConsultantName) {
+        form.setValue("consultant_name", webchatConsultantName, { shouldDirty: true });
+        form.setValue("consultant_role", webchatConsultantRole, { shouldDirty: true });
+      }
       form.setValue("system_prompt", DIRECTOR_PROMPT_TEMPLATE, {
         shouldValidate: true,
         shouldDirty: true,
       });
       setPendingPreset(null);
     },
-    [form],
+    [form, webchatConsultantName, webchatConsultantRole],
   );
 
   const handleSelectPreset = useCallback(
@@ -736,11 +786,28 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                 </div>
 
                 {consultantSource === "chat_widget" ? (
-                  <div className="rounded-[8px] border border-blue-100 bg-blue-50/60 p-2.5 text-xs text-[#333333] flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-[#4a38f5] shrink-0" />
-                    <span className="text-[11px] text-[#555555]">
+                  <div className="rounded-[8px] border border-blue-200 bg-blue-50/70 p-3 text-xs text-[#333333] space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-[#4a38f5] shrink-0" />
+                      <span className="font-medium text-[#111111]">
+                        Подстановка из онлайн-чата активна
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#555555]">
                       Имя и должность консультанта подтягиваются динамически из настроек подключенного виджета онлайн-чата на сайте.
-                    </span>
+                    </p>
+                    {webchatConsultantName ? (
+                      <div className="rounded-[6px] border border-blue-200 bg-white/95 p-2 flex items-center justify-between text-xs">
+                        <span className="text-[#666666]">Текущие настройки виджета:</span>
+                        <span className="font-semibold text-[#111111]">
+                          {webchatConsultantName} ({webchatConsultantRole})
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="rounded-[6px] border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                        Виджет онлайн-чата еще не настроен. Настройте имя консультанта в разделе «Интеграции → Онлайн-чат».
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-3">

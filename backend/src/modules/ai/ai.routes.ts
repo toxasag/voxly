@@ -561,6 +561,12 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       systemPrompt?: string;
       company_name_override?: string;
       companyNameOverride?: string;
+      consultant_source?: "manual" | "chat_widget";
+      consultantSource?: "manual" | "chat_widget";
+      consultant_name?: string;
+      consultantName?: string;
+      consultant_role?: string;
+      consultantRole?: string;
     } | undefined) ?? {};
 
     const agent = await queryOne<{
@@ -569,11 +575,12 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       description?: string | null;
       system_prompt: string;
       company_name_override?: string | null;
+      consultant_source?: "manual" | "chat_widget" | null;
       consultant_name?: string | null;
       consultant_role?: string | null;
       wizard_config: Record<string, unknown> | null;
     }>(
-      `SELECT id, name, description, system_prompt, company_name_override, consultant_name, consultant_role, wizard_config
+      `SELECT id, name, description, system_prompt, company_name_override, consultant_source, consultant_name, consultant_role, wizard_config
        FROM ai_agents
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [request.tenant_id, id],
@@ -664,16 +671,64 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       tenantName ||
       "Компания";
 
-    const effectiveConsultantName =
-      (agent.consultant_name && agent.consultant_name.trim().length > 0 ? agent.consultant_name.trim() : null) ||
-      (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) ||
-      agent.name ||
-      "Консультант";
+    const effectiveConsultantSource =
+      body.consultant_source ??
+      body.consultantSource ??
+      agent.consultant_source ??
+      (wc.consultant_source as "manual" | "chat_widget" | undefined) ??
+      (wc.consultantSource as "manual" | "chat_widget" | undefined) ??
+      "manual";
 
-    const effectiveConsultantRole =
-      (agent.consultant_role && agent.consultant_role.trim().length > 0 ? agent.consultant_role.trim() : null) ||
-      (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) ||
-      "онлайн-помощник";
+    const isWidgetSource = effectiveConsultantSource === "chat_widget";
+
+    let widgetConsultantName: string | undefined;
+    let widgetConsultantRole: string | undefined;
+
+    if (isWidgetSource) {
+      try {
+        const webchatAcc = await queryOne<{ label: string; credentials: Record<string, unknown> }>(
+          `SELECT label, credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL
+           ORDER BY CASE WHEN status = 'connected' THEN 0 ELSE 1 END, created_at ASC
+           LIMIT 1`,
+          [request.tenant_id],
+        );
+        if (webchatAcc?.credentials && typeof webchatAcc.credentials === "object") {
+          const creds = webchatAcc.credentials;
+          if (typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0) {
+            widgetConsultantName = creds.consultantName.trim();
+          } else if (typeof creds.botName === "string" && creds.botName.trim().length > 0) {
+            widgetConsultantName = creds.botName.trim();
+          } else if (webchatAcc.label && webchatAcc.label.trim().length > 0) {
+            widgetConsultantName = webchatAcc.label.trim();
+          }
+
+          if (typeof creds.consultantRole === "string" && creds.consultantRole.trim().length > 0) {
+            widgetConsultantRole = creds.consultantRole.trim();
+          } else if (typeof creds.title === "string" && creds.title.trim().length > 0) {
+            widgetConsultantRole = creds.title.trim();
+          }
+        }
+      } catch (err) {
+        app.log.warn({ err, tenantId: request.tenant_id }, "Failed to fetch webchat account for prompt preview");
+      }
+    }
+
+    const bodyConsultantName =
+      (typeof body.consultant_name === "string" && body.consultant_name.trim().length > 0 ? body.consultant_name.trim() : null) ||
+      (typeof body.consultantName === "string" && body.consultantName.trim().length > 0 ? body.consultantName.trim() : null);
+
+    const bodyConsultantRole =
+      (typeof body.consultant_role === "string" && body.consultant_role.trim().length > 0 ? body.consultant_role.trim() : null) ||
+      (typeof body.consultantRole === "string" && body.consultantRole.trim().length > 0 ? body.consultantRole.trim() : null);
+
+    const effectiveConsultantName = isWidgetSource
+      ? (widgetConsultantName || bodyConsultantName || (agent.consultant_name && agent.consultant_name.trim().length > 0 ? agent.consultant_name.trim() : null) || (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) || agent.name || "Консультант")
+      : (bodyConsultantName || (agent.consultant_name && agent.consultant_name.trim().length > 0 ? agent.consultant_name.trim() : null) || (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) || agent.name || "Консультант");
+
+    const effectiveConsultantRole = isWidgetSource
+      ? (widgetConsultantRole || bodyConsultantRole || (agent.consultant_role && agent.consultant_role.trim().length > 0 ? agent.consultant_role.trim() : null) || (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) || "Онлайн-консультант")
+      : (bodyConsultantRole || (agent.consultant_role && agent.consultant_role.trim().length > 0 ? agent.consultant_role.trim() : null) || (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) || "онлайн-помощник");
 
     const effectiveBusinessNiche =
       (wc.businessNiche && wc.businessNiche.trim().length > 0 ? wc.businessNiche.trim() : null) ||

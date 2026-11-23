@@ -94,6 +94,16 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
     );
   }, [bot]);
 
+  const isWidgetSource = useMemo(() => {
+    const wc = (bot.wizard_config ?? {}) as Record<string, unknown>;
+    return Boolean(
+      bot.consultant_source === "chat_widget" ||
+      bot.consultantSource === "chat_widget" ||
+      wc.consultant_source === "chat_widget" ||
+      wc.consultantSource === "chat_widget",
+    );
+  }, [bot]);
+
   const effectiveVariables = useMemo(() => {
     const fromApi = previewData?.variables ?? {};
     const wc = (bot.wizard_config ?? {}) as Record<string, string | undefined>;
@@ -106,20 +116,27 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       fromApi["tenant.name"] ||
       tenantName;
 
-    const effectiveConsultant =
-      (bot.consultant_name && bot.consultant_name.trim().length > 0 ? bot.consultant_name.trim() : null) ||
-      (bot.consultantName && bot.consultantName.trim().length > 0 ? bot.consultantName.trim() : null) ||
-      (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) ||
-      fromApi["consultant.name"] ||
-      bot.name ||
-      "Консультант";
+    const effectiveConsultant = isWidgetSource
+      ? (fromApi["consultant.name"] ||
+         (bot.consultant_name && bot.consultant_name.trim().length > 0 ? bot.consultant_name.trim() : null) ||
+         bot.name ||
+         "Консультант")
+      : ((bot.consultant_name && bot.consultant_name.trim().length > 0 ? bot.consultant_name.trim() : null) ||
+         (bot.consultantName && bot.consultantName.trim().length > 0 ? bot.consultantName.trim() : null) ||
+         (wc.consultantName && wc.consultantName.trim().length > 0 ? wc.consultantName.trim() : null) ||
+         fromApi["consultant.name"] ||
+         bot.name ||
+         "Консультант");
 
-    const effectiveRole =
-      (bot.consultant_role && bot.consultant_role.trim().length > 0 ? bot.consultant_role.trim() : null) ||
-      (bot.consultantRole && bot.consultantRole.trim().length > 0 ? bot.consultantRole.trim() : null) ||
-      (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) ||
-      fromApi["consultant.role"] ||
-      "онлайн-помощник";
+    const effectiveRole = isWidgetSource
+      ? (fromApi["consultant.role"] ||
+         (bot.consultant_role && bot.consultant_role.trim().length > 0 ? bot.consultant_role.trim() : null) ||
+         "онлайн-помощник")
+      : ((bot.consultant_role && bot.consultant_role.trim().length > 0 ? bot.consultant_role.trim() : null) ||
+         (bot.consultantRole && bot.consultantRole.trim().length > 0 ? bot.consultantRole.trim() : null) ||
+         (wc.consultantRole && wc.consultantRole.trim().length > 0 ? wc.consultantRole.trim() : null) ||
+         fromApi["consultant.role"] ||
+         "онлайн-помощник");
 
     const effectiveNiche =
       (wc.businessNiche && wc.businessNiche.trim().length > 0 ? wc.businessNiche.trim() : null) ||
@@ -505,22 +522,39 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                         </code>
                         <span className="text-xs font-medium text-[#111111]">Имя консультанта</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => copyVariableValue("consultant.name", effectiveVariables["consultant.name"])}
-                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
-                        title="Скопировать"
-                      >
-                        {copiedKey === "consultant.name" ? (
-                          <Check className="h-3.5 w-3.5 text-emerald-600" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "rounded-[4px] border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                            isWidgetSource
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : "border-[#e5e5e5] bg-white text-[#666666]",
+                          )}
+                        >
+                          {isWidgetSource ? "Из настроек онлайн-чата" : "Указано вручную"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyVariableValue("consultant.name", effectiveVariables["consultant.name"])}
+                          className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                          title="Скопировать"
+                        >
+                          {copiedKey === "consultant.name" ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </div>
-                    <div className="text-[13px] text-[#111111] break-words">
+                    <div className="text-[13px] font-medium text-[#111111] break-words">
                       {effectiveVariables["consultant.name"]}
                     </div>
+                    <p className="mt-1 text-[11px] text-[#888888]">
+                      {isWidgetSource
+                        ? "Подставляется динамически из настроек подключенного виджета онлайн-чата."
+                        : "Задано в настройках бота («Имя консультанта»)."}
+                    </p>
                   </div>
 
                   {/* Роль консультанта */}
@@ -532,22 +566,39 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                         </code>
                         <span className="text-xs font-medium text-[#111111]">Должность / роль</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => copyVariableValue("consultant.role", effectiveVariables["consultant.role"])}
-                        className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
-                        title="Скопировать"
-                      >
-                        {copiedKey === "consultant.role" ? (
-                          <Check className="h-3.5 w-3.5 text-emerald-600" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "rounded-[4px] border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                            isWidgetSource
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : "border-[#e5e5e5] bg-white text-[#666666]",
+                          )}
+                        >
+                          {isWidgetSource ? "Из настроек онлайн-чата" : "Указано вручную"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyVariableValue("consultant.role", effectiveVariables["consultant.role"])}
+                          className="rounded-[4px] p-1 text-[#666666] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                          title="Скопировать"
+                        >
+                          {copiedKey === "consultant.role" ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </div>
-                    <div className="text-[13px] text-[#111111] break-words">
+                    <div className="text-[13px] font-medium text-[#111111] break-words">
                       {effectiveVariables["consultant.role"]}
                     </div>
+                    <p className="mt-1 text-[11px] text-[#888888]">
+                      {isWidgetSource
+                        ? "Подставляется динамически из настроек подключенного виджета онлайн-чата."
+                        : "Задано в настройках бота («Должность консультанта»)."}
+                    </p>
                   </div>
 
                   {/* Продукт / Ниша */}

@@ -513,6 +513,22 @@ export class AiService {
                     company_name_override: companyOverride ?? undefined,
                   }
                 : {}),
+              ...(consultantSource !== undefined
+                ? {
+                    consultantSource,
+                    consultant_source: consultantSource,
+                  }
+                : {}),
+              ...(consultantName !== undefined
+                ? {
+                    consultantName: consultantName ?? undefined,
+                  }
+                : {}),
+              ...(consultantRole !== undefined
+                ? {
+                    consultantRole: consultantRole ?? undefined,
+                  }
+                : {}),
             }
           : null)
       : undefined;
@@ -782,9 +798,36 @@ export class AiService {
     const clientProfile = payload.client_profile || payload.clientProfile || "";
     const targetAction = payload.target_action || payload.targetAction || "";
     const constraints = payload.constraints || "";
-    const consultantName = payload.consultant_name || payload.consultantName || "";
-    const consultantRole = payload.consultant_role || payload.consultantRole || "";
+    let consultantName = payload.consultant_name || payload.consultantName || "";
+    let consultantRole = payload.consultant_role || payload.consultantRole || "";
     const handoffSpecialist = payload.handoff_specialist || payload.handoffSpecialist || "";
+
+    if (tenantId && (!consultantName || !consultantRole)) {
+      try {
+        const webchatAcc = await queryOne<{ label: string; credentials: Record<string, unknown> }>(
+          `SELECT label, credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'webchat' AND deleted_at IS NULL
+           ORDER BY CASE WHEN status = 'connected' THEN 0 ELSE 1 END, created_at ASC
+           LIMIT 1`,
+          [tenantId],
+        );
+        if (webchatAcc?.credentials && typeof webchatAcc.credentials === "object") {
+          const creds = webchatAcc.credentials;
+          if (!consultantName && typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0) {
+            consultantName = creds.consultantName.trim();
+          } else if (!consultantName && typeof creds.botName === "string" && creds.botName.trim().length > 0) {
+            consultantName = creds.botName.trim();
+          }
+          if (!consultantRole && typeof creds.consultantRole === "string" && creds.consultantRole.trim().length > 0) {
+            consultantRole = creds.consultantRole.trim();
+          } else if (!consultantRole && typeof creds.title === "string" && creds.title.trim().length > 0) {
+            consultantRole = creds.title.trim();
+          }
+        }
+      } catch {
+        // Игнорируем ошибку получения аккаунта чата
+      }
+    }
 
     const userPromptContent = `
 ПРОАНАЛИЗИРУЙ КОНТЕКСТ КОМПАНИИ И ВЕБ-СТРАНИЦУ (ЕСЛИ ЕСТЬ):
@@ -837,7 +880,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
         const resolvedClient = parsedJson.clientProfile || clientProfile || "Клиенты, заинтересованные в услугах компании";
         const resolvedAction = parsedJson.targetAction || targetAction || "Квалификация потребности и согласование экспертной консультации с запросом номера телефона";
         const resolvedConstraints = parsedJson.constraints || constraints || "Не называть вымышленные цены, строго опираться на базу знаний компании, не давать необоснованных гарантий.";
-        const resolvedName = parsedJson.consultantName || consultantName || "Алексей";
+        const resolvedName = parsedJson.consultantName || consultantName || "Консультант";
         const resolvedRole = parsedJson.consultantRole || consultantRole || "ведущий эксперт";
         const resolvedHandoff = parsedJson.handoffSpecialist || handoffSpecialist || "руководитель профильного направления";
 
@@ -887,7 +930,7 @@ URL целевой страницы: ${rawUrl || "Не указан"}
 
     // Детерминированный fallback по стандарту <director_system_prompt>
     const resolvedNiche = businessNiche || (scrapedTitle ? `Услуги в сфере ${scrapedTitle}` : "Продажи и экспертное обслуживание клиентов");
-    const resolvedName = consultantName || "Алексей";
+    const resolvedName = consultantName || "Консультант";
     const resolvedRole = consultantRole || "ведущий консультант";
     const resolvedAction = targetAction || "Квалификация запроса, выявление потребности и запрос номера телефона для детального разбора со специалистом";
     const resolvedConstraints = constraints || "Строго опираться на факты компании, не называть точные цены без базы знаний, не обещать невыполнимого.";
