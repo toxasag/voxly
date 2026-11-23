@@ -1009,3 +1009,25 @@
   - `next build` и `tsc`: 0 ошибок ✅
   - Боевой деплой `/usr/local/bin/vf-deploy GETVOXLY`: успешен (backend & frontend healthy, HTTP 200).
   - GitHub: ветки `master` и `vf/1-rol-senior-full` обновлены.
+
+---
+
+### 23.11.2026 — Реализация типинг-эффекта печати текста и контроллера настроек в веб-чате GETVOXLY
+- **Контекст и задача:**
+  - Реализация посимвольного появления сообщений бота с мигающим курсором (typing effect) в виджете онлайн-чата.
+  - Добавление переключателя «Типинг-эффект ON/OFF» (`typingEffectEnabled` в `localStorage`), обновляющего UI динамически без перезагрузки страницы (синхронизация через `voxly:typing-effect-changed` и `storage` event).
+  - Поддержка русской и английской локализации (i18n).
+  - Соответствие стандартам доступности (WCAG 2.2 Level AA): `role="status"`, `aria-live="polite"`, `aria-label="typing effect"`, `aria-hidden="true"` для курсора.
+  - Сохранение публичных API-контрактов без изменений.
+- **Что создано и обновлено:**
+  1. `frontend/src/types/widget.d.ts`: типы `ChatMessage`, `TypingEffectConfig`, `ChatWidgetProps`, `WidgetSettingsProps`, `WidgetLanguage`.
+  2. `frontend/src/components/widgets/WidgetSettings.tsx`: контроллер настроек с переключателем `Switch` (Twenty CRM Light Canvas), синхронизацией с `localStorage` и событием `voxly:typing-effect-changed`.
+  3. `frontend/src/components/widgets/ChatWidget.tsx`: интерактивный виджет чата с посимвольной печатью `typeWriter`, мигающим курсором, `role="status"`, `aria-live="polite"`, `aria-label="typing effect"`, защитой от гонок через `completedMessageIdsRef`.
+  4. `frontend/src/app/widget/page.tsx`: интерактивный маршрут `/widget` (`https://getvoxly.ru/widget`) для живого тестирования и верификации виджета и настроек.
+  5. `frontend/src/components/integrations/WebchatAppearanceSettings.tsx`: интеграция переключателя типинг-эффекта в настройки внешнего вида чата в дашборде и анимирование Live Preview.
+  6. `frontend/public/widget.js` & `backend/src/modules/channels/widget-script.ts`: поддержка посимвольной печати входящих сообщений бота и мигающего курсора в автономном клиентском скрипте виджета.
+  7. `frontend/__tests__/ChatWidget.typing.test.tsx`: 8 юнит-тестов (все 8 успешно пройдены за 195мс).
+- **Верификация:**
+  - `vitest run __tests__/ChatWidget.typing.test.tsx`: 8/8 passed ✅
+  - `tsc --noEmit` (frontend & backend): 0 ошибок ✅
+  - `next build`: static page `/widget` сгенерирована успешно ✅
