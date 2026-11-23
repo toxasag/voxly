@@ -1132,6 +1132,148 @@ export class InvoicesService {
     });
   }
 
+  async bulkUpdate(
+    tenant: string,
+    p: {
+      ids: string[];
+      status?: "draft" | "sent" | "overdue" | "cancelled";
+      due_date?: string;
+      notes?: string;
+    },
+  ): Promise<{ updated: number; skippedPaid: number; ids: string[] }> {
+    const sets: string[] = [];
+    const baseParams: (string | string[])[] = [tenant];
+    const push = (col: string, val: string): void => {
+      baseParams.push(val);
+      sets.push(`${col} = $${baseParams.length}`);
+    };
+
+    if (p.status !== undefined) push("status", p.status);
+    if (p.due_date !== undefined) push("due_date", p.due_date);
+    if (p.notes !== undefined) push("notes", p.notes);
+
+    if (sets.length === 0) {
+      throw new ValidationError("Укажите хотя бы одно поле для массового редактирования");
+    }
+
+    return withTenant(tenant, async (tx) => {
+      const rows = await tx.query<{ id: string; status: string }>(
+        `SELECT id, status
+         FROM invoices
+         WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
+         FOR UPDATE`,
+        [tenant, p.ids],
+      );
+
+      if (rows.length === 0) {
+        throw new NotFoundError("Счета не найдены");
+      }
+
+      const editableIds = rows.filter((r) => r.status !== "paid").map((r) => r.id);
+      const skippedPaid = rows.length - editableIds.length;
+
+      if (editableIds.length === 0) {
+        throw new AppError(
+          409,
+          "INVOICE_PAID_READONLY",
+          "Оплаченные счета нельзя редактировать",
+        );
+      }
+
+      const idsParamIndex = baseParams.length + 1;
+      await tx.query(
+        `UPDATE invoices
+         SET ${sets.join(", ")}, updated_at = now()
+         WHERE tenant_id = $1 AND id = ANY($${idsParamIndex}) AND deleted_at IS NULL`,
+        [...baseParams, editableIds],
+      );
+
+      return { updated: editableIds.length, skippedPaid, ids: editableIds };
+    });
+  }
+
+  async bulkRemove(
+    tenant: string,
+    ids: string[],
+  ): Promise<{ deleted: number; skippedPaid: number; ids: string[] }> {
+    return withTenant(tenant, async (tx) => {
+      const rows = await tx.query<{ id: string; status: string; repair_order_id: string | null }>(
+        `SELECT id, status, repair_order_id
+         FROM invoices
+         WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
+         FOR UPDATE`,
+        [tenant, ids],
+      );
+
+      if (rows.length === 0) {
+        throw new NotFoundError("Счета не найдены");
+      }
+
+      const deletable = rows.filter((r) => r.status !== "paid");
+      const skippedPaid = rows.length - deletable.length;
+
+      if (deletable.length === 0) {
+        throw new AppError(
+          409,
+          "INVOICE_PAID_DELETE_FORBIDDEN",
+          "Оплаченные счета нельзя удалить",
+        );
+      }
+
+      const deletableIds = deletable.map((r) => r.id);
+
+      const linkedRows = await tx.query<{ repair_order_id: string }>(
+        `SELECT repair_order_id
+         FROM invoice_repair_orders
+         WHERE tenant_id = $1 AND invoice_id = ANY($2)`,
+        [tenant, deletableIds],
+      );
+
+      const linkedOrderIds = new Set<string>(linkedRows.map((r) => r.repair_order_id));
+      for (const row of deletable) {
+        if (row.repair_order_id) {
+          linkedOrderIds.add(row.repair_order_id);
+        }
+      }
+
+      await tx.query(
+        `UPDATE invoices
+         SET deleted_at = now(), updated_at = now()
+         WHERE tenant_id = $1 AND id = ANY($2)`,
+        [tenant, deletableIds],
+      );
+
+      await tx.query(
+        `DELETE FROM invoice_repair_orders
+         WHERE tenant_id = $1 AND invoice_id = ANY($2)`,
+        [tenant, deletableIds],
+      );
+
+      for (const orderId of linkedOrderIds) {
+        const remaining = await tx.queryOne<{ cnt: string }>(
+          `SELECT COUNT(*)::text AS cnt
+           FROM invoices i
+           LEFT JOIN invoice_repair_orders iro ON iro.invoice_id = i.id AND iro.tenant_id = i.tenant_id
+           WHERE i.tenant_id = $1
+             AND i.deleted_at IS NULL
+             AND i.status <> 'cancelled'
+             AND (i.repair_order_id = $2 OR iro.repair_order_id = $2)`,
+          [tenant, orderId],
+        );
+        if (Number(remaining?.cnt ?? 0) === 0) {
+          await tx.query(
+            `UPDATE repair_orders
+             SET payment_status = 'unpaid', updated_at = now()
+             WHERE tenant_id = $1 AND id = $2 AND payment_status = 'invoiced'`,
+            [tenant, orderId],
+          );
+        }
+      }
+
+      return { deleted: deletableIds.length, skippedPaid, ids: deletableIds };
+    });
+  }
+
   async markPaid(
     tenant: string,
     _user: string,

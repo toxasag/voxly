@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { InvoicesService } from "./invoices.service.js";
 import {
+  bulkDeleteInvoicesSchema,
+  bulkUpdateInvoicesSchema,
   createInvoiceFromActsSchema,
   createInvoiceSchema,
   markInvoicePaidSchema,
@@ -73,6 +75,16 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
   app.post("/from-repairs", { onRequest: write }, async (r, rep) => {
     const body = createInvoiceFromActsSchema.parse(r.body);
     return rep.status(201).send({ data: await s.fromRepairOrders(r.tenant_id, r.authUser.id, body) });
+  });
+
+  app.post("/bulk-update", { onRequest: write }, async (r, rep) => {
+    const body = bulkUpdateInvoicesSchema.parse(r.body);
+    return rep.send({ data: await s.bulkUpdate(r.tenant_id, body) });
+  });
+
+  app.post("/bulk-delete", { onRequest: write }, async (r, rep) => {
+    const { ids } = bulkDeleteInvoicesSchema.parse(r.body);
+    return rep.send({ data: await s.bulkRemove(r.tenant_id, ids) });
   });
 
   app.patch("/:id", { onRequest: write }, async (r, rep) => {
