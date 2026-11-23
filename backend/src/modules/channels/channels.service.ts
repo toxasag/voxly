@@ -508,6 +508,23 @@ export class ChannelsService {
       });
     }
 
+    if (payload.credentials && typeof payload.credentials.token === "string" && payload.credentials.token.trim()) {
+      const newToken = payload.credentials.token.trim();
+      await withTenant(tenantId, async (tx) => {
+        await tx.query(
+          `UPDATE bots SET token = $1, updated_at = now() WHERE tenant_id = $2 AND channel_account_id = $3`,
+          [newToken, tenantId, id],
+        ).catch(() => null);
+      });
+      if (channel === "telegram_bot") {
+        const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+        const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${id}`;
+        const { TelegramBotService } = await import("./telegram-bot.service.js");
+        const tgService = new TelegramBotService();
+        void tgService.setWebhook(newToken, webhookUrl).catch(() => false);
+      }
+    }
+
     const bound = await queryOne<{ agent_id: string; name: string }>(
       `SELECT a.id AS agent_id, a.name
        FROM ai_agent_channel_bindings b
