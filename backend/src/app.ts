@@ -55,6 +55,7 @@ import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
 import stageRulesRoutes from "./modules/crm/deals/stage-rules.routes.js";
 import { leadsRoutes } from "./modules/crm/leads/leads.routes.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
+import { recordHttpUserAction } from "./lib/audit-log.service.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import { getRedisHealth } from "./infrastructure/redis.js";
@@ -242,6 +243,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       },
       "HTTP request completed",
     );
+    recordHttpUserAction(request, reply);
   });
 
   // Opens an AsyncLocalStorage scope for the whole request, which the

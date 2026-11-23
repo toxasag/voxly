@@ -476,6 +476,29 @@ async function request<T>(
   const parsed: unknown = await res.json().catch(() => null);
 
   if (typeof parsed !== "object" || parsed === null || !("data" in parsed)) {
+    if (
+      typeof window !== "undefined" &&
+      !path.includes("/audit-log/client-error")
+    ) {
+      const token = readAccessToken();
+      if (token) {
+        void fetch(buildUrl("/api/v1/tenant/audit-log/client-error"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            code: "MALFORMED_RESPONSE",
+            message: "Unexpected response shape from API",
+            method,
+            url: path,
+            statusCode: res.status,
+            page: window.location.pathname,
+          }),
+        }).catch(() => undefined);
+      }
+    }
     throw new ApiClientError(res.status, {
       error: { code: "MALFORMED_RESPONSE", message: "Unexpected response shape from API" },
     });

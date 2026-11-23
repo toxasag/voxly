@@ -409,12 +409,15 @@ export function useUpdateWarehouseItem() {
 export function useDeleteWarehouseItem() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.delete<{ success: boolean }>(`/api/v1/warehouse/items/${id}`);
+    mutationFn: async (arg: string | { id: string; force?: boolean }) => {
+      const id = typeof arg === "string" ? arg : arg.id;
+      const force = typeof arg === "string" ? false : Boolean(arg.force);
+      const url = force ? `/api/v1/warehouse/items/${id}?force=true` : `/api/v1/warehouse/items/${id}`;
+      const res = await apiClient.delete<{ success: boolean }>(url);
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
     },
   });
 }
@@ -622,9 +625,8 @@ export function useDeleteSupplierOrder() {
       return true;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
-      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
     },
   });
 }
@@ -877,7 +879,9 @@ export function useBulkUpdateWarehouseItems() {
 export function useBulkDeleteWarehouseItems() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: BulkDeleteWarehouseItemsPayload): Promise<{ deletedCount: number; errors?: string[] }> => {
+    mutationFn: async (
+      payload: BulkDeleteWarehouseItemsPayload & { force?: boolean },
+    ): Promise<{ deletedCount: number; errors?: string[] }> => {
       const res = await apiClient.post<{ deletedCount: number; errors?: string[] }>(
         "/api/v1/warehouse/items/bulk-delete",
         payload,
@@ -885,7 +889,7 @@ export function useBulkDeleteWarehouseItems() {
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
     },
   });
 }

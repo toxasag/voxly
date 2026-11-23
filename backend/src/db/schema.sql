@@ -991,6 +991,9 @@ CREATE TABLE IF NOT EXISTS tenant_audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_tenant_id ON tenant_audit_log(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_tenant_created ON tenant_audit_log(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_created_at ON tenant_audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_action ON tenant_audit_log(tenant_id, action);
 
 -- Журнал отключений модулей (миграция 0010). Без этой таблицы POST toggle
 -- на чистой установке падает: restore() читает её до любой вставки вкладок.

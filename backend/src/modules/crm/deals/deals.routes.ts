@@ -469,6 +469,10 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const { id } = idParamsSchema.parse(request.params);
     const { itemId } = z.object({ itemId: z.string().min(1) }).parse(request.params);
     const result = await service.deleteDealItem(request.tenant_id, id, itemId);
-    return reply.send({ success: true, totalBudget: result.totalBudget });
+    return reply.send({
+      data: { success: true, totalBudget: result.totalBudget },
+      success: true,
+      totalBudget: result.totalBudget,
+    });
   });
 }

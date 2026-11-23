@@ -92,7 +92,7 @@ export async function printTemplatesRoutes(app: FastifyInstance) {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     const result = await printTemplatesService.delete(tenant_id, id);
-    return reply.send(result);
+    return reply.send({ data: result, ...result });
   });
 
   // Получение шаблона по ID или слагу

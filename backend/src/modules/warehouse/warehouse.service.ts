@@ -724,8 +724,31 @@ export class WarehouseService {
     });
   }
 
-  async deleteItem(tenantId: string, itemId: string): Promise<boolean> {
+  async deleteItem(tenantId: string, itemId: string, force = false): Promise<boolean> {
     return withTenant(tenantId, async (tx) => {
+      if (force) {
+        const batches = await tx.query<{ id: string }>(
+          `SELECT id FROM warehouse_batches WHERE tenant_id = $1 AND item_id = $2`,
+          [tenantId, itemId],
+        );
+        if (batches.length > 0) {
+          await this.deleteBatchesInTx(
+            tx,
+            tenantId,
+            batches.map((b) => b.id),
+          );
+        }
+        // Дочищаем резервы и движения по товару, у которых batch_id = NULL
+        await tx.query(
+          `DELETE FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = $2`,
+          [tenantId, itemId],
+        );
+        await tx.query(
+          `DELETE FROM warehouse_movements WHERE tenant_id = $1 AND item_id = $2`,
+          [tenantId, itemId],
+        );
+      }
+
       const res = await tx.query(
         `UPDATE warehouse_items SET deleted_at = now()
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
@@ -3726,6 +3749,37 @@ export class WarehouseService {
     }
 
     return withTenant(tenantId, async (tx) => {
+      if (payload.force) {
+        const batches = await tx.query<{ id: string }>(
+          `SELECT id FROM warehouse_batches WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
+          [tenantId, payload.ids],
+        );
+        if (batches.length > 0) {
+          await this.deleteBatchesInTx(
+            tx,
+            tenantId,
+            batches.map((b) => b.id),
+          );
+        }
+        await tx.query(
+          `DELETE FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
+          [tenantId, payload.ids],
+        );
+        await tx.query(
+          `DELETE FROM warehouse_movements WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
+          [tenantId, payload.ids],
+        );
+
+        const res = await tx.query<{ id: string }>(
+          `UPDATE warehouse_items
+           SET deleted_at = now()
+           WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
+           RETURNING id`,
+          [tenantId, payload.ids],
+        );
+        return { deletedCount: res.length };
+      }
+
       const itemsWithStock = await tx.query<{ id: string; name: string; total_stock: string }>(
         `SELECT i.id, i.name, COALESCE(SUM(b.remaining_quantity), 0) AS total_stock
          FROM warehouse_items i
@@ -3741,10 +3795,11 @@ export class WarehouseService {
 
       let deletedCount = 0;
       if (deletableIds.length > 0) {
-        const res = await tx.query(
+        const res = await tx.query<{ id: string }>(
           `UPDATE warehouse_items
            SET deleted_at = now()
-           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
+           RETURNING id`,
           [tenantId, deletableIds],
         );
         deletedCount = res.length;

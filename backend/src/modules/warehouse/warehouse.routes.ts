@@ -182,12 +182,14 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: updated, ...updated });
   });
 
-  // Удаление номенклатуры
+  // Удаление номенклатуры (с поддержкой force=true для каскадной очистки партий, резервов и движений)
   app.delete("/items/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
-    const ok = await warehouseService.deleteItem(tenant_id, id);
-    return reply.send({ success: ok });
+    const { force } = (request.query as { force?: string }) ?? {};
+    const isForce = force === "true" || force === "1";
+    const ok = await warehouseService.deleteItem(tenant_id, id, isForce);
+    return reply.send({ data: { success: ok, id }, success: ok });
   });
 
   // Справочник категорий склада
@@ -499,7 +501,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     await warehouseService.deleteSupplierOrder(tenant_id, id);
-    return reply.send({ success: true });
+    return reply.send({ data: { success: true, id }, success: true });
   });
 
   app.post("/supplier-orders/bulk-delete", { onRequest: canWrite }, async (request, reply) => {

@@ -324,10 +324,18 @@ function WarehouseContent() {
 
   const handleBulkDelete = async () => {
     if (selectedItemIds.size === 0) return;
-    if (!confirm(`Удалить выбранные позиции (${selectedItemIds.size} шт.) из номенклатуры?`)) return;
+    const selectedItems = filteredItems.filter((i) => selectedItemIds.has(i.id));
+    const hasStockItems = selectedItems.some((i) => i.totalStock > 0 || i.reservedStock > 0);
+    const confirmText = hasStockItems
+      ? `Среди выбранных позиций (${selectedItemIds.size} шт.) есть товары с ненулевым остатком или резервом. При удалении все их партии, резервы и движения будут очищены, а остатки пересчитаны. Удалить принудительно?`
+      : `Удалить выбранные позиции (${selectedItemIds.size} шт.) из номенклатуры?`;
+    if (!confirm(confirmText)) return;
 
     try {
-      const res = await bulkDeleteMutation.mutateAsync({ ids: Array.from(selectedItemIds) });
+      const res = await bulkDeleteMutation.mutateAsync({
+        ids: Array.from(selectedItemIds),
+        force: hasStockItems,
+      });
       if (res.errors && res.errors.length > 0) {
         toast.warning(`Удалено ${res.deletedCount} позиций. Предупреждение: ${res.errors[0]}`);
       } else {
@@ -621,15 +629,24 @@ function WarehouseContent() {
   };
 
   const handleDeleteItem = async (item: WarehouseItemDTO) => {
-    if (item.totalStock > 0 || item.reservedStock > 0) {
-      toast.error(`Нельзя удалить товар с ненулевым остатком (в наличии: ${item.totalStock})`);
-      return;
-    }
-    if (!confirm(`Удалить товар «${item.name}» из номенклатуры?`)) return;
+    const hasStockOrReserve = item.totalStock > 0 || item.reservedStock > 0;
+    const confirmMsg = hasStockOrReserve
+      ? `У товара «${item.name}» есть остаток (${item.totalStock} ${item.unit}, в резерве: ${item.reservedStock}). При удалении будут очищены все его партии, резервы и движения, а остатки пересчитаны. Удалить принудительно?`
+      : `Удалить товар «${item.name}» из номенклатуры?`;
+    if (!confirm(confirmMsg)) return;
 
     try {
-      await deleteItemMutation.mutateAsync(item.id);
-      toast.success(`Товар «${item.name}» удален`);
+      await deleteItemMutation.mutateAsync({ id: item.id, force: hasStockOrReserve });
+      toast.success(
+        hasStockOrReserve
+          ? `Товар «${item.name}» и связанные партии/резервы удалены`
+          : `Товар «${item.name}» удален`,
+      );
+      setSelectedItemIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Ошибка при удалении товара");
     }

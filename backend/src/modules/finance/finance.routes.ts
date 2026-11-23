@@ -74,7 +74,7 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
   app.post("/transactions/bulk-delete", { onRequest: write }, async (req, reply) => {
     const { ids } = bulkTransactionsSchema.parse(req.body);
     const result = await service.bulkDeleteTransactions(req.tenant_id, ids);
-    return reply.send({ success: true, count: result.count });
+    return reply.send({ data: { success: true, count: result.count }, success: true, count: result.count });
   });
   app.post("/transactions/bulk-duplicate", { onRequest: write }, async (req, reply) => {
     const { ids } = bulkTransactionsSchema.parse(req.body);
@@ -90,7 +90,7 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
   app.delete("/transactions/:id", { onRequest: write }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const result = await service.bulkDeleteTransactions(req.tenant_id, [id]);
-    return reply.send({ success: true, count: result.count });
+    return reply.send({ data: { success: true, count: result.count }, success: true, count: result.count });
   });
   app.get("/counterparties", { onRequest: read }, async (req, reply) => {
     const q = z.object({
@@ -123,7 +123,7 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
   app.delete("/categories/:id", { onRequest: write }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const success = await service.deleteCategory(req.tenant_id, id);
-    return reply.send({ success });
+    return reply.send({ data: { success }, success });
   });
   app.get("/pnl", { onRequest: read }, async (req, reply) => {
     const p = pnlQuerySchema.parse(req.query);

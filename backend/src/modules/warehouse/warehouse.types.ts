@@ -579,6 +579,7 @@ export type BulkUpdateWarehouseItemsPayload = z.infer<typeof bulkUpdateWarehouse
 
 export const bulkDeleteWarehouseItemsSchema = z.object({
   ids: z.array(z.string().uuid()).min(1, "Select at least 1 item"),
+  force: z.boolean().optional().default(false),
 });
 export type BulkDeleteWarehouseItemsPayload = z.infer<typeof bulkDeleteWarehouseItemsSchema>;
 
