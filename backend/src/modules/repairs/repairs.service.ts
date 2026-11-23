@@ -1583,14 +1583,6 @@ export class RepairsService {
         throw new InvalidStatusTransitionError(from, to);
       }
 
-      // Diagnostics must exist before the quote can go to the customer.
-      const hasStoredDiagnostics = current.diagnostics !== null;
-      if (to === "approval" && payload.diagnostics === undefined && !hasStoredDiagnostics) {
-        throw new ValidationError("Diagnostics are required before requesting approval", {
-          diagnostics: ["Provide findings and recommended_action"],
-        });
-      }
-
       const assignments: string[] = ["status = $3"];
       const params: SqlParam[] = [tenantId, id, to];
 
