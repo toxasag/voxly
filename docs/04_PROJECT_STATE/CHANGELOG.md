@@ -1,3 +1,18 @@
+### Added · Кнопка редактирования услуг в справочнике (2026-11-23)
+
+- **Edit Service Button & Modal**: В диалоговом окне «Справочник услуг» (`ServiceCatalogDialog.tsx`), `ServiceItem.tsx` и странице `/services` добавлена кнопка «Редактировать» с модальным окном изменения наименования, цены, единиц измерения и описания услуги.
+- **Backend PUT Endpoint**: В `services.routes.ts` и `repairs.routes.ts` зарегистрирован метод `PUT /api/services/:id` и `PUT /catalog/services/:id` с валидацией входных данных и обновлением каталога.
+- **Client Cache Synchronization**: Хук `useUpdateService` вызывает `PUT /api/services/:id` и автоматически инвалидирует кеши справочников для синхронного обновления карточек и нарядов.
+- **Components & Routing**: Созданы компоненты `ServiceItem`, `ServiceList`, `EditServiceModal`, shadcn-совместимый `Button`, а также страница `app/(dashboard)/services/page.tsx` с роутом `/services`.
+
+### Added · Склад и наряды на ремонт: статус резерва и закупки (2026-11-23)
+
+- **Warehouse Items Status**: В `GET /api/v1/warehouse/items` добавлены поля `reserved`, `status` и `stockStatus` (`"reserved" | "in_stock" | "out_of_stock"`).
+- **Bulk Purchase Requests**: Добавлен эндпоинт `POST /api/v1/purchase-requests` с поддержкой массива `itemIds` для создания заявок на закупку.
+- **Floating Action Bar**: На странице `/warehouse` добавлена кнопка «Сформировать заявку» для выбранных позиций со статусом резерва или дефицитом.
+- **Sorting in Warehouse**: Интерактивная сортировка таблицы склада по каждому из 9 заголовков с сохранением направления.
+- **PartsTable Out-of-Stock**: В таблице запчастей карточки ремонта `/repairs/[id]` добавлен бейдж «Нет в наличии» и действие «Отметить для заказа» / «В закупке».
+
 ### Added · Security notifications — пароль изменён (2026-10-28)
 
 Добавлен брендированный `sendPasswordChangedEmail`. Уведомление отправляется
