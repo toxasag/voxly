@@ -46,7 +46,10 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
 
   /**
    * Публичный вебхук для получения сообщений от официального Telegram Bot API.
-   * Вызывается Telegram при входящих сообщениях и командах (/start).
+   * Вызывается Telegram при:
+   * - business_connection (привязка бота к аккаунту владельца в "Автоматизации чатов" / Telegram Business)
+   * - business_message / edited_business_message (сообщения в личных чатах аккаунта в режиме секретаря)
+   * - message / edited_message (прямые сообщения и команды /start боту)
    */
   app.post("/webhook/:id", async (request, reply) => {
     const { id } = accountParamsSchema.parse(request.params);
@@ -55,27 +58,18 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       return reply.status(200).send({ ok: true });
     }
 
-    const message = (update.message || update.edited_message) as Record<string, unknown> | undefined;
-    if (!message || typeof message !== "object") {
-      return reply.status(200).send({ ok: true });
-    }
-
-    const from = message.from as Record<string, unknown> | undefined;
-    if (!from || from.is_bot === true) {
-      return reply.status(200).send({ ok: true });
-    }
-
-    const chat = message.chat as Record<string, unknown> | undefined;
-    if (!chat || (chat.type !== "private" && chat.type !== undefined)) {
-      return reply.status(200).send({ ok: true });
-    }
-
     const account = await runWithPlatformScope(() =>
       queryOne<{
         id: string;
         tenant_id: string;
         status: string;
-        credentials: { token?: string } | null;
+        credentials: {
+          token?: string;
+          business_connection_id?: string;
+          business_user_id?: string;
+          business_username?: string;
+          [key: string]: unknown;
+        } | null;
         label: string;
         external_id: string;
       }>(
@@ -92,8 +86,80 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     }
 
     const tenantId = account.tenant_id;
+
+    // 1. Событие подключения Telegram Business Chatbot ("Автоматизация чатов")
+    const businessConnection = update.business_connection as Record<string, unknown> | undefined;
+    if (businessConnection && typeof businessConnection === "object") {
+      const connId = String(businessConnection.id);
+      const user = businessConnection.user as Record<string, unknown> | undefined;
+      const userId = user?.id ? String(user.id) : undefined;
+      const username = typeof user?.username === "string" ? user.username.replace(/^@/, "").trim() : undefined;
+      const canReply = Boolean(businessConnection.can_reply);
+      const isEnabled = Boolean(businessConnection.is_enabled);
+
+      request.log.info(
+        { accountId: id, connId, userId, username, canReply, isEnabled },
+        "Telegram Bot business_connection update received",
+      );
+
+      await runWithPlatformScope(async () => {
+        const { query: dbQuery } = await import("../../db/client.js");
+        const creds = { ...(account.credentials || {}) };
+        creds.business_connection_id = connId;
+        if (userId) creds.business_user_id = userId;
+        if (username) creds.business_username = username;
+        creds.business_can_reply = canReply;
+        creds.business_is_enabled = isEnabled;
+        await dbQuery(
+          `UPDATE channel_accounts SET credentials = $1 WHERE id = $2`,
+          [JSON.stringify(creds), id],
+        );
+      });
+
+      return reply.status(200).send({ ok: true });
+    }
+
+    // 2. Определение сообщения: business_message (режим секретаря) или обычное message боту
+    const isBusiness = Boolean(update.business_message || update.edited_business_message);
+    const message = (
+      update.business_message ||
+      update.edited_business_message ||
+      update.message ||
+      update.edited_message
+    ) as Record<string, unknown> | undefined;
+
+    if (!message || typeof message !== "object") {
+      return reply.status(200).send({ ok: true });
+    }
+
+    const from = message.from as Record<string, unknown> | undefined;
+    if (!from || from.is_bot === true) {
+      return reply.status(200).send({ ok: true });
+    }
+
+    const chat = message.chat as Record<string, unknown> | undefined;
+    if (!chat || (chat.type !== "private" && chat.type !== undefined)) {
+      return reply.status(200).send({ ok: true });
+    }
+
     const chatId = String(chat.id);
     const senderId = String(from.id);
+    const businessConnectionId = isBusiness && typeof message.business_connection_id === "string"
+      ? message.business_connection_id
+      : (account.credentials?.business_connection_id as string | undefined);
+
+    // Если получили business_connection_id из входящего business_message, сохраняем в аккаунте
+    if (businessConnectionId && account.credentials?.business_connection_id !== businessConnectionId) {
+      void runWithPlatformScope(async () => {
+        const { query: dbQuery } = await import("../../db/client.js");
+        const creds = { ...(account.credentials || {}), business_connection_id: businessConnectionId };
+        await dbQuery(
+          `UPDATE channel_accounts SET credentials = $1 WHERE id = $2`,
+          [JSON.stringify(creds), id],
+        ).catch(() => null);
+      });
+    }
+
     const senderUsername = typeof from.username === "string" ? from.username.replace(/^@/, "").trim() : undefined;
     const firstName = typeof from.first_name === "string" ? from.first_name.trim() : "";
     const lastName = typeof from.last_name === "string" ? from.last_name.trim() : "";
@@ -103,6 +169,96 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     const externalMessageId = typeof message.message_id === "number" ? String(message.message_id) : undefined;
     const messageTimestamp = typeof message.date === "number" ? new Date(message.date * 1000) : new Date();
 
+    // 3. Проверка: отправлено ли сообщение оператором/владельцем аккаунта (исходящее оператора)
+    let isFromOperator = false;
+    if (isBusiness) {
+      const bizUserId = account.credentials?.business_user_id;
+      if (bizUserId && senderId === String(bizUserId)) {
+        isFromOperator = true;
+      } else {
+        const ownCheck = await runWithPlatformScope(() =>
+          queryOne<{ id: string }>(
+            `SELECT id FROM (
+               SELECT id::text FROM channel_accounts
+               WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+                 AND (
+                   (credentials->>'tgUserId' IS NOT NULL AND credentials->>'tgUserId' = $2)
+                   OR (credentials->>'business_user_id' IS NOT NULL AND credentials->>'business_user_id' = $2)
+                 )
+               UNION ALL
+               SELECT id::text FROM users
+               WHERE tenant_id = $1 AND deleted_at IS NULL
+                 AND telegram_chat_id IS NOT NULL AND telegram_chat_id::text = $2
+             ) own LIMIT 1`,
+            [tenantId, senderId],
+          ),
+        ).catch(() => null);
+        if (ownCheck) isFromOperator = true;
+      }
+    }
+
+    // 4. Обработка исходящих сообщений оператора в режиме секретаря:
+    // Первое сообщение с аккаунта НЕ создает контакт и сделку.
+    // AI агент НЕ должен отвечать на реплики оператора.
+    if (isFromOperator) {
+      request.log.info(
+        { accountId: id, chatId, senderId, text: rawText },
+        "Telegram Bot business message: operator outbound message received",
+      );
+
+      const existingDeal = await runWithTenantContext(tenantId, () =>
+        queryOne<{ id: string }>(
+          `SELECT d.id FROM deals d
+           LEFT JOIN contacts c ON d.client_id = c.id
+           WHERE d.tenant_id = $1 AND d.channel = 'telegram_bot' AND d.deleted_at IS NULL
+             AND (d.channel_thread_id = $2 OR c.telegram_chat_id = $2)
+           ORDER BY d.created_at DESC LIMIT 1`,
+          [tenantId, chatId],
+        ),
+      ).catch(() => null);
+
+      if (existingDeal) {
+        // Сделка уже существует — добавляем реплику оператора и ставим паузу AI (30 мин)
+        await runWithTenantContext(tenantId, async () => {
+          const { query: dbQuery } = await import("../../db/client.js");
+          await dbQuery(
+            `INSERT INTO deal_messages (tenant_id, deal_id, channel, sender_type, is_outbound, body, external_id, created_at)
+             VALUES ($1, $2, 'telegram_bot', 'operator', true, $3, $4, $5)`,
+            [tenantId, existingDeal.id, rawText || "(вложение)", externalMessageId || null, messageTimestamp],
+          );
+          await dbQuery(
+            `UPDATE deals SET ai_paused_until = now() + interval '30 minutes', updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+            [existingDeal.id, tenantId],
+          );
+        }).catch((err) => {
+          request.log.warn({ err, dealId: existingDeal.id }, "Failed to append operator business message to deal");
+        });
+      } else {
+        // Сделки нет — НЕ создаем контакт и сделку. Буферизуем реплику оператора в Redis,
+        // чтобы при входящем ответе клиента привязать ее к созданной сделке.
+        try {
+          const { getRedisClient, isRedisAvailable } = await import("../../infrastructure/redis.js");
+          const redis = isRedisAvailable() ? getRedisClient() : null;
+          if (redis) {
+            const bufferKey = `tg_biz_pending:${id}:${chatId}`;
+            const existingRaw = await redis.get(bufferKey);
+            const list = existingRaw ? (JSON.parse(existingRaw) as unknown[]) : [];
+            list.push({
+              text: rawText,
+              externalMessageId,
+              timestamp: messageTimestamp.toISOString(),
+            });
+            await redis.set(bufferKey, JSON.stringify(list), "EX", 86400 * 7);
+          }
+        } catch (err) {
+          request.log.warn({ err, chatId }, "Failed to buffer pending operator message in Redis");
+        }
+      }
+
+      return reply.status(200).send({ ok: true });
+    }
+
+    // 5. Входящее сообщение от клиента / собеседника:
     const contactObj = message.contact as Record<string, unknown> | undefined;
     let contactPhone: string | undefined = undefined;
     let contactName: string | undefined = undefined;
@@ -122,6 +278,7 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
         channel: "telegram_bot",
         channelAccountId: account.id,
         chatId,
+        chatThreadId: chatId,
         text: effectiveText,
         senderName: contactName || senderName,
         senderTelegramChatId: senderId,
@@ -147,6 +304,35 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     }
 
     if (crmResult.dealId) {
+      // Подтягиваем ранее буферизованные сообщения оператора из Redis
+      try {
+        const { getRedisClient, isRedisAvailable } = await import("../../infrastructure/redis.js");
+        const redis = isRedisAvailable() ? getRedisClient() : null;
+        if (redis) {
+          const bufferKey = `tg_biz_pending:${id}:${chatId}`;
+          const bufferedRaw = await redis.get(bufferKey);
+          if (bufferedRaw) {
+            const buffered = JSON.parse(bufferedRaw) as Array<{ text: string; externalMessageId?: string; timestamp: string }>;
+            if (buffered.length > 0) {
+              const { query: dbQuery } = await import("../../db/client.js");
+              await runWithTenantContext(tenantId, async () => {
+                for (const p of buffered) {
+                  await dbQuery(
+                    `INSERT INTO deal_messages (tenant_id, deal_id, channel, sender_type, is_outbound, body, external_id, created_at)
+                     VALUES ($1, $2, 'telegram_bot', 'operator', true, $3, $4, $5)`,
+                    [tenantId, crmResult.dealId!, p.text, p.externalMessageId || null, new Date(p.timestamp)],
+                  );
+                }
+              });
+              await redis.del(bufferKey);
+            }
+          }
+        }
+      } catch (bufErr) {
+        request.log.warn({ bufErr, dealId: crmResult.dealId }, "Failed to flush pending operator messages to deal");
+      }
+
+      // Проверка паузы AI бота
       const isPaused = await runWithTenantContext(tenantId, () =>
         queryOne<{ id: string }>(
           `SELECT id FROM deals WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now() LIMIT 1`,
@@ -180,7 +366,9 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
             );
 
             for (const msg of outcome.reply.messages) {
-              await service.sendMessage(account.credentials!.token!, chatId, msg);
+              await service.sendMessage(account.credentials!.token!, chatId, msg, {
+                business_connection_id: businessConnectionId,
+              });
             }
           }
         } catch (agentErr) {
