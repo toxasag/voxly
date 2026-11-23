@@ -1228,8 +1228,10 @@ export function CrmChatView({
           return true;
         }
 
-        // 2. Одинаковый текст и направление сообщения
+        // 2. Одинаковый текст и направление сообщения (неудавшаяся попытка никогда не должна скрывать успешно отправленное сообщение)
         if (
+          prev.deliveryStatus !== "failed" &&
+          msg.deliveryStatus !== "failed" &&
           prev.direction === msg.direction &&
           prev.content.trim() === trimmedContent
         ) {

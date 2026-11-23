@@ -172,17 +172,19 @@ export async function syncMaxDialogHistory(opts: {
   const bridge = new MaxBridgeService();
   const resp = await bridge.getPrivateDialogs({
     botId: opts.channelAccountId,
-    dialogLimit: 20,
+    dialogLimit: 80,
     messageLimit: 50,
   });
 
   if (!resp.ok || !Array.isArray(resp.dialogs)) return 0;
 
   const cleanPhone = opts.peerPhone ? opts.peerPhone.replace(/\D/g, "") : "";
+  const cleanPeerUserId = opts.peerUserId ? opts.peerUserId.trim() : "";
+  const cleanPeerId = opts.peerId ? opts.peerId.trim() : "";
   const target = resp.dialogs.find((d) => {
-    if (d.chatId === opts.peerId) return true;
-    if (opts.peerUserId && d.userId === opts.peerUserId) return true;
-    if (cleanPhone && d.phone && d.phone.replace(/\D/g, "").endsWith(cleanPhone.slice(-10))) return true;
+    if (cleanPeerId && (d.chatId === cleanPeerId || d.userId === cleanPeerId)) return true;
+    if (cleanPeerUserId && (d.userId === cleanPeerUserId || d.chatId === cleanPeerUserId)) return true;
+    if (cleanPhone.length >= 10 && d.phone && d.phone.replace(/\D/g, "").endsWith(cleanPhone.slice(-10))) return true;
     return false;
   });
 
@@ -191,8 +193,10 @@ export async function syncMaxDialogHistory(opts: {
   let insertedCount = 0;
   await runWithTenantContext(opts.tenantId, async () => {
     for (const msg of target.messages) {
-      const text = (msg.text || "").trim();
-      if (!text) continue;
+      const rawText = (msg.text || "").trim();
+      const msgAtts = Array.isArray(msg.attachments) ? msg.attachments : [];
+      const firstAtt = msgAtts[0];
+      if (!rawText && !(firstAtt && firstAtt.fileId)) continue;
 
       const rawDate: unknown = msg.date;
       let msgDate: Date;
@@ -212,8 +216,6 @@ export async function syncMaxDialogHistory(opts: {
 
       let attachmentUrl: string | null = null;
       let attachmentType: string | null = null;
-      const msgAtts = Array.isArray(msg.attachments) ? msg.attachments : [];
-      const firstAtt = msgAtts[0];
       if (firstAtt && firstAtt.fileId) {
         const stored = await resolveAndStoreMaxAttachment({
           tenantId: opts.tenantId,
@@ -229,6 +231,9 @@ export async function syncMaxDialogHistory(opts: {
         }
       }
 
+      const text = rawText || firstAtt?.fileName || "[Вложение]";
+      if (!text && !attachmentUrl) continue;
+
       const source = msg.out ? "manager" : "client";
       const direction = msg.out ? "outbound" : "inbound";
       const rawTargetName = target.firstName || opts.senderName || "Клиент MAX";
@@ -239,6 +244,7 @@ export async function syncMaxDialogHistory(opts: {
       const existing = await queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
+           AND delivery_status <> 'failed'
            AND (
              ($3::text IS NOT NULL AND metadata->>'external_message_id' = $3)
              OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)

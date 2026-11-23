@@ -681,3 +681,14 @@
   - `backend/src/modules/crm/enrichment.service.ts`: `enrichContact` выполняется внутри `runWithTenantContext(tenantId, ...)`, добавлен флаг `skipIfAlreadyChecked`, а `defaultMaxProvider` приоритизирует живые сессии `MaxBridgeService.getLiveBotIds()` и перебирает все подключённые MAX-аккаунты.
   - `backend/src/modules/repairs/repairs.service.ts` (`create`, `createBatch`) и `backend/src/modules/crm/deals/deals.service.ts` (`create`): после коммита транзакции запускают фоновое `CrmEnrichmentService.enrichContact(..., { dealId, skipIfAlreadyChecked: true })`.
   - Обогащение контакта `6b145b3e-cf77-458d-8c80-33aedf5f72a1` (сделка `a65dc0a4-...`) запущено и проверено вживую на проде.
+
+
+### 2026-11-23 — Синхронизация истории чата по всем подключённым аккаунтам MAX/Telegram/WhatsApp и защита от скрытия отправленных сообщений при дедупликации
+- **Root cause (кнопка «Синхронизировать» в карточке контакта `6b145b3e-...` / сделке `a65dc0a4-...` не подтягивала переписку MAX):**
+  1. `DealMessagingService.syncDealChatHistory` выбирал только ОДИН MAX-аккаунт (`LIMIT 1`), из-за чего переписка клиента (`chatId: 209608766`, 9 сообщений) на втором подключённом MAX-аккаунте (`79776282049`) вообще не опрашивалась.
+  2. `syncMaxDialogHistory` запрашивал лишь `dialogLimit: 20` и не использовал `userId` из `contacts.custom_fields.enrichment.channels.max.userId`, а также блокировал дедупликацией строки со статусом `delivery_status = 'failed'`.
+  3. В `CrmChatView.tsx` клиентская дедупликация по совпадению текста скрывала успешно отправленный повтор (`sent`), оставляя в окне чата только предыдущую сбойную попытку (`failed`).
+- **Исправлено:**
+  - `backend/src/modules/crm/deals/deal-messaging.service.ts`: `syncDealChatHistory` перебирает все подключённые аккаунты MAX, Telegram и WhatsApp с изоляцией ошибок по каждому аккаунту и передаёт `enrichedMaxUserId` и `max_chat_id`.
+  - `backend/src/modules/channels/max-integration.routes.ts`: `dialogLimit` увеличен до 80, добавлена поддержка медиасообщений без текста и исключены `delivery_status = 'failed'` из дедупликации.
+  - `frontend/src/components/crm/shared/CrmChatView.tsx`: сообщения со статусом `failed` исключены из текстовой дедупликации, чтобы не скрывать успешно доставленные сообщения.

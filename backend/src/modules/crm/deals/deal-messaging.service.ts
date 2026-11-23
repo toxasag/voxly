@@ -1065,22 +1065,23 @@ export class DealMessagingService {
 
     let totalSynced = 0;
 
-    // Синхронизация истории диалогов MAX
-    const maxAccount = await queryOne<{ id: string }>(
+    // Синхронизация истории диалогов по ВСЕМ подключённым аккаунтам MAX
+    const maxAccounts = await query<{ id: string }>(
       `SELECT id FROM channel_accounts
        WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-       LIMIT 1`,
+       ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    if (maxAccount) {
+    if (maxAccounts.length > 0) {
       const contact = await queryOne<{
         first_name: string;
-        last_name: string;
+        last_name: string | null;
         phone: string;
         socials?: ContactSocialJson[];
+        custom_fields?: Record<string, unknown> | null;
       }>(
-        `SELECT first_name, last_name, phone, socials FROM contacts
+        `SELECT first_name, last_name, phone, socials, custom_fields FROM contacts
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
         [tenantId, deal.contact_id],
       );
@@ -1088,31 +1089,50 @@ export class DealMessagingService {
       if (contact) {
         const { syncMaxDialogHistory } = await import("../../channels/max-integration.routes.js");
         const maxSocial = contact.socials?.find((s) => s.kind === "max")?.value;
-        const count = await syncMaxDialogHistory({
-          tenantId,
-          dealId,
-          channelAccountId: maxAccount.id,
-          peerId: maxSocial || contact.phone,
-          peerPhone: contact.phone,
-          peerUserId: maxSocial,
-          senderName: `${contact.first_name} ${contact.last_name}`.trim(),
-        });
-        totalSynced += count;
+        const cf = contact.custom_fields ?? {};
+        const maxChatId = typeof cf.max_chat_id === "string" ? cf.max_chat_id.trim() : "";
+        const enrichment = cf.enrichment as { channels?: { max?: { userId?: unknown } } } | undefined;
+        const enrichedMaxUserId =
+          typeof enrichment?.channels?.max?.userId === "string"
+            ? enrichment.channels.max.userId.trim()
+            : "";
+        const peerUserId = enrichedMaxUserId || maxSocial || undefined;
+        const senderName = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
+
+        for (const maxAccount of maxAccounts) {
+          try {
+            const count = await syncMaxDialogHistory({
+              tenantId,
+              dealId,
+              channelAccountId: maxAccount.id,
+              peerId: maxChatId || peerUserId || contact.phone,
+              peerPhone: contact.phone,
+              peerUserId,
+              senderName,
+            });
+            totalSynced += count;
+          } catch (err) {
+            this.log?.warn(
+              { err, dealId, channelAccountId: maxAccount.id },
+              "MAX history sync failed for account — continuing with remaining accounts",
+            );
+          }
+        }
       }
     }
 
-    // Синхронизация истории диалогов Telegram
-    const telegramAccount = await queryOne<{ id: string }>(
+    // Синхронизация истории диалогов по ВСЕМ подключённым аккаунтам Telegram
+    const telegramAccounts = await query<{ id: string }>(
       `SELECT id FROM channel_accounts
        WHERE tenant_id = $1 AND channel = 'telegram' AND status = 'connected' AND deleted_at IS NULL
-       LIMIT 1`,
+       ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    if (telegramAccount && deal.contact_id) {
+    if (telegramAccounts.length > 0 && deal.contact_id) {
       const contact = await queryOne<{
         first_name: string;
-        last_name: string;
+        last_name: string | null;
         phone: string;
         telegram_chat_id?: string | number | null;
         socials?: ContactSocialJson[];
@@ -1131,33 +1151,42 @@ export class DealMessagingService {
         if (peer) {
           const syncer = resolveTelegramHistorySyncer();
           if (syncer) {
-            const count = await syncer({
-              tenantId,
-              dealId,
-              channelAccountId: telegramAccount.id,
-              peerId: peer,
-              username: tgSocial ?? undefined,
-              phone: contact.phone ?? undefined,
-              limit: 50,
-            });
-            totalSynced += count;
+            for (const telegramAccount of telegramAccounts) {
+              try {
+                const count = await syncer({
+                  tenantId,
+                  dealId,
+                  channelAccountId: telegramAccount.id,
+                  peerId: peer,
+                  username: tgSocial ?? undefined,
+                  phone: contact.phone ?? undefined,
+                  limit: 50,
+                });
+                totalSynced += count;
+              } catch (err) {
+                this.log?.warn(
+                  { err, dealId, channelAccountId: telegramAccount.id },
+                  "Telegram history sync failed for account",
+                );
+              }
+            }
           }
         }
       }
     }
 
-    // Синхронизация истории диалогов WhatsApp
-    const whatsappAccount = await queryOne<{ id: string }>(
+    // Синхронизация истории диалогов по ВСЕМ подключённым аккаунтам WhatsApp
+    const whatsappAccounts = await query<{ id: string }>(
       `SELECT id FROM channel_accounts
        WHERE tenant_id = $1 AND channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL
-       LIMIT 1`,
+       ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    if (whatsappAccount && deal.contact_id) {
+    if (whatsappAccounts.length > 0 && deal.contact_id) {
       const contact = await queryOne<{
         first_name: string;
-        last_name: string;
+        last_name: string | null;
         phone: string;
       }>(
         `SELECT first_name, last_name, phone FROM contacts
@@ -1167,14 +1196,24 @@ export class DealMessagingService {
 
       if (contact && contact.phone) {
         const { syncWhatsappDialogHistory } = await import("../../channels/whatsapp-integration.routes.js");
-        const count = await syncWhatsappDialogHistory({
-          tenantId,
-          dealId,
-          channelAccountId: whatsappAccount.id,
-          phone: contact.phone,
-          senderName: `${contact.first_name} ${contact.last_name}`.trim(),
-        });
-        totalSynced += count;
+        const senderName = `${contact.first_name ?? ""} ${contact.last_name ?? ""}`.trim();
+        for (const whatsappAccount of whatsappAccounts) {
+          try {
+            const count = await syncWhatsappDialogHistory({
+              tenantId,
+              dealId,
+              channelAccountId: whatsappAccount.id,
+              phone: contact.phone,
+              senderName,
+            });
+            totalSynced += count;
+          } catch (err) {
+            this.log?.warn(
+              { err, dealId, channelAccountId: whatsappAccount.id },
+              "WhatsApp history sync failed for account",
+            );
+          }
+        }
       }
     }
 
