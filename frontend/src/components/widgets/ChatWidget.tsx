@@ -32,7 +32,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   botName,
   botAvatar,
   language = "ru",
-  typingSpeed = 25,
+  typingSpeed = 12,
   typingEffectEnabled: controlledEnabled,
   onSendMessage,
   className,
@@ -234,7 +234,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
 
       setMessages((prev) => [...prev, botMsg]);
       setIsSubmitting(false);
-    }, 450);
+    }, 225);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
