@@ -164,6 +164,7 @@ export interface ConversionEventPayload {
   contactId?: string | null;
   clientId?: string | null;
   ymUid?: string | null;
+  yclid?: string | null;
   yandexuid?: string | null;
   gaId?: string | null;
   fbId?: string | null;
@@ -172,10 +173,31 @@ export interface ConversionEventPayload {
   phone?: string | null;
   eventName: string;
   timestamp?: string;
+  createdAt?: Date | string | null;
   isTest?: boolean;
   jobId?: string | null;
   channelAccountId?: string | null;
   sourceUrl?: string | null;
+}
+
+export interface ConversionDeliveryAttemptDTO {
+  id: string;
+  tenantId: string;
+  dealId: string | null;
+  dealTitle: string | null;
+  provider: AnalyticsProvider | string;
+  eventKey: string;
+  eventName: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  lastStatus: number | null;
+  lastError: string | null;
+  responseSnippet: string | null;
+  isTest: boolean;
+  jobId: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ConversionResult {

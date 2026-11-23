@@ -139,6 +139,9 @@ export function CreateAccountModal({ open, onClose, onCreated }: CreateAccountMo
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#888888]">₽</span>
             </div>
+            <p className="text-[11px] text-[#888888]">
+              Если указать больше 0, автоматически создастся приходная операция «Начальный остаток».
+            </p>
           </div>
 
           {/* Default Switch */}

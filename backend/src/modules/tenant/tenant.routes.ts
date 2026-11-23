@@ -8,6 +8,7 @@ import { TenantService } from "./tenant.service.js";
 import { TeamService } from "./team.service.js";
 import { ensureTenantDefaults } from "./tenant-defaults.js";
 import { quotaService } from "../quotas/quota.service.js";
+import { recordClientErrorAction } from "../../lib/audit-log.service.js";
 
 /**
  * Tenant utility routes, mounted at /api/v1/tenant by app.ts.
@@ -423,5 +424,106 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
   app.post("/defaults", { onRequest: app.requirePermission("tenant:admin") }, async (request, reply) => {
     const result = await ensureTenantDefaults(request.tenant_id);
     return reply.send({ data: result });
+  });
+
+  // GET /tenant/audit-log — журнал действий пользователей и ошибок текущего тенанта
+  app.get("/audit-log", { onRequest: admin }, async (request, reply) => {
+    const q = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+        offset: z.coerce.number().int().min(0).default(0),
+        action: z.string().max(100).optional(),
+        errors_only: z.coerce.boolean().optional().default(false),
+        user_id: z.string().uuid().optional(),
+      })
+      .parse(request.query);
+
+    const conditions: string[] = ["l.tenant_id = $1"];
+    const params: (string | number)[] = [request.tenant_id];
+
+    if (q.action && q.action.trim()) {
+      params.push(`%${q.action.trim()}%`);
+      conditions.push(`l.action ILIKE $${params.length}`);
+    }
+    if (q.errors_only) {
+      conditions.push(`(l.action LIKE '%.error' OR l.action = 'client.api_error' OR COALESCE((l.details->>'statusCode')::int, 200) >= 400)`);
+    }
+    if (q.user_id) {
+      params.push(q.user_id);
+      conditions.push(`l.actor_user_id = $${params.length}`);
+    }
+
+    const where = `WHERE ${conditions.join(" AND ")}`;
+
+    const totalRow = await queryOne<{ total: string }>(
+      `SELECT count(*)::text AS total FROM tenant_audit_log l ${where}`,
+      params,
+    );
+
+    params.push(q.limit, q.offset);
+
+    const rows = await query<{
+      id: string;
+      actor_user_id: string | null;
+      actor_name: string | null;
+      actor_email: string | null;
+      action: string;
+      entity_type: string;
+      entity_id: string | null;
+      details: Record<string, unknown>;
+      created_at: Date | string;
+    }>(
+      `SELECT l.id, l.actor_user_id, u.name AS actor_name, u.email AS actor_email,
+              l.action, l.entity_type, l.entity_id, l.details, l.created_at
+       FROM tenant_audit_log l
+       LEFT JOIN users u ON u.id = l.actor_user_id
+       ${where}
+       ORDER BY l.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+
+    return reply.send({
+      data: rows.map((r) => ({
+        id: r.id,
+        actorUserId: r.actor_user_id,
+        actorName: r.actor_name,
+        actorEmail: r.actor_email,
+        action: r.action,
+        entityType: r.entity_type,
+        entityId: r.entity_id,
+        details: r.details,
+        createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+      })),
+      meta: { limit: q.limit, offset: q.offset, total: Number(totalRow?.total ?? 0) },
+    });
+  });
+
+  // POST /tenant/audit-log/client-error — фиксация клиентских ошибок API/парсинга в журнале тенанта
+  app.post("/audit-log/client-error", async (request, reply) => {
+    const body = z
+      .object({
+        code: z.string().min(1).max(100),
+        message: z.string().min(1).max(1000),
+        method: z.string().max(16).optional(),
+        url: z.string().max(500).optional(),
+        statusCode: z.number().int().optional(),
+        page: z.string().max(500).optional(),
+      })
+      .parse(request.body);
+
+    await recordClientErrorAction({
+      tenantId: request.tenant_id,
+      actorUserId: request.authUser?.id ?? null,
+      code: body.code,
+      message: body.message,
+      method: body.method,
+      url: body.url,
+      statusCode: body.statusCode,
+      page: body.page,
+      ip: request.ip,
+    });
+
+    return reply.status(201).send({ data: { logged: true } });
   });
 }

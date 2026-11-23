@@ -55,6 +55,7 @@ import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
 import stageRulesRoutes from "./modules/crm/deals/stage-rules.routes.js";
 import { leadsRoutes } from "./modules/crm/leads/leads.routes.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
+import { recordHttpUserAction } from "./lib/audit-log.service.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import { getRedisHealth } from "./infrastructure/redis.js";
@@ -242,6 +243,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       },
       "HTTP request completed",
     );
+    recordHttpUserAction(request, reply);
   });
 
   // Opens an AsyncLocalStorage scope for the whole request, which the
@@ -267,6 +269,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(crmRoutes, { prefix: "/api" });
   await app.register(leadsRoutes, { prefix: "/api/v1/leads" });
   await app.register(stageRulesRoutes, { prefix: "/api/v1/crm/stage-rules" });
+  await app.register(stageRulesRoutes, { prefix: "/crm/stage-rules" });
 
   // Service Center — additionally gated on the `service_center` module being
   // installed for the tenant (403 MODULE_NOT_INSTALLED otherwise).
@@ -284,6 +287,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
+  await app.register(storiesRoutes, { prefix: "/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
   await app.register(marketplaceRoutes, { prefix: "/api/marketplace" });
   await app.register(marketplaceRoutes, { prefix: "/api" });

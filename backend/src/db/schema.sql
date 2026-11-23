@@ -991,6 +991,9 @@ CREATE TABLE IF NOT EXISTS tenant_audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_tenant_id ON tenant_audit_log(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_tenant_created ON tenant_audit_log(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_created_at ON tenant_audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_log_action ON tenant_audit_log(tenant_id, action);
 
 -- Журнал отключений модулей (миграция 0010). Без этой таблицы POST toggle
 -- на чистой установке падает: restore() читает её до любой вставки вкладок.
@@ -1704,6 +1707,7 @@ CREATE TABLE IF NOT EXISTS warehouse_batches (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  supplier_order_id UUID NULL REFERENCES supplier_orders(id) ON DELETE SET NULL,
   batch_number TEXT NOT NULL DEFAULT '',
   supplier_name TEXT NOT NULL DEFAULT '',
   purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
@@ -1937,6 +1941,9 @@ CREATE TABLE IF NOT EXISTS deal_items (
   discount_percent NUMERIC NOT NULL DEFAULT 0,
   discount_amount NUMERIC NOT NULL DEFAULT 0,
   total_amount NUMERIC NOT NULL DEFAULT 0,
+  cost_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  cost_source TEXT NOT NULL DEFAULT 'manual',
+  consumed_at TIMESTAMPTZ NULL,
   sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -1964,6 +1971,29 @@ ALTER TABLE repair_part_batch_allocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE repair_part_batch_allocations FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON repair_part_batch_allocations;
 CREATE POLICY tenant_isolation ON repair_part_batch_allocations
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Привязка списания товаров сделки к конкретным складским партиям (FIFO)
+CREATE TABLE IF NOT EXISTS deal_item_batch_allocations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+  deal_item_id UUID NOT NULL REFERENCES deal_items(id) ON DELETE CASCADE,
+  warehouse_item_id UUID NULL REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  batch_id UUID NULL REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  quantity NUMERIC(10, 2) NOT NULL,
+  unit_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_diba_tenant_item ON deal_item_batch_allocations (tenant_id, deal_item_id);
+CREATE INDEX IF NOT EXISTS idx_diba_tenant_deal ON deal_item_batch_allocations (tenant_id, deal_id);
+CREATE INDEX IF NOT EXISTS idx_diba_tenant_batch ON deal_item_batch_allocations (tenant_id, batch_id) WHERE batch_id IS NOT NULL;
+ALTER TABLE deal_item_batch_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE deal_item_batch_allocations FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON deal_item_batch_allocations;
+CREATE POLICY tenant_isolation ON deal_item_batch_allocations
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
 

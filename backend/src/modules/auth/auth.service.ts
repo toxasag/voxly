@@ -3,6 +3,8 @@ import { randomInt, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
 import { hashToken } from "../../lib/crypto.utils.js";
 import { toDate } from "../../lib/date.utils.js";
+import { maskEmail, maskPhone } from "../../lib/mask.utils.js";
+export { maskEmail, maskPhone };
 import { query, queryOne, transaction, setRequestTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
@@ -171,22 +173,6 @@ export function activeUserPredicate(alias: string): string {
 /** Digits only, so `+7 999 123 45 67` and `+79991234567` resolve to one user. */
 function normalisePhone(phone: string): string {
   return phone.replace(/\D/g, "");
-}
-
-/** Маскирование телефона для безопасного логирования */
-export function maskPhone(phone: string): string {
-  const clean = phone.replace(/\s+/g, "");
-  return clean.length <= 5 ? "***" : `${clean.slice(0, 3)}***${clean.slice(-2)}`;
-}
-
-/** Маскирование email для безопасного логирования */
-export function maskEmail(email: string): string {
-  const parts = email.split("@");
-  if (parts.length !== 2) return "***";
-  const [local, domain] = parts;
-  if (!local || !domain) return "***";
-  const maskedLocal = local.length <= 2 ? `${local[0]}***` : `${local[0]}***${local[local.length - 1]}`;
-  return `${maskedLocal}@${domain}`;
 }
 
 /**

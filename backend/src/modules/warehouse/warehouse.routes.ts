@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { warehouseService } from "./warehouse.service.js";
 import {
+  bulkDeleteIdsSchema,
   bulkDeleteWarehouseItemsSchema,
   bulkUpdateWarehouseItemsSchema,
   createPurchaseRequestSchema,
@@ -16,7 +17,9 @@ import {
   receiptSupplierOrderSchema,
   updatePurchaseRequestSchema,
   updateSupplierOrderSchema,
+  updateWarehouseBatchSchema,
   updateWarehouseItemSchema,
+  updateWarehouseMovementSchema,
   updateWarehouseSettingsSchema,
   warehousePaginationQuerySchema,
 } from "./warehouse.types.js";
@@ -179,12 +182,14 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: updated, ...updated });
   });
 
-  // Удаление номенклатуры
+  // Удаление номенклатуры (с поддержкой force=true для каскадной очистки партий, резервов и движений)
   app.delete("/items/:id", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
-    const ok = await warehouseService.deleteItem(tenant_id, id);
-    return reply.send({ success: ok });
+    const { force } = (request.query as { force?: string }) ?? {};
+    const isForce = force === "true" || force === "1";
+    const ok = await warehouseService.deleteItem(tenant_id, id, isForce);
+    return reply.send({ data: { success: ok, id }, success: ok });
   });
 
   // Справочник категорий склада
@@ -325,6 +330,37 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: batches });
   });
 
+  // Редактирование партии
+  app.patch("/batches/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = updateWarehouseBatchSchema.parse(request.body);
+    const updated = await warehouseService.updateBatch(tenant_id, id, body);
+    if (!updated) {
+      return reply.status(404).send({ error: "Batch not found" });
+    }
+    return reply.send({ data: updated });
+  });
+
+  // Удаление партии с каскадной очисткой движений, резервов и аллокаций
+  app.delete("/batches/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const deleted = await warehouseService.deleteBatch(tenant_id, id);
+    if (!deleted) {
+      return reply.status(404).send({ error: "Batch not found" });
+    }
+    return reply.send({ data: { deleted: true, id } });
+  });
+
+  // Массовое удаление партий
+  app.post("/batches/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const body = bulkDeleteIdsSchema.parse(request.body);
+    const result = await warehouseService.bulkDeleteBatches(tenant_id, body.ids);
+    return reply.send({ data: result });
+  });
+
   // Журнал движений
   app.get("/movements", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
@@ -333,11 +369,46 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: movements });
   });
 
+  // Редактирование движения склада
+  app.patch("/movements/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const body = updateWarehouseMovementSchema.parse(request.body);
+    const updated = await warehouseService.updateMovement(tenant_id, id, body);
+    if (!updated) {
+      return reply.status(404).send({ error: "Movement not found" });
+    }
+    return reply.send({ data: updated });
+  });
+
+  // Удаление движения склада с откатом влияния на партии/резервы/аллокации
+  app.delete("/movements/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const { id } = request.params as { id: string };
+    const deleted = await warehouseService.deleteMovement(tenant_id, id);
+    if (!deleted) {
+      return reply.status(404).send({ error: "Movement not found" });
+    }
+    return reply.send({ data: { deleted: true, id } });
+  });
+
+  // Массовое удаление движений склада
+  app.post("/movements/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const body = bulkDeleteIdsSchema.parse(request.body);
+    const result = await warehouseService.bulkDeleteMovements(tenant_id, body.ids);
+    return reply.send({ data: result });
+  });
+
   // Список заявок на закупку (индивидуальные строки)
   app.get("/purchases", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { status, repair_order_id } = request.query as { status?: string; repair_order_id?: string };
-    const list = await warehouseService.listPurchaseRequests(tenant_id, status, repair_order_id);
+    const { status, repair_order_id, deal_id } = request.query as {
+      status?: string;
+      repair_order_id?: string;
+      deal_id?: string;
+    };
+    const list = await warehouseService.listPurchaseRequests(tenant_id, status, repair_order_id, deal_id);
     return reply.send({ data: list });
   });
 
@@ -381,6 +452,14 @@ export async function warehouseRoutes(app: FastifyInstance) {
     return reply.send({ data: { deleted: true, id } });
   });
 
+  // Массовое удаление заявок на закупку
+  app.post("/purchases/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const body = bulkDeleteIdsSchema.parse(request.body);
+    const result = await warehouseService.bulkDeletePurchaseRequests(tenant_id, body.ids);
+    return reply.send({ data: result });
+  });
+
   // -------------------------------------------------------------------------
   // Заказы поставщикам (Supplier Orders)
   // -------------------------------------------------------------------------
@@ -422,7 +501,14 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const { tenant_id } = request;
     const { id } = request.params as { id: string };
     await warehouseService.deleteSupplierOrder(tenant_id, id);
-    return reply.send({ success: true });
+    return reply.send({ data: { success: true, id }, success: true });
+  });
+
+  app.post("/supplier-orders/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const body = bulkDeleteIdsSchema.parse(request.body);
+    const result = await warehouseService.bulkDeleteSupplierOrders(tenant_id, body.ids);
+    return reply.send({ data: result });
   });
 
   app.post("/supplier-orders/:id/pay", { onRequest: canPay }, async (request, reply) => {

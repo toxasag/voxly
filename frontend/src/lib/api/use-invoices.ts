@@ -238,6 +238,8 @@ export interface PnlCogsBreakdownItemDTO {
   batchNumber: string;
   supplierName: string;
   ticketNumber: string | null;
+  dealId?: string | null;
+  dealTitle?: string | null;
   quantity: number;
   unitCost: number;
   totalCost: number;
@@ -246,6 +248,8 @@ export interface PnlCogsBreakdownItemDTO {
 
 export interface PnlCogsSummaryDTO {
   partsRevenue: number;
+  repairPartsRevenue?: number;
+  dealProductsRevenue?: number;
   worksRevenue: number;
   partsCogs: number;
   partsGrossProfit: number;
@@ -309,6 +313,22 @@ export interface CreateTransactionPayload {
   currency?: string;
   category_id?: string;
   category_name: string;
+  description?: string;
+  counterparty_name?: string;
+  counterparty_inn?: string;
+  deal_id?: string;
+  repair_order_id?: string;
+  invoice_id?: string;
+  occurred_at?: string;
+}
+
+export interface UpdateTransactionPayload {
+  account_id?: string;
+  type?: TransactionType;
+  amount?: number;
+  currency?: string;
+  category_id?: string;
+  category_name?: string;
   description?: string;
   counterparty_name?: string;
   counterparty_inn?: string;
@@ -523,7 +543,7 @@ export function useCreateAccount(): UseMutationResult<AccountDTO, ApiClientError
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -537,7 +557,7 @@ export function useTransfer(): UseMutationResult<{ from: AccountDTO; to: Account
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -548,6 +568,24 @@ export function useCreateTransaction(): UseMutationResult<TransactionDTO, ApiCli
   return useMutation<TransactionDTO, ApiClientError, CreateTransactionPayload>({
     mutationFn: async (payload) => {
       const res = await apiClient.post<TransactionDTO>("/api/v1/finance/transactions", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+    },
+  });
+}
+
+export function useUpdateTransaction(): UseMutationResult<
+  TransactionDTO,
+  ApiClientError,
+  { id: string; payload: UpdateTransactionPayload }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<TransactionDTO, ApiClientError, { id: string; payload: UpdateTransactionPayload }>({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.patch<TransactionDTO>(`/api/v1/finance/transactions/${id}`, payload);
       return res.data;
     },
     onSuccess: () => {

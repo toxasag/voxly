@@ -65,7 +65,7 @@ data class CallerIdResult(
                 phone = contactObj.optString("phone", phone),
                 jobTitle = contactObj.optString("jobTitle").takeIf { !it.isNullOrBlank() },
                 companyName = contactObj.optString("companyName").takeIf { !it.isNullOrBlank() },
-                crmUrl = contactObj.optString("crmUrl", "https://voxly.getvoxly.ru/dashboard"),
+                crmUrl = contactObj.optString("crmUrl", "https://getvoxly.ru/dashboard"),
                 activeDeal = activeDeal
             )
 

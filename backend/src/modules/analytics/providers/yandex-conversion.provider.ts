@@ -67,9 +67,26 @@ export class YandexConversionProvider implements IConversionProvider {
               status?: string;
             };
           };
-          const counterName = data.counter?.name
+          let counterName = data.counter?.name
             ? `Счётчик подключён: «${data.counter.name}» (ID: ${counterId})`
             : `Счётчик №${counterId} подключён`;
+
+          // Попытка отправки тестовой цели офлайн-загрузкой для валидации канала
+          try {
+            const testUpload = await this.uploadOfflineConversion(counterId, oauthToken, {
+              target: "lead",
+              idType: "CLIENT_ID",
+              idValue: "1794309270387294568",
+              price: 0,
+              currency: "RUB",
+            });
+            if (testUpload.success && testUpload.uploadId) {
+              counterName += `. Тестовая цель «lead» загружена (Upload ID: ${testUpload.uploadId})`;
+            }
+          } catch {
+            // non-blocking
+          }
+
           return {
             provider: this.provider,
             success: true,
@@ -161,7 +178,74 @@ export class YandexConversionProvider implements IConversionProvider {
   }
 
   /**
-   * Отправка боевой конверсии: приоритетно через Offline Conversions API, с фоллбэком на Measurement Protocol
+   * Загрузка файла офлайн-конверсий в официальный Management API Яндекс Метрики
+   */
+  private async uploadOfflineConversion(
+    counterId: string,
+    oauthToken: string,
+    params: {
+      target: string;
+      idType: "CLIENT_ID" | "YCLID";
+      idValue: string;
+      price?: number;
+      currency?: string;
+      timestampSeconds?: number;
+    },
+  ): Promise<{ success: boolean; status: number; uploadId?: number; error?: string; rawText?: string }> {
+    const timestamp = params.timestampSeconds || (Math.floor(Date.now() / 1000) - 60);
+    const idHeader = params.idType === "YCLID" ? "Yclid" : "ClientId";
+    const price = params.price && params.price > 0 ? Math.round(params.price * 100) / 100 : 0;
+    const currency = (params.currency || "RUB").toUpperCase();
+
+    let csvContent: string;
+    if (price > 0) {
+      csvContent = `${idHeader},Target,DateTime,Price,Currency\n"${params.idValue.replace(/"/g, '""')}","${params.target.replace(/"/g, '""')}",${timestamp},${price},${currency}\n`;
+    } else {
+      csvContent = `${idHeader},Target,DateTime\n"${params.idValue.replace(/"/g, '""')}","${params.target.replace(/"/g, '""')}",${timestamp}\n`;
+    }
+
+    const boundary = `----WebKitFormBoundary${Math.random().toString(36).slice(2)}`;
+    const multipartBody = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="conversions.csv"\r\nContent-Type: text/csv\r\n\r\n`,
+      ),
+      Buffer.from(csvContent, "utf-8"),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const uploadUrl = `https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(counterId)}/offline_conversions/upload?client_id_type=${params.idType}`;
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `OAuth ${oauthToken}`,
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "User-Agent": "GetVoxly-Server-Converter/1.0",
+      },
+      body: multipartBody,
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const text = await response.text();
+    if (response.ok) {
+      let uploadId: number | undefined;
+      try {
+        const parsed = JSON.parse(text) as { uploading?: { id?: number } };
+        uploadId = parsed.uploading?.id;
+      } catch {}
+      return { success: true, status: response.status, uploadId, rawText: text };
+    }
+
+    let parsedError = text;
+    try {
+      const errObj = JSON.parse(text) as { message?: string; errors?: Array<{ message?: string }> };
+      parsedError = errObj.message || errObj.errors?.[0]?.message || text;
+    } catch {}
+
+    return { success: false, status: response.status, error: parsedError, rawText: text };
+  }
+
+  /**
+   * Отправка боевой конверсии: загрузка через Offline Conversions API
    */
   private async sendLiveConversion(
     counterId: string,
@@ -176,82 +260,79 @@ export class YandexConversionProvider implements IConversionProvider {
       target = "lead";
     } else if (rawTarget === "Chat") {
       target = "chat";
+    } else {
+      target = rawTarget.toLowerCase();
     }
 
-    const clientId = payload.ymUid || payload.clientId || payload.yandexuid || "anonymous_lead";
+    // Определение типа идентификатора: ClientId или Yclid
+    let idType: "CLIENT_ID" | "YCLID" = "CLIENT_ID";
+    let idValue = payload.ymUid || payload.clientId || payload.yandexuid || "";
+
+    if (!idValue && payload.yclid) {
+      idType = "YCLID";
+      idValue = payload.yclid;
+    }
+
+    if (!idValue) {
+      return {
+        provider: this.provider,
+        success: false,
+        eventName: payload.eventName,
+        status: 400,
+        error: "Отсутствует идентификатор визита (ClientID / ym_uid или YCLID) для атрибуции в Яндекс Метрике",
+      };
+    }
+
     const price = Math.round((payload.budget || 0) * 100) / 100;
     const currency = (payload.currency || "RUB").toUpperCase();
-    const timestamp = Math.floor(Date.now() / 1000);
 
-    // 1. Приоритетный путь: загрузка офлайн-конверсии через официальный API Яндекс Метрики
-    if (oauthToken) {
-      try {
-        const csvHeaders = "ClientId,Target,DateTime,Price,Currency";
-        const csvRow = [
-          `"${String(clientId).replace(/"/g, '""')}"`,
-          `"${String(target).replace(/"/g, '""')}"`,
-          String(timestamp),
-          price > 0 ? String(price) : "",
-          currency,
-        ].join(",");
-        const csvContent = `${csvHeaders}\n${csvRow}\n`;
-
-        const boundary = `----WebKitFormBoundary${Math.random().toString(36).slice(2)}`;
-        const multipartBody = Buffer.concat([
-          Buffer.from(
-            `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="conversions.csv"\r\nContent-Type: text/csv\r\n\r\n`,
-          ),
-          Buffer.from(csvContent, "utf-8"),
-          Buffer.from(`\r\n--${boundary}--\r\n`),
-        ]);
-
-        const uploadUrl = `https://api-metrika.yandex.net/management/v1/counter/${encodeURIComponent(counterId)}/offline_conversions/upload?client_id_type=CLIENT_ID`;
-        const response = await fetch(uploadUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `OAuth ${oauthToken}`,
-            "Content-Type": `multipart/form-data; boundary=${boundary}`,
-            "User-Agent": "GetVoxly-Server-Converter/1.0",
-          },
-          body: multipartBody,
-          signal: AbortSignal.timeout(8000),
-        });
-
-        if (response.ok) {
-          return {
-            provider: this.provider,
-            success: true,
-            eventName: payload.eventName,
-            status: response.status,
-            responseSnippet: `Цель «${target}» успешно загружена в Яндекс Метрику`,
-          };
-        }
-      } catch (err) {
-        console.warn(`[YandexConversionProvider] Offline conversion upload error:`, err);
-        // Продолжаем к фоллбэку Measurement Protocol
+    // Безопасный таймстамп строго в прошлом с запасом на дрифт серверного времени
+    let timestampSeconds = Math.floor(Date.now() / 1000) - 60;
+    if (payload.createdAt) {
+      const parsedTime = Math.floor(new Date(payload.createdAt).getTime() / 1000);
+      if (!isNaN(parsedTime) && parsedTime < timestampSeconds) {
+        timestampSeconds = parsedTime;
       }
     }
 
-    // 2. Фоллбэк: Яндекс Measurement Protocol
-    const mpUrl = `https://mc.yandex.ru/collect?tid=${encodeURIComponent(counterId)}&cid=${encodeURIComponent(clientId)}&t=event&ec=crm&ea=${encodeURIComponent(target)}&el=${price}`;
+    if (!oauthToken) {
+      return {
+        provider: this.provider,
+        success: false,
+        eventName: payload.eventName,
+        status: 400,
+        error: "Не указан OAuth-токен Яндекс Метрики для загрузки офлайн-конверсий",
+      };
+    }
 
     try {
-      const response = await fetch(mpUrl, {
-        method: "GET",
-        headers: {
-          "User-Agent": "GetVoxly-Server-Converter/1.0",
-        },
-        signal: AbortSignal.timeout(6000),
+      const upload = await this.uploadOfflineConversion(counterId, oauthToken, {
+        target,
+        idType,
+        idValue,
+        price,
+        currency,
+        timestampSeconds,
       });
+
+      if (upload.success) {
+        const uploadSuffix = upload.uploadId ? ` (Upload ID: ${upload.uploadId})` : "";
+        return {
+          provider: this.provider,
+          success: true,
+          eventName: payload.eventName,
+          status: upload.status,
+          responseSnippet: `Цель «${target}» успешно загружена в Яндекс Метрику${uploadSuffix}`,
+        };
+      }
 
       return {
         provider: this.provider,
-        success: response.ok,
+        success: false,
         eventName: payload.eventName,
-        status: response.status,
-        responseSnippet: response.ok
-          ? `Measurement Protocol: статус ${response.status}`
-          : `Measurement Protocol вернул ${response.status}`,
+        status: upload.status,
+        error: `Ошибка Яндекс Метрики (${upload.status}): ${upload.error || "Некорректный формат данных"}`,
+        responseSnippet: upload.rawText?.slice(0, 500),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -260,7 +341,7 @@ export class YandexConversionProvider implements IConversionProvider {
         success: false,
         eventName: payload.eventName,
         status: 500,
-        error: message,
+        error: `Сетевой сбой при загрузке конверсии в Яндекс Метрику: ${message}`,
       };
     }
   }

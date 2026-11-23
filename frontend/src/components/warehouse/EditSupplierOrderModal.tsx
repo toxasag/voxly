@@ -39,13 +39,7 @@ interface FormItemState {
   purchaseRequestIds?: string[];
 }
 
-function formatRub(amount: number): string {
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: "RUB",
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
+import { formatRub } from "@/lib/utils/format";
 
 export function EditSupplierOrderModal({
   open,
@@ -158,6 +152,8 @@ export function EditSupplierOrderModal({
       return;
     }
 
+    const isReceived = order.status === "received";
+
     const payloadItems = items.map((it) => {
       const reqQty = it.requestedQuantity;
       const totalQty = it.quantity;
@@ -185,7 +181,7 @@ export function EditSupplierOrderModal({
           supplier_name: finalSupplierName,
           supplier_company_id: selectedCompany?.id ?? order.supplierCompanyId ?? null,
           notes: notes.trim(),
-          items: payloadItems,
+          ...(isReceived ? {} : { items: payloadItems }),
         },
       });
 
@@ -216,7 +212,9 @@ export function EditSupplierOrderModal({
                 Редактирование заказа {order.orderNumber}
               </h2>
               <p className="text-xs text-[#666666]">
-                Изменение поставщика, количеств и закупочных цен
+                {order.status === "received"
+                  ? "Заказ оприходован: можно изменить поставщика и примечание (состав правится во вкладке «Партии»)"
+                  : "Изменение поставщика, количеств и закупочных цен"}
               </p>
             </div>
           </div>

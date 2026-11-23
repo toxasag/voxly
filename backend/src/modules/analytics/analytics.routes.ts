@@ -310,6 +310,24 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.delete("/integrations/by-id/:id", { onRequest: canAdmin }, handleDelete);
 
   /**
+   * Пакетная синхронизация (replay) активных сделок арендатора в подключенные системы аналитики
+   */
+  app.post("/integrations/replay", { onRequest: canAdmin }, async (request, reply) => {
+    const tenantId = request.tenant_id;
+    const data = await analyticsIntegrationsService.replayTenantConversions(tenantId);
+    return reply.send({ data });
+  });
+
+  /**
+   * Журнал попыток отправки серверных конверсий
+   */
+  app.get("/integrations/attempts", { onRequest: canRead }, async (request, reply) => {
+    const tenantId = request.tenant_id;
+    const data = await analyticsIntegrationsService.getConversionAttempts(tenantId);
+    return reply.send({ data });
+  });
+
+  /**
    * Прямая синхронная тестовая отправка события в систему аналитики
    * Поддерживает :id (UUID конкретного счётчика) или :provider (имя провайдера)
    */

@@ -40,13 +40,14 @@ export interface CreateStageRulePayload {
 }
 
 export const STAGE_RULES_QUERY_KEY = ["stage-rules"] as const;
+const BASE_PATH = "/api/v1/crm/stage-rules";
 
 export function useStageRules(stageId?: string): UseQueryResult<StageRuleDTO[], ApiClientError> {
   const qs = stageId ? `?stageId=${encodeURIComponent(stageId)}` : "";
   return useQuery({
     queryKey: [...STAGE_RULES_QUERY_KEY, stageId],
     queryFn: async () => {
-      const res = await apiClient.get<StageRuleDTO[]>(`/crm/stage-rules${qs}`);
+      const res = await apiClient.get<StageRuleDTO[]>(`${BASE_PATH}${qs}`);
       return res.data;
     },
   });
@@ -57,7 +58,7 @@ export function useCreateStageRule(): UseMutationResult<StageRuleDTO, ApiClientE
 
   return useMutation({
     mutationFn: async (payload) => {
-      const res = await apiClient.post<StageRuleDTO>("/crm/stage-rules", payload);
+      const res = await apiClient.post<StageRuleDTO>(BASE_PATH, payload);
       return res.data;
     },
     onSuccess: () => {
@@ -71,7 +72,7 @@ export function useDeleteStageRule(): UseMutationResult<void, ApiClientError, st
 
   return useMutation({
     mutationFn: async (id: string) => {
-      await apiClient.delete<void>(`/crm/stage-rules/${id}`);
+      await apiClient.delete<void>(`${BASE_PATH}/${id}`);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: STAGE_RULES_QUERY_KEY });

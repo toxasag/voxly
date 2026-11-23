@@ -59,6 +59,8 @@ export type PurchaseRequestStatus = z.infer<typeof purchaseRequestStatusSchema>;
 
 export const createPurchaseRequestSchema = z.object({
   repair_order_id: z.string().uuid().optional(),
+  deal_id: z.string().uuid().optional(),
+  deal_item_id: z.string().uuid().optional(),
   item_id: z.string().uuid().optional(),
   item_name: z.string().min(1, "Item name is required").max(300),
   sku: z.string().max(100).optional().default(""),
@@ -148,6 +150,28 @@ export const paySupplierOrderSchema = z.object({
   comment: z.string().optional(),
 });
 export type PaySupplierOrderPayload = z.infer<typeof paySupplierOrderSchema>;
+
+export const updateWarehouseBatchSchema = z.object({
+  batch_number: z.string().max(100).optional(),
+  supplier_name: z.string().max(200).optional(),
+  purchase_price: z.number().nonnegative("Цена не может быть отрицательной").optional(),
+  initial_quantity: z.number().positive("Количество должно быть больше 0").optional(),
+  remaining_quantity: z.number().nonnegative("Остаток не может быть отрицательным").optional(),
+  received_at: z.string().optional(),
+});
+export type UpdateWarehouseBatchPayload = z.infer<typeof updateWarehouseBatchSchema>;
+
+export const updateWarehouseMovementSchema = z.object({
+  description: z.string().max(1000).optional(),
+  quantity: z.number().positive("Количество должно быть больше 0").optional(),
+  cost_price: z.number().nonnegative("Цена не может быть отрицательной").optional(),
+});
+export type UpdateWarehouseMovementPayload = z.infer<typeof updateWarehouseMovementSchema>;
+
+export const bulkDeleteIdsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, "Выберите хотя бы одну запись").max(500),
+});
+export type BulkDeleteIdsPayload = z.infer<typeof bulkDeleteIdsSchema>;
 
 export interface WarehouseItemRow {
   id: string;
@@ -246,6 +270,7 @@ export interface WarehouseBatchRow {
   id: string;
   tenant_id: string;
   item_id: string;
+  supplier_order_id?: string | null;
   item_name?: string;
   batch_number: string;
   supplier_name: string;
@@ -259,6 +284,7 @@ export interface WarehouseBatchRow {
 export interface WarehouseBatchDTO {
   id: string;
   itemId: string;
+  supplierOrderId?: string | null;
   itemName?: string;
   batchNumber: string;
   supplierName: string;
@@ -277,6 +303,9 @@ export interface WarehouseMovementRow {
   batch_id: string | null;
   repair_order_id: string | null;
   repair_ticket_number?: string | null;
+  deal_id?: string | null;
+  deal_item_id?: string | null;
+  deal_title?: string | null;
   type: string;
   quantity: string | number;
   cost_price: string | number;
@@ -293,6 +322,9 @@ export interface WarehouseMovementDTO {
   batchId: string | null;
   repairOrderId: string | null;
   repairTicketNumber?: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
+  dealTitle?: string | null;
   type: string;
   quantity: number;
   costPrice: number;
@@ -305,8 +337,11 @@ export interface PurchaseRequestRow {
   id: string;
   tenant_id: string;
   repair_order_id: string | null;
+  deal_id?: string | null;
+  deal_item_id?: string | null;
   supplier_order_id: string | null;
   repair_ticket_number?: string | null;
+  deal_title?: string | null;
   item_id: string | null;
   item_name: string;
   sku: string;
@@ -324,8 +359,11 @@ export interface PurchaseRequestRow {
 export interface PurchaseRequestDTO {
   id: string;
   repairOrderId: string | null;
+  dealId?: string | null;
+  dealItemId?: string | null;
   supplierOrderId?: string | null;
   repairTicketNumber?: string | null;
+  dealTitle?: string | null;
   itemId: string | null;
   itemName: string;
   sku: string;
@@ -541,6 +579,7 @@ export type BulkUpdateWarehouseItemsPayload = z.infer<typeof bulkUpdateWarehouse
 
 export const bulkDeleteWarehouseItemsSchema = z.object({
   ids: z.array(z.string().uuid()).min(1, "Select at least 1 item"),
+  force: z.boolean().optional().default(false),
 });
 export type BulkDeleteWarehouseItemsPayload = z.infer<typeof bulkDeleteWarehouseItemsSchema>;
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { toIsoOrNull as toIso } from "../../lib/date.utils.js";
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { invalidateTenantModulesCache } from "../../plugins/auth-cache.js";
@@ -43,11 +44,6 @@ interface CatalogRow {
   installed_at: Date | string | null;
   quantity: number | null;
   trial_ends_at: Date | string | null;
-}
-
-function toIso(value: Date | string | null): string | null {
-  if (value === null) return null;
-  return value instanceof Date ? value.toISOString() : value;
 }
 
 /**

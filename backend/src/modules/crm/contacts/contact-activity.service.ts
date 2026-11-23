@@ -168,7 +168,8 @@ export class ContactActivityService {
       `SELECT id, title, created_at, custom_fields
        FROM deals
        WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC
+       LIMIT 200`,
       [tenantId, contactId],
     );
 
@@ -250,7 +251,7 @@ export class ContactActivityService {
           direction: "inbound",
           timestamp: occurredAtDate.toISOString(),
           title: `${domain} — запустил онлайн-виджет`,
-          authorName: `${contact.first_name} ${contact.last_name}`.trim(),
+          authorName: [contact.first_name ?? "", contact.last_name ?? ""].filter(Boolean).join(" ").trim(),
           clientHandle: contact.telegram_username ? `@${contact.telegram_username.replace(/^@/, "")}` : undefined,
           dealId: webMetaSource.id || undefined,
           dealTitle: webMetaSource.title || undefined,
@@ -314,7 +315,7 @@ export class ContactActivityService {
           direction: "inbound",
           timestamp: new Date(occurredAtDate.getTime() + 60000).toISOString(),
           title: `${domain} — отправил заявку через форму`,
-          authorName: `${contact.first_name} ${contact.last_name}`.trim(),
+          authorName: [contact.first_name ?? "", contact.last_name ?? ""].filter(Boolean).join(" ").trim(),
           clientHandle: contact.telegram_username ? `@${contact.telegram_username.replace(/^@/, "")}` : undefined,
           dealId: webMetaSource.id || undefined,
           dealTitle: webMetaSource.title || undefined,
@@ -323,15 +324,20 @@ export class ContactActivityService {
       }
     }
 
-    // 5. Загружаем сырые deal_messages и кластеризуем в сессии диалогов
+    // 5. Загружаем последние 1000 deal_messages и кластеризуем в сессии диалогов
     //    Окно бездействия: 30 минут (1800 сек).
     const rawMessages = await query<RawMessageRow>(
-      `SELECT m.id, m.deal_id, d.title AS deal_title, m.channel, m.direction,
-              m.sender_name, m.content, m.created_at
-       FROM deal_messages m
-       JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
-       WHERE m.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
-       ORDER BY m.created_at ASC`,
+      `SELECT *
+       FROM (
+         SELECT m.id, m.deal_id, d.title AS deal_title, m.channel, m.direction,
+                m.sender_name, m.content, m.created_at
+         FROM deal_messages m
+         JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+         WHERE m.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+         ORDER BY m.created_at DESC
+         LIMIT 1000
+       ) AS recent_contact_messages
+       ORDER BY created_at ASC`,
       [tenantId, contactId],
     );
 
@@ -369,7 +375,8 @@ export class ContactActivityService {
              SELECT id FROM deals WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
            ))
          )
-       ORDER BY n.created_at DESC`,
+       ORDER BY n.created_at DESC
+       LIMIT 500`,
       [tenantId, contactId],
     );
 
@@ -656,7 +663,7 @@ export class ContactActivityService {
           direction: "inbound",
           timestamp: new Date(firstMsg.created_at).toISOString(),
           title: `клиент ${clientHandle} написал в ${channelLabel} ${accountHandle}`,
-          authorName: `${contact.first_name} ${contact.last_name}`.trim(),
+          authorName: [contact.first_name ?? "", contact.last_name ?? ""].filter(Boolean).join(" ").trim(),
           clientHandle,
           dealId: firstMsg.deal_id,
           dealTitle: firstMsg.deal_title || undefined,

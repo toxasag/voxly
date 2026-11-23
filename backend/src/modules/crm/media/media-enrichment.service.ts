@@ -365,7 +365,9 @@ export class MediaEnrichmentService {
       const messages = await query<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
-           AND (attachment IS NOT NULL OR content LIKE '[файл: %]')`,
+           AND (attachment IS NOT NULL OR content LIKE '[файл: %]')
+         ORDER BY created_at DESC
+         LIMIT 200`,
         [tenantId, dealId],
       );
 

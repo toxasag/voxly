@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
                     phone = "+7 (999) 123-45-67",
                     jobTitle = "Технический директор",
                     companyName = "ООО «Техносервис Групп»",
-                    crmUrl = "https://voxly.getvoxly.ru/dashboard",
+                    crmUrl = "https://getvoxly.ru/dashboard",
                     activeDeal = CallerIdActiveDeal(
                         id = "test-deal-id",
                         title = "Ремонт оборудования промышленного цеха",

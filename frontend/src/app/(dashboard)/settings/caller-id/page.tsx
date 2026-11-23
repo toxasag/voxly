@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api/apiClient";
+import { readAccessToken } from "@/lib/auth/session";
 import { TagPill } from "@/components/ui/tag";
 
 interface CallerIdContact {
@@ -53,8 +54,9 @@ export default function CallerIdSettingsPage() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Образец токена для мобильного компаньона
-  const companionToken = "voxly_live_device_token_sample";
+  // Реальный токен доступа текущей сессии для мобильного компаньона
+  const activeToken = typeof window !== "undefined" ? readAccessToken() : null;
+  const companionToken = activeToken || "voxly_live_device_token_sample";
 
   const handleCopyToken = () => {
     navigator.clipboard.writeText(companionToken);
