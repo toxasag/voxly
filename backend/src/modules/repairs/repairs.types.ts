@@ -39,18 +39,29 @@ export const REPAIR_STATUS_FLOW: readonly RepairStatus[] = [
   "issued",
 ] as const;
 
-/** Allowed transitions between statuses */
+/** Allowed transitions between statuses: менеджер может переводить наряд на любой этап степпера без блокировок. */
+const ALL_TRANSITION_TARGETS: readonly RepairStatus[] = [
+  "intake",
+  "diagnostics",
+  "approval",
+  "waiting_parts",
+  "parts_order",
+  "in_progress",
+  "ready",
+  "issued",
+  "rejected",
+];
+
 const ALLOWED_TRANSITIONS: Record<RepairStatus, readonly RepairStatus[]> = {
-  intake: ["waiting_parts", "parts_order", "ready", "issued", "diagnostics", "in_progress", "rejected"],
-  waiting_parts: ["ready", "issued", "intake", "rejected"],
-  parts_order: ["ready", "issued", "intake", "rejected"],
-  ready: ["issued", "waiting_parts", "parts_order", "intake"],
-  issued: ["ready", "intake"],
-  // Active workflow & rollback transitions
-  diagnostics: ["intake", "waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
-  approval: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
-  in_progress: ["intake", "diagnostics", "waiting_parts", "parts_order", "ready", "issued", "rejected"],
-  rejected: ["intake"],
+  intake: ALL_TRANSITION_TARGETS.filter((s) => s !== "intake"),
+  diagnostics: ALL_TRANSITION_TARGETS.filter((s) => s !== "diagnostics"),
+  approval: ALL_TRANSITION_TARGETS.filter((s) => s !== "approval"),
+  waiting_parts: ALL_TRANSITION_TARGETS.filter((s) => s !== "waiting_parts"),
+  parts_order: ALL_TRANSITION_TARGETS.filter((s) => s !== "parts_order"),
+  in_progress: ALL_TRANSITION_TARGETS.filter((s) => s !== "in_progress"),
+  ready: ALL_TRANSITION_TARGETS.filter((s) => s !== "ready"),
+  issued: ALL_TRANSITION_TARGETS.filter((s) => s !== "issued"),
+  rejected: ALL_TRANSITION_TARGETS.filter((s) => s !== "rejected"),
 };
 
 export function canTransition(from: RepairStatus, to: RepairStatus): boolean {
