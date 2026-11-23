@@ -7,6 +7,7 @@ import type { ChannelSlug } from "../../types/index.js";
 import { quotaService } from "../quotas/quota.service.js";
 import { channelLinksService } from "./channel-links.service.js";
 import { TelegramService } from "../auth/telegram.service.js";
+import type { OutboundMessage, OutboundSendResult } from "./outbound-registry.js";
 import type {
   ChannelAccountDTO,
   ChannelStatus,
@@ -227,7 +228,7 @@ export class TelegramBotService {
     const cleanUsername = botInfo.username.replace(/^@/, "").trim();
     const externalId = `@${cleanUsername}`;
 
-    return withTenant(tenantId, async (tx) => {
+    const result = await withTenant(tenantId, async (tx) => {
       // 1. Проверяем наличие установленного модуля
       const installedModule = await tx.queryOne<{ quantity: number }>(
         `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = 'telegram_bot'`,
@@ -328,6 +329,12 @@ export class TelegramBotService {
         bound_agent_name: boundAgentName,
       });
     });
+
+    const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+    const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${result.id}`;
+    void this.setWebhook(payload.token, webhookUrl);
+
+    return result;
   }
 
   /**
@@ -487,7 +494,7 @@ export class TelegramBotService {
     accountId: string,
     payload: TelegramBotCompleteManagedInput,
   ): Promise<ChannelAccountDTO> {
-    return withTenant(tenantId, async (tx) => {
+    const result = await withTenant(tenantId, async (tx) => {
       const existing = await tx.queryOne<ChannelAccountRow>(
         `SELECT id, channel, label, external_id, status, status_message,
                 (credentials <> '{}'::jsonb) AS has_credentials,
@@ -608,6 +615,12 @@ export class TelegramBotService {
         bound_agent_name: binding?.agent_name ?? null,
       });
     });
+
+    const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+    const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${accountId}`;
+    void this.setWebhook(payload.token.trim(), webhookUrl);
+
+    return result;
   }
 
   /**
@@ -729,7 +742,7 @@ export class TelegramBotService {
     inputToken?: string,
     inputBotId?: number | string,
   ): Promise<ChannelAccountDTO> {
-    return withTenant(tenantId, async (tx) => {
+    const result = await withTenant(tenantId, async (tx) => {
       const existing = await tx.queryOne<ChannelAccountRow>(
         `SELECT id, channel, label, external_id, status, status_message,
                 (credentials <> '{}'::jsonb) AS has_credentials,
@@ -817,6 +830,143 @@ export class TelegramBotService {
         "Бот еще не подтвержден в Telegram. Откройте приложение Telegram по ссылке создания бота или укажите токен от @BotFather.",
       );
     });
+
+    if (result.hasCredentials && result.credentials?.token) {
+      const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+      const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${accountId}`;
+      void this.setWebhook(result.credentials.token as string, webhookUrl);
+    }
+
+    return result;
   }
 
+  /**
+   * Регистрация Webhook в Telegram Bot API.
+   */
+  async setWebhook(token: string, webhookUrl: string, secretToken?: string): Promise<boolean> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/setWebhook`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: webhookUrl,
+          drop_pending_updates: false,
+          allowed_updates: ["message", "edited_message"],
+          ...(secretToken ? { secret_token: secretToken } : {}),
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{ url: string }> | null;
+      return Boolean(data?.ok);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Отправка текстового сообщения в Telegram через Bot API.
+   */
+  async sendMessage(
+    token: string,
+    chatId: string | number,
+    text: string,
+    options?: { parse_mode?: string },
+  ): Promise<{ ok: boolean; messageId?: number; reason?: string }> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/sendMessage`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          ...(options?.parse_mode ? { parse_mode: options.parse_mode } : {}),
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{ message_id: number }> | null;
+      if (data?.ok && data.result) {
+        return { ok: true, messageId: data.result.message_id };
+      }
+      return { ok: false, reason: data?.description || `HTTP ${res.status}` };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : "Network error" };
+    }
+  }
+
+  /**
+   * Исходящее сообщение через Telegram Bot API (адаптер для OutboundRegistry).
+   */
+  async sendOutbound(message: OutboundMessage): Promise<OutboundSendResult> {
+    const account = await queryOne<{
+      credentials: { token?: string } | null;
+    }>(
+      `SELECT credentials FROM channel_accounts
+       WHERE tenant_id = $1 AND id = $2 AND channel = 'telegram_bot' AND deleted_at IS NULL`,
+      [message.tenantId, message.channelAccountId],
+    );
+
+    const token = account?.credentials?.token;
+    if (!token) {
+      return { ok: false, reason: "Бот не найден или не настроен токен" };
+    }
+
+    if (message.attachment) {
+      const isImage = message.attachmentType?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(message.attachment);
+      const endpoint = isImage ? "sendPhoto" : "sendDocument";
+      const bodyField = isImage ? "photo" : "document";
+      try {
+        const res = await fetch(`${TELEGRAM_API_BASE}/bot${token.trim()}/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: message.recipient,
+            [bodyField]: message.attachment,
+            caption: message.text || undefined,
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as TelegramApiResponse<{ message_id: number }> | null;
+        if (data?.ok) return { ok: true };
+      } catch {
+        // fallback to text
+      }
+    }
+
+    const result = await this.sendMessage(token, message.recipient, message.text);
+    if (result.ok) {
+      return { ok: true };
+    }
+    return { ok: false, reason: result.reason || "Ошибка отправки в Telegram" };
+  }
+
+  /**
+   * Синхронизация webhook для всех активных подключенных ботов платформы на старте.
+   */
+  static async syncActiveWebhooks(log?: { info: (...args: any[]) => void; warn: (...args: any[]) => void }): Promise<void> {
+    try {
+      const { runWithPlatformScope, query: dbQuery } = await import("../../db/client.js");
+      const accounts = await runWithPlatformScope(() =>
+        dbQuery<{ id: string; credentials: { token?: string } | null; external_id: string }>(
+          `SELECT id, credentials, external_id FROM channel_accounts
+           WHERE channel = 'telegram_bot' AND status = 'connected' AND deleted_at IS NULL`,
+        ),
+      );
+
+      const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+      const service = new TelegramBotService();
+
+      for (const acc of accounts) {
+        const token = acc.credentials?.token;
+        if (!token) continue;
+        const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${acc.id}`;
+        const ok = await service.setWebhook(token, webhookUrl);
+        if (log) {
+          log.info({ accountId: acc.id, bot: acc.external_id, ok, webhookUrl }, "Telegram Bot webhook synchronized");
+        }
+      }
+    } catch (err) {
+      if (log) {
+        log.warn({ err }, "Failed to sync Telegram Bot webhooks on startup");
+      }
+    }
+  }
 }

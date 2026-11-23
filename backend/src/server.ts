@@ -17,6 +17,7 @@ import { registerOutboundSender } from "./modules/channels/outbound-registry.js"
 import { messagingRegistry } from "./modules/messaging/messaging-registry.js";
 import { WhatsappEvolutionService } from "./modules/channels/whatsapp-evolution.service.js";
 import { resolveOutboundMedia, isMeaningfulCaption } from "./modules/channels/media-resolver.js";
+import { TelegramBotService } from "./modules/channels/telegram-bot.service.js";
 
 /**
  * Прописывает адрес webhook у бота при старте.
@@ -209,6 +210,12 @@ async function main(): Promise<void> {
     }
   });
 
+  // Регистрация исходящих сообщений через официальный Telegram Bot API
+  const unregisterTelegramBotOutbound = registerOutboundSender("telegram_bot", async (message) => {
+    const botService = new TelegramBotService();
+    return botService.sendOutbound(message);
+  });
+
   // Drain in-flight requests, then release DB and Redis connections.
   let isShuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
@@ -234,6 +241,7 @@ async function main(): Promise<void> {
       stopTransport();
       unregisterMaxOutbound();
       unregisterWhatsappOutbound();
+      unregisterTelegramBotOutbound();
       messagingRegistry.destroy();
       closeAllSseStreams();
       await app.close();
@@ -261,6 +269,7 @@ async function main(): Promise<void> {
     await registerTelegramWebhook(app);
     await registerMaxWebhook(app);
     await registerWhatsappWebhooks(app);
+    void TelegramBotService.syncActiveWebhooks(app.log);
   } catch (error) {
     app.log.error(error);
     await closePool();

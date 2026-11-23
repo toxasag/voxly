@@ -84,6 +84,7 @@ interface AccountRow {
   id: string;
   tenant_id: string;
   label: string;
+  remote_user_id?: string | null;
   credentials: { session?: string } | null;
   credentials_encrypted: boolean;
   last_sync_at?: Date | string | null;
@@ -93,6 +94,8 @@ interface ActiveConnection {
   accountId: string;
   tenantId: string;
   client: TelegramClient;
+  myId?: string;
+  myUsername?: string;
   /** Снятие обработчика при отключении аккаунта. */
   detach: () => void;
   /** Время последнего успешного прохода gap-recovery. */
@@ -375,6 +378,10 @@ export class TelegramTransportService {
         return;
       }
 
+      const me = (await client.getMe().catch(() => null)) as Api.User | null;
+      const myId = me?.id ? String(me.id) : (account.remote_user_id || undefined);
+      const myUsername = me?.username ? me.username.toLowerCase().replace(/^@/, "") : undefined;
+
       const handler = (event: NewMessageEvent): void => {
         void this.onIncoming(account, event);
       };
@@ -389,6 +396,8 @@ export class TelegramTransportService {
         accountId: account.id,
         tenantId: account.tenant_id,
         client,
+        myId,
+        myUsername,
         detach: () => client?.removeEventHandler(handler, messageFilter),
         lastGapRecoveryAt: Date.now(),
       };
@@ -463,6 +472,7 @@ export class TelegramTransportService {
 
         const peerId = entity.id?.toString();
         if (!peerId) continue;
+        if (connection.myId && peerId === connection.myId) continue;
 
         const uname = entity.username?.trim().toLowerCase().replace(/^@/, "");
         if (
@@ -543,7 +553,7 @@ export class TelegramTransportService {
             text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
           const msgDate = new Date(msgDateMs);
 
-          if (msg.out === true) {
+          if (msg.out === true || (connection.myId !== undefined && msg.senderId?.toString() === connection.myId)) {
             await runWithTenantContext(account.tenant_id, () =>
               this.crm.processNativeOutbound({
                 tenantId: account.tenant_id,
@@ -738,6 +748,14 @@ export class TelegramTransportService {
 
       if (senderId === undefined || chatId === undefined) return;
 
+      const connection = this.connections.get(account.id);
+      const myId = connection?.myId || account.remote_user_id || undefined;
+
+      // Игнорируем Saved Messages («Избранное») и сообщения самому себе
+      if (myId && (chatId === myId || (senderId === myId && chatId === senderId))) {
+        return;
+      }
+
       const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
       const systemBotUsername = (process.env.TELEGRAM_AUTH_BOT_USERNAME || "GetVoxlybot").trim().toLowerCase().replace(/^@/, "");
 
@@ -840,7 +858,6 @@ export class TelegramTransportService {
 
       // Проверяем наличие медиавложения (фотография, документ)
       let mediaAttachment: { url: string; mimeType: string; filename: string } | null = null;
-      const connection = this.connections.get(account.id);
       if (connection && message.media) {
         mediaAttachment = await this.extractAndStoreMedia(
           connection.client,
@@ -854,7 +871,7 @@ export class TelegramTransportService {
         typeof message.date === "number" ? new Date(message.date * 1000) : undefined;
 
       // M5.3: Зеркалирование нативных исходящих от оператора (fromMe / out)
-      const isFromOperator = message.out === true;
+      const isFromOperator = message.out === true || (myId !== undefined && senderId === myId);
       if (isFromOperator) {
         if (effectiveText.length > 0 || mediaAttachment !== null) {
           const contentText =

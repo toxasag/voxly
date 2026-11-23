@@ -1080,3 +1080,41 @@
   - `npm --prefix backend run build`: 0 ошибок TypeScript ✅
   - `npm --prefix frontend run build`: 45/45 static pages сгенерированы без ошибок ✅
   - Статус бота в БД: `status = 'connected'`, `remote_user_id = 9094784027` ✅
+
+---
+
+### 24.11.2026 — Изоляция аккаунта в режиме секретаря Telegram и интеграция Telegram Bot Webhook
+- **Контекст и задача:**
+  - Подключение Telegram-аккаунта в качестве секретаря и Telegram-бота (`@frilanshanter2_bot`).
+  - Первое исходящее сообщение с подключенного аккаунта не должно создавать контакт и сделку в CRM. Сделка создается только при входящем ответе от собеседника.
+  - Сделка и контакт должны создаваться строго с собеседником, ни в коем случае не с самим подключенным аккаунтом (ранее в CRM создавались контакты «Антон» и сделки с самим собой).
+  - AI-агент не должен отвечать на исходящие сообщения подключенного аккаунта, но обязан видеть всю историю диалога в сделке.
+  - При входящих сообщениях и `/start` Telegram-боту должен создаваться контакт, сделка и AI-агент должен отвечать.
+- **Root Cause:**
+  1. В `telegram-transport.service.ts` не проверялся случай отправки сообщений в «Избранное» (Saved Messages, где `chatId === myId`), а также не было жесткой отсечки по `senderId === myId` в событиях GramJS, из-за чего пересланные в Saved Messages сообщения могли попадать в `processIncoming` от имени владельца аккаунта.
+  2. В `crm-pipeline.service.ts` отсутствовала проверка на собственные каналы и пользователей тенанта: если входящее сообщение имело chatId, username или телефон владельца/канала, CRM создавала контакт и сделку с владельцем.
+  3. Для `telegram_bot` отсутствовал публичный вебхук в Fastify и отправка исходящих в `outbound-registry.ts`.
+  4. Ассистент `a4e8299e-c0b6-406c-b51a-9136a1a43eab` не был привязан в `ai_agent_channel_bindings` к Telegram-каналам, из-за чего `resolveAgent` возвращал null.
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-transport.service.ts`:
+     - В `ActiveConnection` добавлен `myId` и `myUsername`, сохраняемые из `client.getMe()`.
+     - В `onIncoming` внедрена проверка Saved Messages: если `chatId === myId`, сообщение немедленно игнорируется.
+     - Исходящие оператора (`message.out === true || senderId === myId`) зеркалируются через `processNativeOutbound` и прерывают обработку до вызова буфера AI. Первое сообщение оператора новому контакту не создает сделку/контакт, сделка и синхронизация истории (до 50 сообщений) запускаются только при получении ответа собеседника.
+     - В `recoverMissedMessages` диалоги с `peerId === myId` исключены из gap-recovery.
+  2. `backend/src/modules/crm/crm-pipeline.service.ts`:
+     - В `processIncoming` встроен guard: сверка входящего `senderTelegramChatId`, `chatId`, `username` и `phone` с `channel_accounts` и `users` текущего тенанта. Если совпало — возвращается `{ isPersonal: true }`, создание контакта/сделки блокируется.
+  3. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Добавлены методы `setWebhook`, `sendMessage`, `sendOutbound` и статическая синхронизация вебхуков `syncActiveWebhooks`.
+     - Автоматическая регистрация вебхука при подключении и активации ботов.
+  4. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Добавлен публичный обработчик вебхука `POST /webhook/:id` для получения входящих сообщений и команды `/start`, создания сделок и автоответа AI-ассистента.
+  5. `backend/src/plugins/authenticate.ts` и `backend/src/app.ts`:
+     - Исключение вебхука `/api/v1/integrations/telegram-bot/webhook` из проверки JWT и добавление в allowList rate limiter.
+  6. `backend/src/modules/crm/deals/deal-messaging.service.ts`:
+     - Добавлена поддержка `telegram_bot` в `recipientFor`.
+  7. `backend/src/server.ts`:
+     - Зарегистрирован отправитель `telegram_bot` в `registerOutboundSender`.
+     - Добавлен запуск `syncActiveWebhooks` на старте сервера.
+- **Верификация:**
+  - `npm --prefix backend run build`: 0 ошибок TypeScript ✅
+  - `npm --prefix frontend run build`: 45/45 страниц собраны ✅
