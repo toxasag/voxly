@@ -1118,3 +1118,41 @@
 - **Верификация:**
   - `npm --prefix backend run build`: 0 ошибок TypeScript ✅
   - `npm --prefix frontend run build`: 45/45 страниц собраны ✅
+
+---
+
+### 24.11.2026 — Каскадный роутер NoirLight, Паспорт компании (Human-in-the-Loop) и мульти-мессенджерная изоляция MPRO
+- **Контекст и задача:**
+  1. NoirLight model cascading router (`https://api.noirlight.pro/v1`): приоритет топовых моделей (`glm-4.5`, `qwen3.8-27b`, `glm-5.3`, `qwen-omni-plus`, `nemotron-super`), мгновенный каскадный переход между ними и фоллбэк на Google Gemini (`gemini-3.5-flash`, `gemini-3.5-flash-lite`).
+  2. Паспорт компании (Human-in-the-Loop): при загрузке материалов или сайта формируется эталонный саммери (бренд, услуги, прайс, график, контакты, ограничения консультанта). Пользователь утверждает саммери, после чего блок `<approved_company_profile>` получает наивысший приоритет над сырыми чанками RAG, предотвращая галлюцинации и всплытие субподрядных брендов (кейс `Genadich.com` на `team-big.ru`).
+  3. Упрощенный онбординг создания бота (3-4 поля): Название компании, Сайт, Имя ассистента (с кнопкой копирования из виджета сайта), Модель (дефолт `glm-4.5`). Тонкие настройки (температура, промпт, сущности) скрыты за раскрывающимся блоком конфигурации.
+  4. Мульти-мессенджерная изоляция каналов и региональное обучение CRM (MPRO `mpro.getvoxly.ru`): разделение каналов WhatsApp Пхукет (`+66827612885`) и Бали (`+62881037492717`) с отдельными агентами и фильтрацией сообщений при синтезе базы знаний.
+- **Что сделано:**
+  1. **БД и миграция:**
+     - Создана миграция `backend/src/db/migrations/0130_ai_agent_company_summary.sql`: поля `company_profile_summary TEXT`, `company_profile_approved BOOLEAN DEFAULT FALSE`, `company_profile_approved_at TIMESTAMPTZ`. Применена на проде.
+     - Обновлена схема `backend/src/db/schema.sql`.
+  2. **Модели и каскадный роутинг:**
+     - `backend/src/modules/ai/ai-pricing.ts`: добавлены модели `glm-4.5`, `glm-5.3`, `qwen3.8-27b`, `qwen-omni-plus`, `nemotron-super`, `agnes-3.0-flash` с провайдером `custom`.
+     - `backend/src/modules/ai/gateway/model-tier-router.ts`: добавлен каталог профилей и каскадная матрица `HIERARCHICAL_FALLBACK_MATRIX` от NoirLight к Gemini.
+     - `backend/src/modules/ai/agent-pipeline.service.ts`: дефолтный fallback изменен на `glm-4.5`, к цепочке всегда пристыковываются Gemini модели.
+  3. **Синтез паспорта и приоритет над RAG:**
+     - `backend/src/modules/ai/knowledge-synthesizer.service.ts`: реализованы методы `synthesizeCompanyProfile` и `approveCompanyProfile`.
+     - `backend/src/modules/ai/agent-reply.ts`: внедрен блок `<approved_company_profile>` с директивой абсолютного приоритета над сырой базой знаний.
+     - `backend/src/modules/ai/ai.routes.ts`: добавлены эндпоинты `GET /agents/:id/company-profile`, `POST /agents/:id/company-profile/synthesize`, `POST /agents/:id/company-profile/approve`.
+  4. **Фронтенд:**
+     - `frontend/src/lib/ai-bots/ai-bots.types.ts` и `schemas/ai-bot.schema.ts`: типы `company_profile_summary`, `company_profile_approved`, провайдер `NoirLight`.
+     - `frontend/src/lib/api/use-agent-knowledge.ts`: хуки `useCompanyProfile`, `useSynthesizeCompanyProfile`, `useApproveCompanyProfile`.
+     - `frontend/src/components/ai-bots/AgentKnowledgeTab.tsx`: подвкладка «Паспорт компании (Саммери)» со статусом утверждения, генерацией через LLM и редактором.
+     - `frontend/src/components/ai-bots/BotModal.tsx`: легкий режим создания в 3-4 ключевых поля с возможностью раскрыть расширенную конфигурацию.
+  5. **Изоляция каналов MPRO:**
+     - Созданы агенты «Ассистент (Пхукет)» (`1501cc37-3541-42e9-b206-33d25d5f2436`) и «Ассистент (Бали)» (`ccd0ffda-9704-4eb9-bc41-d4fe243fb342`).
+     - Привязаны в `ai_agent_channel_bindings` к соответствующим аккаунтам WhatsApp.
+     - В `synthesizeFromCrm` добавлена фильтрация по `dm.channel_account_id = ANY(boundIds)`.
+- **Верификация:**
+  - TypeScript build backend (`npm --prefix backend run build`): 0 ошибок ✅
+  - Next.js build frontend (`npm --prefix frontend run build`): 45/45 static pages ✅
+  - Деплой на боевой сервер (`vf-deploy GETVOXLY`): backend и frontend контейнеры healthy ✅
+  - Синтез паспорта компании на агенте `a4e8299e-c0b6-406c-b51a-9136a1a43eab` (Team BiG): успешно сгенерирован и утвержден ✅
+  - Проверка инъекции в системный промпт: `<approved_company_profile>` успешно встраивается с высшим приоритетом ✅
+  - Проверка изоляции диалогов MPRO: Пхукет — 45 сообщений, Бали — 332 сообщения, синтезированы 3 документа базы знаний для Пхукета ✅
+
