@@ -14,6 +14,7 @@ import {
   type ChannelAccountDTO,
 } from "@/lib/api/use-channels";
 import { useAutoActivatePendingBot } from "@/lib/api/use-telegram-bot";
+import { useAiAgents } from "@/lib/api/use-ai-agents";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/shared/StatusBadge";
 import { Sheet, SheetContent, SheetHeader } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,7 @@ const editChannelAccountSchema = z.object({
     .trim()
     .min(1, "Укажите название подключения")
     .max(120, "Название не может быть длиннее 120 символов"),
+  agent_id: z.string().nullable().optional(),
 });
 
 type EditChannelAccountValues = z.infer<typeof editChannelAccountSchema>;
@@ -36,6 +38,9 @@ const STATUS_VARIANTS: Record<ChannelStatus, StatusBadgeVariant> = {
   error: "destructive",
   disabled: "neutral",
 };
+
+/** Каналы, для которых отображается поле привязки AI-агента */
+const AGENT_CHANNELS: ChannelSlug[] = ["telegram_bot", "telegram"];
 
 interface EditChannelAccountModalProps {
   open: boolean;
@@ -54,16 +59,25 @@ export function EditChannelAccountModal({
 }: EditChannelAccountModalProps) {
   const update = useUpdateChannelAccount(channel);
   const autoActivate = useAutoActivatePendingBot();
+  const { data: agents = [] } = useAiAgents();
+
+  const showAgentField = AGENT_CHANNELS.includes(channel);
 
   const form = useForm<EditChannelAccountValues>({
     resolver: zodResolver(editChannelAccountSchema),
     mode: "onChange",
-    defaultValues: { label: account?.label ?? "" },
+    defaultValues: {
+      label: account?.label ?? "",
+      agent_id: account?.boundAgentId ?? null,
+    },
   });
 
   useEffect(() => {
     if (open && account) {
-      form.reset({ label: account.label });
+      form.reset({
+        label: account.label,
+        agent_id: account.boundAgentId ?? null,
+      });
     }
   }, [open, account, form]);
 
@@ -87,7 +101,10 @@ export function EditChannelAccountModal({
       if (!account) return;
 
       const trimmed = values.label.trim();
-      if (trimmed === account.label) {
+      const agentChanged = showAgentField && values.agent_id !== (account.boundAgentId ?? null);
+      const labelChanged = trimmed !== account.label;
+
+      if (!labelChanged && !agentChanged) {
         onClose();
         return;
       }
@@ -96,8 +113,9 @@ export function EditChannelAccountModal({
         await update.mutateAsync({
           id: account.id,
           label: trimmed,
+          ...(showAgentField && { agent_id: values.agent_id ?? null }),
         });
-        toast.success(`Название подключения изменено на «${trimmed}»`);
+        toast.success(`Настройки подключения «${trimmed}» сохранены`);
         onClose();
       } catch (error) {
         if (error instanceof ApiClientError) {
@@ -112,10 +130,10 @@ export function EditChannelAccountModal({
           return;
         }
 
-        toast.error("Не удалось обновить название подключения");
+        toast.error("Не удалось обновить настройки подключения");
       }
     },
-    [account, update, onClose, form],
+    [account, update, onClose, form, showAgentField],
   );
 
   if (!account) return null;
@@ -220,6 +238,31 @@ export function EditChannelAccountModal({
               </p>
             )}
           </div>
+
+          {/* Поле привязки AI-агента (только для telegram-каналов) */}
+          {showAgentField && (
+            <div className="space-y-1.5">
+              <label htmlFor="edit_account_agent" className="block text-xs font-medium text-[#666666]">
+                Подключить AI-агент
+              </label>
+              <select
+                id="edit_account_agent"
+                {...form.register("agent_id")}
+                disabled={isSubmitting}
+                className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 disabled:opacity-50"
+              >
+                <option value="">Без AI-агента</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.model})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-[#888888]">
+                AI-агент будет автоматически отвечать на входящие сообщения в этом боте
+              </p>
+            </div>
+          )}
 
           {/* Кнопки действий */}
           <div className="flex items-center justify-end gap-2 pt-2">
