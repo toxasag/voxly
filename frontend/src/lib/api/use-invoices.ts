@@ -543,7 +543,7 @@ export function useCreateAccount(): UseMutationResult<AccountDTO, ApiClientError
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -557,7 +557,7 @@ export function useTransfer(): UseMutationResult<{ from: AccountDTO; to: Account
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
