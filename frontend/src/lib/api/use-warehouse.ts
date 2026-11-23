@@ -27,6 +27,9 @@ export interface WarehouseItemDTO {
   totalStock: number;
   reservedStock: number;
   availableStock: number;
+  reserved?: boolean;
+  status?: "reserved" | "in_stock" | "out_of_stock";
+  stockStatus?: "reserved" | "in_stock" | "out_of_stock";
   price?: number;
   quantity?: number;
   models?: WarehouseItemModelDTO[];
@@ -490,6 +493,20 @@ export function useCreatePurchaseRequest() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+    },
+  });
+}
+
+export function useBulkCreatePurchaseRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { itemIds: string[]; comment?: string; status?: string; repair_order_id?: string; deal_id?: string }) => {
+      const res = await apiClient.post<PurchaseRequestDTO[]>("/api/v1/purchase-requests", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
     },
   });
 }

@@ -186,6 +186,7 @@ export interface WarehouseItemRow {
   cost_price: string | number;
   total_stock?: string | number;
   reserved_stock?: string | number;
+  reserved?: boolean | string | number | null;
   stock_valuation?: string | number;
   fifo_cost_price?: string | number | null;
   active_batches_count?: string | number;
@@ -224,6 +225,9 @@ export interface WarehouseItemDTO {
   quantity?: number;
   reservedStock: number;
   availableStock: number;
+  reserved?: boolean;
+  status?: "reserved" | "in_stock" | "out_of_stock";
+  stockStatus?: "reserved" | "in_stock" | "out_of_stock";
   models?: WarehouseItemModelDTO[];
   modelIds?: string[];
   modelNames?: string[];

@@ -281,6 +281,37 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(warehouseRoutes, { prefix: "/api/v1/warehouse" });
   await app.register(warehouseRoutes, { prefix: "/api/warehouse" });
   await app.register(warehouseRoutes, { prefix: "/warehouse" });
+
+  // Прямой алиас POST /api/v1/purchase-requests для генерации заявок на закупку
+  await app.register(async (purchaseApp) => {
+    await purchaseApp.register(authenticatePlugin);
+    purchaseApp.post("/api/v1/purchase-requests", async (request, reply) => {
+      const { tenant_id } = request;
+      const userId = request.authUser?.id ?? null;
+      const body = request.body as Record<string, unknown>;
+      const { warehouseService } = await import("./modules/warehouse/warehouse.service.js");
+
+      if (Array.isArray(body?.itemIds) && body.itemIds.length > 0) {
+        const created = await warehouseService.createBulkPurchaseRequests(
+          tenant_id,
+          userId,
+          {
+            itemIds: body.itemIds as string[],
+            status: typeof body.status === "string" ? body.status : undefined,
+            comment: typeof body.comment === "string" ? body.comment : undefined,
+            repair_order_id: typeof body.repair_order_id === "string" ? body.repair_order_id : undefined,
+            deal_id: typeof body.deal_id === "string" ? body.deal_id : undefined,
+          },
+        );
+        return reply.status(201).send({ data: created });
+      }
+
+      const { createPurchaseRequestSchema } = await import("./modules/warehouse/warehouse.types.js");
+      const parsed = createPurchaseRequestSchema.parse(request.body);
+      const created = await warehouseService.createPurchaseRequest(tenant_id, userId, parsed);
+      return reply.status(201).send({ data: created });
+    });
+  });
   await app.register(servicesRoutes, { prefix: "/api/v1/services" });
   await app.register(servicesRoutes, { prefix: "/api/services" });
   await app.register(printTemplatesRoutes, { prefix: "/api/v1/print-templates" });

@@ -1,5 +1,5 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
-import { query, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
+import { query, queryOne, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import {
   type AggregatedPurchaseRequestDTO,
   type BulkDeleteWarehouseItemsPayload,
@@ -413,6 +413,13 @@ export class WarehouseService {
         const avgBatchCostPrice =
           totalStock > 0 ? Math.round((stockValuation / totalStock) * 100) / 100 : costPrice;
         const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+        const isReserved = reserved > 0 || Boolean(r.reserved);
+        const status: "reserved" | "in_stock" | "out_of_stock" = isReserved
+          ? "reserved"
+          : available > 0
+            ? "in_stock"
+            : "out_of_stock";
+
         return {
           id: r.id,
           sku: r.sku,
@@ -432,6 +439,9 @@ export class WarehouseService {
           quantity: totalStock,
           reservedStock: reserved,
           availableStock: available,
+          reserved: isReserved,
+          status,
+          stockStatus: status,
           models,
           modelIds: models.map((m) => m.id),
           modelNames: models.map((m) => m.name),
@@ -509,6 +519,12 @@ export class WarehouseService {
       const avgBatchCostPrice =
         total > 0 ? Math.round((stockValuation / total) * 100) / 100 : costPrice;
       const models = (r.models_json as WarehouseItemModelDTO[]) ?? [];
+      const isReserved = reserved > 0 || Boolean(r.reserved);
+      const status: "reserved" | "in_stock" | "out_of_stock" = isReserved
+        ? "reserved"
+        : available > 0
+          ? "in_stock"
+          : "out_of_stock";
 
       return {
         id: r.id,
@@ -529,6 +545,9 @@ export class WarehouseService {
         quantity: total,
         reservedStock: reserved,
         availableStock: available,
+        reserved: isReserved,
+        status,
+        stockStatus: status,
         models,
         modelIds: models.map((m) => m.id),
         modelNames: models.map((m) => m.name),
@@ -1781,6 +1800,67 @@ export class WarehouseService {
       createdAt: toIso(row.created_at),
       updatedAt: toIso(row.updated_at),
     };
+  }
+
+  async isReserved(tenantId: string, itemId: string): Promise<boolean> {
+    const row = await queryOne<{ count: string | number }>(
+      `SELECT count(*)::int AS count
+       FROM warehouse_reservations
+       WHERE tenant_id = $1 AND item_id = $2 AND status = 'reserved'`,
+      [tenantId, itemId],
+    );
+    return Number(row?.count ?? 0) > 0;
+  }
+
+  async createBulkPurchaseRequests(
+    tenantId: string,
+    userId: string | null,
+    payload: {
+      itemIds: string[];
+      status?: string;
+      comment?: string;
+      repair_order_id?: string;
+      deal_id?: string;
+    },
+  ): Promise<PurchaseRequestDTO[]> {
+    const uniqueIds = Array.from(new Set(payload.itemIds.filter(Boolean)));
+    const results: PurchaseRequestDTO[] = [];
+
+    for (const itemId of uniqueIds) {
+      const item = await this.getItem(tenantId, itemId);
+      if (!item) continue;
+
+      const neededQty =
+        item.reservedStock > 0
+          ? item.reservedStock
+          : item.availableStock < 0
+            ? Math.abs(item.availableStock)
+            : 1;
+
+      const created = await this.createPurchaseRequest(tenantId, userId, {
+        item_id: item.id,
+        item_name: item.name,
+        sku: item.sku,
+        quantity: neededQty,
+        unit: item.unit || "шт",
+        estimated_price: item.costPrice > 0 ? item.costPrice : item.retailPrice,
+        comment: payload.comment || "Сформировано из массовых действий склада",
+        repair_order_id: payload.repair_order_id,
+        deal_id: payload.deal_id,
+      });
+
+      if (payload.status && payload.status !== "pending") {
+        const validStatus = payload.status as PurchaseRequestStatus;
+        await this.updatePurchaseRequest(tenantId, created.id, {
+          status: validStatus,
+        });
+        created.status = validStatus;
+      }
+
+      results.push(created);
+    }
+
+    return results;
   }
 
   async updatePurchaseRequest(

@@ -35,6 +35,9 @@ import {
   Filter,
   Lock,
   Unlock,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
@@ -66,6 +69,7 @@ import {
   useDeletePurchaseRequest,
   useExportWarehouseItems,
   useBulkDeleteWarehouseItems,
+  useBulkCreatePurchaseRequests,
   useWarehouseCategories,
   useWarehouseBrands,
   useWarehouseModels,
@@ -346,6 +350,80 @@ function WarehouseContent() {
   const meta = warehouseData?.meta ?? { total: 0, page: 1, limit: 25, pages: 0 };
   const filteredItems = items;
 
+  type ItemSortField =
+    | "sku"
+    | "name"
+    | "category"
+    | "brand"
+    | "totalStock"
+    | "reservedStock"
+    | "availableStock"
+    | "costPrice"
+    | "retailPrice";
+  type SortDirection = "asc" | "desc";
+
+  const [sortField, setSortField] = useState<ItemSortField | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  const handleSort = (field: ItemSortField) => {
+    if (sortField === field) {
+      if (sortDirection === "asc") {
+        setSortDirection("desc");
+      } else {
+        setSortField(null);
+        setSortDirection("asc");
+      }
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortedItems = useMemo(() => {
+    if (!sortField) return filteredItems;
+    return [...filteredItems].sort((a, b) => {
+      const aVal = a[sortField];
+      const bVal = b[sortField];
+
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        const cmp = aVal.localeCompare(bVal, "ru", { sensitivity: "base" });
+        return sortDirection === "asc" ? cmp : -cmp;
+      }
+
+      const aNum = Number(aVal ?? 0);
+      const bNum = Number(bVal ?? 0);
+      return sortDirection === "asc" ? aNum - bNum : bNum - aNum;
+    });
+  }, [filteredItems, sortField, sortDirection]);
+
+  const bulkCreatePurchasesMutation = useBulkCreatePurchaseRequests();
+
+  const selectedItemsList = useMemo(() => {
+    return Array.from(selectedItemIds)
+      .map((id) => items.find((i) => i.id === id))
+      .filter((i): i is WarehouseItemDTO => Boolean(i));
+  }, [selectedItemIds, items]);
+
+  const hasReservedOrDeficit = useMemo(() => {
+    return selectedItemsList.some(
+      (item) => item.reservedStock > 0 || item.availableStock < 0 || item.status === "reserved",
+    );
+  }, [selectedItemsList]);
+
+  const handleBulkCreatePurchaseRequest = async () => {
+    if (selectedItemIds.size === 0) return;
+    try {
+      const res = await bulkCreatePurchasesMutation.mutateAsync({
+        itemIds: Array.from(selectedItemIds),
+        comment: "Сформировано из массовых действий склада",
+      });
+      toast.success(`Сформировано заявок на закупку: ${res.length}`);
+      setSelectedItemIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось сформировать заявку на закупку");
+    }
+  };
+
   const { data: batches = [], isLoading: isBatchesLoading } = useWarehouseBatches();
   const { data: movements = [], isLoading: isMovementsLoading } = useWarehouseMovements();
   const { data: purchaseRequests = [], isLoading: isPurchasesLoading } = usePurchaseRequests();
@@ -368,10 +446,10 @@ function WarehouseContent() {
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
 
   const handleToggleSelectAll = () => {
-    if (selectedItemIds.size === filteredItems.length && filteredItems.length > 0) {
+    if (selectedItemIds.size === sortedItems.length && sortedItems.length > 0) {
       setSelectedItemIds(new Set());
     } else {
-      setSelectedItemIds(new Set(filteredItems.map((i) => i.id)));
+      setSelectedItemIds(new Set(sortedItems.map((i) => i.id)));
     }
   };
 
@@ -1443,43 +1521,169 @@ function WarehouseContent() {
                   <th className="w-[38px] px-3 py-2.5 text-center">
                     <input
                       type="checkbox"
-                      checked={filteredItems.length > 0 && selectedItemIds.size === filteredItems.length}
+                      checked={sortedItems.length > 0 && selectedItemIds.size === sortedItems.length}
                       onChange={handleToggleSelectAll}
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                     />
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
-                    Артикул
+                  <th
+                    onClick={() => handleSort("sku")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "sku" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по артикулу"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Артикул</span>
+                      {sortField === "sku" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Наименование
+                  <th
+                    onClick={() => handleSort("name")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "name" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по наименованию"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Наименование</span>
+                      {sortField === "name" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
-                    Категория
+                  <th
+                    onClick={() => handleSort("category")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "category" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по категории"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Категория</span>
+                      {sortField === "category" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Бренд
+                  <th
+                    onClick={() => handleSort("brand")}
+                    className={cn(
+                      "px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "brand" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по бренду"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Бренд</span>
+                      {sortField === "brand" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
-                    Физический
+                  <th
+                    onClick={() => handleSort("totalStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "totalStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по физическому остатку"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Физический</span>
+                      {sortField === "totalStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
-                    В резерве
+                  <th
+                    onClick={() => handleSort("reservedStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "reservedStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по количеству в резерве"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>В резерве</span>
+                      {sortField === "reservedStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
-                    Доступно
+                  <th
+                    onClick={() => handleSort("availableStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "availableStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по доступному остатку"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Доступно</span>
+                      {sortField === "availableStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Себестоимость
+                  <th
+                    onClick={() => handleSort("costPrice")}
+                    className={cn(
+                      "px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "costPrice" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по себестоимости"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <span>Себестоимость</span>
+                      {sortField === "costPrice" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Розница
+                  <th
+                    onClick={() => handleSort("retailPrice")}
+                    className={cn(
+                      "px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "retailPrice" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по розничной цене"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <span>Розница</span>
+                      {sortField === "retailPrice" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
                   </th>
                   <th className="px-4 py-2.5 w-[90px]" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
-                {filteredItems.map((item) => {
+                {sortedItems.map((item) => {
                   const isOutOfStock = item.availableStock <= 0;
                   const isLowStock = item.availableStock > 0 && item.availableStock <= item.minStock;
                   const isSelected = selectedItemIds.has(item.id);
@@ -2650,6 +2854,30 @@ function WarehouseContent() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleBulkCreatePurchaseRequest}
+              disabled={!hasReservedOrDeficit || bulkCreatePurchasesMutation.isPending}
+              className={cn(
+                "flex h-7 items-center gap-1.5 rounded-[6px] px-3 text-xs font-medium shadow-xs transition-colors",
+                hasReservedOrDeficit && !bulkCreatePurchasesMutation.isPending
+                  ? "bg-amber-600 text-white hover:bg-amber-700 cursor-pointer"
+                  : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed",
+              )}
+              title={
+                !hasReservedOrDeficit
+                  ? "Кнопка активна только для позиций со статусом «В резерве» или дефицитом"
+                  : "Сформировать заявку на закупку для выбранных позиций"
+              }
+            >
+              {bulkCreatePurchasesMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShoppingCart className="h-3.5 w-3.5" />
+              )}
+              Сформировать заявку
+            </button>
+
             <button
               type="button"
               onClick={handleBulkEditClick}
