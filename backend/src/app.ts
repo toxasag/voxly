@@ -25,6 +25,7 @@ import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import trackingRedirectRoutes from "./modules/channels/tracking-redirect.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
+import telegramBotIntegrationRoutes from "./modules/channels/telegram-bot-integration.routes.js";
 import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/channels/whatsapp-integration.routes.js";
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
@@ -315,6 +316,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Авторизация аккаунтов Telegram через MTProto. Отдельная группа: у остальных
   // каналов нет двухшагового входа с кодом и облачным паролем.
   await app.register(telegramIntegrationRoutes, { prefix: "/api/v1/integrations/telegram" });
+
+  // Подключение и управление официальными Telegram-ботами (Bot API & Bot Manager)
+  await app.register(telegramBotIntegrationRoutes, { prefix: "/api/v1/integrations/telegram-bot" });
+  await app.register(telegramBotIntegrationRoutes, { prefix: "/api/v1/integrations/telegram_bot" });
 
   // Авторизация WhatsApp через Evolution API (QR-код)
   await app.register(whatsappIntegrationRoutes, { prefix: "/api/v1/integrations/whatsapp" });
