@@ -106,11 +106,12 @@ export class KnowledgeSynthesizerService {
     let wonDeals: DealRow[] = [];
     if (boundIds.length > 0) {
       wonDeals = await query<DealRow>(
-        `SELECT d.id, d.title, d.budget, s.name AS stage_name, d.created_at
+        `SELECT DISTINCT d.id, d.title, d.budget, s.name AS stage_name, d.created_at
          FROM deals d
          JOIN stages s ON s.id = d.stage_id
+         JOIN deal_messages dm ON dm.deal_id = d.id
          WHERE d.tenant_id = $1 AND s.is_won = true AND d.deleted_at IS NULL
-           AND d.channel_account_id = ANY($2::uuid[])
+           AND dm.channel_account_id = ANY($2::uuid[])
          ORDER BY d.created_at DESC
          LIMIT 30`,
         [tenantId, boundIds],
@@ -139,7 +140,7 @@ export class KnowledgeSynthesizerService {
            JOIN stages s ON s.id = d.stage_id
            JOIN deal_messages dm ON dm.deal_id = d.id
            WHERE d.tenant_id = $1 AND d.deleted_at IS NULL
-             AND (d.channel_account_id = ANY($2::uuid[]) OR dm.channel_account_id = ANY($2::uuid[]))
+             AND dm.channel_account_id = ANY($2::uuid[])
            ORDER BY d.created_at DESC
            LIMIT 20`,
           [tenantId, boundIds],
@@ -165,13 +166,25 @@ export class KnowledgeSynthesizerService {
     }
 
     const dealIds = dealsToAnalyze.map((d) => d.id);
-    const messages = await query<MessageRow>(
-      `SELECT deal_id, source, sender_name, content, created_at
-       FROM deal_messages
-       WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])
-       ORDER BY deal_id, created_at ASC`,
-      [tenantId, dealIds],
-    );
+    let messages: MessageRow[] = [];
+    if (boundIds.length > 0) {
+      messages = await query<MessageRow>(
+        `SELECT deal_id, source, sender_name, content, created_at
+         FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])
+           AND (channel_account_id = ANY($3::uuid[]) OR channel_account_id IS NULL)
+         ORDER BY deal_id, created_at ASC`,
+        [tenantId, dealIds, boundIds],
+      );
+    } else {
+      messages = await query<MessageRow>(
+        `SELECT deal_id, source, sender_name, content, created_at
+         FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])
+         ORDER BY deal_id, created_at ASC`,
+        [tenantId, dealIds],
+      );
+    }
 
     if (messages.length === 0) {
       throw new Error("В сделках CRM не найдено сообщений для обучения");
