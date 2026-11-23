@@ -30,7 +30,7 @@ export default defineConfig({
       NODE_ENV: "test",
     },
     setupFiles: ["./src/tests/react-19-patch.ts", "./src/tests/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "__tests__/**/*.test.{ts,tsx}"],
     /**
      * 20 секунд вместо 5 по умолчанию.
      *
