@@ -14,6 +14,7 @@ import {
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
 import { useCreatePart, useDeletePart } from "@/lib/api/use-repairs";
+import { PartAddModal } from "./PartAddModal";
 import { cn } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
@@ -42,6 +43,7 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [addToPurchaseRequest, setAddToPurchaseRequest] = useState(false);
+  const [partAddModalOpen, setPartAddModalOpen] = useState(false);
 
   const comboboxRef = useRef<HTMLDivElement>(null);
 
@@ -238,9 +240,19 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-[#888888]">{items.length} позиций</span>
           {orderId && (
-            <span className="flex items-center gap-1 rounded-[4px] bg-[#f0f0f0] px-2 py-0.5 text-[11px] text-[#666666]">
-              <Boxes className="h-3 w-3 text-[#4a38f5]" /> Авторезерв со склада
-            </span>
+            <>
+              <button
+                type="button"
+                onClick={() => setPartAddModalOpen(true)}
+                className="flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-0.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 hover:border-[#4a38f5]/30 transition-colors cursor-pointer shadow-2xs"
+                title="Добавить запчасть в наряд"
+              >
+                <Plus className="h-3 w-3" /> Добавить запчасть
+              </button>
+              <span className="flex items-center gap-1 rounded-[4px] bg-[#f0f0f0] px-2 py-0.5 text-[11px] text-[#666666]">
+                <Boxes className="h-3 w-3 text-[#4a38f5]" /> Авторезерв со склада
+              </span>
+            </>
           )}
         </div>
       </div>
@@ -455,10 +467,27 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
                   </div>
                 )}
                 {!isWarehouseLoading && filteredWarehouseItems.length === 0 && (
-                  <div className="px-2.5 py-2 text-xs text-[#888888]">
-                    {warehouseItems.length === 0
-                      ? "Склад пока пуст. Введите название и параметры вручную."
-                      : "На складе позиций не найдено. Можно добавить как свободную деталь."}
+                  <div className="p-2 space-y-1.5">
+                    <div className="text-xs text-[#888888]">
+                      {warehouseItems.length === 0
+                        ? "Склад пока пуст. Запчасть можно добавить вручную или через форму."
+                        : "На складе позиций не найдено."}
+                    </div>
+                    {newName.trim().length > 0 && orderId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCatalogOpen(false);
+                          setPartAddModalOpen(true);
+                        }}
+                        className="flex w-full items-center gap-1.5 rounded-[6px] bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-2.5 py-1.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors text-left cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Добавить «<span className="font-semibold">{newName.trim()}</span>» через форму
+                        </span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -656,6 +685,25 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
             })}
           </div>
         </div>
+      )}
+
+      {orderId && (
+        <PartAddModal
+          open={partAddModalOpen}
+          onClose={() => setPartAddModalOpen(false)}
+          orderId={orderId}
+          initialName={newName}
+          initialArticle={newArticle}
+          onSuccess={() => {
+            setNewName("");
+            setNewArticle("");
+            setNewQty("1");
+            setNewRetail("");
+            setNewCostPrice("");
+            setSelectedWarehouseItem(null);
+            setAddToPurchaseRequest(false);
+          }}
+        />
       )}
     </div>
   );

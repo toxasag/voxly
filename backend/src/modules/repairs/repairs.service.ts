@@ -1865,8 +1865,63 @@ export class RepairsService {
     await this.assertEditable(tenantId, orderId);
 
     return withTenant(tenantId, async (tx) => {
-      // Проверка остатка на складе, если отключена продажа в минус
-      if (payload.warehouse_item_id) {
+      // 0. Idempotency / Duplicate check:
+      // If a part with identical name, article, quantity, retail_price was created within last 15 seconds, return it
+      const recentDuplicate = await tx.queryOne<RepairPartRow>(
+        `SELECT ${PART_COLUMNS}
+         FROM repair_parts
+         WHERE tenant_id = $1 AND repair_order_id = $2
+           AND lower(trim(name)) = lower(trim($3))
+           AND lower(trim(article)) = lower(trim($4))
+           AND quantity = $5
+           AND retail_price = $6
+           AND created_at > now() - interval '15 seconds'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [tenantId, orderId, payload.name, payload.article ?? "", payload.quantity, payload.retail_price],
+      );
+      if (recentDuplicate) {
+        return toRepairPartDTO(recentDuplicate);
+      }
+
+      let resolvedWarehouseItemId = payload.warehouse_item_id ?? null;
+
+      // 1. If not explicitly linked to warehouse, check if an item with this SKU already exists
+      const articleClean = (payload.article ?? "").trim();
+      if (!resolvedWarehouseItemId && articleClean && articleClean !== "Б/А") {
+        const existingItem = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM warehouse_items
+           WHERE tenant_id = $1 AND lower(trim(sku)) = lower($2) AND deleted_at IS NULL
+           LIMIT 1`,
+          [tenantId, articleClean],
+        );
+        if (existingItem) {
+          resolvedWarehouseItemId = existingItem.id;
+        }
+      }
+
+      // 2. If save_to_catalog is requested and still not in warehouse, create catalog item
+      if (payload.save_to_catalog && !resolvedWarehouseItemId) {
+        const newWarehouseRow = await tx.queryOne<{ id: string }>(
+          `INSERT INTO warehouse_items
+             (tenant_id, sku, name, unit, retail_price, cost_price)
+           VALUES ($1, $2, $3, 'шт', $4, $5)
+           RETURNING id`,
+          [
+            tenantId,
+            articleClean || "",
+            payload.name.trim(),
+            payload.retail_price,
+            payload.cost_price,
+          ],
+        );
+        if (newWarehouseRow) {
+          resolvedWarehouseItemId = newWarehouseRow.id;
+        }
+      }
+
+      // 3. Проверка остатка на складе, если отключена продажа в минус
+      if (resolvedWarehouseItemId) {
         const settings = await warehouseService.getSettings(tenantId);
         if (!settings.allowNegativeStock) {
           const stockRow = await tx.queryOne<{ available: string | number }>(
@@ -1874,7 +1929,7 @@ export class RepairsService {
                COALESCE((SELECT SUM(remaining_quantity) FROM warehouse_batches WHERE tenant_id = $1 AND item_id = $2), 0)
                - COALESCE((SELECT SUM(quantity) FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = $2 AND status = 'reserved'), 0)
              ) AS available`,
-            [tenantId, payload.warehouse_item_id],
+            [tenantId, resolvedWarehouseItemId],
           );
           const available = Number(stockRow?.available ?? 0);
           if (available < payload.quantity) {
@@ -1887,18 +1942,18 @@ export class RepairsService {
         payload.status ??
         (payload.add_to_purchase_request
           ? "needs_purchase"
-          : payload.warehouse_item_id
+          : resolvedWarehouseItemId
             ? "reserved"
             : "used");
 
       let resolvedCostPrice = payload.cost_price;
       let costSource = "manual";
 
-      if (payload.warehouse_item_id) {
+      if (resolvedWarehouseItemId) {
         const fifoEstimate = await warehouseService.estimateFifoUnitCost(
           tx,
           tenantId,
-          payload.warehouse_item_id,
+          resolvedWarehouseItemId,
           payload.quantity,
         );
         if (
@@ -1918,7 +1973,7 @@ export class RepairsService {
         [
           tenantId,
           orderId,
-          payload.warehouse_item_id ?? null,
+          resolvedWarehouseItemId,
           partStatus,
           payload.name,
           payload.article ?? "",
@@ -1930,12 +1985,12 @@ export class RepairsService {
       );
 
       // Если деталь привязана к складу, фиксируем резервирование
-      if (payload.warehouse_item_id) {
+      if (resolvedWarehouseItemId) {
         await tx.query(
           `INSERT INTO warehouse_reservations
              (tenant_id, repair_order_id, item_id, quantity, status)
            VALUES ($1, $2, $3, $4, 'reserved')`,
-          [tenantId, orderId, payload.warehouse_item_id, payload.quantity],
+          [tenantId, orderId, resolvedWarehouseItemId, payload.quantity],
         );
 
         await tx.query(
@@ -1944,7 +1999,7 @@ export class RepairsService {
            VALUES ($1, $2, $3, $4, 'reserve', $5, $6, $7)`,
           [
             tenantId,
-            payload.warehouse_item_id,
+            resolvedWarehouseItemId,
             orderId,
             row.id,
             payload.quantity,
@@ -1958,7 +2013,7 @@ export class RepairsService {
       if (payload.add_to_purchase_request) {
         await warehouseService.createPurchaseRequest(tenantId, null, {
           repair_order_id: orderId,
-          item_id: payload.warehouse_item_id ?? undefined,
+          item_id: resolvedWarehouseItemId ?? undefined,
           item_name: payload.name,
           sku: payload.article ?? "",
           quantity: payload.quantity,

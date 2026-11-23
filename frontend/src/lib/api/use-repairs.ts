@@ -435,10 +435,14 @@ export interface CreatePartPayload {
   status?: string;
   name: string;
   article?: string;
+  sku?: string;
   quantity?: number;
   retail_price: number;
+  price?: number;
   cost_price?: number;
   add_to_purchase_request?: boolean;
+  save_to_catalog?: boolean;
+  idempotency_key?: string;
 }
 
 export interface UpdatePartPayload {

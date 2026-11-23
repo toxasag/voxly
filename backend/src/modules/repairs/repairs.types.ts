@@ -310,18 +310,65 @@ export const createWorkSchema = z.object({
 
 export const updateWorkSchema = createWorkSchema.partial();
 
-export const createPartSchema = z.object({
-  warehouse_item_id: z.string().uuid().optional(),
+export const createPartBaseSchema = z.object({
+  warehouse_item_id: z.string().uuid().optional().nullable(),
   name: z.string().min(1, "Part name is required").max(200),
   article: z.string().max(100).optional().or(z.literal("")),
+  sku: z.string().max(100).optional().or(z.literal("")),
   quantity: z.number().int().positive("Quantity must be at least 1").default(1),
-  retail_price: z.number().nonnegative("Retail price cannot be negative"),
+  retail_price: z.number().nonnegative("Retail price cannot be negative").default(0),
+  price: z.number().nonnegative("Price cannot be negative").optional(),
   cost_price: z.number().nonnegative("Cost price cannot be negative").default(0),
   status: z.enum(["used", "reserved", "needs_purchase"]).optional().default("used"),
   add_to_purchase_request: z.boolean().optional().default(false),
+  save_to_catalog: z.boolean().optional().default(false),
+  idempotency_key: z.string().max(100).optional(),
 });
 
-export const updatePartSchema = createPartSchema.partial();
+export const updatePartSchema = createPartBaseSchema.partial();
+
+export const createPartSchema = z.preprocess(
+  (val: unknown) => {
+    if (typeof val !== "object" || val === null) return val;
+    const obj = val as Record<string, unknown>;
+    const copy = { ...obj };
+    if (copy.article === undefined && copy.sku !== undefined) {
+      copy.article = copy.sku;
+    }
+    if (copy.retail_price === undefined && copy.price !== undefined) {
+      copy.retail_price = copy.price;
+    }
+    if (typeof copy.quantity === "string") {
+      const parsed = parseInt(copy.quantity, 10);
+      if (!isNaN(parsed)) copy.quantity = parsed;
+    }
+    if (typeof copy.retail_price === "string") {
+      const parsed = parseFloat(copy.retail_price);
+      if (!isNaN(parsed)) copy.retail_price = parsed;
+    }
+    if (typeof copy.price === "string") {
+      const parsed = parseFloat(copy.price);
+      if (!isNaN(parsed)) copy.price = parsed;
+    }
+    if (typeof copy.cost_price === "string") {
+      const parsed = parseFloat(copy.cost_price);
+      if (!isNaN(parsed)) copy.cost_price = parsed;
+    }
+    return copy;
+  },
+  createPartBaseSchema.transform((data) => ({
+    warehouse_item_id: data.warehouse_item_id ?? undefined,
+    name: data.name.trim(),
+    article: (data.article?.trim() || data.sku?.trim() || "Б/А"),
+    quantity: data.quantity,
+    retail_price: data.retail_price ?? data.price ?? 0,
+    cost_price: data.cost_price,
+    status: data.status,
+    add_to_purchase_request: data.add_to_purchase_request,
+    save_to_catalog: data.save_to_catalog,
+    idempotency_key: data.idempotency_key,
+  })),
+);
 
 export const createNoteSchema = z.object({
   content: z.string().min(1, "Note content is required").max(4000),

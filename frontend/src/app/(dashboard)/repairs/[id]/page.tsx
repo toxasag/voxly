@@ -7,13 +7,14 @@ import {
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase,
   AlertCircle, ExternalLink, Clock, Users, NotebookPen,
-  SlidersHorizontal, Smartphone, Tag, Layers, Cpu, Bug, Flag,
+  SlidersHorizontal, Smartphone, Tag, Layers, Cpu, Bug, Flag, PackagePlus,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { RepairStatusStepper } from "@/components/repairs/detail/RepairStatusStepper";
 import { WorkItemsTable } from "@/components/repairs/detail/WorkItemsTable";
 import { PartsTable } from "@/components/repairs/detail/PartsTable";
+import { PartAddModal } from "@/components/repairs/detail/PartAddModal";
 import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
 import { formatOrderNumber } from "@/components/repairs/RepairsTable";
 import { PrintDocumentModal } from "@/components/repairs/PrintDocumentModal";
@@ -205,6 +206,7 @@ export default function RepairDetailPage() {
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  const [partAddModalOpen, setPartAddModalOpen] = useState(false);
 
   const openPrintTemplate = useCallback((slugOrId: string) => {
     setPrintModalSlug(slugOrId);
@@ -641,6 +643,15 @@ export default function RepairDetailPage() {
                 </button>
               </>
             )}
+            <button
+              type="button"
+              onClick={() => setPartAddModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+              title="Добавить запчасть в наряд"
+            >
+              <PackagePlus className="h-3.5 w-3.5" />
+              Добавить запчасть
+            </button>
             <button
               type="button"
               onClick={() => setSettingsDrawerOpen(true)}
@@ -1787,6 +1798,11 @@ export default function RepairDetailPage() {
         onClose={() => setCompanyPickerOpen(false)}
         currentCompanyId={ticket.company_id}
         onSelect={handleSelectCompany}
+      />
+      <PartAddModal
+        open={partAddModalOpen}
+        onClose={() => setPartAddModalOpen(false)}
+        orderId={ticket.id}
       />
       <ConfirmDialog
         open={pendingLeaveAction !== null}
