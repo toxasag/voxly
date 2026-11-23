@@ -159,7 +159,7 @@ export interface RepairTotals {
   marginPercent: number;
 }
 
-export type RepairFilterStatus = RepairStatus | "all";
+export type RepairFilterStatus = RepairStatus | "all" | "active";
 
 const STATUS_LABELS: Record<RepairStatus, string> = {
   intake: "Принят",

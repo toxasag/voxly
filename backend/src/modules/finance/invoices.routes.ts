@@ -49,9 +49,20 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
   app.get("/:id/pdf", { onRequest: read }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
     const { buffer, filename } = await s.getPdf(r.tenant_id, invoiceId);
+    const asciiFallback =
+      filename
+        .replace(/[^\x20-\x7E]/g, "_")
+        .replace(/["\\]/g, "")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "") || "invoice.pdf";
+    const safeAscii = asciiFallback.endsWith(".pdf") ? asciiFallback : `${asciiFallback}.pdf`;
+    const encodedUtf8 = encodeURIComponent(filename);
     return rep
       .header("Content-Type", "application/pdf")
-      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .header(
+        "Content-Disposition",
+        `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`,
+      )
       .send(buffer);
   });
 
@@ -99,7 +110,14 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
 
   app.post("/:id/pay", { onRequest: write }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
-    return rep.send({ data: await s.markPaid(r.tenant_id, r.authUser.id, invoiceId, markInvoicePaidSchema.parse(r.body)) });
+    return rep.send({
+      data: await s.markPaid(
+        r.tenant_id,
+        r.authUser.id,
+        invoiceId,
+        markInvoicePaidSchema.parse(r.body ?? {}),
+      ),
+    });
   });
 
   app.post("/:id/send", { onRequest: write }, async (r, rep) => {

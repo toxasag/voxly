@@ -26,7 +26,7 @@ import { NotFoundError } from "../../plugins/errorHandler.js";
 
 const listQuerySchema = z.object({
   deal_id: z.string().uuid().optional(),
-  status: repairStatusSchema.optional(),
+  status: z.union([repairStatusSchema, z.literal("active")]).optional(),
   payment_status: repairPaymentStatusSchema.optional(),
   priority: repairPrioritySchema.optional(),
   master_id: z.string().uuid().optional(),

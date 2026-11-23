@@ -692,3 +692,17 @@
   - `backend/src/modules/crm/deals/deal-messaging.service.ts`: `syncDealChatHistory` перебирает все подключённые аккаунты MAX, Telegram и WhatsApp с изоляцией ошибок по каждому аккаунту и передаёт `enrichedMaxUserId` и `max_chat_id`.
   - `backend/src/modules/channels/max-integration.routes.ts`: `dialogLimit` увеличен до 80, добавлена поддержка медиасообщений без текста и исключены `delivery_status = 'failed'` из дедупликации.
   - `frontend/src/components/crm/shared/CrmChatView.tsx`: сообщения со статусом `failed` исключены из текстовой дедупликации, чтобы не скрывать успешно доставленные сообщения.
+
+
+### 2026-11-23 — Сервисный центр и счета: PDF/отправка в мессенджеры, защита несохранённых данных, быстрая кнопка «Оплачен» и фильтр «В работе»
+- **Root causes:**
+  1. `GET /api/v1/invoices/:id/pdf` падал с `Invalid character in header content ["content-disposition"]` из-за кириллицы (`Счёт_СЧ-2026-0006.pdf`) в заголовке без RFC 5987 кодирования; `InvoicesService.sendToMessenger` был сломанной заглушкой (не генерировал PDF и вставлял в несуществующие колонки БД); меню «Отправить» обрезалось из-за `overflow-hidden` контейнера.
+  2. На вкладке «Работы и запчасти» и в шторке приёмки (`RepairIntakeModal`) не было перехвата ухода/закрытия при несохранённом черновике позиции (без нажатия `+`) или заполненных полях приёмки.
+  3. Вкладка «Финансы» в карточке наряда была зажата `max-w-3xl`, из-за чего строки блока «Счета на оплату» ломались и не было 1-клик оплаты счёта.
+  4. На `/repairs` отсутствовал быстрый фильтр «В работе» (все наряды, кроме «Выдан»).
+- **Исправлено:**
+  - `backend/src/modules/finance/invoices.routes.ts`, `invoices.service.ts`, `finance.types.ts`: RFC 5987 `Content-Disposition` для PDF; полноценная генерация PDF и отправка вложения через `ChatMediaService` + `DealMessagingService`/`resolveOutboundSender` (MAX, Telegram, WhatsApp, all); опциональный `account_id` в `markPaid` с автоподбором счёта и обновлением статуса оплаты связанных нарядов (`repair_orders` и `invoice_repair_orders`).
+  - `backend/src/modules/repairs/repairs.routes.ts`, `repairs.service.ts`, `frontend/src/lib/repairs/repairs.types.ts`, `frontend/src/lib/api/use-repairs.ts`, `frontend/src/components/repairs/RepairsTable.tsx`: добавлен фильтр «В работе» (`status=active` -> `ro.status <> 'issued'`), совместимый с фильтром «Оплата».
+  - `frontend/src/components/repairs/detail/FinancialSummary.tsx`, `frontend/src/lib/api/use-invoices.ts`: портальное меню «Отправить» (`createPortal(..., document.body)`, `z-[9999]`, MAX/Telegram/WhatsApp/Все с PDF), быстрая кнопка «Оплачен», расширенная вёрстка строк счёта.
+  - `frontend/src/components/repairs/detail/WorkItemsTable.tsx`, `PartsTable.tsx`, `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`: расширен контейнер вкладки «Финансы» (`max-w-6xl`), добавлен перехват смены вкладок, «Назад» и `beforeunload` с `ConfirmDialog` при несохранённом черновике работы/запчасти.
+  - `frontend/src/components/repairs/RepairIntakeModal.tsx`, `frontend/src/components/shared/ConfirmDialog.tsx`: `z-[70]` для `ConfirmDialog` поверх `Sheet`, перехват закрытия (`X`, «Отмена», клик вне шторки, `Escape`, `beforeunload`) при наличии несохранённых данных («Данные не сохранены, выйти без сохранения?»).
