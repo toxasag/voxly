@@ -68,7 +68,9 @@ import {
   useBulkDeleteWarehouseItems,
   useWarehouseCategories,
   useWarehouseBrands,
+  useWarehouseModels,
   type WarehouseItemDTO,
+  type WarehouseItemModelDTO,
   type WarehouseBatchDTO,
   type WarehouseMovementDTO,
   type PurchaseRequestDTO,
@@ -149,9 +151,23 @@ function WarehouseContent() {
 
   const categoryParam = searchParams.get("category") ?? "";
   const brandParam = searchParams.get("brand") ?? "";
+  const modelIdsParam = searchParams.get("model_ids") || searchParams.get("models") || "";
+
+  const initialModelIds = useMemo(() => {
+    if (!modelIdsParam) return [];
+    return modelIdsParam
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [modelIdsParam]);
 
   const [selectedCategory, setSelectedCategory] = useState<string>(categoryParam);
   const [selectedBrand, setSelectedBrand] = useState<string>(brandParam);
+  const [selectedModelIds, setSelectedModelIds] = useState<string[]>(initialModelIds);
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  useClickOutside(modelDropdownRef, () => setModelDropdownOpen(false), modelDropdownOpen);
 
   useEffect(() => {
     setSelectedCategory(categoryParam);
@@ -161,6 +177,10 @@ function WarehouseContent() {
     setSelectedBrand(brandParam);
   }, [brandParam]);
 
+  useEffect(() => {
+    setSelectedModelIds(initialModelIds);
+  }, [initialModelIds]);
+
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
   useClickOutside(filterPopoverRef, () => setFilterPopoverOpen(false), filterPopoverOpen);
@@ -169,14 +189,36 @@ function WarehouseContent() {
 
   const { data: warehouseCategoriesList = [] } = useWarehouseCategories();
   const { data: warehouseBrandsList = [] } = useWarehouseBrands();
+  const { data: allWarehouseModels = [] } = useWarehouseModels();
 
-  const activeFiltersCount = (selectedCategory ? 1 : 0) + (selectedBrand ? 1 : 0);
+  const availableModels = useMemo(() => {
+    if (!selectedBrand) return allWarehouseModels;
+    return allWarehouseModels.filter(
+      (m) => (m.brandName || "").trim().toLowerCase() === selectedBrand.trim().toLowerCase(),
+    );
+  }, [allWarehouseModels, selectedBrand]);
+
+  const filteredModelsForPicker = useMemo(() => {
+    const q = modelSearchQuery.trim().toLowerCase();
+    if (!q) return availableModels;
+    return availableModels.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        (m.brandName && m.brandName.toLowerCase().includes(q)),
+    );
+  }, [availableModels, modelSearchQuery]);
+
+  const activeFiltersCount =
+    (selectedCategory ? 1 : 0) +
+    (selectedBrand ? 1 : 0) +
+    (selectedModelIds.length > 0 ? 1 : 0);
 
   const updateUrl = (updates: {
     page?: number;
     limit?: number;
     category?: string;
     brand?: string;
+    model_ids?: string[];
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (updates.page !== undefined) {
@@ -199,14 +241,48 @@ function WarehouseContent() {
         params.delete("brand");
       }
     }
+    if (updates.model_ids !== undefined) {
+      if (updates.model_ids.length > 0) {
+        params.set("model_ids", updates.model_ids.join(","));
+      } else {
+        params.delete("model_ids");
+        params.delete("models");
+      }
+    }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
   const handleClearFilters = () => {
     setSelectedCategory("");
     setSelectedBrand("");
+    setSelectedModelIds([]);
+    setModelDropdownOpen(false);
     setFilterPopoverOpen(false);
-    updateUrl({ page: 1, category: "", brand: "" });
+    updateUrl({ page: 1, category: "", brand: "", model_ids: [] });
+  };
+
+  const handleToggleModel = (modelId: string) => {
+    const next = selectedModelIds.includes(modelId)
+      ? selectedModelIds.filter((id) => id !== modelId)
+      : [...selectedModelIds, modelId];
+    setSelectedModelIds(next);
+    updateUrl({
+      page: 1,
+      category: selectedCategory,
+      brand: selectedBrand,
+      model_ids: next,
+    });
+  };
+
+  const handleRemoveModel = (modelId: string) => {
+    const next = selectedModelIds.filter((id) => id !== modelId);
+    setSelectedModelIds(next);
+    updateUrl({
+      page: 1,
+      category: selectedCategory,
+      brand: selectedBrand,
+      model_ids: next,
+    });
   };
 
   const handleSearchChange = (newVal: string) => {
@@ -263,6 +339,7 @@ function WarehouseContent() {
     search: searchQuery,
     category: selectedCategory || undefined,
     brand: selectedBrand || undefined,
+    model_ids: selectedModelIds.length > 0 ? selectedModelIds : undefined,
   });
 
   const items = warehouseData?.items ?? [];
@@ -1033,7 +1110,7 @@ function WarehouseContent() {
                 </button>
 
                 {filterPopoverOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 z-30 w-72 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                  <div className="absolute left-0 top-full mt-1.5 z-30 w-80 rounded-xl border border-[#e5e5e5] bg-white p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-100">
                     <div className="flex items-center justify-between pb-2 border-b border-[#f0f0f0]">
                       <span className="text-xs font-semibold text-[#111111]">
                         Фильтры склада
@@ -1042,7 +1119,7 @@ function WarehouseContent() {
                         <button
                           type="button"
                           onClick={handleClearFilters}
-                          className="text-[11px] text-[#4a38f5] hover:underline"
+                          className="text-[11px] text-[#4a38f5] hover:underline cursor-pointer"
                         >
                           Сбросить
                         </button>
@@ -1059,9 +1136,9 @@ function WarehouseContent() {
                           onChange={(e) => {
                             const val = e.target.value;
                             setSelectedCategory(val);
-                            updateUrl({ page: 1, category: val, brand: selectedBrand });
+                            updateUrl({ page: 1, category: val, brand: selectedBrand, model_ids: selectedModelIds });
                           }}
-                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
                         >
                           <option value="">Все категории</option>
                           {warehouseCategoriesList.map((cat) => (
@@ -1081,9 +1158,9 @@ function WarehouseContent() {
                           onChange={(e) => {
                             const val = e.target.value;
                             setSelectedBrand(val);
-                            updateUrl({ page: 1, category: selectedCategory, brand: val });
+                            updateUrl({ page: 1, category: selectedCategory, brand: val, model_ids: selectedModelIds });
                           }}
-                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
                         >
                           <option value="">Все бренды</option>
                           {warehouseBrandsList.map((b) => (
@@ -1094,11 +1171,154 @@ function WarehouseContent() {
                         </select>
                       </div>
 
+                      {/* Фильтр: Подходит к моделям */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-[11px] font-medium text-[#666666]">
+                            Подходит к моделям
+                          </label>
+                          {selectedModelIds.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedModelIds([]);
+                                updateUrl({
+                                  page: 1,
+                                  category: selectedCategory,
+                                  brand: selectedBrand,
+                                  model_ids: [],
+                                });
+                              }}
+                              className="text-[10px] text-[#888888] hover:text-[#111111] transition-colors cursor-pointer"
+                            >
+                              Очистить ({selectedModelIds.length})
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Чипы выбранных моделей внутри поповера */}
+                        {selectedModelIds.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-1.5 max-h-24 overflow-y-auto pr-0.5">
+                            {selectedModelIds.map((id) => {
+                              const modelObj = allWarehouseModels.find((m) => m.id === id);
+                              const modelName = modelObj ? modelObj.name : id;
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-1.5 py-0.5 text-[11px] font-medium text-[#4a38f5]"
+                                >
+                                  <span className="truncate max-w-[140px]">{modelName}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveModel(id)}
+                                    className="hover:text-rose-600 transition-colors cursor-pointer"
+                                    title="Удалить"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Кнопка-селектор моделей */}
+                        <div className="relative" ref={modelDropdownRef}>
+                          <button
+                            type="button"
+                            onClick={() => setModelDropdownOpen((prev) => !prev)}
+                            className={cn(
+                              "h-8 w-full rounded-[6px] border bg-white px-2.5 text-xs text-left flex items-center justify-between transition-colors cursor-pointer",
+                              modelDropdownOpen
+                                ? "border-[#4a38f5] ring-1 ring-[#4a38f5]/20"
+                                : "border-[#e5e5e5] hover:border-[#cccccc]",
+                            )}
+                          >
+                            <span className={selectedModelIds.length > 0 ? "text-[#111111] font-medium truncate" : "text-[#888888] truncate"}>
+                              {selectedModelIds.length === 0
+                                ? "Все модели"
+                                : `Выбрано: ${selectedModelIds.length} модел${selectedModelIds.length === 1 ? "ь" : selectedModelIds.length < 5 ? "и" : "ей"}`}
+                            </span>
+                            <ChevronDown className={cn("h-3.5 w-3.5 text-[#888888] shrink-0 transition-transform", modelDropdownOpen && "rotate-180")} />
+                          </button>
+
+                          {modelDropdownOpen && (
+                            <div className="absolute left-0 right-0 top-full mt-1 z-40 rounded-[8px] border border-[#e5e5e5] bg-white p-2 shadow-lg animate-in fade-in zoom-in-95 duration-100">
+                              <div className="relative mb-2">
+                                <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-[#888888]" />
+                                <input
+                                  type="text"
+                                  value={modelSearchQuery}
+                                  onChange={(e) => setModelSearchQuery(e.target.value)}
+                                  placeholder="Поиск по моделям..."
+                                  className="h-7 w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] pl-7 pr-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:bg-white focus:outline-none"
+                                />
+                                {modelSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setModelSearchQuery("")}
+                                    className="absolute right-2 top-2 text-[#888888] hover:text-[#111111] cursor-pointer"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="max-h-48 overflow-y-auto space-y-0.5 pr-0.5">
+                                {filteredModelsForPicker.length === 0 ? (
+                                  <div className="py-3 text-center text-xs text-[#888888]">
+                                    {allWarehouseModels.length === 0
+                                      ? "В справочнике пока нет моделей"
+                                      : "Модели не найдены"}
+                                  </div>
+                                ) : (
+                                  filteredModelsForPicker.map((m) => {
+                                    const isSelected = selectedModelIds.includes(m.id);
+                                    return (
+                                      <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => handleToggleModel(m.id)}
+                                        className={cn(
+                                          "flex w-full items-center justify-between rounded-[4px] px-2 py-1.5 text-xs text-left transition-colors cursor-pointer",
+                                          isSelected
+                                            ? "bg-[#4a38f5]/10 text-[#4a38f5] font-medium"
+                                            : "text-[#111111] hover:bg-[#f5f5f5]",
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                                          <div
+                                            className={cn(
+                                              "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors",
+                                              isSelected
+                                                ? "border-[#4a38f5] bg-[#4a38f5] text-white"
+                                                : "border-[#cccccc] bg-white",
+                                            )}
+                                          >
+                                            {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                                          </div>
+                                          <span className="truncate">{m.name}</span>
+                                        </div>
+                                        {m.brandName && (
+                                          <span className="shrink-0 rounded bg-[#f0f0f0] px-1.5 py-0.2 text-[10px] text-[#666666]">
+                                            {m.brandName}
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="pt-2 flex items-center justify-end gap-2 border-t border-[#f0f0f0]">
                         <button
                           type="button"
                           onClick={() => setFilterPopoverOpen(false)}
-                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors"
+                          className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer"
                         >
                           Готово
                         </button>
@@ -1151,9 +1371,9 @@ function WarehouseContent() {
                 type="button"
                 onClick={() => {
                   setSelectedCategory("");
-                  updateUrl({ page: 1, category: "", brand: selectedBrand });
+                  updateUrl({ page: 1, category: "", brand: selectedBrand, model_ids: selectedModelIds });
                 }}
-                className="hover:text-[#3d2ee0]"
+                className="hover:text-[#3d2ee0] cursor-pointer"
                 title="Удалить фильтр"
               >
                 <X className="h-3 w-3" />
@@ -1167,19 +1387,40 @@ function WarehouseContent() {
                 type="button"
                 onClick={() => {
                   setSelectedBrand("");
-                  updateUrl({ page: 1, category: selectedCategory, brand: "" });
+                  updateUrl({ page: 1, category: selectedCategory, brand: "", model_ids: selectedModelIds });
                 }}
-                className="hover:text-[#3d2ee0]"
+                className="hover:text-[#3d2ee0] cursor-pointer"
                 title="Удалить фильтр"
               >
                 <X className="h-3 w-3" />
               </button>
             </span>
           )}
+          {selectedModelIds.length > 0 &&
+            selectedModelIds.map((id) => {
+              const modelObj = allWarehouseModels.find((m) => m.id === id);
+              const modelName = modelObj ? modelObj.name : id;
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-xs text-[#4a38f5] font-medium"
+                >
+                  <span>Модель: {modelName}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveModel(id)}
+                    className="hover:text-[#3d2ee0] cursor-pointer"
+                    title="Удалить фильтр"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
           <button
             type="button"
             onClick={handleClearFilters}
-            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1"
+            className="text-[11px] text-[#888888] hover:text-[#111111] hover:underline transition-colors ml-1 cursor-pointer"
           >
             Сбросить все
           </button>

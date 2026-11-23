@@ -767,3 +767,21 @@
     - Реализован визуальный оверлей перетаскивания в стилистике Twenty CRM Light Canvas (`bg-white/90 backdrop-blur-xs border-2 border-dashed border-[#4a38f5] bg-[#4a38f5]/5` с иконкой `UploadCloud` и пояснением).
     - Доработан `handleSend`: последовательная загрузка и отправка каждого файла из списка вложений через `uploadMediaMutation` и `sendMessageMutation` с текстом сообщения на первом вложении.
 
+
+### 2026-11-23 — Фильтр «Подходит к моделям» в номенклатуре склада (/warehouse)
+- **Контекст и задача:** На странице `/warehouse` в блоке фильтров требовалось добавить фильтр «Подходит к моделям», берущий данные из существующего справочника оборудования (`equipment_models`), с фильтрацией списка номенклатуры склада по выбранным моделям, синхронизацией с URL и счетчиками позиций.
+- **Архитектурные детали:**
+  1. Связь складских позиций и моделей оборудования уже реализована через таблицу `warehouse_item_models (tenant_id, item_id, model_id)` со сбалансированными составными индексами `(tenant_id, item_id)` и `(tenant_id, model_id)` и RLS-политиками.
+  2. В `warehouseService.listItems` добавлен параметризованный фильтр `EXISTS (SELECT 1 FROM warehouse_item_models wim WHERE wim.tenant_id = i.tenant_id AND wim.item_id = i.id AND wim.model_id = ANY($N::uuid[]))` без нарушения мультитенантности и без умножения строк (GROUP BY i.id сохраняет точный расчет пагинации и `total`).
+  3. В `warehousePaginationQuerySchema` добавлен парсинг параметров `model_ids` / `modelIds` (поддерживает как единичные/массивные значения, так и comma-separated строки `?model_ids=id1,id2`).
+  4. На фронтенде блок фильтра встроен в выпадающий поповер «Фильтры склада» со стилизацией Twenty CRM Light Canvas: поиск по моделям, отображение брендов, чекбоксы выбора, чипы выбранных моделей и синхронизация с URL (`model_ids`).
+  5. На основной панели инструментов добавлены интерактивные чипы выбранных моделей с индивидуальным удалением и общим сбросом.
+- **Измененные файлы:**
+  - `backend/src/modules/warehouse/warehouse.types.ts`: схема `warehousePaginationQuerySchema` с поддержкой `model_ids` / `modelIds`.
+  - `backend/src/modules/warehouse/warehouse.service.ts`: фильтрация по `modelIds` через `warehouse_item_models`.
+  - `backend/src/modules/warehouse/warehouse.routes.ts`: проброс параметров `modelIds` в `listItems`.
+  - `backend/src/tests/warehouse-model-filter.test.ts`: модульные тесты парсера и валидатора схемы.
+  - `frontend/src/lib/api/use-warehouse.ts`: поддержка `model_ids` в хуке `useWarehouse` и инвалидации `queryKey`.
+  - `frontend/src/app/(dashboard)/warehouse/page.tsx`: UI мультиселекта с поиском, чипами, состоянием и URL-синхронизацией.
+
+

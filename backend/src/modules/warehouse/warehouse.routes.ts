@@ -129,10 +129,12 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.get("/", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const modelIds = query.model_ids ?? query.modelIds;
     const result = await warehouseService.listItems(tenant_id, query.search, {
       page: query.page,
       limit: query.limit,
       all: query.all,
+      modelIds,
     });
     return reply.send(result);
   });
@@ -141,12 +143,14 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.get("/items", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
     const query = warehousePaginationQuerySchema.parse(request.query ?? {});
+    const modelIds = query.model_ids ?? query.modelIds;
     const result = await warehouseService.listItems(tenant_id, query.search, {
       page: query.page,
       limit: query.limit,
       all: query.all,
       category: query.category,
       brand: query.brand,
+      modelIds,
     });
     return reply.send(result);
   });

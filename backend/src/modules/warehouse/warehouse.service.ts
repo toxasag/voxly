@@ -255,13 +255,20 @@ export class WarehouseService {
   async listItems(
     tenantId: string,
     search?: string,
-    options?: { page?: number; limit?: number; all?: boolean; category?: string; brand?: string },
+    options?: {
+      page?: number;
+      limit?: number;
+      all?: boolean;
+      category?: string;
+      brand?: string;
+      modelIds?: string[];
+    },
   ): Promise<PaginatedWarehouseItemsDTO> {
     const page = Math.max(1, options?.page ?? 1);
     const limit = options?.limit ?? 25;
     const all = Boolean(options?.all);
 
-    const params: (string | number)[] = [tenantId];
+    const params: (string | number | string[])[] = [tenantId];
     let searchFilter = "";
 
     if (search && search.trim()) {
@@ -275,6 +282,16 @@ export class WarehouseService {
     if (options?.brand && options.brand.trim()) {
       params.push(options.brand.trim());
       searchFilter += ` AND i.brand = $${params.length}`;
+    }
+    const modelIds = (options?.modelIds ?? []).filter((id) => typeof id === "string" && id.trim().length > 0);
+    if (modelIds.length > 0) {
+      params.push(modelIds);
+      searchFilter += ` AND EXISTS (
+        SELECT 1 FROM warehouse_item_models wim
+        WHERE wim.tenant_id = i.tenant_id
+          AND wim.item_id = i.id
+          AND wim.model_id = ANY($${params.length}::uuid[])
+      )`;
     }
 
     const settings = await this.getSettings(tenantId);

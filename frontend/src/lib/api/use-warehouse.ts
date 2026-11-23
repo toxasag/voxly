@@ -289,6 +289,8 @@ export interface WarehousePaginationParams {
   search?: string;
   category?: string;
   brand?: string;
+  model_ids?: string[];
+  modelIds?: string[];
   all?: boolean;
 }
 
@@ -298,6 +300,8 @@ export function useWarehouse(params?: WarehousePaginationParams) {
   const search = params?.search;
   const category = params?.category;
   const brand = params?.brand;
+  const modelIds = params?.model_ids ?? params?.modelIds;
+  const modelIdsKey = (modelIds ?? []).slice().sort().join(",");
   const all = params?.all;
 
   return useQuery({
@@ -309,6 +313,7 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       search ?? "",
       category ?? "",
       brand ?? "",
+      modelIdsKey,
       Boolean(all),
     ],
     queryFn: async (): Promise<PaginatedWarehouseResponse> => {
@@ -327,6 +332,9 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       }
       if (brand && brand.trim()) {
         q.set("brand", brand.trim());
+      }
+      if (modelIds && modelIds.length > 0) {
+        q.set("model_ids", modelIds.join(","));
       }
 
       const qs = q.toString();
