@@ -670,3 +670,14 @@
 - **Исправлено:**
   - `backend/src/modules/repairs/repairs.service.ts`: удалена жёсткая проверка обязательности `diagnostics` при переходе в `approval` (опциональное сохранение `payload.diagnostics` при передаче через API сохранено).
   - `backend/src/modules/repairs/repairs.types.ts`: разрешены переходы между всеми рабочими статусами степпера (`intake`, `diagnostics`, `approval`, `waiting_parts`, `parts_order`, `in_progress`, `ready`, `issued`, `rejected`).
+
+
+### 2026-11-23 — Автообогащение контактов мессенджерами при приёмке ремонта и создании сделки (+ multi-MAX фоллбэк)
+- **Root cause (сделка `a65dc0a4-...` / контакт `Николай` `+79015013097` у `remtoua` не были обогащены):**
+  1. Контакт и сделка создавались через пакетную приёмку ремонта (`RepairsService.createBatch`), где, как и в `RepairsService.create` и `DealsService.create`, вообще не вызывался `CrmEnrichmentService.enrichContact` — `contacts.custom_fields` оставался пустым `{}`.
+  2. `CrmEnrichmentService.enrichContact` не оборачивал запросы в `runWithTenantContext(tenantId, ...)`, из-за чего фоновые вызовы вне ALS-контекста могли блокироваться RLS.
+  3. `CrmEnrichmentService.defaultMaxProvider` брал только один MAX-аккаунт (`ORDER BY connected_at DESC LIMIT 1`), без перебора остальных подключённых аккаунтов при истекшей сессии первого.
+- **Исправлено:**
+  - `backend/src/modules/crm/enrichment.service.ts`: `enrichContact` выполняется внутри `runWithTenantContext(tenantId, ...)`, добавлен флаг `skipIfAlreadyChecked`, а `defaultMaxProvider` приоритизирует живые сессии `MaxBridgeService.getLiveBotIds()` и перебирает все подключённые MAX-аккаунты.
+  - `backend/src/modules/repairs/repairs.service.ts` (`create`, `createBatch`) и `backend/src/modules/crm/deals/deals.service.ts` (`create`): после коммита транзакции запускают фоновое `CrmEnrichmentService.enrichContact(..., { dealId, skipIfAlreadyChecked: true })`.
+  - Обогащение контакта `6b145b3e-cf77-458d-8c80-33aedf5f72a1` (сделка `a65dc0a4-...`) запущено и проверено вживую на проде.

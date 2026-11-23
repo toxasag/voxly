@@ -922,8 +922,18 @@ export class RepairsService {
       });
 
       const dto = toRepairOrderDTO(row);
-      if (dto.dealId) void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
-      return dto;
+      return { dto, customerId, dealId: dto.dealId };
+    }).then((res) => {
+      if (res.dealId) void this.syncDealBudgetFromRepairs(tenantId, res.dealId);
+      if (res.customerId) {
+        void new CrmEnrichmentService()
+          .enrichContact(tenantId, res.customerId, {
+            dealId: res.dealId ?? undefined,
+            skipIfAlreadyChecked: true,
+          })
+          .catch(() => {});
+      }
+      return res.dto;
     });
   }
 
@@ -1235,9 +1245,18 @@ export class RepairsService {
         createdOrders.push(toRepairOrderDTO(row));
       }
 
-      if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
-
-      return createdOrders;
+      return { createdOrders, customerId, dealId };
+    }).then((res) => {
+      if (res.dealId) void this.syncDealBudgetFromRepairs(tenantId, res.dealId);
+      if (res.customerId) {
+        void new CrmEnrichmentService()
+          .enrichContact(tenantId, res.customerId, {
+            dealId: res.dealId || undefined,
+            skipIfAlreadyChecked: true,
+          })
+          .catch(() => {});
+      }
+      return res.createdOrders;
     });
   }
 

@@ -395,6 +395,17 @@ export class DealsService {
     void leadNotificationQueue.checkAndTriggerNotification(tenantId, created.id);
     void notificationQueue.dispatchLeadCreated({ tenantId, dealId: created.id });
     void conversionDispatcher.handleDealCreated({ tenantId, dealId: created.id });
+    if (created.contactId) {
+      const contactId = created.contactId;
+      void import("../enrichment.service.js")
+        .then(({ CrmEnrichmentService }) =>
+          new CrmEnrichmentService().enrichContact(tenantId, contactId, {
+            dealId: created.id,
+            skipIfAlreadyChecked: true,
+          }),
+        )
+        .catch(() => {});
+    }
     return created;
   }
 
