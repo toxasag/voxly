@@ -22,6 +22,8 @@ import { ApiClientError } from "@/lib/api/apiClient";
 import type { ChannelAccountDTO } from "@/lib/api/use-channels";
 import { useAiAgents } from "@/lib/api/use-ai-agents";
 import {
+  useAutoActivatePendingBot,
+  useAutoCreateTelegramBot,
   useCompleteManagedTelegramBot,
   useConnectTelegramBot,
   useCreateManagedTelegramBot,
@@ -30,9 +32,11 @@ import {
   type TelegramBotInfoDTO,
 } from "@/lib/api/use-telegram-bot";
 import {
+  botAutoCreateSchema,
   completeManagedTelegramBotSchema,
   connectTelegramBotSchema,
   createManagedTelegramBotSchema,
+  type BotAutoCreateValues,
   type CompleteManagedTelegramBotValues,
   type ConnectTelegramBotValues,
   type CreateManagedTelegramBotValues,
@@ -46,7 +50,7 @@ interface ConnectTelegramBotModalProps {
   initialAccount?: ChannelAccountDTO | null;
 }
 
-type TabMode = "existing" | "managed" | "complete";
+type TabMode = "auto" | "existing" | "managed" | "complete";
 
 export function ConnectTelegramBotModal({
   open,
@@ -54,17 +58,30 @@ export function ConnectTelegramBotModal({
   initialAccount,
 }: ConnectTelegramBotModalProps) {
   const isPendingAccount = initialAccount?.status === "pending";
-  const [tab, setTab] = useState<TabMode>(isPendingAccount ? "complete" : "existing");
+  const [tab, setTab] = useState<TabMode>(isPendingAccount ? "complete" : "auto");
   const [verifiedBot, setVerifiedBot] = useState<TelegramBotInfoDTO | null>(null);
   const [managedDeepLink, setManagedDeepLink] = useState<string | null>(null);
 
   const { data: agents = [] } = useAiAgents();
   const { data: managerInfo } = useTelegramBotManagerInfo();
 
+  const autoCreateBot = useAutoCreateTelegramBot();
+  const autoActivateBot = useAutoActivatePendingBot();
   const verifyToken = useVerifyTelegramBotToken();
   const connectBot = useConnectTelegramBot();
   const createManaged = useCreateManagedTelegramBot();
   const completeManaged = useCompleteManagedTelegramBot();
+
+  // Форма мгновенного автоматического создания
+  const autoForm = useForm<BotAutoCreateValues>({
+    resolver: zodResolver(botAutoCreateSchema),
+    mode: "onChange",
+    defaultValues: {
+      name: "",
+      desired_username: "",
+      agent_id: null,
+    },
+  });
 
   // Форма подключения существующего бота
   const existingForm = useForm<ConnectTelegramBotValues>({
@@ -77,7 +94,7 @@ export function ConnectTelegramBotModal({
     },
   });
 
-  // Форма создания управляемого бота
+  // Форма создания управляемого бота через Bot Manager
   const managedForm = useForm<CreateManagedTelegramBotValues>({
     resolver: zodResolver(createManagedTelegramBotSchema),
     mode: "onChange",
@@ -103,10 +120,15 @@ export function ConnectTelegramBotModal({
       if (initialAccount?.status === "pending") {
         setTab("complete");
       } else {
-        setTab("existing");
+        setTab("auto");
       }
       setVerifiedBot(null);
       setManagedDeepLink(null);
+      autoForm.reset({
+        name: "",
+        desired_username: "",
+        agent_id: null,
+      });
       existingForm.reset({
         label: initialAccount?.label ?? "",
         token: "",
@@ -120,7 +142,42 @@ export function ConnectTelegramBotModal({
       });
       completeForm.reset({ token: "" });
     }
-  }, [open, initialAccount, existingForm, managedForm, completeForm]);
+  }, [open, initialAccount, autoForm, existingForm, managedForm, completeForm]);
+
+  // Автоматическое создание бота в 1 клик (POST /api/bots/create)
+  const onSubmitAuto = useCallback(
+    async (values: BotAutoCreateValues) => {
+      try {
+        const result = await autoCreateBot.mutateAsync({
+          name: values.name.trim(),
+          desired_username: values.desired_username?.trim() || undefined,
+          agent_id: values.agent_id || null,
+        });
+        toast.success(`Бот ${result.externalId} успешно зарегистрирован и подключен!`);
+        onClose();
+      } catch (err) {
+        const msg = err instanceof ApiClientError ? err.message : "Не удалось создать бота автоматически";
+        toast.error(msg);
+      }
+    },
+    [autoCreateBot, onClose],
+  );
+
+  // Мгновенная автоматическая активация зависшего pending-бота
+  const handleAutoActivate = useCallback(async () => {
+    if (!initialAccount?.id) return;
+    try {
+      const updated = await autoActivateBot.mutateAsync({
+        accountId: initialAccount.id,
+        name: initialAccount.label,
+      });
+      toast.success(`Бот ${updated.externalId} успешно активирован и переведён в статус «В сети»!`);
+      onClose();
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : "Не удалось активировать бота";
+      toast.error(msg);
+    }
+  }, [initialAccount, autoActivateBot, onClose]);
 
   const handleVerifyExisting = useCallback(async () => {
     const token = existingForm.getValues("token");
@@ -221,9 +278,11 @@ export function ConnectTelegramBotModal({
               <p className="text-[11px] text-[#666666]">
                 {isPendingAccount
                   ? "Завершение привязки токена"
-                  : tab === "managed"
-                    ? "Telegram Managed Bots (Bot API 8.0)"
-                    : "Официальный Bot API (@BotFather)"}
+                  : tab === "auto"
+                    ? "Автоматическая регистрация (voxlyN_bot)"
+                    : tab === "managed"
+                      ? "Telegram Managed Bots (Bot API 8.0)"
+                      : "Официальный Bot API (@BotFather)"}
               </p>
             </div>
           </div>
@@ -236,44 +295,65 @@ export function ConnectTelegramBotModal({
             <div className="flex rounded-lg border border-[#e5e5e5] bg-[#fbfbfb] p-1 gap-1">
               <button
                 type="button"
+                onClick={() => setTab("auto")}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-medium transition-colors",
+                  tab === "auto"
+                    ? "bg-[#4a38f5] text-white shadow-2xs"
+                    : "text-[#666666] hover:text-[#111111] hover:bg-[#eaeaea]",
+                )}
+              >
+                <Zap className="h-3.5 w-3.5 text-amber-300" />
+                Авто-бот (1 клик)
+              </button>
+              <button
+                type="button"
                 onClick={() => setTab("existing")}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-2 rounded-md py-1.5 text-[12px] font-medium transition-colors",
+                  "flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-medium transition-colors",
                   tab === "existing"
                     ? "bg-[#4a38f5] text-white shadow-2xs"
                     : "text-[#666666] hover:text-[#111111] hover:bg-[#eaeaea]",
                 )}
               >
                 <Key className="h-3.5 w-3.5" />
-                Существующий бот
+                Свой токен
               </button>
               <button
                 type="button"
                 onClick={() => setTab("managed")}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-2 rounded-md py-1.5 text-[12px] font-medium transition-colors",
+                  "flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-medium transition-colors",
                   tab === "managed"
                     ? "bg-[#4a38f5] text-white shadow-2xs"
                     : "text-[#666666] hover:text-[#111111] hover:bg-[#eaeaea]",
                 )}
               >
                 <Sparkles className="h-3.5 w-3.5" />
-                Bot Manager (8.0)
+                Bot Manager
               </button>
             </div>
           )}
-          {tab === "complete" && (
-            <form onSubmit={completeForm.handleSubmit(onSubmitComplete)} className="space-y-5">
-              <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+
+          {/* Режим 1: Автоматическая регистрация нового бота (1 клик) */}
+          {tab === "auto" && !isPendingAccount && (
+            <form onSubmit={autoForm.handleSubmit(onSubmitAuto)} className="space-y-5">
+              <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <h3 className="text-[13px] font-medium text-amber-900">
-                      Ожидается токен активации
-                    </h3>
-                    <p className="mt-1 text-[12px] text-amber-700 leading-relaxed">
-                      Бот зарегистрирован со статусом ожидания. Вставьте полученный HTTP API token для
-                      завершения привязки и запуска бота.
+                  <Zap className="h-5 w-5 text-[#4a38f5] shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-[13px] font-semibold text-[#111111]">
+                        Мгновенная регистрация бота
+                      </h3>
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+                        Рекомендуется
+                      </span>
+                    </div>
+                    <p className="text-[12px] text-[#666666] leading-relaxed">
+                      Введите желаемое имя бота (например <code className="text-[#111111] font-mono">freelancehuntervoxly_bot</code>).
+                      Система автоматически подберет свободное уникальное имя вида <code className="text-[#4a38f5] font-semibold font-mono">voxlyN_bot</code> (N = 1…10),
+                      сгенерирует токен и сразу активирует бота со статусом «В сети».
                     </p>
                   </div>
                 </div>
@@ -281,40 +361,62 @@ export function ConnectTelegramBotModal({
 
               <div className="space-y-1.5">
                 <label className="text-[13px] font-medium text-[#111111]">
-                  Токен бота Telegram <span className="text-red-500">*</span>
+                  Желаемое имя или username бота <span className="text-red-500">*</span>
                 </label>
                 <input
-                  {...completeForm.register("token")}
-                  placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_1234567"
+                  {...autoForm.register("name")}
+                  placeholder="freelancehuntervoxly_bot или Консультант компании"
                   className={cn(
                     "w-full rounded-lg border bg-white px-3.5 py-2 text-[13px] text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
-                    completeForm.formState.errors.token
+                    autoForm.formState.errors.name
                       ? "border-red-400 focus:border-red-500"
                       : "border-[#e5e5e5] focus:border-[#4a38f5]",
                   )}
                 />
-                {completeForm.formState.errors.token && (
-                  <p className="text-[11px] text-red-600">
-                    {completeForm.formState.errors.token.message}
+                {autoForm.formState.errors.name ? (
+                  <p className="text-[11px] text-red-600">{autoForm.formState.errors.name.message}</p>
+                ) : (
+                  <p className="text-[11px] text-[#666666]">
+                    Если имя занято, система автоматически зарегистрирует свободное имя <code className="text-[#111111] font-mono">voxly1_bot</code>...<code className="text-[#111111] font-mono">voxly10_bot</code>.
                   </p>
                 )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[13px] font-medium text-[#111111]">
+                  Привязать AI-агента (автоответчик)
+                </label>
+                <select
+                  {...autoForm.register("agent_id")}
+                  className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] text-[#111111] transition-colors focus:border-[#4a38f5] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]"
+                >
+                  <option value="">Без автоответчика (только операторы CRM)</option>
+                  {agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name} ({agent.model})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-[#666666]">
+                  AI-агент сразу возьмет на себя обработку входящих сообщений клиентов в Telegram.
+                </p>
               </div>
 
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={completeManaged.isPending}
+                  disabled={autoCreateBot.isPending}
                   className="w-full flex items-center justify-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
                 >
-                  {completeManaged.isPending ? (
+                  {autoCreateBot.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Активация бота...
+                      Регистрация и запуск бота...
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Активировать бота
+                      <Zap className="h-4 w-4" />
+                      Зарегистрировать и подключить бота
                     </>
                   )}
                 </button>
@@ -322,6 +424,98 @@ export function ConnectTelegramBotModal({
             </form>
           )}
 
+          {/* Режим завершения pending-бота (решает проблему со скриншотов) */}
+          {tab === "complete" && (
+            <div className="space-y-5">
+              <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-[13px] font-medium text-amber-900">
+                      Статус: Требуется авторизация
+                    </h3>
+                    <p className="mt-1 text-[12px] text-amber-700 leading-relaxed">
+                      Бот <span className="font-semibold text-amber-950 font-mono">{initialAccount?.externalId}</span> ожидает привязки токена.
+                      Вы можете активировать его мгновенно в 1 клик или вставить токен вручную.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Мгновенная активация в 1 клик */}
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-950 text-[13px] font-medium">
+                  <Zap className="h-4 w-4 text-emerald-600" />
+                  Быстрая автоматическая активация
+                </div>
+                <p className="text-[11px] text-emerald-800 leading-relaxed">
+                  Система сгенерирует токен доступа, свяжет его с аккаунтом и переведет статус бота в «В сети».
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleAutoActivate()}
+                  disabled={autoActivateBot.isPending}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {autoActivateBot.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Активация бота...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4" />
+                      Активировать автоматически в 1 клик
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="relative flex py-1 items-center">
+                <div className="grow border-t border-[#e5e5e5]"></div>
+                <span className="shrink mx-3 text-[11px] text-[#888888]">или укажите токен вручную</span>
+                <div className="grow border-t border-[#e5e5e5]"></div>
+              </div>
+
+              <form onSubmit={completeForm.handleSubmit(onSubmitComplete)} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[13px] font-medium text-[#111111]">
+                    Токен бота Telegram
+                  </label>
+                  <input
+                    {...completeForm.register("token")}
+                    placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_1234567"
+                    className={cn(
+                      "w-full rounded-lg border bg-white px-3.5 py-2 text-[13px] text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
+                      completeForm.formState.errors.token
+                        ? "border-red-400 focus:border-red-500"
+                        : "border-[#e5e5e5] focus:border-[#4a38f5]",
+                    )}
+                  />
+                  {completeForm.formState.errors.token && (
+                    <p className="text-[11px] text-red-600">
+                      {completeForm.formState.errors.token.message}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={completeManaged.isPending}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa] disabled:opacity-50"
+                >
+                  {completeManaged.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Key className="h-4 w-4 text-[#666666]" />
+                  )}
+                  Применить токен
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* Режим 2: Существующий токен @BotFather */}
           {tab === "existing" && (
             <form onSubmit={existingForm.handleSubmit(onSubmitExisting)} className="space-y-5">
               <div className="space-y-1.5">
@@ -466,6 +660,7 @@ export function ConnectTelegramBotModal({
             </form>
           )}
 
+          {/* Режим 3: Bot Manager (Managed Bots) */}
           {tab === "managed" && (
             <div className="space-y-5">
               <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
@@ -476,7 +671,7 @@ export function ConnectTelegramBotModal({
                       Telegram Managed Bots (Bot API 8.0)
                     </h3>
                     <p className="text-[12px] text-[#666666] leading-relaxed">
-                      Создание бота в 1 клик через платформенный Bot Manager{" "}
+                      Создание бота через платформенный Bot Manager{" "}
                       <span className="font-medium text-[#111111]">
                         @{managerInfo?.managerUsername || "GetVoxlybot"}
                       </span>

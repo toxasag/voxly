@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Hash, Loader2, Pencil } from "lucide-react";
+import { Hash, Loader2, Pencil, Zap, CheckCircle2 } from "lucide-react";
 
 import { ApiClientError } from "@/lib/api/apiClient";
 import {
@@ -13,6 +13,7 @@ import {
   useUpdateChannelAccount,
   type ChannelAccountDTO,
 } from "@/lib/api/use-channels";
+import { useAutoActivatePendingBot } from "@/lib/api/use-telegram-bot";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/shared/StatusBadge";
 import { Sheet, SheetContent, SheetHeader } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,7 @@ export function EditChannelAccountModal({
   onClose,
 }: EditChannelAccountModalProps) {
   const update = useUpdateChannelAccount(channel);
+  const autoActivate = useAutoActivatePendingBot();
 
   const form = useForm<EditChannelAccountValues>({
     resolver: zodResolver(editChannelAccountSchema),
@@ -64,6 +66,21 @@ export function EditChannelAccountModal({
       form.reset({ label: account.label });
     }
   }, [open, account, form]);
+
+  const handleQuickActivate = useCallback(async () => {
+    if (!account) return;
+    try {
+      const updated = await autoActivate.mutateAsync({
+        accountId: account.id,
+        name: form.getValues("label") || account.label,
+      });
+      toast.success(`Бот ${updated.externalId} успешно активирован и подключен!`);
+      onClose();
+    } catch (err) {
+      const msg = err instanceof ApiClientError ? err.message : "Не удалось активировать бота";
+      toast.error(msg);
+    }
+  }, [account, form, autoActivate, onClose]);
 
   const submit = useCallback(
     async (values: EditChannelAccountValues) => {
@@ -145,6 +162,38 @@ export function EditChannelAccountModal({
               </span>
             </div>
           </div>
+
+          {account.status === "pending" && (channel === "telegram_bot" || channel === "telegram") && (
+            <div className="rounded-[8px] border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <Zap className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <p className="font-medium text-emerald-950">Бот ожидает активации</p>
+                  <p className="text-[11px] text-emerald-800 mt-0.5">
+                    Сгенерировать токен и мгновенно перевести статус в «В сети».
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleQuickActivate()}
+                disabled={autoActivate.isPending}
+                className="w-full flex items-center justify-center gap-1.5 rounded-[6px] bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {autoActivate.isPending ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Активация...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Активировать автоматически в 1 клик
+                  </>
+                )}
+              </button>
+            </div>
+          )}
 
           {/* Поле редактирования названия */}
           <div className="space-y-1.5">

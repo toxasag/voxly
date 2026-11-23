@@ -86,3 +86,42 @@ export interface TelegramBotCreateManagedResultDTO {
   isPending: boolean;
   message: string;
 }
+
+// ---------------------------------------------------------------------------
+// Автоматическая регистрация нового бота (POST /api/bots/create).
+// ---------------------------------------------------------------------------
+
+export const botNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Укажите имя бота")
+  .max(120, "Имя бота не должно превышать 120 символов");
+
+export const botCreateSchema = z.object({
+  name: botNameSchema,
+  desired_username: z.string().trim().max(64).optional(),
+  agent_id: z.string().uuid("Некорректный ID AI-агента").nullable().optional(),
+});
+
+export type BotCreateInput = z.infer<typeof botCreateSchema>;
+
+export const autoActivateBotSchema = z.object({
+  name: z.string().trim().max(120).optional(),
+});
+
+export type AutoActivateBotInput = z.infer<typeof autoActivateBotSchema>;
+
+export interface BotConfigDTO {
+  id: string;
+  tenantId: string;
+  name: string;
+  username: string;
+  externalId: string;
+  token: string;
+  status: "connected" | "pending" | "error" | "disabled";
+  channelAccountId: string;
+  channelAccount?: ChannelAccountDTO;
+  agentId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
