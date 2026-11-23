@@ -3,11 +3,13 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Paperclip,
   Smile,
@@ -291,6 +293,8 @@ export function TelegramComposer({
   const fullscreenEditorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const formattingTriggerRef = useRef<HTMLDivElement>(null);
+  const formattingSubmenuRef = useRef<HTMLDivElement>(null);
 
   const lastSerializedValueRef = useRef<string>(value);
   const savedRangeRef = useRef<Range | null>(null);
@@ -303,9 +307,11 @@ export function TelegramComposer({
   const prevIsFullscreenRef = useRef(isFullscreen);
   const [hasContent, setHasContent] = useState<boolean>(Boolean(value.trim()));
 
-  // Контекстное меню
+  // Контекстное меню и позиционирование с защитой от выхода за границы экрана
   const [contextMenuPos, setContextMenuPos] = useState<ContextMenuPosition | null>(null);
+  const [adjustedMenuPos, setAdjustedMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [isFormattingSubmenuOpen, setIsFormattingSubmenuOpen] = useState(false);
+  const [submenuPos, setSubmenuPos] = useState<{ left: number; top: number } | null>(null);
 
   // Возвращает активный элемент редактора (основной или полноэкранный)
   const getTargetEditor = useCallback((): HTMLDivElement | null => {
@@ -402,9 +408,14 @@ export function TelegramComposer({
   // Закрытие контекстного меню при клике снаружи или Escape
   useEffect(() => {
     const handleClickOutside = (e: globalThis.MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const inMain = contextMenuRef.current?.contains(target) ?? false;
+      const inSubmenu = formattingSubmenuRef.current?.contains(target) ?? false;
+      if (!inMain && !inSubmenu) {
         setContextMenuPos(null);
+        setAdjustedMenuPos(null);
         setIsFormattingSubmenuOpen(false);
+        setSubmenuPos(null);
       }
     };
 
@@ -412,7 +423,9 @@ export function TelegramComposer({
       if (e.key === "Escape") {
         if (contextMenuPos) {
           setContextMenuPos(null);
+          setAdjustedMenuPos(null);
           setIsFormattingSubmenuOpen(false);
+          setSubmenuPos(null);
         } else if (isFullscreen) {
           setIsFullscreen(false);
         } else if (showEmojiPicker) {
@@ -421,22 +434,79 @@ export function TelegramComposer({
       }
     };
 
+    const handleViewportResize = () => {
+      if (contextMenuPos) {
+        setContextMenuPos(null);
+        setAdjustedMenuPos(null);
+        setIsFormattingSubmenuOpen(false);
+        setSubmenuPos(null);
+      }
+    };
+
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleKeyDownGlobal);
+    window.addEventListener("resize", handleViewportResize);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleKeyDownGlobal);
+      window.removeEventListener("resize", handleViewportResize);
     };
   }, [contextMenuPos, isFullscreen, showEmojiPicker]);
+
+  // Динамическое позиционирование основного контекстного меню внутри viewport
+  useLayoutEffect(() => {
+    if (!contextMenuPos || !contextMenuRef.current) {
+      setAdjustedMenuPos(null);
+      return;
+    }
+    const pad = 8;
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    const maxLeft = Math.max(pad, window.innerWidth - rect.width - pad);
+    const maxTop = Math.max(pad, window.innerHeight - rect.height - pad);
+    const left = Math.max(pad, Math.min(contextMenuPos.x, maxLeft));
+    const top = Math.max(pad, Math.min(contextMenuPos.y, maxTop));
+    setAdjustedMenuPos({ left, top });
+  }, [contextMenuPos]);
+
+  // Динамическое позиционирование подменю «Форматирование» внутри viewport (флип влево + сдвиг вверх)
+  useLayoutEffect(() => {
+    if (
+      !isFormattingSubmenuOpen ||
+      !adjustedMenuPos ||
+      !contextMenuRef.current ||
+      !formattingTriggerRef.current ||
+      !formattingSubmenuRef.current
+    ) {
+      setSubmenuPos(null);
+      return;
+    }
+    const pad = 8;
+    const mainRect = contextMenuRef.current.getBoundingClientRect();
+    const triggerRect = formattingTriggerRef.current.getBoundingClientRect();
+    const subRect = formattingSubmenuRef.current.getBoundingClientRect();
+
+    let left = mainRect.right - 2;
+    if (left + subRect.width > window.innerWidth - pad) {
+      left = mainRect.left - subRect.width + 2;
+    }
+    const maxLeft = Math.max(pad, window.innerWidth - subRect.width - pad);
+    left = Math.max(pad, Math.min(left, maxLeft));
+
+    let top = triggerRect.top - 6;
+    const maxTop = Math.max(pad, window.innerHeight - subRect.height - pad);
+    top = Math.max(pad, Math.min(top, maxTop));
+
+    setSubmenuPos({ left, top });
+  }, [isFormattingSubmenuOpen, adjustedMenuPos]);
 
   // Правый клик -> вызов кастомного контекстного меню
   const handleContextMenu = (e: MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     saveSelection();
-    const x = Math.min(e.clientX, window.innerWidth - 240);
-    const y = Math.min(e.clientY, window.innerHeight - 380);
-    setContextMenuPos({ x, y });
+    setAdjustedMenuPos(null);
+    setSubmenuPos(null);
     setIsFormattingSubmenuOpen(false);
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
   };
 
   /**
@@ -1144,91 +1214,129 @@ export function TelegramComposer({
         </div>
       </div>
 
-      {/* КАСТОМНОЕ КОНТЕКСТНОЕ МЕНЮ С ФОРМАТИРОВАНИЕМ */}
-      {contextMenuPos && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 min-w-[210px] rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 shadow-2xl text-[13px] text-[#111111]"
-          style={{ top: contextMenuPos.y, left: contextMenuPos.x }}
-        >
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleUndo}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Отменить</span>
-            <span className="text-[11px] text-[#888888]">⌘Z</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleRedo}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Повторить</span>
-            <span className="text-[11px] text-[#888888]">⇧⌘Z</span>
-          </button>
-
-          <div className="my-1 border-t border-[#f0f0f0]" />
-
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleCut}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Вырезать</span>
-            <span className="text-[11px] text-[#888888]">⌘X</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleCopy}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Копировать</span>
-            <span className="text-[11px] text-[#888888]">⌘C</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void handlePasteAction()}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Вставить</span>
-            <span className="text-[11px] text-[#888888]">⌘V</span>
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleDelete}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Удалить</span>
-          </button>
-
-          <div className="my-1 border-t border-[#f0f0f0]" />
-
-          {/* Пункт с подменю «Форматирование >» */}
-          <div
-            className="relative"
-            onMouseEnter={() => setIsFormattingSubmenuOpen(true)}
-          >
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setIsFormattingSubmenuOpen((v) => !v)}
-              className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+      {/* КАСТОМНОЕ КОНТЕКСТНОЕ МЕНЮ С ФОРМАТИРОВАНИЕМ (в портале с защитой от выхода за viewport) */}
+      {contextMenuPos &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <>
+            <div
+              ref={contextMenuRef}
+              className="fixed z-[9999] max-h-[calc(100vh-16px)] min-w-[210px] overflow-y-auto rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 text-[13px] text-[#111111] shadow-2xl select-none"
+              style={{
+                top: adjustedMenuPos?.top ?? contextMenuPos.y,
+                left: adjustedMenuPos?.left ?? contextMenuPos.x,
+                visibility: adjustedMenuPos ? "visible" : "hidden",
+              }}
             >
-              <span>Форматирование</span>
-              <ChevronRight className="h-4 w-4 text-[#888888]" />
-            </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleUndo}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Отменить</span>
+                <span className="text-[11px] text-[#888888]">⌘Z</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleRedo}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Повторить</span>
+                <span className="text-[11px] text-[#888888]">⇧⌘Z</span>
+              </button>
 
-            {/* Подменю форматирования */}
+              <div className="my-1 border-t border-[#f0f0f0]" />
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleCut}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Вырезать</span>
+                <span className="text-[11px] text-[#888888]">⌘X</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleCopy}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Копировать</span>
+                <span className="text-[11px] text-[#888888]">⌘C</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={() => void handlePasteAction()}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Вставить</span>
+                <span className="text-[11px] text-[#888888]">⌘V</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleDelete}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Удалить</span>
+              </button>
+
+              <div className="my-1 border-t border-[#f0f0f0]" />
+
+              {/* Пункт с подменю «Форматирование >» */}
+              <div
+                ref={formattingTriggerRef}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(true)}
+              >
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setIsFormattingSubmenuOpen((v) => !v)}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer",
+                    isFormattingSubmenuOpen && "bg-[#f5f5f5]"
+                  )}
+                >
+                  <span>Форматирование</span>
+                  <ChevronRight className="h-4 w-4 text-[#888888]" />
+                </button>
+              </div>
+
+              <div className="my-1 border-t border-[#f0f0f0]" />
+
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(false)}
+                onClick={handleSelectAll}
+                className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
+              >
+                <span>Выбрать всё</span>
+                <span className="text-[11px] text-[#888888]">⌘A</span>
+              </button>
+            </div>
+
+            {/* Подменю форматирования — отдельный fixed-блок с автофлипом и скроллом внутри viewport */}
             {isFormattingSubmenuOpen && (
               <div
-                className="absolute left-full top-[-80px] z-50 min-w-[210px] rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 shadow-2xl text-[13px] text-[#111111]"
+                ref={formattingSubmenuRef}
+                style={{
+                  top: submenuPos?.top ?? adjustedMenuPos?.top ?? contextMenuPos.y,
+                  left: submenuPos?.left ?? adjustedMenuPos?.left ?? contextMenuPos.x,
+                  visibility: submenuPos ? "visible" : "hidden",
+                }}
+                onMouseEnter={() => setIsFormattingSubmenuOpen(true)}
+                className="fixed z-[10000] max-h-[calc(100vh-16px)] min-w-[215px] overflow-y-auto rounded-[12px] border border-[#e5e5e5] bg-white py-1.5 text-[13px] text-[#111111] shadow-2xl select-none"
               >
                 <button
                   type="button"
@@ -1321,28 +1429,16 @@ export function TelegramComposer({
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={clearFormatting}
-                  className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] text-[#888888] hover:text-[#111111] cursor-pointer"
+                  className="flex w-full items-center justify-between px-3 py-1.5 text-[#888888] hover:bg-[#f5f5f5] hover:text-[#111111] cursor-pointer"
                 >
                   <span>Без форматирования</span>
                   <span className="text-[11px] text-[#888888]">⇧⌘N</span>
                 </button>
               </div>
             )}
-          </div>
-
-          <div className="my-1 border-t border-[#f0f0f0]" />
-
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleSelectAll}
-            className="flex w-full items-center justify-between px-3 py-1.5 hover:bg-[#f5f5f5] cursor-pointer"
-          >
-            <span>Выбрать всё</span>
-            <span className="text-[11px] text-[#888888]">⌘A</span>
-          </button>
-        </div>
-      )}
+          </>,
+          document.body
+        )}
 
       {/* ПОЛНОЭКРАННЫЙ РЕЖИМ РЕДАКТИРОВАНИЯ (Fullscreen Overlay) */}
       {isFullscreen && (

@@ -1093,7 +1093,9 @@ export function CrmChatView({
   // Автоматический выбор первого доступного аккаунта отправки
   useEffect(() => {
     if (sendFromOptions.length === 0) return;
-    if (selectedChannelAccountId && sendFromOptions.some((o) => o.channelAccountId === selectedChannelAccountId)) {
+    const currentSelected = sendFromOptions.find((o) => o.channelAccountId === selectedChannelAccountId);
+    const hasAnyAvailable = sendFromOptions.some((o) => o.available);
+    if (currentSelected && (currentSelected.available || !hasAnyAvailable)) {
       return;
     }
     const defaultAvailable = sendFromOptions.find((o) => o.isDefault && o.available);
@@ -2075,19 +2077,24 @@ export function CrmChatView({
       <div className="shrink-0 border-t border-[#e5e5e5] bg-[#fbfbfb] p-3">
         {/* Выбор «Пишем от:» */}
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-[#666666]">Пишем от:</span>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="shrink-0 text-xs font-medium text-[#666666]">Пишем от:</span>
             {sendFromOptionsQuery.isLoading ? (
               <span className="inline-flex items-center gap-1.5 text-xs text-[#888888]">
                 <Loader2 className="h-3 w-3 animate-spin text-[#888888]" />
                 Загрузка каналов...
               </span>
             ) : sendFromOptions.length > 0 ? (
-              <div className="flex items-center gap-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 <select
                   value={selectedChannelAccountId}
                   onChange={(e) => handleSelectAccount(e.target.value)}
-                  className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] shadow-2xs outline-none transition-colors hover:border-[#cccccc] focus:border-[#4a38f5] cursor-pointer"
+                  title={
+                    selectedOption
+                      ? `${selectedOption.label}${!selectedOption.available && selectedOption.unavailableReason ? ` — ${selectedOption.unavailableReason}` : ""}`
+                      : undefined
+                  }
+                  className="h-7 max-w-full min-w-0 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] shadow-2xs outline-none transition-colors hover:border-[#cccccc] focus:border-[#4a38f5] cursor-pointer"
                 >
                   {sendFromOptions.map((opt) => (
                     <option

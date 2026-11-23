@@ -1,5 +1,5 @@
 import { MaxBridgeService } from "../../../channels/max-bridge.service.js";
-import { queryOne } from "../../../../db/client.js";
+import { query, queryOne } from "../../../../db/client.js";
 import type {
   IMessagingAdapter,
   SendMessageParams,
@@ -68,6 +68,22 @@ export class MaxBridgeAdapter implements IMessagingAdapter {
       });
 
       if (!res.ok) {
+        if (res.sessionExpired) {
+          const accountTitle = account?.label ? ` «${account.label}»` : "";
+          await query(
+            `UPDATE channel_accounts
+             SET status = 'error',
+                 status_message = 'Сессия истекла — требуется повторная авторизация по QR-коду'
+             WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+            [params.tenantId, params.channelAccountId],
+          ).catch(() => {});
+
+          return {
+            ok: false,
+            error: `Сессия MAX-аккаунта${accountTitle} истекла — переподключите его по QR-коду в разделе «Интеграции → MAX» или выберите другой аккаунт в «Пишем от:».`,
+          };
+        }
+
         return {
           ok: false,
           error: res.error || "Ошибка отправки через max-bridge",
@@ -80,9 +96,10 @@ export class MaxBridgeAdapter implements IMessagingAdapter {
         timestamp: Date.now(),
       };
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: msg,
       };
     }
   }
