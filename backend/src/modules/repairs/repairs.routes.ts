@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { RepairsService } from "./repairs.service.js";
 import { InvoicesService } from "../finance/invoices.service.js";
@@ -243,6 +243,18 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     const result = await service.deleteServiceFromCatalog(request.tenant_id, id);
     return reply.send({ data: result });
   });
+
+  // PATCH & PUT /repairs/catalog/services/:id — update service in catalog
+  const handleUpdateCatalogService = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { servicesService } = await import("../services/services.service.js");
+    const { updateServiceSchema } = await import("../services/services.types.js");
+    const body = updateServiceSchema.parse(request.body);
+    const updated = await servicesService.update(request.tenant_id, id, body);
+    return reply.send({ data: updated });
+  };
+  app.patch("/catalog/services/:id", { onRequest: canWrite }, handleUpdateCatalogService);
+  app.put("/catalog/services/:id", { onRequest: canWrite }, handleUpdateCatalogService);
 
   // GET /repairs/lookup-inn — поиск реквизитов организации по ИНН (DaData / ФНС ЕГРЮЛ)
   app.get("/lookup-inn", { onRequest: canRead }, async (request, reply) => {
