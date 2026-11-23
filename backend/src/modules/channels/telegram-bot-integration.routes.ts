@@ -102,7 +102,7 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
         "Telegram Bot business_connection update received",
       );
 
-      await runWithPlatformScope(async () => {
+      await runWithTenantContext(tenantId, async () => {
         const { query: dbQuery } = await import("../../db/client.js");
         const creds = { ...(account.credentials || {}) };
         creds.business_connection_id = connId;
@@ -111,8 +111,8 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
         creds.business_can_reply = canReply;
         creds.business_is_enabled = isEnabled;
         await dbQuery(
-          `UPDATE channel_accounts SET credentials = $1 WHERE id = $2`,
-          [JSON.stringify(creds), id],
+          `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
+          [JSON.stringify(creds), id, tenantId],
         );
       });
 
@@ -150,12 +150,12 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
 
     // Если получили business_connection_id из входящего business_message, сохраняем в аккаунте
     if (businessConnectionId && account.credentials?.business_connection_id !== businessConnectionId) {
-      void runWithPlatformScope(async () => {
+      void runWithTenantContext(tenantId, async () => {
         const { query: dbQuery } = await import("../../db/client.js");
         const creds = { ...(account.credentials || {}), business_connection_id: businessConnectionId };
         await dbQuery(
-          `UPDATE channel_accounts SET credentials = $1 WHERE id = $2`,
-          [JSON.stringify(creds), id],
+          `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
+          [JSON.stringify(creds), id, tenantId],
         ).catch(() => null);
       });
     }
