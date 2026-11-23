@@ -9,7 +9,7 @@ export type BotStatus = "active" | "paused";
 
 export type BotMode = "suggester" | "autoreply" | "disabled";
 
-export type LlmProvider = "openai" | "anthropic" | "deepseek" | "google";
+export type LlmProvider = "openai" | "anthropic" | "deepseek" | "google" | "custom";
 
 export type BotModel = string;
 
@@ -45,10 +45,15 @@ export interface ModelInfo {
 }
 
 export const MODEL_CATALOG: ModelInfo[] = [
+  { id: "glm-4.5", label: "GLM 4.5 (NoirLight) — Рекомендуемая", provider: "custom", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "qwen3.8-27b", label: "Qwen 3.8 27B (NoirLight) — Быстрая диалоговая", provider: "custom", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "glm-5.3", label: "GLM 5.3 (NoirLight) — Рассуждения и логика", provider: "custom", context_window: 128_000, price_in_per_1k: 0.10, price_out_per_1k: 0.30 },
+  { id: "qwen-omni-plus", label: "Qwen Omni Plus (NoirLight)", provider: "custom", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "nemotron-super", label: "Nemotron Super (NoirLight)", provider: "custom", context_window: 128_000, price_in_per_1k: 0.10, price_out_per_1k: 0.30 },
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash (Google) — Резервная", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
+  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite (Google)", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
   { id: "gemini-flash-lite-latest", label: "Gemini Flash Lite (Fast)", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
   { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
-  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
-  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
   { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "google", context_window: 2_000_000, price_in_per_1k: 1.25, price_out_per_1k: 5.00 },
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
@@ -57,9 +62,8 @@ export const MODEL_CATALOG: ModelInfo[] = [
   { id: "claude-sonnet-4", label: "Claude Sonnet 4", provider: "anthropic", context_window: 200_000, price_in_per_1k: 0.27, price_out_per_1k: 1.35 },
   { id: "claude-opus-4", label: "Claude Opus 4", provider: "anthropic", context_window: 200_000, price_in_per_1k: 1.35, price_out_per_1k: 6.75 },
   { id: "deepseek-v3", label: "DeepSeek V3", provider: "deepseek", context_window: 64_000, price_in_per_1k: 0.02, price_out_per_1k: 0.09 },
-  { id: "agnes-3.0-flash", label: "Agnes 3.0 Flash (Fast & Resilient)", provider: "openai", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
-  { id: "glm-4-flash", label: "GLM-4 Flash (Zhipu AI)", provider: "openai", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
-  { id: "qwen-omni-plus", label: "Qwen Omni Plus (Alibaba)", provider: "openai", context_window: 128_000, price_in_per_1k: 0.10, price_out_per_1k: 0.30 },
+  { id: "agnes-3.0-flash", label: "Agnes 3.0 Flash (Fast & Resilient)", provider: "custom", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "glm-4-flash", label: "GLM-4 Flash (NoirLight)", provider: "custom", context_window: 128_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
   { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.11, price_out_per_1k: 0.45 },
 ];
 
@@ -120,6 +124,9 @@ export interface AiBot {
   target_page_url?: string | null;
   generated_system_prompt?: string | null;
   knowledge_base_md?: string;
+  company_profile_summary?: string | null;
+  company_profile_approved?: boolean;
+  company_profile_approved_at?: string | null;
   feedback_learning_enabled?: boolean;
   wizard_config?: WizardConfig | null;
   website_url?: string;
@@ -423,6 +430,7 @@ const PROVIDER_LABELS: Record<LlmProvider, string> = {
   anthropic: "Anthropic",
   deepseek: "DeepSeek",
   google: "Google",
+  custom: "NoirLight",
 };
 
 const ACCENT_CLASSES: Record<AiBot["accent"], string> = {

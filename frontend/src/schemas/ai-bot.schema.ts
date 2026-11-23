@@ -92,6 +92,8 @@ export const createBotSchema = z.object({
   target_page_url: z.string().optional().or(z.literal("")),
   generated_system_prompt: z.string().optional().or(z.literal("")),
   knowledge_base_md: z.string().optional(),
+  company_profile_summary: z.string().optional().or(z.literal("")),
+  company_profile_approved: z.boolean().optional(),
   feedback_learning_enabled: z.boolean().optional(),
 });
 

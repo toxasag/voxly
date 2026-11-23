@@ -46,7 +46,7 @@ import { detectMessageLanguage } from "./language-detector.js";
 const MIN_BALANCE_KOPECKS = 100;
 
 /** Модель по умолчанию, если у агента указана незнакомая. */
-const FALLBACK_MODEL: AiModelId = "gemini-3.5-flash-lite";
+const FALLBACK_MODEL: AiModelId = "glm-4.5";
 
 /**
  * Соответствие моделей каталога идентификаторам шлюза.
@@ -96,6 +96,9 @@ interface AgentRow {
   consultant_role?: string | null;
   fallback_models?: string[] | null;
   knowledge_base_md?: string | null;
+  company_profile_summary?: string | null;
+  company_profile_approved?: boolean | null;
+  company_profile_approved_at?: Date | string | null;
   feedback_learning_enabled?: boolean | null;
   wizard_config: WizardConfig | null;
 }
@@ -142,7 +145,9 @@ export class AgentPipelineService {
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
               a.max_tokens, a.system_prompt, a.company_name_override,
               a.consultant_source, a.consultant_name, a.consultant_role,
-              a.fallback_models, a.knowledge_base_md, a.feedback_learning_enabled, a.wizard_config
+              a.fallback_models, a.knowledge_base_md, a.company_profile_summary,
+              a.company_profile_approved, a.company_profile_approved_at,
+              a.feedback_learning_enabled, a.wizard_config
        FROM ai_agent_channel_bindings b
        JOIN ai_agents a ON a.id = b.agent_id
        WHERE b.tenant_id = $1
@@ -623,6 +628,7 @@ export class AgentPipelineService {
     const systemPrompt = buildSystemPrompt({
       agentPrompt: agent.system_prompt,
       knowledgeBaseMd: agent.knowledge_base_md || "",
+      approvedCompanySummary: agent.company_profile_approved && agent.company_profile_summary ? agent.company_profile_summary : undefined,
       contextChunks: contextChunks.map((hit) => ({
         content: hit.content,
         filename: hit.filename,
@@ -640,6 +646,8 @@ export class AgentPipelineService {
       const fallbackList = [
         ...(agent.fallback_models ?? []),
         ...(wc?.fallback_models ?? wc?.fallbackModels ?? []),
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
       ].filter((m): m is string => typeof m === "string" && m.trim().length > 0);
 
       aiTraceLogger.traceEvent("ai:prepare_reply:start", {

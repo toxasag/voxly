@@ -883,6 +883,18 @@ CREATE TABLE IF NOT EXISTS ai_agents (
   -- Промпт в БД, а не в коде (.cursorrules §13).
   system_prompt TEXT NOT NULL,
   context_entities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  company_name_override TEXT DEFAULT NULL,
+  consultant_source TEXT NOT NULL DEFAULT 'manual',
+  consultant_name TEXT DEFAULT NULL,
+  consultant_role TEXT DEFAULT NULL,
+  fallback_models TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  target_page_url TEXT DEFAULT NULL,
+  generated_system_prompt TEXT DEFAULT NULL,
+  knowledge_base_md TEXT NOT NULL DEFAULT '',
+  company_profile_summary TEXT DEFAULT NULL,
+  company_profile_approved BOOLEAN NOT NULL DEFAULT FALSE,
+  company_profile_approved_at TIMESTAMPTZ DEFAULT NULL,
+  feedback_learning_enabled BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
