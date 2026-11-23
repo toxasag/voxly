@@ -21,6 +21,7 @@ interface PartsTableProps {
   orderId?: string;
   items: PartItem[];
   onChange?: (items: PartItem[]) => void;
+  onDraftStateChange?: (draftLabel: string | null) => void;
 }
 
 function formatCost(amount: number): string {
@@ -31,7 +32,7 @@ function formatCost(amount: number): string {
   }).format(amount);
 }
 
-export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
+export function PartsTable({ orderId, items, onChange, onDraftStateChange }: PartsTableProps) {
   const [newName, setNewName] = useState("");
   const [newArticle, setNewArticle] = useState("");
   const [newQty, setNewQty] = useState("1");
@@ -43,6 +44,30 @@ export function PartsTable({ orderId, items, onChange }: PartsTableProps) {
   const [addToPurchaseRequest, setAddToPurchaseRequest] = useState(false);
 
   const comboboxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!onDraftStateChange) return;
+    const trimmedName = newName.trim();
+    const trimmedArticle = newArticle.trim();
+    const hasDraft = Boolean(
+      trimmedName ||
+        selectedWarehouseItem !== null ||
+        trimmedArticle ||
+        newRetail.trim() ||
+        newCostPrice.trim(),
+    );
+    onDraftStateChange(
+      hasDraft
+        ? trimmedName || selectedWarehouseItem?.name || trimmedArticle || "Новая запчасть"
+        : null,
+    );
+  }, [newName, newArticle, newRetail, newCostPrice, selectedWarehouseItem, onDraftStateChange]);
+
+  useEffect(() => {
+    return () => {
+      onDraftStateChange?.(null);
+    };
+  }, [onDraftStateChange]);
 
   const { data: warehouseItems = [], isLoading: isWarehouseLoading } = useWarehouseItems();
   const { data: warehouseSettings } = useWarehouseSettings();

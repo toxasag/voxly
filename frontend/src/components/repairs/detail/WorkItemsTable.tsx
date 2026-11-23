@@ -21,6 +21,7 @@ interface WorkItemsTableProps {
   orderId?: string;
   items: WorkItem[];
   onChange?: (items: WorkItem[]) => void;
+  onDraftStateChange?: (draftLabel: string | null) => void;
 }
 
 function formatCost(amount: number): string {
@@ -31,7 +32,7 @@ function formatCost(amount: number): string {
   }).format(amount);
 }
 
-export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps) {
+export function WorkItemsTable({ orderId, items, onChange, onDraftStateChange }: WorkItemsTableProps) {
   const [newDesc, setNewDesc] = useState("");
   const [newMaster, setNewMaster] = useState("");
   const [newQty, setNewQty] = useState("1");
@@ -40,6 +41,25 @@ export function WorkItemsTable({ orderId, items, onChange }: WorkItemsTableProps
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [isCatalogDialogOpen, setIsCatalogDialogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const hasUnsavedWorkDraft = Boolean(
+    newDesc.trim() || newUnitPrice.trim() || newCost.trim(),
+  );
+
+  useEffect(() => {
+    if (!onDraftStateChange) return;
+    if (hasUnsavedWorkDraft) {
+      onDraftStateChange(newDesc.trim() || "Новая работа");
+    } else {
+      onDraftStateChange(null);
+    }
+  }, [hasUnsavedWorkDraft, newDesc, onDraftStateChange]);
+
+  useEffect(() => {
+    return () => {
+      onDraftStateChange?.(null);
+    };
+  }, [onDraftStateChange]);
 
   const comboboxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);

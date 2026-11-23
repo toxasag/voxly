@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -33,6 +33,7 @@ import {
   type ServiceDictionariesDTO,
 } from "@/lib/api/use-repairs";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { toast } from "sonner";
 import type { RepairTicket } from "@/lib/repairs/repairs.types";
 import { RepairClientSection } from "./RepairClientSection";
@@ -71,6 +72,44 @@ function createEmptyEquipment(): EquipmentCardItem {
     defect_description: "",
     estimated_cost: 0,
   };
+}
+
+function serializeIntakeSnapshot(
+  values: Partial<CreateRepairPayload>,
+  equipments: EquipmentCardItem[],
+  photoCount: number,
+): string {
+  return JSON.stringify({
+    deal_id: (values.deal_id ?? "").trim(),
+    customer_id: (values.customer_id ?? "").trim(),
+    customer_name: (values.customer_name ?? "").trim(),
+    customer_phone: (values.customer_phone ?? "").trim(),
+    customer_email: (values.customer_email ?? "").trim(),
+    additional_contacts: values.additional_contacts ?? [],
+    is_company: Boolean(values.is_company),
+    company_id: (values.company_id ?? "").trim(),
+    company_name: (values.company_name ?? "").trim(),
+    company_inn: (values.company_inn ?? "").trim(),
+    company_ogrn: (values.company_ogrn ?? "").trim(),
+    company_bik: (values.company_bik ?? "").trim(),
+    company_account_number: (values.company_account_number ?? "").trim(),
+    company_legal_address: (values.company_legal_address ?? "").trim(),
+    priority: values.priority ?? "normal",
+    notes: (values.notes ?? "").trim(),
+    equipments: equipments.map((eq) => ({
+      equipment_type: eq.equipment_type.trim(),
+      equipment_brand: eq.equipment_brand.trim(),
+      equipment_model: eq.equipment_model.trim(),
+      equipment_serial: eq.equipment_serial.trim(),
+      package_contents: eq.package_contents.trim(),
+      package_contents_items: eq.package_contents_items,
+      appearance: eq.appearance.trim(),
+      malfunctions: eq.malfunctions,
+      defect_description: eq.defect_description.trim(),
+      estimated_cost: Number(eq.estimated_cost || 0),
+    })),
+    photoCount,
+  });
 }
 
 interface EquipmentCardProps {
@@ -358,6 +397,24 @@ export function RepairIntakeModal({
   // Список карточек оборудования (мульти-приёмка)
   const [equipments, setEquipments] = useState<EquipmentCardItem[]>([createEmptyEquipment()]);
   const [equipmentErrors, setEquipmentErrors] = useState<Record<string, Record<string, string>>>({});
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+
+  const baselineSnapshotRef = useRef<string | null>(null);
+  const equipmentsRef = useRef<EquipmentCardItem[]>(equipments);
+  const photosCountRef = useRef<number>(photos.length);
+  const isSubmittingRef = useRef<boolean>(isSubmitting);
+
+  useEffect(() => {
+    equipmentsRef.current = equipments;
+  }, [equipments]);
+
+  useEffect(() => {
+    photosCountRef.current = photos.length;
+  }, [photos.length]);
+
+  useEffect(() => {
+    isSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
 
   const currentUser = useCurrentUser();
   const mastersQuery = useRepairMasters();
@@ -459,12 +516,14 @@ export function RepairIntakeModal({
   useEffect(() => {
     if (open) {
       form.reset();
-      setEquipments([createEmptyEquipment()]);
+      const initialEquipments = [createEmptyEquipment()];
+      setEquipments(initialEquipments);
       setEquipmentErrors({});
       setPhotos([]);
       setPhotoPreviews([]);
       setIsHistorySheetOpen(false);
       setHistorySerial("");
+      setCloseConfirmOpen(false);
 
       // Предвыбор мастера
       const self = teamMembers.find(
@@ -547,8 +606,53 @@ export function RepairIntakeModal({
       } else if (initialDealId) {
         form.setValue("deal_id", initialDealId, { shouldValidate: true });
       }
+
+      baselineSnapshotRef.current = serializeIntakeSnapshot(
+        form.getValues(),
+        initialEquipments,
+        0,
+      );
+    } else {
+      baselineSnapshotRef.current = null;
+      setCloseConfirmOpen(false);
     }
   }, [open, form, copyFromTicket, initialCustomerId, initialDeal, initialDealId, teamMembers, currentUser]);
+
+  const hasUnsavedChanges = useCallback((): boolean => {
+    if (!baselineSnapshotRef.current) return false;
+    const currentSnapshot = serializeIntakeSnapshot(
+      form.getValues(),
+      equipmentsRef.current,
+      photosCountRef.current,
+    );
+    return currentSnapshot !== baselineSnapshotRef.current;
+  }, [form]);
+
+  const handleAttemptClose = useCallback(() => {
+    if (isSubmittingRef.current) return;
+    if (hasUnsavedChanges()) {
+      setCloseConfirmOpen(true);
+      return;
+    }
+    onClose();
+  }, [hasUnsavedChanges, onClose]);
+
+  const handleConfirmDiscardAndClose = useCallback(() => {
+    setCloseConfirmOpen(false);
+    onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isSubmittingRef.current) return;
+      if (!hasUnsavedChanges()) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [open, hasUnsavedChanges]);
 
   // Копирование карточки оборудования
   const handleCopyEquipment = useCallback((idx: number) => {
@@ -794,8 +898,8 @@ export function RepairIntakeModal({
 
   return (
     <>
-      <Sheet open={open} onClose={onClose} width="w-[720px]" resizable>
-        <SheetHeader onClose={onClose}>
+      <Sheet open={open} onClose={handleAttemptClose} width="w-[720px]" resizable>
+        <SheetHeader onClose={handleAttemptClose}>
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10">
               <Wrench className="h-4 w-4 text-[#4a38f5]" />
@@ -953,7 +1057,7 @@ export function RepairIntakeModal({
             <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleAttemptClose}
                 className="rounded-lg border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
               >
                 Отмена
@@ -992,6 +1096,18 @@ export function RepairIntakeModal({
         }}
         equipment={serialHistorySearch.data?.equipment ?? null}
         history={serialHistorySearch.data?.history ?? []}
+      />
+
+      {/* Подтверждение выхода при несохранённых данных */}
+      <ConfirmDialog
+        open={closeConfirmOpen}
+        onClose={() => setCloseConfirmOpen(false)}
+        onConfirm={handleConfirmDiscardAndClose}
+        title="Данные не сохранены, выйти без сохранения?"
+        description="Введённые данные приёмки оборудования будут потеряны."
+        cancelLabel="Нет, остаться"
+        confirmLabel="Да, выйти"
+        variant="destructive"
       />
     </>
   );

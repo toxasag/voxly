@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { useParams, notFound } from "next/navigation";
+import { useParams, useRouter, notFound } from "next/navigation";
 import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
@@ -27,6 +27,7 @@ import { RepairNotesSection } from "@/components/repairs/RepairNotesSection";
 import { DictionarySelectField } from "@/components/repairs/DictionarySelectField";
 import { TagPill, type TagColor } from "@/components/ui/tag";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Guard } from "@/components/shared/Guard";
 import { isModuleInstalled } from "@/lib/context/tenant";
 import { useAuth } from "@/lib/auth/use-auth";
@@ -101,10 +102,70 @@ function getStatusBadge(status: string): { label: string; color: TagColor } {
 
 export default function RepairDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { tenant } = useAuth();
   const displayTenant = tenant ?? { tenantName: "", plan: "", installedModules: [] };
   const hasFinance = isModuleInstalled(displayTenant.installedModules, "finance");
   const [tab, setTab] = useState<DetailTab>("details");
+  const [unsavedWorkDraft, setUnsavedWorkDraft] = useState<string | null>(null);
+  const [unsavedPartDraft, setUnsavedPartDraft] = useState<string | null>(null);
+  const [pendingLeaveAction, setPendingLeaveAction] = useState<
+    { type: "tab"; targetTab: DetailTab } | { type: "back" } | null
+  >(null);
+
+  const hasUnsavedWorkOrPartDraft =
+    tab === "work_parts" && Boolean(unsavedWorkDraft || unsavedPartDraft);
+
+  const unsavedDraftList = useMemo(() => {
+    const labels: string[] = [];
+    if (unsavedWorkDraft) labels.push(`работа «${unsavedWorkDraft}»`);
+    if (unsavedPartDraft) labels.push(`запчасть «${unsavedPartDraft}»`);
+    return labels.join(" и ");
+  }, [unsavedWorkDraft, unsavedPartDraft]);
+
+  const handleSelectTab = useCallback(
+    (nextTab: DetailTab) => {
+      if (nextTab === tab) return;
+      if (hasUnsavedWorkOrPartDraft && nextTab !== "work_parts") {
+        setPendingLeaveAction({ type: "tab", targetTab: nextTab });
+        return;
+      }
+      setTab(nextTab);
+    },
+    [tab, hasUnsavedWorkOrPartDraft],
+  );
+
+  const handleBackClick = useCallback(
+    (e: React.MouseEvent<HTMLAnchorElement>) => {
+      if (!hasUnsavedWorkOrPartDraft) return;
+      e.preventDefault();
+      setPendingLeaveAction({ type: "back" });
+    },
+    [hasUnsavedWorkOrPartDraft],
+  );
+
+  const handleConfirmLeaveWorkParts = useCallback(() => {
+    const action = pendingLeaveAction;
+    setPendingLeaveAction(null);
+    setUnsavedWorkDraft(null);
+    setUnsavedPartDraft(null);
+    if (!action) return;
+    if (action.type === "tab") {
+      setTab(action.targetTab);
+    } else if (action.type === "back") {
+      router.push("/repairs");
+    }
+  }, [pendingLeaveAction, router]);
+
+  useEffect(() => {
+    if (!hasUnsavedWorkOrPartDraft) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedWorkOrPartDraft]);
 
   const { data: detail, isLoading, isError, error, refetch: refetchRepair } = useRepair(params.id);
   const { data: works = [] } = useRepairWorks(params.id);
@@ -529,6 +590,7 @@ export default function RepairDetailPage() {
           <div className="flex items-center gap-3">
             <Link
               href="/repairs"
+              onClick={handleBackClick}
               className="flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[13px] text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -887,7 +949,7 @@ export default function RepairDetailPage() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => setTab("notes")}
+                          onClick={() => handleSelectTab("notes")}
                           className="text-[10px] text-[#854d0e] hover:underline cursor-pointer"
                         >
                           Все заметки
@@ -1239,7 +1301,7 @@ export default function RepairDetailPage() {
                   <button
                     key={t.key}
                     type="button"
-                    onClick={() => setTab(t.key)}
+                    onClick={() => handleSelectTab(t.key)}
                     className={cn(
                       "flex items-center gap-1.5 rounded-[8px] px-3 py-2 text-xs font-medium transition-colors cursor-pointer",
                       tab === t.key
@@ -1566,8 +1628,17 @@ export default function RepairDetailPage() {
               {/* Вкладка 2: Работы и запчасти */}
               {tab === "work_parts" && (
                 <div className="space-y-6">
-                  <WorkItemsTable orderId={ticket.id} items={ticket.work_items} />
-                  <PartsTable orderId={ticket.id} items={ticket.parts_used} onChange={() => {}} />
+                  <WorkItemsTable
+                    orderId={ticket.id}
+                    items={ticket.work_items}
+                    onDraftStateChange={setUnsavedWorkDraft}
+                  />
+                  <PartsTable
+                    orderId={ticket.id}
+                    items={ticket.parts_used}
+                    onChange={() => {}}
+                    onDraftStateChange={setUnsavedPartDraft}
+                  />
                 </div>
               )}
 
@@ -1732,7 +1803,7 @@ export default function RepairDetailPage() {
 
               {/* Вкладка 4: Финансы (агрегация работ/запчастей + создание счета) */}
               {tab === "finance" && (
-                <div className="space-y-6 max-w-3xl">
+                <div className="space-y-6 w-full max-w-6xl">
                   <FinancialSummary
                     repairOrderId={ticket.id}
                     workItems={ticket.work_items}
@@ -1826,6 +1897,20 @@ export default function RepairDetailPage() {
             source_label: ticket.ticket_number,
           })),
         ]}
+      />
+      <ConfirmDialog
+        open={pendingLeaveAction !== null}
+        onClose={() => setPendingLeaveAction(null)}
+        onConfirm={handleConfirmLeaveWorkParts}
+        title="Позиция не добавлена в заказ"
+        description={
+          unsavedDraftList
+            ? `Вы выбрали ${unsavedDraftList}, но не нажали кнопку «+» для добавления. Если уйти сейчас, эти данные не сохранятся.`
+            : "Вы ввели работу или запчасть, но не нажали кнопку «+» для добавления. Уйти без сохранения?"
+        }
+        cancelLabel="Вернуться и нажать «+»"
+        confirmLabel="Уйти без сохранения"
+        variant="destructive"
       />
     </Guard>
   );

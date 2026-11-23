@@ -87,7 +87,7 @@ export class InvalidStatusTransitionError extends AppError {
 
 export interface ListRepairsOptions {
   dealId?: string;
-  status?: RepairStatus;
+  status?: RepairStatus | "active";
   paymentStatus?: RepairPaymentStatus;
   priority?: RepairPriority;
   masterId?: string;
@@ -229,7 +229,9 @@ export class RepairsService {
       conditions.push(`ro.deal_id = $${params.length}`);
     }
 
-    if (options.status !== undefined) {
+    if (options.status === "active") {
+      conditions.push(`ro.status <> 'issued'`);
+    } else if (options.status !== undefined) {
       params.push(options.status);
       conditions.push(`ro.status = $${params.length}`);
     }
