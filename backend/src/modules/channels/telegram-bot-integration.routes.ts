@@ -209,9 +209,9 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       const existingDeal = await runWithTenantContext(tenantId, () =>
         queryOne<{ id: string }>(
           `SELECT d.id FROM deals d
-           LEFT JOIN contacts c ON d.client_id = c.id
-           WHERE d.tenant_id = $1 AND d.channel = 'telegram_bot' AND d.deleted_at IS NULL
-             AND (d.channel_thread_id = $2 OR c.telegram_chat_id = $2)
+           LEFT JOIN contacts c ON d.contact_id = c.id
+           WHERE d.tenant_id = $1 AND d.deleted_at IS NULL
+             AND (d.chat_thread_id = $2 OR c.telegram_chat_id = $2)
            ORDER BY d.created_at DESC LIMIT 1`,
           [tenantId, chatId],
         ),
@@ -222,9 +222,17 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
         await runWithTenantContext(tenantId, async () => {
           const { query: dbQuery } = await import("../../db/client.js");
           await dbQuery(
-            `INSERT INTO deal_messages (tenant_id, deal_id, channel, sender_type, is_outbound, body, external_id, created_at)
-             VALUES ($1, $2, 'telegram_bot', 'operator', true, $3, $4, $5)`,
-            [tenantId, existingDeal.id, rawText || "(вложение)", externalMessageId || null, messageTimestamp],
+            `INSERT INTO deal_messages (tenant_id, deal_id, channel, source, direction, sender_name, content, channel_account_id, delivery_status, metadata, created_at)
+             VALUES ($1, $2, 'telegram_bot', 'manager', 'outbound', $3, $4, $5, 'sent', $6, $7)`,
+            [
+              tenantId,
+              existingDeal.id,
+              account.credentials?.business_username || "Оператор",
+              rawText || "(вложение)",
+              account.id,
+              JSON.stringify({ external_message_id: externalMessageId }),
+              messageTimestamp,
+            ],
           );
           await dbQuery(
             `UPDATE deals SET ai_paused_until = now() + interval '30 minutes', updated_at = now() WHERE id = $1 AND tenant_id = $2`,
@@ -318,9 +326,17 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
               await runWithTenantContext(tenantId, async () => {
                 for (const p of buffered) {
                   await dbQuery(
-                    `INSERT INTO deal_messages (tenant_id, deal_id, channel, sender_type, is_outbound, body, external_id, created_at)
-                     VALUES ($1, $2, 'telegram_bot', 'operator', true, $3, $4, $5)`,
-                    [tenantId, crmResult.dealId!, p.text, p.externalMessageId || null, new Date(p.timestamp)],
+                    `INSERT INTO deal_messages (tenant_id, deal_id, channel, source, direction, sender_name, content, channel_account_id, delivery_status, metadata, created_at)
+                     VALUES ($1, $2, 'telegram_bot', 'manager', 'outbound', $3, $4, $5, 'sent', $6, $7)`,
+                    [
+                      tenantId,
+                      crmResult.dealId!,
+                      account.credentials?.business_username || "Оператор",
+                      p.text || "(сообщение)",
+                      account.id,
+                      JSON.stringify({ external_message_id: p.externalMessageId }),
+                      new Date(p.timestamp),
+                    ],
                   );
                 }
               });
