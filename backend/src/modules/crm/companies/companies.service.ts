@@ -264,6 +264,29 @@ export class CompaniesService {
       [tenantId, id],
     );
 
+    if (row !== null) {
+      // Каскадно помечаем удаленными контакты и сделки компании, удаляем переписки
+      await query(
+        `UPDATE contacts SET deleted_at = now()
+         WHERE tenant_id = $1 AND company_id = $2 AND deleted_at IS NULL`,
+        [tenantId, id],
+      );
+      const deals = await query<{ id: string }>(
+        `UPDATE deals SET deleted_at = now()
+         WHERE tenant_id = $1 AND company_id = $2 AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, id],
+      );
+      if (deals.length > 0) {
+        const dealIds = deals.map((d) => d.id);
+        await query(
+          `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+          [tenantId, dealIds],
+        );
+      }
+      return true;
+    }
+
     return row !== null;
   }
 
@@ -278,6 +301,27 @@ export class CompaniesService {
          RETURNING id`,
         [tenantId, ids],
       );
+      if (rows.length > 0) {
+        const companyIds = rows.map((r) => r.id);
+        await query(
+          `UPDATE contacts SET deleted_at = now()
+           WHERE tenant_id = $1 AND company_id = ANY($2::uuid[]) AND deleted_at IS NULL`,
+          [tenantId, companyIds],
+        );
+        const deals = await query<{ id: string }>(
+          `UPDATE deals SET deleted_at = now()
+           WHERE tenant_id = $1 AND company_id = ANY($2::uuid[]) AND deleted_at IS NULL
+           RETURNING id`,
+          [tenantId, companyIds],
+        );
+        if (deals.length > 0) {
+          const dealIds = deals.map((d) => d.id);
+          await query(
+            `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+            [tenantId, dealIds],
+          );
+        }
+      }
       return { count: rows.length };
     }
 
@@ -315,6 +359,28 @@ export class CompaniesService {
        RETURNING c.id`,
       params,
     );
+
+    if (rows.length > 0) {
+      const companyIds = rows.map((r) => r.id);
+      await query(
+        `UPDATE contacts SET deleted_at = now()
+         WHERE tenant_id = $1 AND company_id = ANY($2::uuid[]) AND deleted_at IS NULL`,
+        [tenantId, companyIds],
+      );
+      const deals = await query<{ id: string }>(
+        `UPDATE deals SET deleted_at = now()
+         WHERE tenant_id = $1 AND company_id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, companyIds],
+      );
+      if (deals.length > 0) {
+        const dealIds = deals.map((d) => d.id);
+        await query(
+          `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+          [tenantId, dealIds],
+        );
+      }
+    }
 
     return { count: rows.length };
   }

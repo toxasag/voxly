@@ -532,11 +532,16 @@ export function useCreateKnowledgeDraft(
 // Синтез базы знаний из CRM и WhatsApp
 // ---------------------------------------------------------------------------
 
-export function useCrmKnowledgeStats(): UseQueryResult<CrmKnowledgeStats, ApiClientError> {
+export function useCrmKnowledgeStats(
+  agentId?: string,
+): UseQueryResult<CrmKnowledgeStats, ApiClientError> {
   return useQuery({
-    queryKey: ["ai", "knowledge", "crm-stats"],
+    queryKey: ["ai", "knowledge", "crm-stats", agentId],
     queryFn: async () => {
-      const res = await apiClient.get<CrmKnowledgeStats>(`${BASE_PATH}/knowledge/crm-stats`);
+      const url = agentId
+        ? `${BASE_PATH}/knowledge/crm-stats?agent_id=${encodeURIComponent(agentId)}`
+        : `${BASE_PATH}/knowledge/crm-stats`;
+      const res = await apiClient.get<CrmKnowledgeStats>(url);
       return res.data;
     },
   });

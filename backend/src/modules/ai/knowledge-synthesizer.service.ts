@@ -25,6 +25,7 @@ interface MessageRow {
   sender_name: string;
   content: string;
   created_at: Date | string;
+  channel?: string;
 }
 
 export class KnowledgeSynthesizerService {
@@ -44,30 +45,101 @@ export class KnowledgeSynthesizerService {
 
   /**
    * Получение статистики по CRM для показа виджета «Теплый старт».
+   * Считает только активные (неудалённые) сделки и их реальные сообщения переписок из мессенджеров.
    */
-  async getCrmStats(tenantId: string): Promise<CrmKnowledgeStats> {
-    const totalDealsRow = await queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM deals WHERE tenant_id = $1 AND deleted_at IS NULL`,
-      [tenantId],
-    );
+  async getCrmStats(tenantId: string, agentId?: string): Promise<CrmKnowledgeStats> {
+    let boundIds: string[] = [];
+    if (agentId) {
+      const boundChannels = await query<{ channel_account_id: string }>(
+        `SELECT b.channel_account_id
+         FROM ai_agent_channel_bindings b
+         JOIN channel_accounts ca ON ca.id = b.channel_account_id
+         WHERE b.tenant_id = $1 AND b.agent_id = $2 AND b.is_enabled = true AND ca.deleted_at IS NULL`,
+        [tenantId, agentId],
+      );
+      boundIds = boundChannels.map((b) => b.channel_account_id);
+    }
 
-    const wonDealsRow = await queryOne<{ count: string }>(
-      `SELECT COUNT(d.id)::text AS count
-       FROM deals d
-       JOIN stages s ON s.id = d.stage_id
-       WHERE d.tenant_id = $1 AND s.is_won = true AND d.deleted_at IS NULL`,
-      [tenantId],
-    );
+    let totalDealsRow: { count: string } | null = null;
+    let wonDealsRow: { count: string } | null = null;
+    let totalMessagesRow: { count: string } | null = null;
+    let dealsWithMessagesRow: { count: string } | null = null;
 
-    const totalMessagesRow = await queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM deal_messages WHERE tenant_id = $1`,
-      [tenantId],
-    );
+    if (boundIds.length > 0) {
+      totalDealsRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(DISTINCT d.id)::text AS count
+         FROM deals d
+         JOIN deal_messages dm ON dm.deal_id = d.id
+         WHERE d.tenant_id = $1 AND d.deleted_at IS NULL
+           AND dm.channel != 'system'
+           AND dm.channel_account_id = ANY($2::uuid[])`,
+        [tenantId, boundIds],
+      );
 
-    const dealsWithMessagesRow = await queryOne<{ count: string }>(
-      `SELECT COUNT(DISTINCT deal_id)::text AS count FROM deal_messages WHERE tenant_id = $1`,
-      [tenantId],
-    );
+      wonDealsRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(DISTINCT d.id)::text AS count
+         FROM deals d
+         JOIN stages s ON s.id = d.stage_id
+         JOIN deal_messages dm ON dm.deal_id = d.id
+         WHERE d.tenant_id = $1 AND s.is_won = true AND d.deleted_at IS NULL
+           AND dm.channel != 'system'
+           AND dm.channel_account_id = ANY($2::uuid[])`,
+        [tenantId, boundIds],
+      );
+
+      totalMessagesRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(dm.id)::text AS count
+         FROM deal_messages dm
+         JOIN deals d ON d.id = dm.deal_id
+         WHERE dm.tenant_id = $1 AND d.deleted_at IS NULL
+           AND dm.channel != 'system'
+           AND dm.channel_account_id = ANY($2::uuid[])`,
+        [tenantId, boundIds],
+      );
+
+      dealsWithMessagesRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(DISTINCT dm.deal_id)::text AS count
+         FROM deal_messages dm
+         JOIN deals d ON d.id = dm.deal_id
+         WHERE dm.tenant_id = $1 AND d.deleted_at IS NULL
+           AND dm.channel != 'system'
+           AND dm.channel_account_id = ANY($2::uuid[])`,
+        [tenantId, boundIds],
+      );
+    } else {
+      totalDealsRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM deals
+         WHERE tenant_id = $1 AND deleted_at IS NULL`,
+        [tenantId],
+      );
+
+      wonDealsRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(d.id)::text AS count
+         FROM deals d
+         JOIN stages s ON s.id = d.stage_id
+         WHERE d.tenant_id = $1 AND s.is_won = true AND d.deleted_at IS NULL`,
+        [tenantId],
+      );
+
+      totalMessagesRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(dm.id)::text AS count
+         FROM deal_messages dm
+         JOIN deals d ON d.id = dm.deal_id
+         WHERE dm.tenant_id = $1 AND d.deleted_at IS NULL
+           AND dm.channel != 'system'`,
+        [tenantId],
+      );
+
+      dealsWithMessagesRow = await queryOne<{ count: string }>(
+        `SELECT COUNT(DISTINCT dm.deal_id)::text AS count
+         FROM deal_messages dm
+         JOIN deals d ON d.id = dm.deal_id
+         WHERE dm.tenant_id = $1 AND d.deleted_at IS NULL
+           AND dm.channel != 'system'`,
+        [tenantId],
+      );
+    }
 
     const totalDeals = Number(totalDealsRow?.count ?? 0);
     const wonDeals = Number(wonDealsRow?.count ?? 0);
@@ -94,10 +166,12 @@ export class KnowledgeSynthesizerService {
     dealsAnalyzed: number;
     messagesAnalyzed: number;
   }> {
-    // 0. Проверяем привязанные каналы агента для изоляции обучения (Phuket vs Bali)
+    // 0. Проверяем привязанные активные каналы агента для изоляции обучения (Phuket vs Bali)
     const boundChannels = await query<{ channel_account_id: string }>(
-      `SELECT channel_account_id FROM ai_agent_channel_bindings
-       WHERE tenant_id = $1 AND agent_id = $2 AND is_enabled = true`,
+      `SELECT b.channel_account_id
+       FROM ai_agent_channel_bindings b
+       JOIN channel_accounts ca ON ca.id = b.channel_account_id
+       WHERE b.tenant_id = $1 AND b.agent_id = $2 AND b.is_enabled = true AND ca.deleted_at IS NULL`,
       [tenantId, agentId],
     );
     const boundIds = boundChannels.map((b) => b.channel_account_id);
@@ -169,18 +243,30 @@ export class KnowledgeSynthesizerService {
     let messages: MessageRow[] = [];
     if (boundIds.length > 0) {
       messages = await query<MessageRow>(
-        `SELECT deal_id, source, sender_name, content, created_at
+        `SELECT deal_id, source, sender_name, content, created_at, channel
          FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])
+           AND channel != 'system'
            AND (channel_account_id = ANY($3::uuid[]) OR channel_account_id IS NULL)
          ORDER BY deal_id, created_at ASC`,
         [tenantId, dealIds, boundIds],
       );
+      if (messages.length === 0) {
+        messages = await query<MessageRow>(
+          `SELECT deal_id, source, sender_name, content, created_at, channel
+           FROM deal_messages
+           WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])
+             AND channel != 'system'
+           ORDER BY deal_id, created_at ASC`,
+          [tenantId, dealIds],
+        );
+      }
     } else {
       messages = await query<MessageRow>(
-        `SELECT deal_id, source, sender_name, content, created_at
+        `SELECT deal_id, source, sender_name, content, created_at, channel
          FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])
+           AND channel != 'system'
          ORDER BY deal_id, created_at ASC`,
         [tenantId, dealIds],
       );
@@ -207,7 +293,8 @@ export class KnowledgeSynthesizerService {
       contextText += `\n\n=== СДЕЛКА: ${deal.title} (Бюджет: ${deal.budget ? `${deal.budget} руб.` : "не указан"}, Этап: ${deal.stage_name}) ===\n`;
       for (const m of msgs) {
         const role = m.source === "customer" || m.source === "user" ? "Клиент" : "Менеджер";
-        contextText += `${role} (${m.sender_name}): ${m.content.trim()}\n`;
+        const ch = m.channel ? `[${m.channel.toUpperCase()}] ` : "";
+        contextText += `${ch}${role} (${m.sender_name}): ${m.content.trim()}\n`;
       }
     }
 
@@ -216,12 +303,12 @@ export class KnowledgeSynthesizerService {
 
     // 2. Отправляем в LLM через GatewayChatProvider
     const systemPrompt = `Ты — ведущий AI-аналитик продаж и бизнес-процессов CRM платформы GETVOXLY.
-Твоя задача: детально проанализировать реальные успешные диалоги и сделки компании и сгенерировать 3 структурированных документа для базы знаний AI-консультанта.
+Твоя задача: детально проанализировать реальные успешные диалоги и сделки компании из всех подключенных каналов (Telegram, WhatsApp, MAX, онлайн-чат на сайте) и сгенерировать 3 структурированных документа для базы знаний AI-консультанта.
 
 Требования:
 1. Выдели все упомянутые услуги, товары, цены, тарифы, стоимость работ и скидки.
 2. Собери частые вопросы клиентов и лучшие ответы менеджеров (FAQ), приведшие к покупке.
-3. Извлеки скрипты продаж: как менеджеры здороваются, выявляют потребность, отрабатывают возражения (дорого, подумаю, нет времени) и дожимают до сделки.
+3. Извлеки скрипты продаж: как менеджеры здороваются, выявляют потребность, отрабатывают возражения (дорого, подумаю, нет времени) и дожимают до сделки в переписках (Telegram, WhatsApp, MAX, онлайн-чат).
 
 ФОРМАТ ОТВЕТА — СТРОГО ВАЛИДНЫЙ JSON БЕЗ РАЗМЕТКИ И БЕЗ \`\`\`json:
 {

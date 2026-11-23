@@ -1,3 +1,10 @@
+### Fixed · Каскадное удаление сообщений чата при soft-delete сделок и точный подсчёт CRM (2026-11-24)
+
+- **Cascade Deal Messages Cleanup**: Создана миграция 0131 и триггер `trg_deals_soft_delete_messages`: при soft-delete сделки (`deleted_at = now()`) все сообщения переписок (`deal_messages`) автоматически каскадно удаляются. Удалены 1082 осиротевших сообщения удалённых сделок.
+- **Accurate CRM Knowledge Stats**: `getCrmStats` считает только неудалённые сделки (`d.deleted_at IS NULL`) и реальные сообщения мессенджеров (`dm.channel != 'system'`), поддерживая изоляцию по привязанным каналам агента (`agent_id`).
+- **Cascade Deletion in Services**: В `deals.service.ts`, `contacts.service.ts` и `companies.service.ts` реализовано каскадное удаление связанных сделок и их сообщений чата при удалении контакта или компании.
+- **Multi-Messenger Labeling**: В `synthesizeFromCrm` добавлена поддержка и явная маркировка всех каналов мессенджеров (Telegram, WhatsApp, MAX, онлайн-чат).
+
 ### Added · Каскадный роутер NoirLight, Паспорт компании и изоляция каналов MPRO (2026-11-24)
 
 - **NoirLight Cascading Router**: Добавлены модели `glm-4.5`, `qwen3.8-27b`, `glm-5.3`, `qwen-omni-plus`, `nemotron-super` с провайдером NoirLight и мгновенным каскадным переходом между ними и Google Gemini (`gemini-3.5-flash`, `gemini-3.5-flash-lite`).

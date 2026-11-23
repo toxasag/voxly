@@ -842,7 +842,15 @@ export class DealsService {
       [tenantId, id],
     );
 
-    return row !== null;
+    if (row !== null) {
+      await query(
+        `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = $2`,
+        [tenantId, id],
+      );
+      return true;
+    }
+
+    return false;
   }
 
   async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
@@ -856,6 +864,13 @@ export class DealsService {
          RETURNING id`,
         [tenantId, ids],
       );
+      if (rows.length > 0) {
+        const deletedIds = rows.map((r) => r.id);
+        await query(
+          `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+          [tenantId, deletedIds],
+        );
+      }
       return { count: rows.length };
     }
 
@@ -895,6 +910,14 @@ export class DealsService {
        RETURNING d.id`,
       params,
     );
+
+    if (rows.length > 0) {
+      const deletedIds = rows.map((r) => r.id);
+      await query(
+        `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+        [tenantId, deletedIds],
+      );
+    }
 
     return { count: rows.length };
   }
