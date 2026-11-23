@@ -2040,6 +2040,27 @@ CREATE POLICY bots_tenant_isolation ON bots
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- -----------------------------------------------------------------------------
+-- Автоматическое каскадное удаление сообщений чата при soft-delete сделки
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trg_deals_soft_delete_messages()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN
+    DELETE FROM deal_messages WHERE deal_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_deals_soft_delete_messages ON deals;
+
+CREATE TRIGGER trg_deals_soft_delete_messages
+AFTER UPDATE OF deleted_at ON deals
+FOR EACH ROW
+WHEN (NEW.deleted_at IS NOT NULL)
+EXECUTE FUNCTION trg_deals_soft_delete_messages();
+
 
 
 

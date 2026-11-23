@@ -13,7 +13,7 @@ interface CrmSyncModalProps {
 }
 
 export function CrmSyncModal({ agentId, open, onClose }: CrmSyncModalProps) {
-  const { data: stats, isLoading } = useCrmKnowledgeStats();
+  const { data: stats, isLoading } = useCrmKnowledgeStats(agentId);
   const syncMutation = useSyncCrmKnowledge(agentId);
 
   if (!open) return null;

@@ -1167,8 +1167,14 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  const crmStatsQuerySchema = z.object({
+    agent_id: z.string().uuid().optional(),
+  });
+
   app.get("/knowledge/crm-stats", { onRequest: readAgents }, async (request, reply) => {
-    const stats = await knowledgeSynthesizerService.getCrmStats(request.tenant_id);
+    const queryParams = crmStatsQuerySchema.safeParse(request.query);
+    const agentId = queryParams.success ? queryParams.data.agent_id : undefined;
+    const stats = await knowledgeSynthesizerService.getCrmStats(request.tenant_id, agentId);
     return reply.send({ data: stats });
   });
 

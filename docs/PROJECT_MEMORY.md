@@ -1156,3 +1156,29 @@
   - Проверка инъекции в системный промпт: `<approved_company_profile>` успешно встраивается с высшим приоритетом ✅
   - Проверка изоляции диалогов MPRO: Пхукет — 45 сообщений, Бали — 332 сообщения, синтезированы 3 документа базы знаний для Пхукета ✅
 
+---
+
+### 24.11.2026 — Каскадная очистка переписок при soft-delete сделок и корректный подсчёт сообщений CRM
+- **Контекст и проблема:**
+  - Пользователь удалил в CRM старые сделки (33 шт.), контакты и компании, но в модалке «Опыт из CRM» отображалось: «Успешных сделок: 0, Всего сделок: 0, Сообщений в чатах: 236». При этом чаты в `/inbox` были пустыми.
+- **Root Cause:**
+  1. В `getCrmStats` запросы на сообщения выполняли `SELECT COUNT(*) FROM deal_messages WHERE tenant_id = $1` без `JOIN` на `deals` и без фильтра `d.deleted_at IS NULL`.
+  2. При soft-delete сделок (`UPDATE deals SET deleted_at = now()`) сообщения в таблице `deal_messages` не удалялись, поскольку FK `ON DELETE CASCADE` срабатывает только при физическом `DELETE FROM deals`. В результате все 236 сообщений удалённых сделок оставались в БД.
+  3. Модалка `CrmSyncModal.tsx` вызывала `useCrmKnowledgeStats()` без `agentId`, из-за чего статистика не учитывала привязанные каналы агента.
+- **Что сделано:**
+  1. **Миграция 0131 и БД триггер:**
+     - Создана миграция `backend/src/db/migrations/0131_cleanup_deleted_deals_messages.sql`: удалены 1082 осиротевших сообщения переписок удалённых сделок (включая 236 сообщений тенанта Team BiG).
+     - Создан триггер `trg_deals_soft_delete_messages` на таблице `deals`: при установке `deleted_at` триггер автоматически удаляет все связанные `deal_messages`.
+  2. **Бэкенд:**
+     - `knowledge-synthesizer.service.ts`: `getCrmStats` принимает `agentId`, исключает удалённые сделки (`d.deleted_at IS NULL`), служебные сообщения (`channel != 'system'`), и фильтрует по активным каналам агента (`ca.deleted_at IS NULL`).
+     - `synthesizeFromCrm`: добавлена маркировка каналов `[TELEGRAM]`, `[MAX]`, `[WHATSAPP]`, `[WEBCHAT]` в расшифровках диалогов.
+     - `deals.service.ts`, `contacts.service.ts`, `companies.service.ts`: добавлено каскадное удаление сделок и переписок на уровне сервисов CRM.
+     - `ai.routes.ts`: `GET /knowledge/crm-stats` принимает query-параметр `agent_id`.
+  3. **Фронтенд:**
+     - `use-agent-knowledge.ts`: `useCrmKnowledgeStats(agentId?: string)` передает `agent_id` в API.
+     - `CrmSyncModal.tsx` и `AgentKnowledgeTab.tsx`: вызывают `useCrmKnowledgeStats(agentId)`.
+- **Верификация:**
+  - На БД выполнена миграция 0131: 1082 записи удалены, `SELECT count(*) FROM deal_messages WHERE tenant_id = 'c0000000-0000-0000-0000-000000000001'` вернул 0.
+  - Проверена модалка «Опыт из CRM»: счетчик сообщений чатов вернул 0 при отсутствии активных сделок.
+
+

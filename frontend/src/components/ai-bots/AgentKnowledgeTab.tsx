@@ -241,7 +241,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
     "all" | "prices" | "crm" | "whatsapp" | "site" | "reviews"
   >("all");
 
-  const { data: crmStats } = useCrmKnowledgeStats();
+  const { data: crmStats } = useCrmKnowledgeStats(agentId);
 
   const meta = data?.meta;
   const documents = data?.documents ?? [];
