@@ -836,6 +836,7 @@ export class InvoicesService {
       show_notice: issuer.invoiceConfig.showNotice,
       notice_text: issuer.invoiceConfig.noticeText,
       show_accountant: issuer.invoiceConfig.showAccountant,
+      show_basis: issuer.invoiceConfig.showBasis,
     });
     return { buffer, filename: `Invoice-${inv.invoiceNumber}.pdf` };
   }
