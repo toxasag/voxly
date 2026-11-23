@@ -132,3 +132,49 @@ export const telegramPasswordSchema = z.object({
 });
 
 export type TelegramPasswordValues = z.infer<typeof telegramPasswordSchema>;
+
+// ---------------------------------------------------------------------------
+// Подключение официального Telegram-бота (Bot API и Bot Manager).
+// ---------------------------------------------------------------------------
+
+export const telegramBotTokenSchema = z
+  .string()
+  .trim()
+  .min(10, "Токен бота слишком короткий")
+  .max(128, "Токен бота слишком длинный")
+  .regex(/^\d+:[A-Za-z0-9_-]+$/, "Неверный формат токена Telegram бота (ожидается <id>:<hash>)");
+
+/** Подключение существующего бота по токену @BotFather */
+export const connectTelegramBotSchema = z.object({
+  label: z.string().trim().min(1, "Укажите название подключения").max(120),
+  token: telegramBotTokenSchema,
+  agent_id: z.string().uuid("Некорректный ID агента").nullable().optional(),
+});
+
+export type ConnectTelegramBotValues = z.infer<typeof connectTelegramBotSchema>;
+
+/** Создание нового бота через Bot Manager */
+export const createManagedTelegramBotSchema = z.object({
+  name: z.string().trim().min(1, "Укажите имя бота").max(64),
+  username: z
+    .string()
+    .trim()
+    .min(5, "Username бота должен содержать от 5 до 32 символов")
+    .max(32, "Username бота должен содержать от 5 до 32 символов")
+    .regex(/^[a-zA-Z0-9_]+$/, "Только латинские буквы, цифры и подчеркивание")
+    .refine(
+      (val) => val.toLowerCase().endsWith("bot"),
+      "Username бота должен заканчиваться на 'bot' (например: my_company_bot)",
+    ),
+  token: telegramBotTokenSchema.optional().or(z.literal("")),
+  agent_id: z.string().uuid("Некорректный ID агента").nullable().optional(),
+});
+
+export type CreateManagedTelegramBotValues = z.infer<typeof createManagedTelegramBotSchema>;
+
+/** Завершение привязки токена для бота в статусе pending */
+export const completeManagedTelegramBotSchema = z.object({
+  token: telegramBotTokenSchema,
+});
+
+export type CompleteManagedTelegramBotValues = z.infer<typeof completeManagedTelegramBotSchema>;

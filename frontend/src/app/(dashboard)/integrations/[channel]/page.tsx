@@ -11,6 +11,7 @@ import { ChannelAccountsTable } from "@/components/integrations/ChannelAccountsT
 import { ChannelAccountLinksCard } from "@/components/integrations/ChannelAccountLinksCard";
 import { ConnectChannelModal } from "@/components/integrations/ConnectChannelModal";
 import { ConnectTelegramModal } from "@/components/integrations/ConnectTelegramModal";
+import { ConnectTelegramBotModal } from "@/components/integrations/ConnectTelegramBotModal";
 import { ConnectWhatsappModal } from "@/components/integrations/ConnectWhatsappModal";
 import { ConnectMaxModal } from "@/components/integrations/ConnectMaxModal";
 import { channelEntry } from "@/lib/modules/registry";
@@ -161,6 +162,13 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
           onClose={handleCloseConnect}
         />
       )}
+      {channel === "telegram_bot" && (
+        <ConnectTelegramBotModal
+          open={connectOpen}
+          initialAccount={reconnectAccount}
+          onClose={handleCloseConnect}
+        />
+      )}
       {channel === "whatsapp" && (
         <ConnectWhatsappModal
           open={connectOpen}
@@ -175,7 +183,7 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
           onClose={handleCloseConnect}
         />
       )}
-      {channel !== "telegram" && channel !== "whatsapp" && channel !== "max" && (
+      {channel !== "telegram" && channel !== "telegram_bot" && channel !== "whatsapp" && channel !== "max" && (
         <ConnectChannelModal
           open={connectOpen}
           channel={channel}

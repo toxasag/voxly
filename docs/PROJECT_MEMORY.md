@@ -11,6 +11,42 @@
 - Внешний домен: https://getvoxly.com / https://vibecode.team-big.ru/.
 - Интеграции: Telegram bot / user api, CRM deals & contacts pipeline.
 
+## 2026-11-23: Интеграция Telegram-ботов: Bot API (@BotFather) и Telegram Managed Bots (Bot API 8.0)
+- **Root Cause & Задачи:**
+  1. **Остановка соло-агента из-за лимита модели:**
+     На старте сессии solo-agent упал с ошибкой исчерпания премиум-лимитов на платформе для модели `gemini-4-neon-high`. Пользователь переключил модель в UI на Gemini 3.8 Flash (High), что устранило блокировку выполнения. В кодовой базе проекта захардкоженные ссылки на модель отсутствуют.
+  2. **Отсутствие специализированного мастера подключения Telegram-бота:**
+     На странице `/integrations/telegram_bot` вызывался стандартный `ConnectChannelModal`, который запрашивал только название и идентификатор, без проверки токена бота, валидации через Telegram Bot API и интеграции с Telegram Bot Manager.
+  3. **Поддержка двух режимов подключения официальных ботов:**
+     - Подключение существующего бота по токену @BotFather с валидацией через `getMe`.
+     - Создание нового управляемого бота через Telegram Managed Bots (Bot API 8.0) с генерацией deep-link (`https://t.me/newbot/...`) и привязкой токена.
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-bot.types.ts`:
+     - Схемы Zod: `telegramBotTokenSchema`, `telegramBotVerifySchema`, `telegramBotConnectSchema`, `telegramBotCreateManagedSchema`, `telegramBotCompleteManagedSchema`.
+     - Типы: `TelegramBotInfoDTO`, `TelegramBotManagerInfoDTO`, `TelegramBotCreateManagedResultDTO`.
+  2. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Класс `TelegramBotService`: валидация токена через Telegram Bot API `getMe`, `getManagerInfo`, подключение существующего бота `connectExisting`, создание управляемого бота `createManaged` (с deep link) и завершение привязки токена `completeManaged`.
+     - Изоляция tenant_id, проверка квот тарифа `telegram_bot_channels`, сохранение в `channel_accounts` и привязка к `ai_agent_channel_bindings`.
+  3. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Эндпоинты `/api/v1/integrations/telegram-bot` (`/verify`, `/manager-info`, `/connect`, `/create-managed`, `/accounts/:id/complete`).
+  4. `backend/src/app.ts`:
+     - Регистрация роутов по префиксам `/api/v1/integrations/telegram-bot` и `/api/v1/integrations/telegram_bot`.
+  5. `backend/src/tests/telegram-bot.test.ts`:
+     - 7 unit-тестов: валидация токенов, правил username бота, генерация deep-link, обработка 200 getMe и 401 Unauthorized.
+  6. `frontend/src/schemas/channel.schema.ts`:
+     - Экспортированы схемы Zod для форм подключения бота.
+  7. `frontend/src/lib/api/use-telegram-bot.ts`:
+     - React Query хуки для интеграции с API бэкенда.
+  8. `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`:
+     - Модальная шторка (Sheet) в дизайн-системе Twenty CRM Light Canvas: вкладки «Существующий бот» и «Bot Manager (8.0)», верификация токена в реальном времени, карточка бота, выбор AI-агента, переход в Telegram по deep-link в 1 клик.
+  9. `frontend/src/app/(dashboard)/integrations/[channel]/page.tsx`:
+     - Подключение `ConnectTelegramBotModal` для канала `telegram_bot`.
+- **Верификация:**
+  - `npm --prefix backend run build` (tsc): успешно, 0 ошибок.
+  - `node --test backend/dist/tests/telegram-bot.test.js`: 7/7 тестов успешно.
+  - `npm --prefix frontend run build` (next build): успешно, все 43 страницы собраны без ошибок.
+
+
 ## 2026-11-20: Изоляция печати листа A4 из редактора, стабилизация линии отрыва и полный вывод полей дефекта/заметок в талоне мастера
 - **Root Cause & Задачи:**
   1. **Печать из визуального редактора выводила весь интерфейс экрана:**
