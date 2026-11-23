@@ -162,6 +162,8 @@ export interface AccountDTO {
   id: string;
   name: string;
   accountType?: AccountType;
+  accountNumber?: string;
+  organizationId?: string | null;
   currency: string;
   balance: number;
   isDefault: boolean;
@@ -1009,6 +1011,7 @@ export function useCreateFinanceOrganization(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }
@@ -1029,6 +1032,7 @@ export function useUpdateFinanceOrganization(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: organizationKeys.all });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });
 }

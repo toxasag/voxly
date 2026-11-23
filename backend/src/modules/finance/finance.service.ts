@@ -14,7 +14,16 @@ import type {
 import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 
-interface AccountRow { id: string; name: string; account_type?: string; currency: string; balance: string; is_default: boolean }
+interface AccountRow {
+  id: string;
+  name: string;
+  account_type?: string;
+  account_number?: string;
+  organization_id?: string | null;
+  currency: string;
+  balance: string;
+  is_default: boolean;
+}
 interface TxRow {
   id: string;
   direction: "income" | "expense";
@@ -102,6 +111,8 @@ export class FinanceService {
       `SELECT a.id,
               a.name,
               COALESCE(a.account_type, 'cash') AS account_type,
+              COALESCE(a.account_number, '') AS account_number,
+              a.organization_id,
               a.currency,
               COALESCE((
                 SELECT SUM(CASE WHEN t.direction = 'income' THEN t.amount ELSE -t.amount END)
@@ -111,13 +122,15 @@ export class FinanceService {
               a.is_default
        FROM cash_accounts a
        WHERE a.tenant_id = $1 AND a.deleted_at IS NULL
-       ORDER BY a.is_default DESC, a.name`,
+       ORDER BY a.is_default DESC, a.created_at ASC, a.name`,
       [tenantId],
     );
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
       accountType: (r.account_type as AccountType) || "cash",
+      accountNumber: r.account_number || "",
+      organizationId: r.organization_id ?? null,
       currency: r.currency,
       balance: Number(r.balance),
       isDefault: r.is_default,

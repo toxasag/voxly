@@ -187,6 +187,8 @@ export interface AccountDTO {
   id: string;
   name: string;
   accountType: AccountType;
+  accountNumber?: string;
+  organizationId?: string | null;
   currency: string;
   balance: number;
   isDefault: boolean;
