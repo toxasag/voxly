@@ -112,7 +112,7 @@ export interface AgentReply {
  * Предотвращает появление `undefined`, `null` или сырых усов `{{variable}}` в промпте.
  */
 export const SAFE_DEFAULTS: Record<string, string> = {
-  "consultant.name": "Алексей",
+  "consultant.name": "Консультант",
   "consultant.role": "ведущий специалист",
   "business.niche": "оказание профильных услуг и консультация клиентов",
   "client.profile": "клиенты, которым требуется экспертная консультация и решение их задачи",
