@@ -956,3 +956,29 @@
   - Тесты `node --test`: 18/18 pass ✅
   - `next build`: 44/44 страницы собрано ✅
   - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY` выполнен успешно (миграция 155 применена, контейнеры healthy, HTTP 200 на api и frontend).
+
+---
+
+### 23.11.2026 — Интеграция Telegram Bot Manager (managed_bot webhook) и выбор AI-агента в подключении
+- **Задача:**
+  1. Обеспечить работу создания ботов через Telegram Bot Management Mode (@GetVoxlybot): боты должны становиться реальными в Telegram, получать живой токен и активироваться автоматически при получении webhook `managed_bot`.
+  2. Добавить поле «Подключить AI-агент» в шторку редактирования аккаунта канала (`EditChannelAccountModal.tsx`).
+- **Архитектурные решения:**
+  1. В `backend/src/modules/auth/telegram.service.ts`:
+     - Добавлен метод `getManagedBotToken(botId)` к Bot API платформы для получения реального токена управляемого бота через `getManagedBotToken`.
+     - `setWebhook` настроен на получение `allowed_updates: ["message", "managed_bot"]`.
+  2. В `backend/src/modules/auth/auth.routes.ts`:
+     - Схема `telegramUpdate` расширена полем `managed_bot`.
+     - В публичном вебхуке `/auth/telegram/webhook` добавлен обработчик `managed_bot`: извлекает `bot.id`, запрашивает через `getManagedBotToken` реальный токен от Bot API, находит тенантский `channel_accounts` в статусе `pending` по `@username`, переводит в `connected`, сохраняет токен и обновляет связанную запись в `bots`.
+  3. В `frontend/src/components/integrations/EditChannelAccountModal.tsx`:
+     - Добавлен хук `useAiAgents` и поле выбора AI-агента для каналов `telegram_bot` и `telegram`.
+     - Добавлена отправка `agent_id` в мутацию `useUpdateChannelAccount`.
+- **Измененные файлы:**
+  - `backend/src/modules/auth/telegram.service.ts`
+  - `backend/src/modules/auth/auth.routes.ts`
+  - `frontend/src/components/integrations/EditChannelAccountModal.tsx`
+- **Проверка, деплой и синхронизация:**
+  - Тесты `node --test`: 18/18 pass ✅
+  - Сборка backend (`tsc`) и frontend (`next build`): 0 ошибок ✅
+  - Деплой через `/usr/local/bin/vf-deploy GETVOXLY` успешен (backend и frontend healthy, HTTP 200 на health & login).
+  - Коммит `6c355e6` синхронизирован в ветку `master` и запушен на GitHub (`origin/master`).
