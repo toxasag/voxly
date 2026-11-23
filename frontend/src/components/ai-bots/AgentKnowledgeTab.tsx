@@ -33,6 +33,7 @@ import {
   useAgentFeedbacks,
   useApproveFeedback,
   useCrawlSite,
+  useCrawlStatus,
   useCrmKnowledgeStats,
   useDeleteFeedback,
   useDeleteKnowledgeDocument,
@@ -154,7 +155,8 @@ function isDocInCategory(
       filename.startsWith("[Сайт]") ||
       lower.includes("http") ||
       lower.includes(".ru") ||
-      lower.includes(".com")
+      lower.includes(".com") ||
+      lower.includes(".рф")
     );
   }
   if (category === "reviews") {
@@ -177,6 +179,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const uploadFile = useUploadKnowledgeFile(agentId);
   const importUrl = useImportKnowledgeUrl(agentId);
   const crawlSite = useCrawlSite(agentId);
+  const { data: crawlStatus } = useCrawlStatus(agentId);
   const importMapReviews = useImportMapReviews(agentId);
   const remove = useDeleteKnowledgeDocument(agentId);
   const { data: salesExamplesData, isLoading: isLoadingSales } = useSalesExamples(agentId);
@@ -284,16 +287,16 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
     if (isCrawlAll) {
       void crawlSite
         .mutateAsync({ url: raw, maxPages: crawlMaxPages })
-        .then((res) => {
+        .then(() => {
           toast.success(
-            `Сайт успешно просканирован! Обработано страниц: ${res.scannedCount}, добавлено в базу знаний: ${res.indexedCount}`,
+            "Сканирование сайта запущено в фоне! Страницы автоматически добавляются в базу знаний в виде черновиков для проверки.",
           );
           setUrlValue("");
           setUrlTitle("");
           setUrlOpen(false);
         })
         .catch((err: unknown) => {
-          toast.error(err instanceof Error ? err.message : "Не удалось просканировать сайт");
+          toast.error(err instanceof Error ? err.message : "Не удалось запустить сканирование сайта");
         });
     } else {
       void importUrl
@@ -993,6 +996,36 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
 
           {/* Список документов */}
           <div className="p-6">
+            {crawlStatus && (crawlStatus.status === "pending" || crawlStatus.status === "in_progress") && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/[0.04] p-3.5 text-xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#4a38f5]" />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-[#111111]">
+                      Идёт сканирование сайта ({crawlStatus.websiteUrl || "краулер"})
+                    </p>
+                    <p className="text-[#666666]">
+                      Обход страниц, очистка разметки и подготовка черновиков для базы знаний...
+                    </p>
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2.5 py-0.5 font-medium text-[#4a38f5]">
+                  В процессе
+                </span>
+              </div>
+            )}
+
+            {crawlStatus && crawlStatus.status === "failed" && crawlStatus.error && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-[8px] border border-rose-200 bg-rose-50/80 p-3.5 text-xs text-rose-800">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-rose-900">Ошибка сканирования сайта</p>
+                    <p className="text-rose-700">{crawlStatus.error}</p>
+                  </div>
+                </div>
+              </div>
+            )}
             {isLoading && (
               <div className="space-y-2">
                 {Array.from({ length: 3 }, (_, index) => (

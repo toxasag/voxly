@@ -16,7 +16,7 @@ export interface CleanHtmlOptions {
 }
 
 const NOISE_LINE_REGEX =
-  /^(р\.|руб\.|рублей|от|до|подробнее|получить прайс|оставить заявку|заказать звонок|заявка|отправить|купить|\d+\s*из\s*\d+|предыдущий слайд|следующий слайд|закрыть диалоговое окно|[-–—•*])$/i;
+  /^(р\.|руб\.|рублей|₽|от|до|подробнее|получить прайс|оставить заявку|заказать звонок|заявка|отправить|купить|\d+\s*из\s*\d+|предыдущий слайд|следующий слайд|закрыть диалоговое окно|[-–—•*]|перейти к навигации|перейти к содержанию|корзина|поиск|искать:|меню|в каталог|read more|построить маршрут|построить маршрут в офис|построить маршрут на парковку|написать в max)$/i;
 
 export function cleanHtmlToMarkdown(
   html: string,
@@ -48,7 +48,13 @@ export function cleanHtmlToMarkdown(
       .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, " ")
       .replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, " ")
       .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, " ")
-      .replace(/<aside\b[^<]*(?:(?!<\/aside>)<[^<]*)*<\/aside>/gi, " ");
+      .replace(/<aside\b[^<]*(?:(?!<\/aside>)<[^<]*)*<\/aside>/gi, " ")
+      .replace(/<a\b[^>]*class="[^"]*(?:skip-link|screen-reader-text)[^"]*"[\s\S]*?<\/a>/gi, " ")
+      .replace(/<span\b[^>]*class="[^"]*screen-reader-text[^"]*"[\s\S]*?<\/span>/gi, " ")
+      .replace(/<div\b[^>]*class="[^"]*(?:top-bar|topbar|shoptimizer-mini-cart-wrap|cart-drawer|site-branding|widget_search)[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi, " ")
+      .replace(/<div\b[^>]*id="[^"]*(?:cookie-notice|shoptimizerCartDrawer|ajax-loading)[^"]*"[\s\S]*?<\/div>/gi, " ")
+      .replace(/<form\b[^>]*class="[^"]*(?:search-form|searchform|woocommerce-product-search)[^"]*"[\s\S]*?<\/form>/gi, " ")
+      .replace(/<button\b[^>]*class="[^"]*menu-toggle[^"]*"[\s\S]*?<\/button>/gi, " ");
   }
 
   cleaned = cleaned
@@ -99,7 +105,9 @@ export function cleanHtmlToMarkdown(
       .replace(/мы используем файлы cookie[^\n.]*[.\n]?/gi, "")
       .replace(/соглашаюсь с политикой конфиденциальности[^\n.]*[.\n]?/gi, "")
       .replace(/даю согласие на обработку персональных данных[^\n.]*[.\n]?/gi, "")
-      .replace(/нажимая кнопку,? вы соглашаетесь[^\n.]*[.\n]?/gi, "");
+      .replace(/нажимая кнопку,? вы соглашаетесь[^\n.]*[.\n]?/gi, "")
+      .replace(/продолжая использовать сайт,? вы соглашаетесь[^\n.]*[.\n]?/gi, "")
+      .replace(/политика конфиденциальности/gi, "");
   }
 
   const rawLines = cleaned.split("\n");

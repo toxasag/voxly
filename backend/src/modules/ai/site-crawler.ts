@@ -106,11 +106,14 @@ import { cleanHtmlToMarkdown } from "./html-cleaner.js";
  * Очистка HTML-разметки до чистого текста/markdown.
  */
 export function htmlToText(html: string): { title: string; text: string } {
-  return cleanHtmlToMarkdown(html);
+  return cleanHtmlToMarkdown(html, {
+    stripLayoutChrome: true,
+    stripCookieBanners: true,
+  });
 }
 
 /**
- * Проверка расширения ссылки.
+ * Проверка допустимости URL для сканирования.
  */
 function isAllowedUrl(url: URL, baseHost: string): boolean {
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
@@ -128,17 +131,32 @@ function isAllowedUrl(url: URL, baseHost: string): boolean {
     return false;
   }
 
-  // Исключаем служебные пути и мусор
+  // Исключаем служебные пути, мусорные страницы и юридические согласия, тратящие квоту
   if (
     pathname.includes("/logout") ||
     pathname.includes("/cart") ||
     pathname.includes("/checkout") ||
+    pathname.includes("/wishlist") ||
+    pathname.includes("/my-account") ||
     pathname.includes("/admin") ||
     pathname.includes("/wp-admin") ||
     pathname.includes("/api/") ||
     pathname.includes("/login") ||
     pathname.includes("/register") ||
-    pathname.includes("/user/")
+    pathname.includes("/user/") ||
+    pathname.includes("/feed") ||
+    pathname.includes("/comments") ||
+    pathname.includes("/xmlrpc") ||
+    pathname.includes("/wp-json") ||
+    pathname.includes("/tag/") ||
+    pathname.includes("/author/") ||
+    pathname.includes("/soglasie-na-") ||
+    pathname.includes("/politika-obrabotki") ||
+    pathname.includes("/publichnaya-oferta") ||
+    url.searchParams.has("add-to-cart") ||
+    url.searchParams.has("removed_item") ||
+    url.searchParams.has("orderby") ||
+    url.searchParams.has("product_tag")
   ) {
     return false;
   }
@@ -147,7 +165,46 @@ function isAllowedUrl(url: URL, baseHost: string): boolean {
 }
 
 /**
- * Поиск ссылок в карте sitemap.xml сайта.
+ * Определение приоритета полезности страницы для базы знаний AI-консультанта.
+ * Первыми обходятся услуги, прайсы, аренда, контакты и гарантии.
+ */
+function getUrlPriority(href: string): number {
+  try {
+    const u = new URL(href);
+    const path = u.pathname.toLowerCase();
+    if (path === "/" || path === "") return 0;
+    if (
+      path.includes("arenda") ||
+      path.includes("remont") ||
+      path.includes("uslug") ||
+      path.includes("price") ||
+      path.includes("prajs") ||
+      path.includes("cena") ||
+      path.includes("ceny") ||
+      path.includes("contact") ||
+      path.includes("kontakty") ||
+      path.includes("garanti") ||
+      path.includes("servis")
+    ) {
+      return 1;
+    }
+    if (path.includes("chastye-bolyachki") || path.includes("category") || path.includes("polomk")) {
+      return 2;
+    }
+    if (path.includes("obzor") || path.includes("filtr") || path.includes("blog")) {
+      return 3;
+    }
+    if (path.includes("shop") || path.includes("product")) {
+      return 4;
+    }
+    return 5;
+  } catch {
+    return 10;
+  }
+}
+
+/**
+ * Поиск ссылок в карте sitemap.xml сайта (с рекурсивной поддержкой sitemapindex).
  */
 async function fetchSitemapUrls(baseUrl: URL, timeoutMs: number): Promise<string[]> {
   const sitemapUrl = `${baseUrl.origin}/sitemap.xml`;
@@ -162,23 +219,71 @@ async function fetchSitemapUrls(baseUrl: URL, timeoutMs: number): Promise<string
     if (!response.ok) return [];
 
     const xml = await response.text();
-    const locMatches = xml.matchAll(/<loc>([\s\S]*?)<\/loc>/gi);
-    for (const match of locMatches) {
-      const rawLoc = match[1]?.trim();
-      if (!rawLoc) continue;
-      try {
-        const u = new URL(rawLoc);
-        if (isAllowedUrl(u, baseUrl.hostname)) {
-          // Исключаем хэши и лишние параметры
-          u.hash = "";
-          urls.push(u.href);
+    const isSitemapIndex = /<sitemapindex\b/i.test(xml);
+
+    if (isSitemapIndex) {
+      // Это индексная карта (sitemapindex) — извлекаем дочерние карты
+      const sitemapMatches = xml.matchAll(/<loc>([\s\S]*?)<\/loc>/gi);
+      const childSitemaps: string[] = [];
+      for (const m of sitemapMatches) {
+        const rawLoc = m[1]?.trim();
+        if (!rawLoc) continue;
+        if (!rawLoc.includes("author") && !rawLoc.includes("tag-sitemap")) {
+          childSitemaps.push(rawLoc);
         }
-      } catch {
-        // Пропускаем некорректный URL
+      }
+
+      // Приоритезируем страницы услуг, категорий и статей
+      childSitemaps.sort((a, b) => {
+        const score = (s: string) => {
+          if (s.includes("page")) return 1;
+          if (s.includes("category")) return 2;
+          if (s.includes("service")) return 3;
+          if (s.includes("post")) return 4;
+          if (s.includes("product")) return 5;
+          return 10;
+        };
+        return score(a) - score(b);
+      });
+
+      for (const childUrl of childSitemaps.slice(0, 6)) {
+        try {
+          const childRes = await fetch(childUrl, {
+            headers: { "User-Agent": USER_AGENT, Accept: "application/xml,text/xml,*/*" },
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!childRes.ok) continue;
+          const childXml = await childRes.text();
+          const pageMatches = childXml.matchAll(/<loc>([\s\S]*?)<\/loc>/gi);
+          for (const pm of pageMatches) {
+            const loc = pm[1]?.trim();
+            if (!loc) continue;
+            try {
+              const u = new URL(loc);
+              if (isAllowedUrl(u, baseUrl.hostname)) {
+                u.hash = "";
+                urls.push(u.href);
+              }
+            } catch {}
+          }
+        } catch {}
+      }
+    } else {
+      const locMatches = xml.matchAll(/<loc>([\s\S]*?)<\/loc>/gi);
+      for (const match of locMatches) {
+        const rawLoc = match[1]?.trim();
+        if (!rawLoc) continue;
+        try {
+          const u = new URL(rawLoc);
+          if (isAllowedUrl(u, baseUrl.hostname)) {
+            u.hash = "";
+            urls.push(u.href);
+          }
+        } catch {}
       }
     }
   } catch {
-    // Если sitemap недоступен — ничего страшного, пойдем по ссылкам в HTML
+    // Если sitemap недоступен — пойдем по ссылкам в HTML
   }
 
   return urls;
@@ -209,7 +314,7 @@ function extractInternalLinks(html: string, currentUrl: URL): string[] {
     try {
       const resolved = new URL(href, currentUrl);
       resolved.hash = "";
-      // Удаляем трекинговые метки utm, yclid, fbclid
+      // Удаляем трекинговые и корзинные метки
       resolved.searchParams.delete("utm_source");
       resolved.searchParams.delete("utm_medium");
       resolved.searchParams.delete("utm_campaign");
@@ -218,6 +323,9 @@ function extractInternalLinks(html: string, currentUrl: URL): string[] {
       resolved.searchParams.delete("yclid");
       resolved.searchParams.delete("gclid");
       resolved.searchParams.delete("fbclid");
+      resolved.searchParams.delete("add-to-cart");
+      resolved.searchParams.delete("removed_item");
+      resolved.searchParams.delete("orderby");
 
       if (isAllowedUrl(resolved, currentUrl.hostname)) {
         links.push(resolved.href);
@@ -249,7 +357,7 @@ export async function crawlWebsite(
   const sitemapLinks = await fetchSitemapUrls(startUrl, timeoutMs);
   if (sitemapLinks.length > 0) {
     for (const link of sitemapLinks) {
-      if (queue.length < maxPages * 2) {
+      if (queue.length < maxPages * 3) {
         queue.push(link);
       }
     }
@@ -261,15 +369,13 @@ export async function crawlWebsite(
     queue.unshift(startUrl.href);
   }
 
+  // Приоритезируем ключевые страницы (главная, услуги, аренда, прайсы, контакты)
+  queue.sort((a, b) => getUrlPriority(a) - getUrlPriority(b));
+
   // 2. Обход страниц в ширину (BFS)
   while (queue.length > 0 && results.length < maxPages) {
     const currentHref = queue.shift();
     if (!currentHref) break;
-
-    // Нормализация ключа посещений (без концевого слеша)
-    const normKey = currentHref.replace(/\/+$/, "");
-    if (visited.has(normKey)) continue;
-    visited.add(normKey);
 
     let currentUrl: URL;
     try {
@@ -277,6 +383,12 @@ export async function crawlWebsite(
     } catch {
       continue;
     }
+
+    // Нормализация ключа посещений по пути (без концевого слеша и query-параметров)
+    const normPath = currentUrl.pathname.replace(/\/+$/, "") || "/";
+    const normKey = `${currentUrl.origin}${normPath}`;
+    if (visited.has(normKey)) continue;
+    visited.add(normKey);
 
     try {
       const response = await fetch(currentHref, {
@@ -316,11 +428,23 @@ export async function crawlWebsite(
       if (results.length < maxPages) {
         const pageLinks = extractInternalLinks(html, currentUrl);
         for (const link of pageLinks) {
-          const lKey = link.replace(/\/+$/, "");
-          if (!visited.has(lKey) && !queue.includes(link) && queue.length < maxPages * 3) {
-            queue.push(link);
-          }
+          try {
+            const u = new URL(link);
+            const lKey = `${u.origin}${u.pathname.replace(/\/+$/, "") || "/"}`;
+            const alreadyInQueue = queue.some((q) => {
+              try {
+                const qu = new URL(q);
+                return `${qu.origin}${qu.pathname.replace(/\/+$/, "") || "/"}` === lKey;
+              } catch {
+                return false;
+              }
+            });
+            if (!visited.has(lKey) && !alreadyInQueue && queue.length < maxPages * 4) {
+              queue.push(link);
+            }
+          } catch {}
         }
+        queue.sort((a, b) => getUrlPriority(a) - getUrlPriority(b));
       }
     } catch {
       // Игнорируем сбой отдельной страницы, продолжаем обход остальных
