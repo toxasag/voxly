@@ -518,6 +518,7 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
       senderPhone: peerPhone,
       attachment: attachmentUrl,
       attachmentType: attachmentType,
+      externalMessageId: body.messageId ? String(body.messageId) : undefined,
       isBot: isBotFlag,
       profile: maxProfile,
     }),
@@ -732,6 +733,7 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
       pauseMinutes: 60,
       attachment: attachmentUrl,
       attachmentType: attachmentType,
+      externalMessageId: body.messageId ? String(body.messageId) : undefined,
     }),
   );
 
