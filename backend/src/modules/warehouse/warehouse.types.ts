@@ -20,6 +20,7 @@ export const createWarehouseItemSchema = z.object({
   min_stock: z.number().nonnegative().default(0),
   retail_price: z.number().nonnegative().default(0),
   cost_price: z.number().nonnegative().default(0),
+  reserved: z.boolean().optional(),
   model_ids: z.array(z.string().uuid()).optional(),
   models: z.array(z.string()).optional(),
 });

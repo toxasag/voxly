@@ -363,7 +363,7 @@ export class WarehouseService {
 
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
-                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                i.min_stock, i.retail_price, i.cost_price, COALESCE(i.reserved, false) AS reserved, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
                 COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
                 COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
@@ -470,7 +470,7 @@ export class WarehouseService {
     return withTenant(tenantId, async (tx) => {
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
-                i.min_stock, i.retail_price, i.cost_price, i.created_at, i.updated_at,
+                i.min_stock, i.retail_price, i.cost_price, COALESCE(i.reserved, false) AS reserved, i.created_at, i.updated_at,
                 COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
                 COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
                 COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
@@ -561,9 +561,9 @@ export class WarehouseService {
     const row = await withTenant(tenantId, async (tx) => {
       const inserted = await tx.queryOneOrThrow<WarehouseItemRow>(
         `INSERT INTO warehouse_items
-           (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, created_at, updated_at`,
+           (tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, reserved)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, tenant_id, sku, name, brand, category, unit, min_stock, retail_price, cost_price, reserved, created_at, updated_at`,
         [
           tenantId,
           payload.sku ?? "",
@@ -574,6 +574,7 @@ export class WarehouseService {
           payload.min_stock ?? 0,
           payload.retail_price ?? 0,
           payload.cost_price ?? 0,
+          Boolean(payload.reserved),
         ],
       );
 
@@ -610,6 +611,7 @@ export class WarehouseService {
     if (payload.min_stock !== undefined) add("min_stock", payload.min_stock);
     if (payload.retail_price !== undefined) add("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) add("cost_price", payload.cost_price);
+    if (payload.reserved !== undefined) add("reserved", Boolean(payload.reserved));
 
     await withTenant(tenantId, async (tx) => {
       if (fields.length > 0) {
