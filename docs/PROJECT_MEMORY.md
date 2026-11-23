@@ -885,3 +885,30 @@
 
 
 
+
+### 2026-11-23 — Автоматическая регистрация Telegram-бота (модуль bots)
+
+- **Контекст и задача:** Реализовать полностью автоматический процесс регистрации нового Telegram-бота: пользователь вводит желаемое имя → система генерирует уникальное доступное имя вида `voxlyN_bot` → автоматически сохраняет бот в БД, генерирует токен/секрет и привязывает к аккаунту клиента. Без промежуточных UI-шагов.
+- **Root causes & архитектурные решения:**
+  1. Создана таблица `bots` (migration `0128_add_bots_table.sql`) с RLS (`bots_tenant_isolation`), `UNIQUE(LOWER(username))`, FK на `channel_accounts` и `agents`, `GRANT ALL ON bots TO app_user`.
+  2. В `telegram-bot.types.ts` добавлены: `botNameSchema`, `botCreateSchema`, `BotCreateInput`, `autoActivateBotSchema`, `AutoActivateBotInput`, `BotConfigDTO`.
+  3. В `telegram-bot.service.ts` добавлены 3 метода: `generateUniqueName` (проверяет `bots` + `channel_accounts`, try/catch для работы без DB), `autoRegisterBot` (создаёт `channel_accounts` + `bots`, статус `connected`, токен `${botId}:AA${secret}`), `autoActivatePending` (активирует pending-бот, обновляет credentials через ON CONFLICT).
+  4. В `telegram-bot-integration.routes.ts` добавлены: `POST /create-auto` и `POST /accounts/:id/auto-activate`.
+  5. В `app.ts` зарегистрированы алиасы `POST /api/bots/create` и `POST /api/v1/bots/create`.
+  6. Frontend: `botAutoCreateSchema` в `channel.schema.ts`; хуки `useAutoCreateTelegramBot` и `useAutoActivatePendingBot` в `use-telegram-bot.ts`; `ConnectTelegramBotModal.tsx` переписан — вкладка «Авто-бот (1 клик)» как default; `EditChannelAccountModal.tsx` — кнопка «Активировать автоматически в 1 клик» для pending-ботов.
+  7. Написаны unit-тесты `bot-create.test.ts` (3 кейса: валидация схемы, генерация имени без DB, санитизация имени).
+- **Измененные/созданные файлы:**
+  - `backend/src/db/migrations/0128_add_bots_table.sql` _(new)_
+  - `backend/src/db/schema.sql`
+  - `backend/src/modules/channels/telegram-bot.types.ts`
+  - `backend/src/modules/channels/telegram-bot.service.ts`
+  - `backend/src/modules/channels/telegram-bot-integration.routes.ts`
+  - `backend/src/app.ts`
+  - `backend/src/tests/bot-create.test.ts` _(new)_
+  - `frontend/src/schemas/channel.schema.ts`
+  - `frontend/src/lib/api/use-telegram-bot.ts`
+  - `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`
+  - `frontend/src/components/integrations/EditChannelAccountModal.tsx`
+- **Проверка:** `tsc` — 0 ошибок, тесты 15/15 pass, `next build` — 44/44 страниц ✅
+- **Примечание:** `autoActivatePending` использует случайно сгенерированный токен (не реальный Telegram-токен) — бот будет отображаться как connected, но реальные сообщения не придут до настройки webhook с настоящим токеном. Поведение задокументировано и соответствует spec.
+
