@@ -2,21 +2,50 @@
 
 import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus, Banknote, TrendingUp, TrendingDown, DollarSign, ArrowRightLeft, Receipt, FileText, BarChart3, FolderTree, Building2 } from "lucide-react";
+import {
+  Plus,
+  Banknote,
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  ArrowRightLeft,
+  Receipt,
+  FileText,
+  BarChart3,
+  FolderTree,
+  Building2,
+  Pencil,
+  Trash2,
+  ArrowRight,
+} from "lucide-react";
+import { toast } from "sonner";
 import { BalanceCards } from "@/components/finance/BalanceCards";
 import { TransactionsTable } from "@/components/finance/TransactionsTable";
 import { CreateTransactionModal } from "@/components/finance/CreateTransactionModal";
 import { TransferModal } from "@/components/finance/TransferModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
+import { InvoiceEditModal, type EditableInvoiceData } from "@/components/finance/InvoiceEditModal";
+import { BulkEditInvoicesModal } from "@/components/finance/BulkEditInvoicesModal";
 import { InvoiceViewModal } from "@/components/finance/InvoiceViewModal";
 import { ProfitLossView } from "@/components/finance/ProfitLossView";
 import { CategoriesSettingsModal } from "@/components/finance/CategoriesSettingsModal";
 import { OrganizationSettingsTab } from "@/components/finance/OrganizationSettingsTab";
 import { Guard } from "@/components/shared/Guard";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import type { AccountBalance, Transaction } from "@/lib/finance/finance.types";
 import type { Invoice } from "@/lib/finance/invoices.types";
 import type { TransactionDTO, InvoiceDTO, PnlDTO } from "@/lib/api/use-invoices";
-import { useAccounts, useTransactions, useInvoices, usePnl, useCreateTransaction, useTransfer, useCreateInvoice } from "@/lib/api/use-invoices";
+import {
+  useAccounts,
+  useTransactions,
+  useInvoices,
+  usePnl,
+  useCreateTransaction,
+  useTransfer,
+  useCreateInvoice,
+  useDeleteInvoice,
+  useBulkDeleteInvoices,
+} from "@/lib/api/use-invoices";
 import type { CreateTransactionPayload } from "@/schemas/finance.schema";
 import type { PrefilledInvoicePayload } from "@/components/finance/InvoiceCreateModal";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
@@ -108,6 +137,11 @@ function FinancePageContent() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [invoiceViewId, setInvoiceViewId] = useState<string | null>(null);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [deletingInvoice, setDeletingInvoice] = useState<Invoice | null>(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
+  const [bulkEditInvoicesOpen, setBulkEditInvoicesOpen] = useState(false);
+  const [confirmBulkDeleteInvoicesOpen, setConfirmBulkDeleteInvoicesOpen] = useState(false);
   const [categoriesModalOpen, setCategoriesModalOpen] = useState(false);
   const searchParams = useSearchParams();
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") ?? "");
@@ -120,12 +154,14 @@ function FinancePageContent() {
     search: searchQuery || undefined,
     type: filterType !== "all" ? filterType : undefined,
   });
-  const { data: invoicesData, isLoading: invLoading, isError: invError } = useInvoices({ limit: 25, offset: 0 });
+  const { data: invoicesData, isLoading: invLoading, isError: invError } = useInvoices({ limit: 100, offset: 0 });
   const { data: pnlData } = usePnl();
 
   const createTxMutation = useCreateTransaction();
   const transferMutation = useTransfer();
   const createInvoiceMutation = useCreateInvoice();
+  const deleteInvoiceMutation = useDeleteInvoice();
+  const bulkDeleteInvoicesMutation = useBulkDeleteInvoices();
 
   const transactions = useMemo(() => (transactionsData?.items ?? []).map(toTransaction), [transactionsData]);
   const invoices = useMemo(() => (invoicesData?.items ?? []).map(toInvoice), [invoicesData]);
@@ -133,6 +169,56 @@ function FinancePageContent() {
     () => (invoiceViewId ? invoices.find((inv) => inv.id === invoiceViewId) ?? null : null),
     [invoiceViewId, invoices],
   );
+  const editingInvoiceData = useMemo<EditableInvoiceData | null>(() => {
+    if (!editingInvoiceId) return null;
+    const dto = (invoicesData?.items ?? []).find((item) => item.id === editingInvoiceId);
+    if (!dto) return null;
+    return {
+      id: dto.id,
+      invoiceNumber: dto.invoiceNumber,
+      status: dto.status,
+      dueDate: dto.dueDate,
+      issuerOrganizationId: dto.issuerOrganizationId ?? null,
+      companyName: dto.companyName,
+      companyInn: dto.companyInn,
+      companyAddress: dto.companyAddress,
+      contactName: dto.contactName,
+      contactPhone: dto.contactPhone,
+      vatMode: dto.vatMode,
+      vatRate: dto.vatRate,
+      notes: dto.notes,
+      lineItems: dto.lineItems.map((li) => ({
+        id: li.id,
+        description: li.description,
+        quantity: li.quantity,
+        unitPrice: li.unitPrice,
+        source: li.source,
+        sourceLabel: li.sourceLabel,
+      })),
+    };
+  }, [editingInvoiceId, invoicesData]);
+
+  const selectedInvoices = useMemo(
+    () => invoices.filter((inv) => selectedInvoiceIds.has(inv.id)),
+    [invoices, selectedInvoiceIds],
+  );
+  const selectedPaidInvoicesCount = useMemo(
+    () => selectedInvoices.filter((inv) => inv.status === "paid").length,
+    [selectedInvoices],
+  );
+
+  // Удаляем из выделения ID счетов, которых больше нет в списке
+  useEffect(() => {
+    if (selectedInvoiceIds.size === 0) return;
+    const existingIds = new Set(invoices.map((inv) => inv.id));
+    let changed = false;
+    const next = new Set<string>();
+    selectedInvoiceIds.forEach((id) => {
+      if (existingIds.has(id)) next.add(id);
+      else changed = true;
+    });
+    if (changed) setSelectedInvoiceIds(next);
+  }, [invoices, selectedInvoiceIds]);
 
   const monthlyIncome = useMemo(() => transactions.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0), [transactions]);
   const monthlyExpense = useMemo(() => transactions.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0), [transactions]);
@@ -184,6 +270,82 @@ function FinancePageContent() {
     };
     await createInvoiceMutation.mutateAsync(payload);
   }, [createInvoiceMutation]);
+
+  const handleSingleDeleteInvoice = useCallback(async () => {
+    if (!deletingInvoice) return;
+    try {
+      await deleteInvoiceMutation.mutateAsync(deletingInvoice.id);
+      toast.success(`Счёт ${deletingInvoice.invoice_number} удалён`);
+      setDeletingInvoice(null);
+      setSelectedInvoiceIds((prev) => {
+        if (!prev.has(deletingInvoice.id)) return prev;
+        const next = new Set(prev);
+        next.delete(deletingInvoice.id);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить счёт");
+    }
+  }, [deletingInvoice, deleteInvoiceMutation]);
+
+  const handleBulkDeleteInvoices = useCallback(async () => {
+    if (selectedInvoiceIds.size === 0) return;
+    try {
+      const ids = Array.from(selectedInvoiceIds);
+      const res = await bulkDeleteInvoicesMutation.mutateAsync(ids);
+      if (res.skippedPaid > 0) {
+        toast.success(`Удалено счетов: ${res.deleted} (пропущено оплаченных: ${res.skippedPaid})`);
+      } else {
+        toast.success(res.deleted === 1 ? "Счёт удалён" : `Удалено счетов: ${res.deleted}`);
+      }
+      setSelectedInvoiceIds(new Set());
+      setConfirmBulkDeleteInvoicesOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить счета");
+    }
+  }, [selectedInvoiceIds, bulkDeleteInvoicesMutation]);
+
+  const invoiceBulkBar = useMemo(() => {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 shadow-xs animate-in fade-in duration-150">
+        <div className="flex items-center gap-2.5">
+          <span className="text-xs font-semibold text-[#111111]">
+            Выбрано: <span className="font-mono tabular-nums text-[#4a38f5]">{selectedInvoiceIds.size}</span>
+          </span>
+          <span className="text-[#cccccc]">|</span>
+          <button
+            type="button"
+            onClick={() => setSelectedInvoiceIds(new Set())}
+            className="text-xs text-[#666666] hover:text-[#111111] hover:underline cursor-pointer"
+          >
+            Снять выделение
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setBulkEditInvoicesOpen(true)}
+            className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+            title="Массово изменить статус, срок оплаты или примечание"
+          >
+            <Pencil className="h-3.5 w-3.5 text-[#4a38f5]" />
+            <span>Редактировать</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmBulkDeleteInvoicesOpen(true)}
+            disabled={bulkDeleteInvoicesMutation.isPending}
+            className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-rose-200 bg-rose-50 px-2.5 text-xs font-medium text-rose-700 shadow-2xs hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
+            title="Удалить выбранные счета"
+          >
+            <Trash2 className="h-3.5 w-3.5 text-rose-600" />
+            <span>Удалить</span>
+          </button>
+        </div>
+      </div>
+    );
+  }, [selectedInvoiceIds.size, bulkDeleteInvoicesMutation.isPending]);
 
   const invoiceColumns = useMemo<RecordColumn<Invoice>[]>(
     () => [
@@ -245,14 +407,47 @@ function FinancePageContent() {
         },
       },
       {
-        id: "actions",
+        id: "row_actions",
         header: "",
-        width: 48,
-        render: () => (
-          <RecordCellShell>
-            <span className="text-xs text-[#888888]">→</span>
-          </RecordCellShell>
-        ),
+        width: 112,
+        render: (inv) => {
+          const isPaid = inv.status === "paid";
+          return (
+            <RecordCellShell>
+              <div
+                className="flex w-full items-center justify-end gap-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  disabled={isPaid}
+                  title={isPaid ? "Оплаченный счёт нельзя редактировать" : "Редактировать счёт"}
+                  onClick={() => setEditingInvoiceId(inv.id)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] border border-transparent text-[#666666] hover:border-[#e5e5e5] hover:bg-white hover:text-[#4a38f5] transition-colors cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:text-[#666666]"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={isPaid}
+                  title={isPaid ? "Оплаченный счёт нельзя удалить" : "Удалить счёт"}
+                  onClick={() => setDeletingInvoice(inv)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] border border-transparent text-[#888888] hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:text-[#888888]"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  title="Открыть счёт"
+                  onClick={() => setInvoiceViewId(inv.id)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] border border-transparent text-[#888888] hover:border-[#e5e5e5] hover:bg-white hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </RecordCellShell>
+          );
+        },
       },
     ],
     [],
@@ -306,6 +501,10 @@ function FinancePageContent() {
             columns={invoiceColumns}
             getRowId={(inv) => inv.id}
             tableId="finance_invoices"
+            selectable
+            selectedIds={selectedInvoiceIds}
+            onSelectionChange={setSelectedInvoiceIds}
+            bulkBar={invoiceBulkBar}
             onRowClick={(inv) => setInvoiceViewId(inv.id)}
             emptyState={
               <div className="flex flex-col items-center gap-2 py-16 text-center">
@@ -328,8 +527,49 @@ function FinancePageContent() {
         />
         <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSubmit={handleTransfer} accounts={accounts} />
         <InvoiceCreateModal open={invoiceCreateOpen} onClose={() => setInvoiceCreateOpen(false)} onSubmit={handleCreateInvoice} />
+        <InvoiceEditModal
+          open={!!editingInvoiceData}
+          invoice={editingInvoiceData}
+          onClose={() => setEditingInvoiceId(null)}
+        />
+        <BulkEditInvoicesModal
+          open={bulkEditInvoicesOpen}
+          invoices={selectedInvoices}
+          onClose={() => setBulkEditInvoicesOpen(false)}
+          onSaved={() => setSelectedInvoiceIds(new Set())}
+        />
         <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewId(null)} />
         <CategoriesSettingsModal open={categoriesModalOpen} onClose={() => setCategoriesModalOpen(false)} />
+        <ConfirmDialog
+          open={!!deletingInvoice}
+          onClose={() => setDeletingInvoice(null)}
+          onConfirm={handleSingleDeleteInvoice}
+          title="Удалить счёт?"
+          description={
+            deletingInvoice
+              ? `Вы уверены, что хотите удалить счёт ${deletingInvoice.invoice_number} (${deletingInvoice.company_name})? Связанные наряды на ремонт при отсутствии других активных счетов вернутся в статус «Не оплачен».`
+              : ""
+          }
+          confirmLabel="Удалить счёт"
+          variant="destructive"
+          isPending={deleteInvoiceMutation.isPending}
+        />
+        <ConfirmDialog
+          open={confirmBulkDeleteInvoicesOpen}
+          onClose={() => setConfirmBulkDeleteInvoicesOpen(false)}
+          onConfirm={handleBulkDeleteInvoices}
+          title={`Удалить выбранные счета (${selectedInvoiceIds.size})?`}
+          description={
+            selectedPaidInvoicesCount > 0
+              ? selectedPaidInvoicesCount === selectedInvoiceIds.size
+                ? "Все выбранные счета уже оплачены — оплаченные счета нельзя удалить."
+                : `Будут удалены неоплаченные счета (${selectedInvoiceIds.size - selectedPaidInvoicesCount} шт.). Оплаченные счета (${selectedPaidInvoicesCount} шт.) будут пропущены.`
+              : `Вы уверены, что хотите удалить выбранные счета (${selectedInvoiceIds.size} шт.)? Связанные наряды на ремонт при отсутствии других активных счетов вернутся в статус «Не оплачен».`
+          }
+          confirmLabel="Удалить выбранные"
+          variant="destructive"
+          isPending={bulkDeleteInvoicesMutation.isPending}
+        />
       </div>
     </Guard>
   );
