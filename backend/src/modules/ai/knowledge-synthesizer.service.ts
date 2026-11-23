@@ -442,7 +442,7 @@ export class KnowledgeSynthesizerService {
     const docs = await query<{ id: string; filename: string; content_text: string }>(
       `SELECT id, filename, content_text
        FROM knowledge_base_documents
-       WHERE tenant_id = $1 AND agent_id = $2 AND status != 'failed' AND deleted_at IS NULL
+       WHERE tenant_id = $1 AND agent_id = $2 AND status != 'failed'
        ORDER BY created_at DESC
        LIMIT 15`,
       [tenantId, agentId],
