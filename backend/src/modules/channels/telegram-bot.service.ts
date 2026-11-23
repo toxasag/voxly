@@ -841,6 +841,44 @@ export class TelegramBotService {
   }
 
   /**
+   * Допустимые типы обновлений, включая Business updates для режима секретаря (Telegram Business).
+   */
+  static readonly ALLOWED_UPDATES = [
+    "message",
+    "edited_message",
+    "business_connection",
+    "business_message",
+    "edited_business_message",
+    "deleted_business_messages",
+  ];
+
+  /**
+   * Получение текущей информации о webhook бота.
+   */
+  async getWebhookInfo(token: string): Promise<TelegramApiResponse<{
+    url: string;
+    has_custom_certificate: boolean;
+    pending_update_count: number;
+    allowed_updates?: string[];
+  }> | null> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/getWebhookInfo`;
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      return (await res.json().catch(() => null)) as TelegramApiResponse<{
+        url: string;
+        has_custom_certificate: boolean;
+        pending_update_count: number;
+        allowed_updates?: string[];
+      }> | null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Регистрация Webhook в Telegram Bot API.
    */
   async setWebhook(token: string, webhookUrl: string, secretToken?: string): Promise<boolean> {
@@ -852,7 +890,7 @@ export class TelegramBotService {
         body: JSON.stringify({
           url: webhookUrl,
           drop_pending_updates: false,
-          allowed_updates: ["message", "edited_message"],
+          allowed_updates: TelegramBotService.ALLOWED_UPDATES,
           ...(secretToken ? { secret_token: secretToken } : {}),
         }),
       });
@@ -865,12 +903,13 @@ export class TelegramBotService {
 
   /**
    * Отправка текстового сообщения в Telegram через Bot API.
+   * Поддерживает business_connection_id для ответа от имени подключенного аккаунта (Telegram Business).
    */
   async sendMessage(
     token: string,
     chatId: string | number,
     text: string,
-    options?: { parse_mode?: string },
+    options?: { parse_mode?: string; business_connection_id?: string },
   ): Promise<{ ok: boolean; messageId?: number; reason?: string }> {
     const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/sendMessage`;
     try {
@@ -880,6 +919,7 @@ export class TelegramBotService {
         body: JSON.stringify({
           chat_id: chatId,
           text,
+          ...(options?.business_connection_id ? { business_connection_id: options.business_connection_id } : {}),
           ...(options?.parse_mode ? { parse_mode: options.parse_mode } : {}),
         }),
       });
@@ -898,7 +938,7 @@ export class TelegramBotService {
    */
   async sendOutbound(message: OutboundMessage): Promise<OutboundSendResult> {
     const account = await queryOne<{
-      credentials: { token?: string } | null;
+      credentials: { token?: string; business_connection_id?: string } | null;
     }>(
       `SELECT credentials FROM channel_accounts
        WHERE tenant_id = $1 AND id = $2 AND channel = 'telegram_bot' AND deleted_at IS NULL`,
@@ -910,6 +950,8 @@ export class TelegramBotService {
       return { ok: false, reason: "Бот не найден или не настроен токен" };
     }
 
+    const businessConnectionId = account.credentials?.business_connection_id;
+
     if (message.attachment) {
       const isImage = message.attachmentType?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(message.attachment);
       const endpoint = isImage ? "sendPhoto" : "sendDocument";
@@ -920,6 +962,7 @@ export class TelegramBotService {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: message.recipient,
+            ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}),
             [bodyField]: message.attachment,
             caption: message.text || undefined,
           }),
@@ -931,7 +974,9 @@ export class TelegramBotService {
       }
     }
 
-    const result = await this.sendMessage(token, message.recipient, message.text);
+    const result = await this.sendMessage(token, message.recipient, message.text, {
+      business_connection_id: businessConnectionId,
+    });
     if (result.ok) {
       return { ok: true };
     }
@@ -940,6 +985,7 @@ export class TelegramBotService {
 
   /**
    * Синхронизация webhook для всех активных подключенных ботов платформы на старте.
+   * Сначала проверяет текущее состояние через getWebhookInfo, чтобы не тратить лимит Telegram API.
    */
   static async syncActiveWebhooks(log?: { info: (...args: any[]) => void; warn: (...args: any[]) => void }): Promise<void> {
     try {
@@ -958,18 +1004,28 @@ export class TelegramBotService {
         const token = acc.credentials?.token;
         if (!token) continue;
         const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${acc.id}`;
+
+        const info = await service.getWebhookInfo(token);
+        if (info?.ok && info.result) {
+          const isUrlMatching = info.result.url === webhookUrl;
+          const allowed = info.result.allowed_updates || [];
+          const hasBusinessUpdates =
+            allowed.includes("business_message") && allowed.includes("business_connection");
+
+          if (isUrlMatching && hasBusinessUpdates) {
+            if (log) {
+              log.info(
+                { accountId: acc.id, bot: acc.external_id, webhookUrl },
+                "Telegram Bot webhook already configured with business updates",
+              );
+            }
+            continue;
+          }
+        }
+
         const ok = await service.setWebhook(token, webhookUrl);
         if (log) {
           log.info({ accountId: acc.id, bot: acc.external_id, ok, webhookUrl }, "Telegram Bot webhook synchronized");
-        }
-        if (!ok) {
-          setTimeout(() => {
-            void service.setWebhook(token, webhookUrl).then((retryOk) => {
-              if (log) {
-                log.info({ accountId: acc.id, bot: acc.external_id, ok: retryOk, webhookUrl }, "Telegram Bot webhook retry synchronized");
-              }
-            });
-          }, 45_000);
         }
       }
     } catch (err) {
