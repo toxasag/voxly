@@ -117,11 +117,12 @@ export interface BotConfigDTO {
   name: string;
   username: string;
   externalId: string;
-  token: string;
+  token?: string | null;
   status: "connected" | "pending" | "error" | "disabled";
   channelAccountId: string;
   channelAccount?: ChannelAccountDTO;
   agentId?: string | null;
+  deepLink?: string;
   createdAt: string;
   updatedAt: string;
 }

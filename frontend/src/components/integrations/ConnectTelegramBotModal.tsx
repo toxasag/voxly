@@ -13,17 +13,14 @@ import {
   Key,
   Loader2,
   Plus,
-  RefreshCw,
   Sparkles,
   Zap,
 } from "lucide-react";
 
 import { ApiClientError } from "@/lib/api/apiClient";
-import type { ChannelAccountDTO } from "@/lib/api/use-channels";
+import { useChannelAccounts, type ChannelAccountDTO } from "@/lib/api/use-channels";
 import { useAiAgents } from "@/lib/api/use-ai-agents";
 import {
-  useAutoActivatePendingBot,
-  useAutoCreateTelegramBot,
   useCompleteManagedTelegramBot,
   useConnectTelegramBot,
   useCreateManagedTelegramBot,
@@ -32,11 +29,9 @@ import {
   type TelegramBotInfoDTO,
 } from "@/lib/api/use-telegram-bot";
 import {
-  botAutoCreateSchema,
   completeManagedTelegramBotSchema,
   connectTelegramBotSchema,
   createManagedTelegramBotSchema,
-  type BotAutoCreateValues,
   type CompleteManagedTelegramBotValues,
   type ConnectTelegramBotValues,
   type CreateManagedTelegramBotValues,
@@ -50,7 +45,31 @@ interface ConnectTelegramBotModalProps {
   initialAccount?: ChannelAccountDTO | null;
 }
 
-type TabMode = "auto" | "existing" | "managed" | "complete";
+type TabMode = "managed" | "existing" | "complete";
+
+/**
+ * Транслитерация кириллицы в латиницу для автоматического подбора username бота.
+ */
+function transliterateToBotUsername(name: string): string {
+  const ru: Record<string, string> = {
+    а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "yo", ж: "zh",
+    з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o",
+    п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts",
+    ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+  };
+  const latin = name
+    .toLowerCase()
+    .split("")
+    .map((c) => ru[c] ?? c)
+    .join("")
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 26);
+
+  if (!latin) return "";
+  if (latin.endsWith("bot")) return latin;
+  return `${latin}_bot`;
+}
 
 export function ConnectTelegramBotModal({
   open,
@@ -58,43 +77,23 @@ export function ConnectTelegramBotModal({
   initialAccount,
 }: ConnectTelegramBotModalProps) {
   const isPendingAccount = initialAccount?.status === "pending";
-  const [tab, setTab] = useState<TabMode>(isPendingAccount ? "complete" : "auto");
+  const [tab, setTab] = useState<TabMode>(isPendingAccount ? "complete" : "managed");
   const [verifiedBot, setVerifiedBot] = useState<TelegramBotInfoDTO | null>(null);
   const [managedDeepLink, setManagedDeepLink] = useState<string | null>(null);
+  const [createdUsername, setCreatedUsername] = useState<string | null>(null);
+  const [usernameUserEdited, setUsernameUserEdited] = useState(false);
+  const [isSuccessConfirmed, setIsSuccessConfirmed] = useState(false);
 
   const { data: agents = [] } = useAiAgents();
   const { data: managerInfo } = useTelegramBotManagerInfo();
+  const { data: accountsData, refetch: refetchAccounts } = useChannelAccounts("telegram_bot");
 
-  const autoCreateBot = useAutoCreateTelegramBot();
-  const autoActivateBot = useAutoActivatePendingBot();
   const verifyToken = useVerifyTelegramBotToken();
   const connectBot = useConnectTelegramBot();
   const createManaged = useCreateManagedTelegramBot();
   const completeManaged = useCompleteManagedTelegramBot();
 
-  // Форма мгновенного автоматического создания
-  const autoForm = useForm<BotAutoCreateValues>({
-    resolver: zodResolver(botAutoCreateSchema),
-    mode: "onChange",
-    defaultValues: {
-      name: "",
-      desired_username: "",
-      agent_id: null,
-    },
-  });
-
-  // Форма подключения существующего бота
-  const existingForm = useForm<ConnectTelegramBotValues>({
-    resolver: zodResolver(connectTelegramBotSchema),
-    mode: "onChange",
-    defaultValues: {
-      label: initialAccount?.label ?? "",
-      token: "",
-      agent_id: initialAccount?.boundAgentId ?? null,
-    },
-  });
-
-  // Форма создания управляемого бота через Bot Manager
+  // Форма создания управляемого бота через Bot Manager (официально в Telegram)
   const managedForm = useForm<CreateManagedTelegramBotValues>({
     resolver: zodResolver(createManagedTelegramBotSchema),
     mode: "onChange",
@@ -103,6 +102,17 @@ export function ConnectTelegramBotModal({
       username: "",
       token: "",
       agent_id: null,
+    },
+  });
+
+  // Форма подключения существующего бота через токен @BotFather
+  const existingForm = useForm<ConnectTelegramBotValues>({
+    resolver: zodResolver(connectTelegramBotSchema),
+    mode: "onChange",
+    defaultValues: {
+      label: initialAccount?.label ?? "",
+      token: "",
+      agent_id: initialAccount?.boundAgentId ?? null,
     },
   });
 
@@ -115,18 +125,24 @@ export function ConnectTelegramBotModal({
     },
   });
 
+  // Сброс состояния при открытии/закрытии
   useEffect(() => {
     if (open) {
       if (initialAccount?.status === "pending") {
         setTab("complete");
       } else {
-        setTab("auto");
+        setTab("managed");
       }
       setVerifiedBot(null);
       setManagedDeepLink(null);
-      autoForm.reset({
+      setCreatedUsername(null);
+      setUsernameUserEdited(false);
+      setIsSuccessConfirmed(false);
+
+      managedForm.reset({
         name: "",
-        desired_username: "",
+        username: "",
+        token: "",
         agent_id: null,
       });
       existingForm.reset({
@@ -134,51 +150,78 @@ export function ConnectTelegramBotModal({
         token: "",
         agent_id: initialAccount?.boundAgentId ?? null,
       });
-      managedForm.reset({
-        name: "",
-        username: "",
-        token: "",
-        agent_id: null,
-      });
       completeForm.reset({ token: "" });
     }
-  }, [open, initialAccount, autoForm, existingForm, managedForm, completeForm]);
+  }, [open, initialAccount, managedForm, existingForm, completeForm]);
 
-  // Автоматическое создание бота в 1 клик (POST /api/bots/create)
-  const onSubmitAuto = useCallback(
-    async (values: BotAutoCreateValues) => {
+  // Периодический опрос статуса при ожидании подтверждения в Telegram
+  useEffect(() => {
+    if (!managedDeepLink || isSuccessConfirmed) return;
+
+    const interval = setInterval(() => {
+      void refetchAccounts();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [managedDeepLink, isSuccessConfirmed, refetchAccounts]);
+
+  // Реакция на изменение статуса аккаунта в "connected"
+  useEffect(() => {
+    if (!createdUsername || !managedDeepLink || isSuccessConfirmed) return;
+
+    const target = accountsData?.items.find((a) => {
+      const ext = a.externalId.toLowerCase().replace(/^@/, "");
+      const search = createdUsername.toLowerCase().replace(/^@/, "");
+      return ext === search;
+    });
+
+    if (target && target.status === "connected") {
+      setIsSuccessConfirmed(true);
+      toast.success(`Бот @${createdUsername} успешно создан и подключен!`);
+      const timer = setTimeout(() => {
+        onClose();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [accountsData, createdUsername, managedDeepLink, isSuccessConfirmed, onClose]);
+
+  // Создание бота через Telegram Bot Manager
+  const onSubmitManaged = useCallback(
+    async (values: CreateManagedTelegramBotValues) => {
       try {
-        const result = await autoCreateBot.mutateAsync({
+        const cleanUsername = values.username.replace(/^@/, "").trim();
+        const result = await createManaged.mutateAsync({
           name: values.name.trim(),
-          desired_username: values.desired_username?.trim() || undefined,
+          username: cleanUsername,
+          token: values.token?.trim() || undefined,
           agent_id: values.agent_id || null,
         });
-        toast.success(`Бот ${result.externalId} успешно зарегистрирован и подключен!`);
-        onClose();
+
+        if (result.isPending) {
+          setCreatedUsername(cleanUsername);
+          setManagedDeepLink(result.deepLink);
+
+          // Пытаемся автоматически открыть Telegram в новом окне/вкладке
+          try {
+            window.open(result.deepLink, "_blank", "noopener,noreferrer");
+          } catch {
+            // если браузер заблокировал всплывающее окно — пользователь нажмет кнопку
+          }
+
+          toast.info("Подтвердите создание бота в открывшемся окне Telegram");
+        } else {
+          toast.success("Бот успешно создан и активирован!");
+          onClose();
+        }
       } catch (err) {
-        const msg = err instanceof ApiClientError ? err.message : "Не удалось создать бота автоматически";
+        const msg = err instanceof ApiClientError ? err.message : "Не удалось создать бота";
         toast.error(msg);
       }
     },
-    [autoCreateBot, onClose],
+    [createManaged, onClose],
   );
 
-  // Мгновенная автоматическая активация зависшего pending-бота
-  const handleAutoActivate = useCallback(async () => {
-    if (!initialAccount?.id) return;
-    try {
-      const updated = await autoActivateBot.mutateAsync({
-        accountId: initialAccount.id,
-        name: initialAccount.label,
-      });
-      toast.success(`Бот ${updated.externalId} успешно активирован и переведён в статус «В сети»!`);
-      onClose();
-    } catch (err) {
-      const msg = err instanceof ApiClientError ? err.message : "Не удалось активировать бота";
-      toast.error(msg);
-    }
-  }, [initialAccount, autoActivateBot, onClose]);
-
+  // Проверка токена от @BotFather
   const handleVerifyExisting = useCallback(async () => {
     const token = existingForm.getValues("token");
     if (!token || token.trim().length < 10) {
@@ -200,6 +243,7 @@ export function ConnectTelegramBotModal({
     }
   }, [existingForm, verifyToken]);
 
+  // Подключение бота по токену @BotFather
   const onSubmitExisting = useCallback(
     async (values: ConnectTelegramBotValues) => {
       try {
@@ -218,32 +262,7 @@ export function ConnectTelegramBotModal({
     [connectBot, onClose],
   );
 
-  const onSubmitManaged = useCallback(
-    async (values: CreateManagedTelegramBotValues) => {
-      try {
-        const cleanUsername = values.username.replace(/^@/, "").trim();
-        const result = await createManaged.mutateAsync({
-          name: values.name.trim(),
-          username: cleanUsername,
-          token: values.token?.trim() || undefined,
-          agent_id: values.agent_id || null,
-        });
-
-        if (result.isPending) {
-          setManagedDeepLink(result.deepLink);
-          toast.success("Бот создан в системе! Перейдите в Telegram для подтверждения.");
-        } else {
-          toast.success("Бот успешно создан и активирован!");
-          onClose();
-        }
-      } catch (err) {
-        const msg = err instanceof ApiClientError ? err.message : "Не удалось создать управляемого бота";
-        toast.error(msg);
-      }
-    },
-    [createManaged, onClose],
-  );
-
+  // Ручной ввод токена для завершения pending-бота
   const onSubmitComplete = useCallback(
     async (values: CompleteManagedTelegramBotValues) => {
       if (!initialAccount?.id) return;
@@ -259,30 +278,31 @@ export function ConnectTelegramBotModal({
         toast.error(msg);
       }
     },
-    [initialAccount?.id, completeManaged, onClose],
+    [initialAccount, completeManaged, onClose],
   );
 
   return (
-    <Sheet open={open} onClose={onClose} width="w-[540px]" resizable>
-      <div className="flex flex-col h-full bg-white">
-        {/* Заголовок шторки */}
+    <Sheet open={open} onClose={onClose} width="w-[520px]" resizable>
+      <div className="flex h-full flex-col bg-white">
         <SheetHeader onClose={onClose}>
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[#4a38f5]/10 text-[#4a38f5]">
-              <Bot className="h-3.5 w-3.5" />
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+              <Bot className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-[#111111]">
-                {initialAccount ? `Настройка: ${initialAccount.label}` : "Подключение Telegram-бота"}
-              </h2>
-              <p className="text-[11px] text-[#666666]">
+              <h2 className="text-base font-semibold text-[#111111]">
                 {isPendingAccount
-                  ? "Завершение привязки токена"
-                  : tab === "auto"
-                    ? "Автоматическая регистрация (voxlyN_bot)"
-                    : tab === "managed"
-                      ? "Telegram Managed Bots (Bot API 8.0)"
-                      : "Официальный Bot API (@BotFather)"}
+                  ? "Завершение подключения бота"
+                  : tab === "managed"
+                    ? "Создание бота в Telegram"
+                    : "Подключение по токену @BotFather"}
+              </h2>
+              <p className="text-[12px] text-[#666666]">
+                {isPendingAccount
+                  ? "Подтверждение создания в Telegram"
+                  : tab === "managed"
+                    ? "Официальное создание через Telegram Bot Manager"
+                    : "Подключение созданного в @BotFather бота"}
               </p>
             </div>
           </div>
@@ -290,38 +310,15 @@ export function ConnectTelegramBotModal({
 
         {/* Тело формы */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          {/* Переключатель режимов */}
+          {/* Переключатель режимов (если не режим завершения) */}
           {!isPendingAccount && (
             <div className="flex rounded-lg border border-[#e5e5e5] bg-[#fbfbfb] p-1 gap-1">
               <button
                 type="button"
-                onClick={() => setTab("auto")}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-medium transition-colors",
-                  tab === "auto"
-                    ? "bg-[#4a38f5] text-white shadow-2xs"
-                    : "text-[#666666] hover:text-[#111111] hover:bg-[#eaeaea]",
-                )}
-              >
-                <Zap className="h-3.5 w-3.5 text-amber-300" />
-                Авто-бот (1 клик)
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("existing")}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-medium transition-colors",
-                  tab === "existing"
-                    ? "bg-[#4a38f5] text-white shadow-2xs"
-                    : "text-[#666666] hover:text-[#111111] hover:bg-[#eaeaea]",
-                )}
-              >
-                <Key className="h-3.5 w-3.5" />
-                Свой токен
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("managed")}
+                onClick={() => {
+                  setTab("managed");
+                  setManagedDeepLink(null);
+                }}
                 className={cn(
                   "flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-medium transition-colors",
                   tab === "managed"
@@ -330,188 +327,231 @@ export function ConnectTelegramBotModal({
                 )}
               >
                 <Sparkles className="h-3.5 w-3.5" />
-                Bot Manager
+                Создать в Telegram
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTab("existing");
+                  setManagedDeepLink(null);
+                }}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-medium transition-colors",
+                  tab === "existing"
+                    ? "bg-[#4a38f5] text-white shadow-2xs"
+                    : "text-[#666666] hover:text-[#111111] hover:bg-[#eaeaea]",
+                )}
+              >
+                <Key className="h-3.5 w-3.5" />
+                Свой токен (@BotFather)
               </button>
             </div>
           )}
 
-          {/* Режим 1: Автоматическая регистрация нового бота (1 клик) */}
-          {tab === "auto" && !isPendingAccount && (
-            <form onSubmit={autoForm.handleSubmit(onSubmitAuto)} className="space-y-5">
-              <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
-                <div className="flex items-start gap-3">
-                  <Zap className="h-5 w-5 text-[#4a38f5] shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-[13px] font-semibold text-[#111111]">
-                        Мгновенная регистрация бота
-                      </h3>
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
-                        Рекомендуется
-                      </span>
-                    </div>
-                    <p className="text-[12px] text-[#666666] leading-relaxed">
-                      Введите желаемое имя бота (например <code className="text-[#111111] font-mono">freelancehuntervoxly_bot</code>).
-                      Система автоматически подберет свободное уникальное имя вида <code className="text-[#4a38f5] font-semibold font-mono">voxlyN_bot</code> (N = 1…10),
-                      сгенерирует токен и сразу активирует бота со статусом «В сети».
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[13px] font-medium text-[#111111]">
-                  Желаемое имя или username бота <span className="text-red-500">*</span>
-                </label>
-                <input
-                  {...autoForm.register("name")}
-                  placeholder="freelancehuntervoxly_bot или Консультант компании"
-                  className={cn(
-                    "w-full rounded-lg border bg-white px-3.5 py-2 text-[13px] text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
-                    autoForm.formState.errors.name
-                      ? "border-red-400 focus:border-red-500"
-                      : "border-[#e5e5e5] focus:border-[#4a38f5]",
-                  )}
-                />
-                {autoForm.formState.errors.name ? (
-                  <p className="text-[11px] text-red-600">{autoForm.formState.errors.name.message}</p>
-                ) : (
-                  <p className="text-[11px] text-[#666666]">
-                    Если имя занято, система автоматически зарегистрирует свободное имя <code className="text-[#111111] font-mono">voxly1_bot</code>...<code className="text-[#111111] font-mono">voxly10_bot</code>.
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[13px] font-medium text-[#111111]">
-                  Привязать AI-агента (автоответчик)
-                </label>
-                <select
-                  {...autoForm.register("agent_id")}
-                  className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] text-[#111111] transition-colors focus:border-[#4a38f5] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]"
-                >
-                  <option value="">Без автоответчика (только операторы CRM)</option>
-                  {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.name} ({agent.model})
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-[#666666]">
-                  AI-агент сразу возьмет на себя обработку входящих сообщений клиентов в Telegram.
-                </p>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={autoCreateBot.isPending}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
-                >
-                  {autoCreateBot.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Регистрация и запуск бота...
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="h-4 w-4" />
-                      Зарегистрировать и подключить бота
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Режим завершения pending-бота (решает проблему со скриншотов) */}
-          {tab === "complete" && (
+          {/* Режим 1: Создание управляемого бота через Bot Manager (Основной, 1 клик) */}
+          {tab === "managed" && !isPendingAccount && (
             <div className="space-y-5">
-              <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <h3 className="text-[13px] font-medium text-amber-900">
-                      Статус: Требуется авторизация
-                    </h3>
-                    <p className="mt-1 text-[12px] text-amber-700 leading-relaxed">
-                      Бот <span className="font-semibold text-amber-950 font-mono">{initialAccount?.externalId}</span> ожидает привязки токена.
-                      Вы можете активировать его мгновенно в 1 клик или вставить токен вручную.
+              {!managedDeepLink ? (
+                <form onSubmit={managedForm.handleSubmit(onSubmitManaged)} className="space-y-5">
+                  <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
+                    <div className="flex items-start gap-3">
+                      <Sparkles className="h-5 w-5 text-[#4a38f5] shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-[13px] font-semibold text-[#111111]">
+                            Официальное создание бота в Telegram
+                          </h3>
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+                            Рекомендуется
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-[#666666] leading-relaxed">
+                          Создание реального бота под управлением менеджера{" "}
+                          <span className="font-semibold text-[#111111]">
+                            @{managerInfo?.managerUsername || "GetVoxlybot"}
+                          </span>
+                          . Вы указываете имя, подтверждаете создание в Telegram в 1 клик — и бот моментально подключается со статусом «В сети».
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[13px] font-medium text-[#111111]">
+                      Имя бота <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      placeholder="Например: Фриланс Хантер или Консультант"
+                      {...managedForm.register("name")}
+                      onChange={(e) => {
+                        managedForm.setValue("name", e.target.value, { shouldValidate: true });
+                        if (!usernameUserEdited) {
+                          const suggested = transliterateToBotUsername(e.target.value);
+                          managedForm.setValue("username", suggested, { shouldValidate: true });
+                        }
+                      }}
+                      className={cn(
+                        "w-full rounded-lg border bg-white px-3.5 py-2 text-[13px] text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
+                        managedForm.formState.errors.name
+                          ? "border-red-400 focus:border-red-500"
+                          : "border-[#e5e5e5] focus:border-[#4a38f5]",
+                      )}
+                    />
+                    {managedForm.formState.errors.name ? (
+                      <p className="text-[11px] text-red-600">
+                        {managedForm.formState.errors.name.message}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-[#666666]">
+                        Отображаемое имя бота в Telegram и диалогах CRM
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[13px] font-medium text-[#111111]">
+                      Username бота в Telegram <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative flex items-center">
+                      <span className="absolute left-3 text-[13px] text-[#888888]">@</span>
+                      <input
+                        placeholder="freelancehunter_bot"
+                        {...managedForm.register("username")}
+                        onChange={(e) => {
+                          setUsernameUserEdited(true);
+                          managedForm.setValue("username", e.target.value, { shouldValidate: true });
+                        }}
+                        className={cn(
+                          "w-full rounded-lg border bg-white pl-8 pr-3.5 py-2 text-[13px] font-mono text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
+                          managedForm.formState.errors.username
+                            ? "border-red-400 focus:border-red-500"
+                            : "border-[#e5e5e5] focus:border-[#4a38f5]",
+                        )}
+                      />
+                    </div>
+                    {managedForm.formState.errors.username ? (
+                      <p className="text-[11px] text-red-600">
+                        {managedForm.formState.errors.username.message}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-[#666666]">
+                        Уникальный адрес в Telegram (латиница, обязан оканчиваться на <code className="font-semibold text-[#111111]">bot</code>)
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Привязка AI-агента */}
+                  <div className="space-y-1.5">
+                    <label className="text-[13px] font-medium text-[#111111]">
+                      Привязать AI-агента (автоответчик)
+                    </label>
+                    <select
+                      {...managedForm.register("agent_id")}
+                      className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] text-[#111111] transition-colors focus:border-[#4a38f5] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]"
+                    >
+                      <option value="">Без автоответчика (только операторы CRM)</option>
+                      {agents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name} ({agent.model})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-[#666666]">
+                      AI-агент сразу возьмет на себя обработку входящих сообщений клиентов в Telegram
                     </p>
                   </div>
-                </div>
-              </div>
 
-              {/* Мгновенная активация в 1 клик */}
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
-                <div className="flex items-center gap-2 text-emerald-950 text-[13px] font-medium">
-                  <Zap className="h-4 w-4 text-emerald-600" />
-                  Быстрая автоматическая активация
-                </div>
-                <p className="text-[11px] text-emerald-800 leading-relaxed">
-                  Система сгенерирует токен доступа, свяжет его с аккаунтом и переведет статус бота в «В сети».
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void handleAutoActivate()}
-                  disabled={autoActivateBot.isPending}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {autoActivateBot.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Активация бота...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Активировать автоматически в 1 клик
-                    </>
-                  )}
-                </button>
-              </div>
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={createManaged.isPending}
+                      className="w-full flex items-center justify-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+                    >
+                      {createManaged.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Подготовка ссылки...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          Создать бота в Telegram
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                /* Экран ожидания подтверждения в Telegram */
+                <div className="space-y-5">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-5 space-y-4">
+                    <div className="flex items-start gap-3">
+                      {isSuccessConfirmed ? (
+                        <CheckCircle2 className="h-6 w-6 text-emerald-600 shrink-0" />
+                      ) : (
+                        <Loader2 className="h-6 w-6 text-emerald-600 animate-spin shrink-0" />
+                      )}
+                      <div className="space-y-1">
+                        <h4 className="text-[14px] font-semibold text-emerald-950">
+                          {isSuccessConfirmed
+                            ? "Бот успешно активирован!"
+                            : "Подтвердите создание бота в Telegram"}
+                        </h4>
+                        <p className="text-[12px] text-emerald-800 leading-relaxed">
+                          {isSuccessConfirmed
+                            ? `Бот @${createdUsername} готов к работе и принимает входящие сообщения.`
+                            : `Мы сформировали официальный запрос на создание бота @${createdUsername} в Telegram.`}
+                        </p>
+                      </div>
+                    </div>
 
-              <div className="relative flex py-1 items-center">
-                <div className="grow border-t border-[#e5e5e5]"></div>
-                <span className="shrink mx-3 text-[11px] text-[#888888]">или укажите токен вручную</span>
-                <div className="grow border-t border-[#e5e5e5]"></div>
-              </div>
+                    {!isSuccessConfirmed && (
+                      <>
+                        <a
+                          href={managedDeepLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-emerald-700"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          Открыть Telegram для подтверждения
+                        </a>
 
-              <form onSubmit={completeForm.handleSubmit(onSubmitComplete)} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[13px] font-medium text-[#111111]">
-                    Токен бота Telegram
-                  </label>
-                  <input
-                    {...completeForm.register("token")}
-                    placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_1234567"
-                    className={cn(
-                      "w-full rounded-lg border bg-white px-3.5 py-2 text-[13px] text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
-                      completeForm.formState.errors.token
-                        ? "border-red-400 focus:border-red-500"
-                        : "border-[#e5e5e5] focus:border-[#4a38f5]",
+                        <div className="rounded-lg border border-emerald-200/80 bg-white/70 p-3.5 text-[12px] space-y-2 text-emerald-950">
+                          <p className="font-semibold text-emerald-900">Что произойдет дальше:</p>
+                          <ol className="list-decimal pl-4 space-y-1 text-emerald-800 text-[11px] leading-relaxed">
+                            <li>В Telegram откроется окно подтверждения создания бота</li>
+                            <li>Нажмите «Создать» (или «Confirm») в Telegram</li>
+                            <li>Telegram зарегистрирует бота и наш сервер автоматически подключит его со статусом «В сети»</li>
+                          </ol>
+                        </div>
+
+                        <div className="flex items-center justify-center gap-2 py-1 text-emerald-700 text-[11px]">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Ожидаем подтверждения в приложении Telegram...
+                        </div>
+                      </>
                     )}
-                  />
-                  {completeForm.formState.errors.token && (
-                    <p className="text-[11px] text-red-600">
-                      {completeForm.formState.errors.token.message}
-                    </p>
-                  )}
-                </div>
+                  </div>
 
-                <button
-                  type="submit"
-                  disabled={completeManaged.isPending}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa] disabled:opacity-50"
-                >
-                  {completeManaged.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Key className="h-4 w-4 text-[#666666]" />
-                  )}
-                  Применить токен
-                </button>
-              </form>
+                  <div className="flex items-center justify-between pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setManagedDeepLink(null)}
+                      className="text-xs text-[#666666] hover:text-[#111111] hover:underline"
+                    >
+                      ← Изменить имя или username
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa]"
+                    >
+                      Закрыть
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -660,168 +700,87 @@ export function ConnectTelegramBotModal({
             </form>
           )}
 
-          {/* Режим 3: Bot Manager (Managed Bots) */}
-          {tab === "managed" && (
+          {/* Режим завершения pending-бота */}
+          {tab === "complete" && (
             <div className="space-y-5">
-              <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
+              <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
                 <div className="flex items-start gap-3">
-                  <Sparkles className="h-5 w-5 text-[#4a38f5] shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <h3 className="text-[13px] font-semibold text-[#111111]">
-                      Telegram Managed Bots (Bot API 8.0)
+                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-[13px] font-medium text-amber-900">
+                      Статус: Требуется подтверждение в Telegram
                     </h3>
-                    <p className="text-[12px] text-[#666666] leading-relaxed">
-                      Создание бота через платформенный Bot Manager{" "}
-                      <span className="font-medium text-[#111111]">
-                        @{managerInfo?.managerUsername || "GetVoxlybot"}
-                      </span>
-                      . Пользователь авторизует создание нативно в Telegram.
+                    <p className="mt-1 text-[12px] text-amber-700 leading-relaxed">
+                      Бот <span className="font-semibold text-amber-950 font-mono">{initialAccount?.externalId}</span> ожидает подтверждения создания в приложении Telegram или ввода токена вручную.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {!managedDeepLink ? (
-                <form onSubmit={managedForm.handleSubmit(onSubmitManaged)} className="space-y-5">
-                  <div className="space-y-1.5">
-                    <label className="text-[13px] font-medium text-[#111111]">
-                      Имя бота <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      {...managedForm.register("name")}
-                      placeholder="Например: Сервисный консультант"
-                      className={cn(
-                        "w-full rounded-lg border bg-white px-3.5 py-2 text-[13px] text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
-                        managedForm.formState.errors.name
-                          ? "border-red-400 focus:border-red-500"
-                          : "border-[#e5e5e5] focus:border-[#4a38f5]",
-                      )}
-                    />
-                    {managedForm.formState.errors.name && (
-                      <p className="text-[11px] text-red-600">
-                        {managedForm.formState.errors.name.message}
-                      </p>
-                    )}
+              {/* Ссылка на создание в Telegram */}
+              {initialAccount && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-950 text-[13px] font-medium">
+                    <ExternalLink className="h-4 w-4 text-emerald-600" />
+                    Подтвердить создание в Telegram
                   </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[13px] font-medium text-[#111111]">
-                      Желаемый Username бота <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative flex items-center">
-                      <span className="absolute left-3 text-[13px] text-[#888888]">@</span>
-                      <input
-                        {...managedForm.register("username")}
-                        placeholder="my_company_sales_bot"
-                        className={cn(
-                          "w-full rounded-lg border bg-white pl-8 pr-3.5 py-2 text-[13px] font-mono text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
-                          managedForm.formState.errors.username
-                            ? "border-red-400 focus:border-red-500"
-                            : "border-[#e5e5e5] focus:border-[#4a38f5]",
-                        )}
-                      />
-                    </div>
-                    {managedForm.formState.errors.username ? (
-                      <p className="text-[11px] text-red-600">
-                        {managedForm.formState.errors.username.message}
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-[#666666]">
-                        Должен содержать латинские буквы и заканчиваться на <code className="font-semibold text-[#111111]">bot</code>.
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Опциональный токен */}
-                  <div className="space-y-1.5">
-                    <label className="text-[13px] font-medium text-[#111111]">
-                      Токен бота <span className="text-[11px] text-[#888888] font-normal">(если уже сгенерирован)</span>
-                    </label>
-                    <input
-                      {...managedForm.register("token")}
-                      type="password"
-                      placeholder="Необязательно при создании по ссылке"
-                      className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-mono text-[#111111] placeholder-[#999999] transition-colors focus:border-[#4a38f5] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]"
-                    />
-                  </div>
-
-                  {/* Привязка AI-агента */}
-                  <div className="space-y-1.5">
-                    <label className="text-[13px] font-medium text-[#111111]">
-                      Привязать AI-агента
-                    </label>
-                    <select
-                      {...managedForm.register("agent_id")}
-                      className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] text-[#111111] transition-colors focus:border-[#4a38f5] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]"
-                    >
-                      <option value="">Без автоматического агента</option>
-                      {agents.map((agent) => (
-                        <option key={agent.id} value={agent.id}>
-                          {agent.name} ({agent.model})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="pt-2">
-                    <button
-                      type="submit"
-                      disabled={createManaged.isPending}
-                      className="w-full flex items-center justify-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
-                    >
-                      {createManaged.isPending ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Генерация бота...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-4 w-4" />
-                          Сгенерировать и создать бота
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                /* Блок со сформированным deep link для Telegram */
-                <div className="space-y-5 rounded-xl border border-emerald-200 bg-emerald-50/50 p-5">
-                  <div className="flex items-start gap-3">
-                    <CheckCircle2 className="h-6 w-6 text-emerald-600 shrink-0" />
-                    <div>
-                      <h4 className="text-[14px] font-semibold text-emerald-950">
-                        Ссылка создания бота готова
-                      </h4>
-                      <p className="mt-1 text-[12px] text-emerald-800 leading-relaxed">
-                        Нажмите кнопку ниже, чтобы открыть официальный экран создания бота в приложении Telegram.
-                      </p>
-                    </div>
-                  </div>
-
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    Откройте экран создания бота в Telegram для завершения автоматической привязки.
+                  </p>
                   <a
-                    href={managedDeepLink}
+                    href={`https://t.me/newbot/${managerInfo?.managerUsername || "GetVoxlybot"}/${initialAccount.externalId.replace(/^@/, "")}?name=${encodeURIComponent(initialAccount.label)}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-emerald-700"
+                    className="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-emerald-700"
                   >
                     <ExternalLink className="h-4 w-4" />
-                    Создать бота в Telegram
+                    Перейти в Telegram для подтверждения
                   </a>
-
-                  <div className="pt-3 border-t border-emerald-200/70">
-                    <p className="text-[11px] text-emerald-900 mb-3">
-                      После подтверждения создания в Telegram бот появится в списке подключений. Вы сможете в любой момент отредактировать его или обновить токен.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="w-full rounded-lg border border-emerald-300 bg-white px-3.5 py-2 text-[12px] font-medium text-emerald-950 hover:bg-emerald-50"
-                    >
-                      Вернуться к списку каналов
-                    </button>
-                  </div>
                 </div>
               )}
+
+              <div className="relative flex py-1 items-center">
+                <div className="grow border-t border-[#e5e5e5]"></div>
+                <span className="shrink mx-3 text-[11px] text-[#888888]">или укажите токен от @BotFather</span>
+                <div className="grow border-t border-[#e5e5e5]"></div>
+              </div>
+
+              <form onSubmit={completeForm.handleSubmit(onSubmitComplete)} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[13px] font-medium text-[#111111]">
+                    Токен бота Telegram <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    {...completeForm.register("token")}
+                    type="password"
+                    placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_1234567"
+                    className={cn(
+                      "w-full rounded-lg border bg-white px-3.5 py-2 text-[13px] font-mono text-[#111111] placeholder-[#999999] transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]",
+                      completeForm.formState.errors.token
+                        ? "border-red-400 focus:border-red-500"
+                        : "border-[#e5e5e5] focus:border-[#4a38f5]",
+                    )}
+                  />
+                  {completeForm.formState.errors.token && (
+                    <p className="text-[11px] text-red-600">
+                      {completeForm.formState.errors.token.message}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={completeManaged.isPending}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa] disabled:opacity-50"
+                >
+                  {completeManaged.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Key className="h-4 w-4 text-[#666666]" />
+                  )}
+                  Применить токен
+                </button>
+              </form>
             </div>
           )}
         </div>

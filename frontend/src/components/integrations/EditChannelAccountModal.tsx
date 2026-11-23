@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Hash, Loader2, Pencil, Zap, CheckCircle2 } from "lucide-react";
+import { Hash, Loader2, Pencil, ExternalLink, CheckCircle2 } from "lucide-react";
 
 import { ApiClientError } from "@/lib/api/apiClient";
 import {
@@ -182,31 +182,40 @@ export function EditChannelAccountModal({
           </div>
 
           {account.status === "pending" && (channel === "telegram_bot" || channel === "telegram") && (
-            <div className="rounded-[8px] border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
+            <div className="rounded-[8px] border border-amber-200 bg-amber-50/70 p-3.5 space-y-2.5">
               <div className="flex items-start gap-2">
-                <Zap className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                <ExternalLink className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                 <div className="text-xs">
-                  <p className="font-medium text-emerald-950">Бот ожидает активации</p>
-                  <p className="text-[11px] text-emerald-800 mt-0.5">
-                    Сгенерировать токен и мгновенно перевести статус в «В сети».
+                  <p className="font-semibold text-amber-950">Ожидает создания в Telegram</p>
+                  <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                    Для активации бота перейдите в Telegram и подтвердите создание, после чего бот автоматически подключится.
                   </p>
                 </div>
               </div>
+              <a
+                href={`https://t.me/newbot/GetVoxlybot/${account.externalId.replace(/^@/, "")}?name=${encodeURIComponent(account.label)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-center gap-1.5 rounded-[6px] bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-2xs hover:bg-emerald-700"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Подтвердить создание в Telegram
+              </a>
               <button
                 type="button"
                 onClick={() => void handleQuickActivate()}
                 disabled={autoActivate.isPending}
-                className="w-full flex items-center justify-center gap-1.5 rounded-[6px] bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-50"
               >
                 {autoActivate.isPending ? (
                   <>
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Активация...
+                    Проверка...
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Активировать автоматически в 1 клик
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    Проверить статус активации
                   </>
                 )}
               </button>
