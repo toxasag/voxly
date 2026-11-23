@@ -18,6 +18,9 @@ export interface AccountBalance {
   id: string;
   name: string;
   account_type?: AccountType;
+  accountType?: AccountType;
+  accountNumber?: string;
+  organizationId?: string | null;
   currency: string;
   balance: number;
 }
