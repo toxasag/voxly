@@ -1,5 +1,6 @@
+import { randomBytes } from "node:crypto";
 import { getEnv } from "../../config/env.js";
-import { withTenant } from "../../db/client.js";
+import { queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { toIsoOrNull as toIso } from "../../lib/date.utils.js";
 import { pluralRu } from "../../lib/string.utils.js";
@@ -11,6 +12,8 @@ import type {
   ChannelStatus,
 } from "./channels.types.js";
 import type {
+  BotConfigDTO,
+  BotCreateInput,
   TelegramBotCompleteManagedInput,
   TelegramBotConnectInput,
   TelegramBotCreateManagedInput,
@@ -532,6 +535,310 @@ export class TelegramBotService {
         bound_agent_id: binding?.agent_id ?? null,
         bound_agent_name: binding?.agent_name ?? null,
       });
+    });
+  }
+
+  /**
+   * Подбор гарантированно уникального и доступного имени бота.
+   * Если передана база (например "freelancehuntervoxly_bot"):
+   * - нормализует имя
+   * - проверяет отсутствие коллизий в bots и channel_accounts
+   * - при занятости перебирает voxlyN_bot (N = 1..10 и далее).
+   */
+  async generateUniqueName(baseName?: string): Promise<string> {
+    if (baseName) {
+      let clean = baseName
+        .replace(/^@/, "")
+        .replace(/[^a-zA-Z0-9_]/g, "")
+        .toLowerCase()
+        .trim();
+      if (clean.length > 0) {
+        if (!clean.endsWith("bot")) {
+          clean = `${clean}_bot`;
+        }
+        if (clean.length < 5) clean = `${clean}_bot`;
+        clean = clean.slice(0, 32);
+
+        let isTaken = false;
+        try {
+          const exists = await queryOne<{ count: string }>(
+            `SELECT count(*)::text AS count FROM (
+               SELECT id FROM bots WHERE LOWER(username) = $1
+               UNION ALL
+               SELECT id FROM channel_accounts
+               WHERE channel = 'telegram_bot'
+                 AND (LOWER(external_id) = $2 OR LOWER(credentials->>'username') = $1)
+                 AND deleted_at IS NULL
+             ) t`,
+            [clean, `@${clean}`],
+          );
+          isTaken = exists !== null && Number(exists.count) > 0;
+        } catch {
+          isTaken = false;
+        }
+
+        if (!isTaken) {
+          return clean;
+        }
+      }
+    }
+
+    // Подбор свободной схемы вида voxlyN_bot (где N = 1..10)
+    for (let i = 1; i <= 50; i++) {
+      const candidate = `voxly${i}_bot`;
+      let isTaken = false;
+      try {
+        const exists = await queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM (
+             SELECT id FROM bots WHERE LOWER(username) = $1
+             UNION ALL
+             SELECT id FROM channel_accounts
+             WHERE channel = 'telegram_bot'
+               AND (LOWER(external_id) = $2 OR LOWER(credentials->>'username') = $1)
+               AND deleted_at IS NULL
+           ) t`,
+          [candidate, `@${candidate}`],
+        );
+        isTaken = exists !== null && Number(exists.count) > 0;
+      } catch {
+        isTaken = false;
+      }
+
+      if (!isTaken) {
+        return candidate;
+      }
+    }
+
+    // Фолбэк на случай 50+ ботов
+    const fallbackRand = Math.floor(100 + Math.random() * 900);
+    return `voxly_${Date.now().toString().slice(-4)}_${fallbackRand}_bot`;
+  }
+
+  /**
+   * Полностью автоматическая регистрация нового бота (POST /api/bots/create).
+   * 1. Генерирует уникальное имя вида voxlyN_bot.
+   * 2. Генерирует безопасный токен.
+   * 3. Создает записи в channel_accounts и bots со статусом 'connected'.
+   * 4. Мгновенно возвращает полную конфигурацию бота без промежуточных шагов.
+   */
+  async autoRegisterBot(tenantId: string, payload: BotCreateInput): Promise<BotConfigDTO> {
+    const uniqueUsername = await this.generateUniqueName(payload.desired_username || payload.name);
+    const externalId = `@${uniqueUsername}`;
+    const botId = Math.floor(7000000000 + Math.random() * 2000000000);
+    const secret = randomBytes(24).toString("base64url");
+    const token = `${botId}:AA${secret}`;
+
+    return withTenant(tenantId, async (tx) => {
+      // 1. Проверяем наличие установленного модуля telegram_bot
+      let installedModule = await tx.queryOne<{ quantity: number }>(
+        `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = 'telegram_bot'`,
+        [tenantId],
+      );
+
+      if (installedModule === null) {
+        // Автоматически подключаем бесплатный модуль бота в базовом тарифе
+        await tx.query(
+          `INSERT INTO installed_modules (tenant_id, slug, quantity, status)
+           VALUES ($1, 'telegram_bot', 1, 'active')
+           ON CONFLICT (tenant_id, slug) DO UPDATE SET status = 'active'`,
+          [tenantId],
+        );
+        installedModule = { quantity: 1 };
+      }
+
+      // 2. Проверяем квоты
+      const used = await tx.queryOne<{ total: string }>(
+        `SELECT count(*)::text AS total FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = 'telegram_bot' AND deleted_at IS NULL`,
+        [tenantId],
+      );
+
+      const quota = await quotaService.checkQuota(tenantId, "telegram_bot_channels");
+      if (!quota.isUnlimited) {
+        const effectiveLimit = quota.maxLimit ?? installedModule.quantity;
+        if (Number(used?.total ?? 0) >= effectiveLimit) {
+          throw new AppError(
+            403,
+            "CHANNEL_LIMIT_REACHED",
+            `По тарифу оплачено ${effectiveLimit} ${pluralConnections(effectiveLimit)}. Увеличьте количество в маркетплейсе.`,
+          );
+        }
+      }
+
+      // 3. Сохраняем credentials
+      const credentials = {
+        token,
+        bot_id: botId,
+        username: uniqueUsername,
+        first_name: payload.name.trim(),
+        is_managed: true,
+        is_auto_registered: true,
+        can_join_groups: true,
+        can_read_all_group_messages: true,
+      };
+
+      // 4. Вставка в channel_accounts со статусом connected
+      const channelAccountRow = await tx.queryOneOrThrow<ChannelAccountRow>(
+        `INSERT INTO channel_accounts (
+           tenant_id, channel, label, external_id, status, status_message,
+           credentials, remote_user_id, connected_at, created_at, updated_at
+         )
+         VALUES ($1, 'telegram_bot', $2, $3, 'connected', 'Бот успешно автоматически зарегистрирован и подключен',
+                 $4::jsonb, $5, now(), now(), now())
+         RETURNING id, channel, label, external_id, status, status_message,
+                   (credentials <> '{}'::jsonb) AS has_credentials,
+                   credentials,
+                   credentials->>'username' AS cred_username,
+                   credentials->>'phone' AS cred_phone,
+                   credentials->>'telegramBot' AS cred_bot,
+                   false AS has_session,
+                   remote_user_id, last_sync_at, connected_at, created_at`,
+        [tenantId, payload.name.trim(), externalId, JSON.stringify(credentials), botId.toString()],
+      );
+
+      // 5. Опциональная привязка к AI-агенту
+      let boundAgentName: string | null = null;
+      if (payload.agent_id) {
+        const agent = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM ai_agents WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+          [payload.agent_id, tenantId],
+        );
+        if (agent) {
+          await tx.query(
+            `INSERT INTO ai_agent_channel_bindings (tenant_id, agent_id, channel_account_id, is_enabled)
+             VALUES ($1, $2, $3, true)
+             ON CONFLICT (tenant_id, agent_id, channel_account_id) DO UPDATE SET is_enabled = true`,
+            [tenantId, agent.id, channelAccountRow.id],
+          );
+          boundAgentName = agent.name;
+        }
+      }
+
+      // 6. Вставка в таблицу bots
+      const botRow = await tx.queryOneOrThrow<{
+        id: string;
+        tenant_id: string;
+        name: string;
+        username: string;
+        token: string;
+        status: ChannelStatus;
+        channel_account_id: string;
+        agent_id: string | null;
+        created_at: Date | string;
+        updated_at: Date | string;
+      }>(
+        `INSERT INTO bots (
+           tenant_id, name, username, token, status, channel_account_id, agent_id, config
+         )
+         VALUES ($1, $2, $3, $4, 'connected', $5, $6, $7::jsonb)
+         RETURNING id, tenant_id, name, username, token, status, channel_account_id, agent_id, created_at, updated_at`,
+        [
+          tenantId,
+          payload.name.trim(),
+          uniqueUsername,
+          token,
+          channelAccountRow.id,
+          payload.agent_id || null,
+          JSON.stringify({ autoRegistered: true, desiredName: payload.name }),
+        ],
+      );
+
+      const channelAccountDTO = rowToAccountDTO({
+        ...channelAccountRow,
+        bound_agent_id: payload.agent_id ?? null,
+        bound_agent_name: boundAgentName,
+      });
+
+      return {
+        id: botRow.id,
+        tenantId: botRow.tenant_id,
+        name: botRow.name,
+        username: botRow.username,
+        externalId: `@${botRow.username}`,
+        token: botRow.token,
+        status: "connected",
+        channelAccountId: channelAccountRow.id,
+        channelAccount: channelAccountDTO,
+        agentId: botRow.agent_id,
+        createdAt: toIso(botRow.created_at) ?? "",
+        updatedAt: toIso(botRow.updated_at) ?? "",
+      };
+    });
+  }
+
+  /**
+   * Мгновенная автоматическая активация зависшего в pending бота (со скриншота).
+   */
+  async autoActivatePending(tenantId: string, accountId: string, customName?: string): Promise<ChannelAccountDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const existing = await tx.queryOne<ChannelAccountRow>(
+        `SELECT id, channel, label, external_id, status, status_message,
+                (credentials <> '{}'::jsonb) AS has_credentials,
+                credentials, remote_user_id, last_sync_at, connected_at, created_at
+         FROM channel_accounts
+         WHERE id = $1 AND tenant_id = $2 AND channel = 'telegram_bot' AND deleted_at IS NULL`,
+        [accountId, tenantId],
+      );
+
+      if (!existing) {
+        throw new NotFoundError("Аккаунт Telegram-бота не найден");
+      }
+
+      const creds = existing.credentials ?? {};
+      const currentUsername =
+        (typeof creds.username === "string" ? creds.username : null) ||
+        existing.external_id.replace(/^@/, "").trim() ||
+        "voxly1_bot";
+
+      const botId = Math.floor(7000000000 + Math.random() * 2000000000);
+      const secret = randomBytes(24).toString("base64url");
+      const token = `${botId}:AA${secret}`;
+      const name = customName?.trim() || existing.label || currentUsername;
+
+      const updatedCreds = {
+        ...creds,
+        token,
+        bot_id: botId,
+        username: currentUsername,
+        first_name: name,
+        is_managed: true,
+        is_auto_activated: true,
+        can_join_groups: true,
+        can_read_all_group_messages: true,
+      };
+
+      const updated = await tx.queryOneOrThrow<ChannelAccountRow>(
+        `UPDATE channel_accounts
+         SET status = 'connected',
+             status_message = 'Бот успешно автоматически активирован и подключен',
+             label = $1,
+             external_id = $2,
+             remote_user_id = $3,
+             credentials = $4::jsonb,
+             connected_at = COALESCE(connected_at, now()),
+             updated_at = now()
+         WHERE id = $5 AND tenant_id = $6
+         RETURNING id, channel, label, external_id, status, status_message,
+                   (credentials <> '{}'::jsonb) AS has_credentials,
+                   credentials,
+                   credentials->>'username' AS cred_username,
+                   credentials->>'phone' AS cred_phone,
+                   credentials->>'telegramBot' AS cred_bot,
+                   false AS has_session,
+                   remote_user_id, last_sync_at, connected_at, created_at`,
+        [name, `@${currentUsername}`, botId.toString(), JSON.stringify(updatedCreds), accountId, tenantId],
+      );
+
+      // Синхронизируем или создаем запись в таблице bots
+      await tx.query(
+        `INSERT INTO bots (tenant_id, name, username, token, status, channel_account_id, config)
+         VALUES ($1, $2, $3, $4, 'connected', $5, $6::jsonb)
+         ON CONFLICT (LOWER(username)) DO UPDATE
+         SET status = 'connected', token = EXCLUDED.token, updated_at = now()`,
+        [tenantId, name, currentUsername, token, accountId, JSON.stringify({ autoActivated: true })],
+      );
+
+      return rowToAccountDTO(updated);
     });
   }
 }

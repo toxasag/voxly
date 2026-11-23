@@ -313,6 +313,23 @@ export async function buildApp(): Promise<FastifyInstance> {
       return reply.status(201).send({ data: created });
     });
   });
+
+  // Прямой эндпоинт POST /api/bots/create для автоматической регистрации бота
+  await app.register(async (botsApp) => {
+    await botsApp.register(authenticatePlugin);
+    const handler = async (request: FastifyRequest, reply: FastifyReply) => {
+      const { tenant_id } = request;
+      const { botCreateSchema } = await import("./modules/channels/telegram-bot.types.js");
+      const { TelegramBotService } = await import("./modules/channels/telegram-bot.service.js");
+      const body = botCreateSchema.parse(request.body);
+      const service = new TelegramBotService();
+      const config = await service.autoRegisterBot(tenant_id, body);
+      return reply.status(201).send({ data: config });
+    };
+
+    botsApp.post("/api/bots/create", { onRequest: [botsApp.requirePermission("tenant:admin")] }, handler);
+    botsApp.post("/api/v1/bots/create", { onRequest: [botsApp.requirePermission("tenant:admin")] }, handler);
+  });
   await app.register(servicesRoutes, { prefix: "/api/v1/services" });
   await app.register(servicesRoutes, { prefix: "/api/services" });
   await app.register(printTemplatesRoutes, { prefix: "/api/v1/print-templates" });

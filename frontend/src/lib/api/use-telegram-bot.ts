@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient, type UseMutationResult, type Use
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 import { channelKeys, type ChannelAccountDTO } from "@/lib/api/use-channels";
 import type {
+  BotAutoCreateValues,
   CompleteManagedTelegramBotValues,
   ConnectTelegramBotValues,
   CreateManagedTelegramBotValues,
@@ -38,6 +39,21 @@ export interface TelegramBotCreateManagedResultDTO {
   deepLink: string;
   isPending: boolean;
   message: string;
+}
+
+export interface BotConfigDTO {
+  id: string;
+  tenantId: string;
+  name: string;
+  username: string;
+  externalId: string;
+  token: string;
+  status: "connected" | "pending" | "error" | "disabled";
+  channelAccountId: string;
+  channelAccount?: ChannelAccountDTO;
+  agentId?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Информация о платформенном Bot Manager. */
@@ -108,6 +124,47 @@ export function useCompleteManagedTelegramBot(): UseMutationResult<
   return useMutation({
     mutationFn: async ({ accountId, values }) =>
       (await apiClient.post<ChannelAccountDTO>(`${BASE_PATH}/accounts/${accountId}/complete`, values)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts("telegram_bot") });
+      void queryClient.invalidateQueries({ queryKey: channelKeys.summary("telegram_bot") });
+    },
+  });
+}
+
+/** Автоматическая регистрация нового бота (1 клик) через POST /api/bots/create. */
+export function useAutoCreateTelegramBot(): UseMutationResult<
+  BotConfigDTO,
+  ApiClientError,
+  BotAutoCreateValues
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<BotConfigDTO>("/api/bots/create", payload)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts("telegram_bot") });
+      void queryClient.invalidateQueries({ queryKey: channelKeys.summary("telegram_bot") });
+    },
+  });
+}
+
+/** Мгновенная активация зависшего в pending бота (со скриншота). */
+export function useAutoActivatePendingBot(): UseMutationResult<
+  ChannelAccountDTO,
+  ApiClientError,
+  { accountId: string; name?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ accountId, name }) =>
+      (
+        await apiClient.post<ChannelAccountDTO>(
+          `${BASE_PATH}/accounts/${accountId}/auto-activate`,
+          { name },
+        )
+      ).data,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts("telegram_bot") });
       void queryClient.invalidateQueries({ queryKey: channelKeys.summary("telegram_bot") });

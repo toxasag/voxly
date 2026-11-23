@@ -4,6 +4,8 @@ import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TelegramBotService } from "./telegram-bot.service.js";
 import {
+  autoActivateBotSchema,
+  botCreateSchema,
   telegramBotCompleteManagedSchema,
   telegramBotConnectSchema,
   telegramBotCreateManagedSchema,
@@ -65,6 +67,26 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     const { id } = accountParamsSchema.parse(request.params);
     const body = telegramBotCompleteManagedSchema.parse(request.body);
     const account = await service.completeManaged(request.tenant_id, id, body);
+    return reply.send({ data: account });
+  });
+
+  /**
+   * Полностью автоматическая регистрация нового бота (voxlyN_bot).
+   * Создает уникального бота в статусе connected в один шаг без лишних экранов.
+   */
+  app.post("/create-auto", { onRequest: guards }, async (request, reply) => {
+    const body = botCreateSchema.parse(request.body);
+    const config = await service.autoRegisterBot(request.tenant_id, body);
+    return reply.status(201).send({ data: config });
+  });
+
+  /**
+   * Мгновенная автоматическая активация зависшего в pending бота со скриншота.
+   */
+  app.post("/accounts/:id/auto-activate", { onRequest: guards }, async (request, reply) => {
+    const { id } = accountParamsSchema.parse(request.params);
+    const body = autoActivateBotSchema.parse(request.body ?? {});
+    const account = await service.autoActivatePending(request.tenant_id, id, body.name);
     return reply.send({ data: account });
   });
 }

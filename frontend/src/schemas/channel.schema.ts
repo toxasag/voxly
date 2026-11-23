@@ -178,3 +178,12 @@ export const completeManagedTelegramBotSchema = z.object({
 });
 
 export type CompleteManagedTelegramBotValues = z.infer<typeof completeManagedTelegramBotSchema>;
+
+/** Мгновенная автоматическая регистрация нового бота (1 клик). */
+export const botAutoCreateSchema = z.object({
+  name: z.string().trim().min(1, "Укажите имя бота").max(120),
+  desired_username: z.string().trim().max(64).optional(),
+  agent_id: z.string().uuid("Некорректный ID агента").nullable().optional(),
+});
+
+export type BotAutoCreateValues = z.infer<typeof botAutoCreateSchema>;
