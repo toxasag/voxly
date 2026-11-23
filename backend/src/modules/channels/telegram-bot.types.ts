@@ -107,6 +107,8 @@ export type BotCreateInput = z.infer<typeof botCreateSchema>;
 
 export const autoActivateBotSchema = z.object({
   name: z.string().trim().max(120).optional(),
+  token: z.string().trim().optional(),
+  bot_id: z.union([z.number(), z.string()]).optional(),
 });
 
 export type AutoActivateBotInput = z.infer<typeof autoActivateBotSchema>;

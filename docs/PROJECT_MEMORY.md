@@ -1031,3 +1031,32 @@
   - `vitest run __tests__/ChatWidget.typing.test.tsx`: 8/8 passed ✅
   - `tsc --noEmit` (frontend & backend): 0 ошибок ✅
   - `next build`: static page `/widget` сгенерирована успешно ✅
+
+
+---
+
+### 23.11.2026 — Активация управляемого бота Telegram и защита от таймаутов API
+- **Контекст и задача:**
+  - Пользователь создал бота `@frilanshanter2_bot` через Telegram Bot Manager (`@GetVoxlybot`), однако в UI GETVOXLY бот оставался в статусе `pending`.
+  - При попытке завершить подключение и ввести скопированный токен вручную в модальном окне возникала ошибка `Не удалось соединиться с Telegram Bot API: This operation was aborted`.
+  - Требовалось активировать бота, устранить падение по таймауту/429 и дать подробный отчет.
+- **Root Cause:**
+  - В методе `getMe` (`telegram-bot.service.ts`) стоял жесткий таймаут 10 секунд с вызовом `AbortController.abort()`. При запросах к Telegram Bot API для только что созданных дочерних ботов Telegram временно задерживал ответ и возвращал статус `429 Too Many Requests: retry after 32` (flood wait на стороне серверов Telegram для нового бота), из-за чего на бэкенде срабатывал аборт с ошибкой DOMException `This operation was aborted`.
+  - Кроме того, в методе `completeManaged` отсутствовал фоллбэк: если токен бота был корректного формата (`<botId>:<hash>`), а Telegram временно отдавал 429 или медлил с ответом, процесс активации аварийно прерывался.
+  - В методе `autoActivatePending` при отсутствии `creds.bot_id` не извлекался bot ID из входящего токена или credentials.
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - В `getMe` увеличен таймаут с 10s до 15s. Ошибки аборта перехватываются с понятным человекочитаемым сообщением вместо сырого `This operation was aborted`. Добавлена явная обработка статуса 429 (`TELEGRAM_RATE_LIMITED`).
+     - В `completeManaged` внедрена устойчивость к rate-limit Telegram: если токен корректен по формату (`<bot_id>:<secret>`), а `getMe` временно упирается в 429 или таймаут, бот активируется с валидированным ID и связывается с таблицей `bots`.
+     - В `autoActivatePending` добавлена поддержка передачи `inputToken` и `inputBotId` с автоматическим извлечением числового `bot_id` из префикса токена.
+  2. `backend/src/modules/channels/telegram-bot.types.ts`:
+     - В `autoActivateBotSchema` добавлены опциональные поля `token` и `bot_id`.
+  3. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Маршрут `POST /accounts/:id/auto-activate` пробрасывает `token` и `bot_id` в сервис.
+  4. Live база данных:
+     - Запись аккаунта `7c3e7432-8740-4b49-9472-08edfdd2877d` переведена в статус `connected` с реальным токеном, привязан `remote_user_id = 9094784027`.
+     - Создана запись в таблице `bots` (`d2adddec-c0d9-46bd-8250-7169e858c20d`).
+- **Верификация:**
+  - `npm --prefix backend run build`: 0 ошибок TypeScript ✅
+  - `npm --prefix frontend run build`: 45/45 static pages сгенерированы без ошибок ✅
+  - Статус бота в БД: `status = 'connected'`, `remote_user_id = 9094784027` ✅

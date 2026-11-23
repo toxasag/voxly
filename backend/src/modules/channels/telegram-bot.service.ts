@@ -127,7 +127,7 @@ export class TelegramBotService {
    */
   async getMe(token: string): Promise<TelegramBotInfoDTO> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => controller.abort(), 15_000);
 
     try {
       const res = await fetch(`${TELEGRAM_API_BASE}/bot${token.trim()}/getMe`, {
@@ -145,6 +145,13 @@ export class TelegramBotService {
             400,
             "INVALID_BOT_TOKEN",
             "Неверный токен бота Telegram. Проверьте правильность токена, полученного от @BotFather или Bot Manager.",
+          );
+        }
+        if (res.status === 429 || body?.error_code === 429) {
+          throw new AppError(
+            429,
+            "TELEGRAM_RATE_LIMITED",
+            `Telegram Bot API временно ограничил запросы к боту (${desc}). Подождите полминуты и повторите попытку.`,
           );
         }
         throw new AppError(
@@ -182,7 +189,10 @@ export class TelegramBotService {
       };
     } catch (err) {
       if (err instanceof AppError) throw err;
-      const message = err instanceof Error ? err.message : "Неизвестная сетевая ошибка";
+      let message = err instanceof Error ? err.message : "Неизвестная сетевая ошибка";
+      if (err instanceof Error && (err.name === "AbortError" || message.includes("aborted"))) {
+        message = "Таймаут соединения с Telegram Bot API (сервер Telegram не ответил вовремя). Повторите попытку.";
+      }
       throw new AppError(
         502,
         "TELEGRAM_CONNECTION_ERROR",
@@ -477,10 +487,6 @@ export class TelegramBotService {
     accountId: string,
     payload: TelegramBotCompleteManagedInput,
   ): Promise<ChannelAccountDTO> {
-    const botInfo = await this.getMe(payload.token);
-    const cleanUsername = botInfo.username.replace(/^@/, "").trim();
-    const externalId = `@${cleanUsername}`;
-
     return withTenant(tenantId, async (tx) => {
       const existing = await tx.queryOne<ChannelAccountRow>(
         `SELECT id, channel, label, external_id, status, status_message,
@@ -494,6 +500,37 @@ export class TelegramBotService {
       if (!existing) {
         throw new NotFoundError("Аккаунт Telegram-бота не найден");
       }
+
+      const trimmedToken = payload.token.trim();
+      let botInfo: TelegramBotInfoDTO;
+
+      try {
+        botInfo = await this.getMe(trimmedToken);
+      } catch (err) {
+        if (err instanceof AppError && err.code === "INVALID_BOT_TOKEN") {
+          throw err;
+        }
+
+        const tokenParts = trimmedToken.split(":");
+        const tokenBotId = tokenParts[0];
+        if (tokenParts.length === 2 && tokenBotId !== undefined && /^\d{8,12}$/.test(tokenBotId)) {
+          const cleanUsername = existing.external_id ? existing.external_id.replace(/^@/, "") : "";
+          botInfo = {
+            id: Number(tokenBotId),
+            isBot: true,
+            firstName: existing.label || cleanUsername,
+            username: cleanUsername,
+            canJoinGroups: false,
+            canReadAllGroupMessages: false,
+            supportsInlineQueries: false,
+          };
+        } else {
+          throw err;
+        }
+      }
+
+      const cleanUsername = botInfo.username.replace(/^@/, "").trim();
+      const externalId = `@${cleanUsername}`;
 
       // Проверка на конфликт с другим аккаунтом
       const conflict = await tx.queryOne<{ id: string }>(
@@ -510,7 +547,7 @@ export class TelegramBotService {
 
       const updatedCreds = {
         ...(existing.credentials ?? {}),
-        token: payload.token.trim(),
+        token: trimmedToken,
         bot_id: botInfo.id,
         username: cleanUsername,
         first_name: botInfo.firstName,
@@ -539,6 +576,21 @@ export class TelegramBotService {
                    remote_user_id, last_sync_at, connected_at, created_at`,
         [externalId, botInfo.id.toString(), JSON.stringify(updatedCreds), accountId, tenantId],
       );
+
+      await tx.query(
+        `INSERT INTO bots (tenant_id, name, username, token, status, channel_account_id, config)
+         VALUES ($1, $2, $3, $4, 'connected', $5, $6::jsonb)
+         ON CONFLICT (LOWER(username)) DO UPDATE
+         SET status = 'connected', token = EXCLUDED.token, channel_account_id = EXCLUDED.channel_account_id, updated_at = now()`,
+        [
+          tenantId,
+          existing.label,
+          cleanUsername,
+          trimmedToken,
+          accountId,
+          JSON.stringify({ is_managed: true }),
+        ],
+      ).catch(() => {});
 
       // Получаем привязанного агента
       const binding = await tx.queryOne<{ agent_id: string; agent_name: string }>(
@@ -670,7 +722,13 @@ export class TelegramBotService {
   /**
    * Активация бота в статусе pending (проверка подтверждения в Telegram).
    */
-  async autoActivatePending(tenantId: string, accountId: string, customName?: string): Promise<ChannelAccountDTO> {
+  async autoActivatePending(
+    tenantId: string,
+    accountId: string,
+    customName?: string,
+    inputToken?: string,
+    inputBotId?: number | string,
+  ): Promise<ChannelAccountDTO> {
     return withTenant(tenantId, async (tx) => {
       const existing = await tx.queryOne<ChannelAccountRow>(
         `SELECT id, channel, label, external_id, status, status_message,
@@ -686,14 +744,28 @@ export class TelegramBotService {
       }
 
       const creds = existing.credentials ?? {};
-      const botId = creds.bot_id || existing.remote_user_id;
+      const storedBotId = typeof creds.bot_id === "number" || typeof creds.bot_id === "string" ? creds.bot_id : null;
+      let botId: number | string | null = inputBotId || storedBotId || existing.remote_user_id || null;
+
+      if (!botId && inputToken) {
+        const parts = inputToken.trim().split(":");
+        const prefix = parts[0];
+        if (parts.length === 2 && prefix !== undefined && /^\d+$/.test(prefix)) {
+          botId = prefix;
+        }
+      }
 
       if (botId) {
-        const realToken = await this.telegramService.getManagedBotToken(Number(botId));
+        let realToken = inputToken?.trim() || null;
+        if (!realToken) {
+          realToken = await this.telegramService.getManagedBotToken(Number(botId));
+        }
+
         if (realToken !== null) {
           const updatedCreds = {
             ...creds,
             token: realToken,
+            bot_id: Number(botId),
             status: "connected",
             is_managed: true,
           };
@@ -704,10 +776,11 @@ export class TelegramBotService {
              SET status = 'connected',
                  status_message = 'Бот успешно активирован через Telegram Bot Manager',
                  label = $1,
-                 credentials = $2::jsonb,
+                 remote_user_id = $2,
+                 credentials = $3::jsonb,
                  connected_at = COALESCE(connected_at, now()),
                  updated_at = now()
-             WHERE id = $3 AND tenant_id = $4
+             WHERE id = $4 AND tenant_id = $5
              RETURNING id, channel, label, external_id, status, status_message,
                        (credentials <> '{}'::jsonb) AS has_credentials,
                        credentials,
@@ -716,21 +789,21 @@ export class TelegramBotService {
                        credentials->>'telegramBot' AS cred_bot,
                        false AS has_session,
                        remote_user_id, last_sync_at, connected_at, created_at`,
-            [label, JSON.stringify(updatedCreds), accountId, tenantId],
+            [label, botId.toString(), JSON.stringify(updatedCreds), accountId, tenantId],
           );
 
           await tx.query(
             `INSERT INTO bots (tenant_id, name, username, token, status, channel_account_id, config)
              VALUES ($1, $2, $3, $4, 'connected', $5, $6::jsonb)
              ON CONFLICT (LOWER(username)) DO UPDATE
-             SET status = 'connected', token = EXCLUDED.token, updated_at = now()`,
+             SET status = 'connected', token = EXCLUDED.token, channel_account_id = EXCLUDED.channel_account_id, updated_at = now()`,
             [
               tenantId,
               label,
               existing.external_id.replace(/^@/, ""),
               realToken,
               accountId,
-              JSON.stringify({ autoActivated: true }),
+              JSON.stringify({ autoActivated: true, is_managed: true }),
             ],
           ).catch(() => {});
 
