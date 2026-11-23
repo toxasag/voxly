@@ -706,3 +706,10 @@
   - `frontend/src/components/repairs/detail/FinancialSummary.tsx`, `frontend/src/lib/api/use-invoices.ts`: портальное меню «Отправить» (`createPortal(..., document.body)`, `z-[9999]`, MAX/Telegram/WhatsApp/Все с PDF), быстрая кнопка «Оплачен», расширенная вёрстка строк счёта.
   - `frontend/src/components/repairs/detail/WorkItemsTable.tsx`, `PartsTable.tsx`, `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`: расширен контейнер вкладки «Финансы» (`max-w-6xl`), добавлен перехват смены вкладок, «Назад» и `beforeunload` с `ConfirmDialog` при несохранённом черновике работы/запчасти.
   - `frontend/src/components/repairs/RepairIntakeModal.tsx`, `frontend/src/components/shared/ConfirmDialog.tsx`: `z-[70]` для `ConfirmDialog` поверх `Sheet`, перехват закрытия (`X`, «Отмена», клик вне шторки, `Escape`, `beforeunload`) при наличии несохранённых данных («Данные не сохранены, выйти без сохранения?»).
+
+
+### 2026-11-23 — Карточка наряда `/repairs/[id]`: удаление дублей («Создать счёт», «Документооборот и гарантия») и новый порядок вкладок
+- **Исправлено (`frontend/src/app/(dashboard)/repairs/[id]/page.tsx`):**
+  1. Убрана лишняя кнопка «Создать счёт» из верхней панели действий наряда и связанная с ней мёртвая обвязка (`InvoiceCreateModal`, `invoiceCreateOpen`, неиспользуемый импорт `ShieldCheck`). Работа со счетами во вкладке «Финансы» (`FinancialSummary.tsx`) полностью сохранена.
+  2. На вкладке «Данные заказа» удалён дублирующий блок «Документооборот и гарантия» (печатные формы уже вынесены в верхнюю панель) — оставшиеся 4 карточки образуют ровную сетку 2×2.
+  3. Установлен строгий порядок вкладок: `Данные заказа` → `Работы и запчасти` → `Финансы` → `Чат` → `Заметки` → `История`.

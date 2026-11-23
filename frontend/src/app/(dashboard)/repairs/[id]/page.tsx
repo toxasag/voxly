@@ -6,7 +6,7 @@ import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
   FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase,
-  AlertCircle, ExternalLink, Clock, ShieldCheck, Users, NotebookPen,
+  AlertCircle, ExternalLink, Clock, Users, NotebookPen,
   SlidersHorizontal, Smartphone, Tag, Layers, Cpu, Bug, Flag,
 } from "lucide-react";
 import Link from "next/link";
@@ -21,7 +21,6 @@ import { PrintTemplateSettingsDrawer } from "@/components/repairs/PrintTemplateS
 import { usePrintTemplates } from "@/lib/api/use-print-templates";
 import { ContactPickerModal } from "@/components/repairs/detail/ContactPickerModal";
 import { CompanyPickerModal } from "@/components/repairs/detail/CompanyPickerModal";
-import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { RepairNotesSection } from "@/components/repairs/RepairNotesSection";
 import { DictionarySelectField } from "@/components/repairs/DictionarySelectField";
@@ -52,11 +51,11 @@ type DetailTab = "details" | "notes" | "work_parts" | "history" | "finance" | "c
 
 const TABS: { key: DetailTab; label: string; icon: typeof FileText }[] = [
   { key: "details", label: "Данные заказа", icon: FileText },
-  { key: "notes", label: "Заметки", icon: NotebookPen },
   { key: "work_parts", label: "Работы и запчасти", icon: Wrench },
-  { key: "history", label: "История", icon: History },
   { key: "finance", label: "Финансы", icon: Receipt },
   { key: "chat", label: "Чат", icon: MessageCircle },
+  { key: "notes", label: "Заметки", icon: NotebookPen },
+  { key: "history", label: "История", icon: History },
 ];
 
 function formatDate(iso: string): string {
@@ -204,7 +203,6 @@ export default function RepairDetailPage() {
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printModalSlug, setPrintModalSlug] = useState<string>("work_order");
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
-  const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
 
@@ -310,7 +308,6 @@ export default function RepairDetailPage() {
 
   useEffect(() => {
     if (detail && !isLoading) {
-      setInvoiceCreateOpen(false);
       syncFormFromDetail();
     }
   }, [detail, isLoading, syncFormFromDetail]);
@@ -653,16 +650,6 @@ export default function RepairDetailPage() {
               <SlidersHorizontal className="h-3.5 w-3.5 text-[#4a38f5]" />
               Настроить
             </button>
-            {hasFinance && (
-              <button
-                type="button"
-                onClick={() => setInvoiceCreateOpen(true)}
-                className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
-              >
-                <Receipt className="h-3.5 w-3.5" />
-                Создать счёт
-              </button>
-            )}
             {ticket.status === "ready" && (
               <button
                 type="button"
@@ -1389,85 +1376,7 @@ export default function RepairDetailPage() {
                     </div>
                   </div>
 
-                  {/* Блок 2: Документооборот и гарантия */}
-                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
-                    <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#f0f0f0]">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="h-4 w-4 text-[#4a38f5]" />
-                        <h3 className="text-[13px] font-semibold text-[#111111]">
-                          Документооборот и гарантия
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSettingsDrawerOpen(true)}
-                        className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/5 transition-colors cursor-pointer"
-                        title="Настроить печатные бланки и реквизиты"
-                      >
-                        <SlidersHorizontal className="h-3.5 w-3.5" />
-                        Настроить бланки
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider block">
-                        Печатные формы
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {visiblePrintTemplates.length > 0 ? (
-                          visiblePrintTemplates.map((tpl) => (
-                            <button
-                              key={tpl.id}
-                              type="button"
-                              onClick={() => openPrintTemplate(tpl.slug || tpl.id)}
-                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                            >
-                              <FileText className="h-3.5 w-3.5 text-[#666666] shrink-0" />
-                              <span>{tpl.name}</span>
-                            </button>
-                          ))
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => openPrintTemplate("work_order")}
-                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                            >
-                              <FileText className="h-3.5 w-3.5 text-[#666666]" />
-                              Акт приема-передачи оборудования
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openPrintTemplate("completion_act")}
-                              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                            >
-                              <FileText className="h-3.5 w-3.5 text-[#666666]" />
-                              Акт выполненных работ
-                            </button>
-                          </>
-                        )}
-                        {hasFinance && (
-                          <button
-                            type="button"
-                            onClick={() => setInvoiceCreateOpen(true)}
-                            className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
-                          >
-                            <Receipt className="h-3.5 w-3.5" />
-                            Счёт на оплату
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-[6px] bg-[#fafafa] p-3 border border-[#f0f0f0] space-y-1.5 text-xs">
-                      <span className="font-semibold text-[#111111] block">Условия гарантийного обслуживания</span>
-                      <p className="text-[#666666] leading-relaxed text-[11px]">
-                        Гарантийный срок на произведённые работы составляет 30 календарных дней с момента выдачи оборудования. Гарантия на установленные оригинальные запасные части предоставляется в соответствии с регламентом производителя.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Блок 3: Связанная сделка CRM */}
+                  {/* Блок 2: Связанная сделка CRM */}
                   <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
                     <div className="flex items-center justify-between pb-3 border-b border-[#f0f0f0]">
                       <div className="flex items-center gap-2">
@@ -1878,25 +1787,6 @@ export default function RepairDetailPage() {
         onClose={() => setCompanyPickerOpen(false)}
         currentCompanyId={ticket.company_id}
         onSelect={handleSelectCompany}
-      />
-      <InvoiceCreateModal
-        open={invoiceCreateOpen}
-        onClose={() => setInvoiceCreateOpen(false)}
-        onSubmit={() => setInvoiceCreateOpen(false)}
-        prefilled={[
-          ...ticket.work_items.map((wi) => ({
-            description: wi.description,
-            unit_price: wi.cost,
-            source: "repair_work" as const,
-            source_label: ticket.ticket_number,
-          })),
-          ...ticket.parts_used.map((pi) => ({
-            description: pi.name,
-            unit_price: pi.retail_price,
-            source: "repair_part" as const,
-            source_label: ticket.ticket_number,
-          })),
-        ]}
       />
       <ConfirmDialog
         open={pendingLeaveAction !== null}
