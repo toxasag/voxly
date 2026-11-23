@@ -345,7 +345,7 @@ export class CrmPipelineService {
          SELECT id FROM users
          WHERE tenant_id = $1 AND deleted_at IS NULL
            AND (
-             (telegram_chat_id IS NOT NULL AND telegram_chat_id <> '' AND telegram_chat_id = $2)
+             (telegram_chat_id IS NOT NULL AND telegram_chat_id::text = $2)
              OR ($3::text <> '' AND LOWER(telegram_username) = $3)
              OR ($4::text IS NOT NULL AND phone = $4)
            )
