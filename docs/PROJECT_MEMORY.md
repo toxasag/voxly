@@ -927,3 +927,32 @@
 - **Проверка:** `tsc` — 0 ошибок, тесты 15/15 pass, `next build` — 44/44 страниц ✅
 - **Примечание:** `autoActivatePending` использует случайно сгенерированный токен (не реальный Telegram-токен) — бот будет отображаться как connected, но реальные сообщения не придут до настройки webhook с настоящим токеном. Поведение задокументировано и соответствует spec.
 
+
+### 2026-11-23 — Полный охват индивидуальных квот и лимитов функций (Entitlements) и безлимит главного портала
+
+- **Контекст и задача:** На странице `/admin/tenants` в модальном окне управления тенантом («Индивидуальные квоты и лимиты функций / Entitlements») у главного портала платформы (`voxly` / `c0000000-0000-0000-0000-000000000001`) стояли галочки «Безлимитно», но на практике при создании или подключении ботов (Telegram-бот, MAX-бот), интеграций сайтов или каналов связи (Avito, Instagram) система выбрасывала ошибку исчерпания лимита (`CHANNEL_LIMIT_REACHED` / `QUOTA_EXCEEDED` / «По тарифу оплачено 1 подключение»). Требовалось выявить root cause, расширить блок квот всеми каналами и модулями из сайдбара и обеспечить гарантированный безлимит для главного портала.
+- **Root causes & архитектурные решения:**
+  1. В `SYSTEM_FEATURE_QUOTAS` присутствовали только 6 фичей (`webchat_widgets`, `ai_agents`, `telegram_channels`, `whatsapp_channels`, `max_channels`, `custom_pipelines`). Каналы `telegram_bot_channels`, `max_bot_channels`, `avito_channels`, `instagram_channels`, а также `site_integrations` отсутствовали в списке.
+  2. В методе `QuotaService.getCurrentUsage` отсутствовал подсчёт для неуказанных фичей (возвращался 0).
+  3. В методе `QuotaService.bulkUpdateTenantQuotas` синхронизация с `installed_modules.quantity` выполнялась только для 5 модулей; для `telegram_bot`, `max_bot`, `avito`, `instagram` в базе оставалось дефолтное `quantity = 1`.
+  4. В `QuotaService.checkQuota` отсутствовала системная защита для корневого портала платформы (`slug === 'voxly'` или id `c0000000-0000-0000-0000-000000000001`), из-за чего он подвергался обычным тарифным лимитам. Теперь для root-портала `isUnlimited = true` и `allowed = true` гарантируются безусловно.
+  5. В `backend/src/modules/channels/telegram-auth.service.ts` метод `assertQuotaAvailable` сравнивал количество только с `module.quantity`, игнорируя статус `is_unlimited` из `QuotaService`. Подключена проверка `quotaService.checkQuota(tenantId, "telegram_channels")`.
+  6. В `backend/src/modules/channels/sites/sites.service.ts` в метод `createSite` добавлена проверка `quotaService.assertQuota(tenantId, "site_integrations", "сайтов")`.
+  7. Создана миграция `0129_expand_feature_quotas_and_root_unlimited.sql`, наполняющая `tenant_feature_quotas` для главного портала всеми 11 фичами (`is_unlimited = true`, `max_limit = -1`) и устанавливающая `quantity = 999999` в `installed_modules` для всех каналов и модулей.
+  8. В UI (`TenantManageModal.tsx`):
+     - Добавлена кнопка «Снять все лимиты» (включает безлимит на все 11 позиций в один клик) и кнопка «Сброс».
+     - Для главного портала выводится специальный информационный статус Twenty CRM о неограниченном доступе.
+     - Список квот структурирован по категориям («Виджеты и сайты», «AI и боты», «Каналы связи и мессенджеры», «CRM и воронки») с системными иконками Lucide.
+  9. Написаны тесты `feature-quotas.test.ts` (покрытие всех 11 фичей, валидация схем и безлимита root-портала).
+- **Измененные/созданные файлы:**
+  - `backend/src/modules/quotas/quota.types.ts`
+  - `backend/src/modules/quotas/quota.service.ts`
+  - `backend/src/modules/channels/telegram-auth.service.ts`
+  - `backend/src/modules/channels/sites/sites.service.ts`
+  - `backend/src/db/migrations/0129_expand_feature_quotas_and_root_unlimited.sql` _(new)_
+  - `backend/src/tests/feature-quotas.test.ts` _(new)_
+  - `frontend/src/components/admin/TenantManageModal.tsx`
+- **Проверка и деплой:**
+  - Тесты `node --test`: 18/18 pass ✅
+  - `next build`: 44/44 страницы собрано ✅
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY` выполнен успешно (миграция 155 применена, контейнеры healthy, HTTP 200 на api и frontend).
