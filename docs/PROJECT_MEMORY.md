@@ -713,3 +713,19 @@
   1. Убрана лишняя кнопка «Создать счёт» из верхней панели действий наряда и связанная с ней мёртвая обвязка (`InvoiceCreateModal`, `invoiceCreateOpen`, неиспользуемый импорт `ShieldCheck`). Работа со счетами во вкладке «Финансы» (`FinancialSummary.tsx`) полностью сохранена.
   2. На вкладке «Данные заказа» удалён дублирующий блок «Документооборот и гарантия» (печатные формы уже вынесены в верхнюю панель) — оставшиеся 4 карточки образуют ровную сетку 2×2.
   3. Установлен строгий порядок вкладок: `Данные заказа` → `Работы и запчасти` → `Финансы` → `Чат` → `Заметки` → `История`.
+
+
+### 2026-11-23 — Исправление потери входящих Telegram-сообщений (сделка `b64d69b3`, `yandex-eda`) и починка Realtime SSE (`Telegram / MAX / WhatsApp`)
+- **Root causes (подтверждены БД, логами и git-таймлайном):**
+  1. **Окно перезапуска и отсутствие gap-recovery в `TelegramTransportService`:** клиент ответил в Telegram (`external_message_id: 43`, `2026-11-23 10:43:48 UTC`) ровно через 17 секунд после пересборки/рестарта `getvoxly-backend-1` (`f0c59ca` в `10:43:31 UTC`), во время `STARTUP_DELAY_MS = 15_000`. GramJS `StringSession` не сохраняет MTProto `pts/qts`, при подключении не выполнялся догоняющий `getDialogs`/`getMessages`, `resync()` не проверял `client.connected` (мёртвый сокет оставался в `connections`), а текстовые входящие 15–20 секунд висели в оперативном `IncomingMessageBuffer` (сброс буфера при `stop()`).
+  2. **Сломанный Realtime SSE (`/api/v1/crm/chat/stream`) и отсутствие события `message_created`:**
+     - `CrmPipelineService.processIncoming` и `processNativeOutbound` не эмитили `chatEventBus.emitChatEvent({ type: "message_created" })`.
+     - `chat-stream.routes.ts` писал в `reply.raw` без `reply.hijack()` и без CORS-заголовков, из-за чего Fastify закрывал поток.
+     - `use-chat-stream.ts` не передавал `?token=` в `EventSource` (кросс-доменная авторизация `yandex-eda.getvoxly.ru` → `api.getvoxly.ru` падала с 401) и переподключал `EventSource` каждые 5 секунд из-за нестабильных колбэков в `useEffect`.
+     - `CrmChatView.tsx` вообще не передавал `onMessage` в `useChatStream`.
+  3. **Асимметрия идемпотентности:** live-пути Telegram, MAX и WhatsApp не записывали `external_message_id` в `deal_messages.metadata`, а `syncDialogHistory`/`syncWhatsappDialogHistory` не исключали `delivery_status <> 'failed'`.
+- **Исправлено:**
+  - `backend/src/modules/crm/crm-pipeline.service.ts`: добавлены `externalMessageId` и `messageTimestamp`, точная дедупликация по `metadata->>'external_message_id'` (с исключением `failed`) и мгновенный `chatEventBus.emitChatEvent({ type: "message_created" })` после коммита в `processIncoming` и `processNativeOutbound`.
+  - `backend/src/modules/channels/telegram-transport.service.ts` + `incoming-buffer.ts`: мгновенная запись текстовых входящих в CRM (буфер оставлен только для AI-дебаунса), `STARTUP_DELAY_MS = 3_000`, `connectionRetries = 10`, автодетект разорванных сокетов в `resync()`, `recoverMissedMessages` (gap-recovery при старте/реконнекте и раз в 2 минуты по `last_sync_at` с идемпотентностью по `external_message_id`), `delivery_status <> 'failed'` в `syncDialogHistory`.
+  - `backend/src/modules/channels/max-integration.routes.ts` и `whatsapp-integration.routes.ts`: передача `externalMessageId` в live-вебхуках (`processIncoming` / `processNativeOutbound`), `delivery_status <> 'failed'` в `syncWhatsappDialogHistory`.
+  - `backend/src/modules/crm/chat/chat-stream.routes.ts`, `frontend/src/lib/api/use-chat-stream.ts`, `frontend/src/components/crm/shared/CrmChatView.tsx`: `reply.hijack()` + CORS на `reply.raw`, `?token=` для `EventSource`, стабильные ref-колбэки с автореконнектом, привязка `onMessage` к инвалидации чата сделки/контакта и inbox.

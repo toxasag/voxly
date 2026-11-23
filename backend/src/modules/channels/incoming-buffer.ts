@@ -64,6 +64,9 @@ export interface BufferedIncoming {
   messageCount: number;
   firstMessageAt: Date;
   sourceMetadata?: Record<string, unknown>;
+  alreadyPersisted?: boolean;
+  dealId?: string | null;
+  contactId?: string | null;
 }
 
 interface BufferEntry {
@@ -79,6 +82,9 @@ interface BufferEntry {
   /** Абсолютный дедлайн от первого сообщения: продление не должно его обходить. */
   hardDeadlineAt: number;
   sourceMetadata?: Record<string, unknown>;
+  alreadyPersisted?: boolean;
+  dealId?: string | null;
+  contactId?: string | null;
 }
 
 interface Logger {
@@ -122,6 +128,9 @@ export class IncomingMessageBuffer {
     peerId: string;
     text: string;
     sourceMetadata?: Record<string, unknown>;
+    alreadyPersisted?: boolean;
+    dealId?: string | null;
+    contactId?: string | null;
   }): void {
     const key = bufferKey(input);
     const now = Date.now();
@@ -140,11 +149,20 @@ export class IncomingMessageBuffer {
         hardDeadlineAt: now + DEBOUNCE_MAX_TOTAL_MS,
         timer: this.arm(key, nextDelayMs()),
         sourceMetadata: input.sourceMetadata,
+        alreadyPersisted: input.alreadyPersisted,
+        dealId: input.dealId,
+        contactId: input.contactId,
       };
 
       this.entries.set(key, entry);
       return;
     }
+
+    if (input.alreadyPersisted !== undefined) {
+      existing.alreadyPersisted = existing.alreadyPersisted !== false && input.alreadyPersisted;
+    }
+    if (input.dealId) existing.dealId = input.dealId;
+    if (input.contactId) existing.contactId = input.contactId;
 
     if (input.sourceMetadata && Object.keys(input.sourceMetadata).length > 0) {
       existing.sourceMetadata = {
@@ -223,6 +241,9 @@ export class IncomingMessageBuffer {
         messageCount: entry.parts.length,
         firstMessageAt: entry.firstMessageAt,
         sourceMetadata: entry.sourceMetadata,
+        alreadyPersisted: entry.alreadyPersisted,
+        dealId: entry.dealId,
+        contactId: entry.contactId,
       });
     } catch (error) {
       // Ошибка ответа не должна ронять слушателя: следующее сообщение клиента

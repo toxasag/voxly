@@ -914,10 +914,14 @@ export function CrmChatView({
     }
   }, [entityId, isDeal, messagesQuery.data]);
 
-  // Realtime события через SSE
+  // Realtime события через SSE (включая мгновенную инвалидацию при входящем message_created)
   useChatStream({
     dealId: isDeal ? entityId : undefined,
-    enabled: Boolean(entityId && isDeal),
+    enabled: Boolean(entityId),
+    onMessage: () => {
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", entityType, entityId] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+    },
     onDeliveryUpdate: () => {
       void queryClient.invalidateQueries({ queryKey: ["crm-chat", entityType, entityId] });
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
