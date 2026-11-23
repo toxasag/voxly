@@ -1156,3 +1156,37 @@
   - Проверка инъекции в системный промпт: `<approved_company_profile>` успешно встраивается с высшим приоритетом ✅
   - Проверка изоляции диалогов MPRO: Пхукет — 45 сообщений, Бали — 332 сообщения, синтезированы 3 документа базы знаний для Пхукета ✅
 
+
+---
+
+### 24.11.2026 — Полноценная поддержка Telegram Business Chatbots (режим секретаря)
+- **Контекст и скриншоты пользователя:**
+  - Пользователь подключил бота `@frilanshanter2_bot` через интерфейс Telegram в меню «Автоматизация чатов» (Telegram Business Chatbots / «Подключите бота, который будет отвечать на сообщения от Вашего имени»).
+  - При отправке исходящего сообщения («Привет» / «HI») сделка не создавалась (ожидаемо).
+  - При входящем ответе от собеседника («как ты» / «Hello») сделка также не создавалась.
+- **Root Cause:**
+  1. При подключении бота в «Автоматизации чатов» Telegram использует Telegram Business Bot API:
+     - Обновления приходят как `business_connection` и `business_message` (а не стандартный `message`).
+     - Ранее в `setWebhook` параметр `allowed_updates` был жестко задан как `["message", "edited_message"]`, из-за чего Telegram намеренно отбрасывал все бизнес-события!
+     - В роуте вебхука проверялись только `update.message` и `update.edited_message`, обновления `business_message` игнорировались.
+  2. Запросы к `deals` и `deal_messages` содержали неверные имена колонок (`chat_thread_id` вместо `channel_thread_id`, `contact_id` вместо `client_id`, `source`/`direction`/`content` вместо `sender_type`/`is_outbound`/`body`), из-за чего при наличии сделки падала ошибка БД.
+  3. Частые вызовы `setWebhook` на каждый рестарт триггерили лимит Telegram Bot API (HTTP 429 Too Many Requests).
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Добавлена константа `ALLOWED_UPDATES = ["message", "edited_message", "business_connection", "business_message", "edited_business_message", "deleted_business_messages"]`.
+     - Метод `sendMessage` расширен поддержкой `options.business_connection_id` (необходим для отправки от имени бизнес-аккаунта в личный диалог).
+     - Метод `sendOutbound` автоматически извлекает `business_connection_id` из настроек аккаунта.
+     - Метод `syncActiveWebhooks` сначала вызывает `getWebhookInfo` и пропускает `setWebhook`, если URL и allowed_updates уже актуальны.
+  2. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Обработка `business_connection`: автоматическое сохранение `business_connection_id`, `business_user_id` и прав в credentials аккаунта в контексте тенанта.
+     - Обработка `business_message`:
+       - Определение исходящего сообщения оператора (сверка с `business_user_id`, а также аккаунтами и пользователями тенанта).
+       - Если оператор пишет первым: сделка и контакт НЕ создаются, сообщение буферизуется в Redis (`tg_biz_pending:${id}:${chatId}`, TTL 7 дней), AI агент не вызывается.
+       - Если сообщение входящее от клиента: CRM создает контакт и сделку для собеседника (не для владельца!), из Redis выгружаются предшествующие сообщения оператора в `deal_messages`, вызывается AI-агент, и его ответ отправляется в чат через `sendMessage` с `business_connection_id`.
+- **Верификация:**
+  - TypeScript build backend (`npm --prefix backend run build`): 0 ошибок ✅
+  - Next.js build frontend (`npm --prefix frontend run build`): 45/45 static pages ✅
+  - Деплой на боевой сервер (`vf-deploy GETVOXLY`): backend и frontend healthy ✅
+  - Тест 1 (исходящее от оператора «HI»): сделка не создана, сообщение успешно сохранено в Redis ✅
+  - Тест 2 (входящее от клиента «Hello»): создана сделка «Заявка от Geh (telegram_bot)», привязана реплика оператора («HI»), реплика клиента («Hello»), AI-агент сгенерировал релевантный ответ и отправил его в диалог ✅
+  - Тестовые записи удалены из базы ✅
