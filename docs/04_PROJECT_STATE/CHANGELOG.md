@@ -1,3 +1,11 @@
+### Added · Склад и наряды на ремонт: статус резерва и закупки (2026-11-23)
+
+- **Warehouse Items Status**: В `GET /api/v1/warehouse/items` добавлены поля `reserved`, `status` и `stockStatus` (`"reserved" | "in_stock" | "out_of_stock"`).
+- **Bulk Purchase Requests**: Добавлен эндпоинт `POST /api/v1/purchase-requests` с поддержкой массива `itemIds` для создания заявок на закупку.
+- **Floating Action Bar**: На странице `/warehouse` добавлена кнопка «Сформировать заявку» для выбранных позиций со статусом резерва или дефицитом.
+- **Sorting in Warehouse**: Интерактивная сортировка таблицы склада по каждому из 9 заголовков с сохранением направления.
+- **PartsTable Out-of-Stock**: В таблице запчастей карточки ремонта `/repairs/[id]` добавлен бейдж «Нет в наличии» и действие «Отметить для заказа» / «В закупке».
+
 ### Added · Security notifications — пароль изменён (2026-10-28)
 
 Добавлен брендированный `sendPasswordChangedEmail`. Уведомление отправляется

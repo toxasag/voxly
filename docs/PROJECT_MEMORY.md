@@ -803,5 +803,24 @@
   - `frontend/src/components/repairs/detail/PartsTable.tsx`: кнопка добавления в шапке, опция в автокомплите склада, интеграция `PartAddModal`.
   - `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`: кнопка «Добавить запчасть» в основном тулбаре наряда и рендеринг модала.
 
+### 2026-11-23 — Статус резерва позиций склада, массовые заявки на закупку, индикация дефицита в наряде и сортировка
+- **Контекст и задача:** Реализовать отображение статуса доступности и резерва (`in_stock`, `reserved`, `out_of_stock`) в `GET /api/v1/warehouse/items`; бизнес-логику создания заявок на закупку через `POST /api/v1/purchase-requests` по массиву `itemIds`; кнопку «Сформировать заявку» в плавающей панели действий `/warehouse` (активную при наличии резерва или дефицита); бейдж «Нет в наличии» и действие «Отметить для заказа» / «В закупке» в `PartsTable` наряда на ремонт `/repairs/[id]`; интерактивную сортировку по колонкам таблицы склада.
+- **Root causes & архитектурные решения:**
+  1. В `warehouse_items` добавлена колонка `reserved BOOLEAN NOT NULL DEFAULT false` (миграция `0127_warehouse_item_reserved_status.sql`). В методах `listItems` и `getItem` добавлено вычисление `status` / `stockStatus` (`"reserved" | "in_stock" | "out_of_stock"`) на основе `reservedStock > 0 || reserved = true` и `availableStock > 0`.
+  2. В `warehouseService.createBulkPurchaseRequests` и роуте `POST /api/v1/purchase-requests` реализована пакетная генерация заявок на закупку по массиву `itemIds` с расчетом необходимого количества (дефицит либо количество резерва) и привязкой к тенанту.
+  3. В плавающей панели действий на `/warehouse` добавлена кнопка «Сформировать заявку» с иконкой `ShoppingCart` и защитой от вызова без выделенных резервных/дефицитных позиций.
+  4. В `PartsTable.tsx` добавлен расчет дефицита по справочнику склада (`availableStock <= 0`), отображение бейджа «Нет в наличии» в Twenty CRM палитре (`bg-rose-50 text-rose-700 border-rose-200`) и кнопка «Отметить для заказа» с созданием заявки на закупку и статусом «В закупке».
+  5. В таблице `/warehouse` реализована сортировка по каждому из 9 столбцов (`sku`, `name`, `category`, `brand`, `totalStock`, `reservedStock`, `availableStock`, `costPrice`, `retailPrice`) с визуальными индикаторами направления сортировки (`ArrowUp`, `ArrowDown`, `ArrowUpDown`).
+- **Измененные файлы:**
+  - `backend/src/db/migrations/0127_warehouse_item_reserved_status.sql`: миграция добавления колонки `reserved`.
+  - `backend/src/db/schema.sql`: добавление `reserved BOOLEAN` в `warehouse_items`.
+  - `backend/src/modules/warehouse/warehouse.types.ts`: добавление полей `reserved`, `status`, `stockStatus` в DTO и схемы создания/обновления.
+  - `backend/src/modules/warehouse/warehouse.service.ts`: расчет статусов, выборка `reserved`, методы `isReserved` и `createBulkPurchaseRequests`.
+  - `backend/src/modules/warehouse/warehouse.routes.ts`: поддержка массового создания заявок через `POST /purchase-requests`.
+  - `backend/src/app.ts`: прямой алиас `POST /api/v1/purchase-requests` с `authenticatePlugin`.
+  - `frontend/src/lib/api/use-warehouse.ts`: расширение `WarehouseItemDTO` и хук `useBulkCreatePurchaseRequests`.
+  - `frontend/src/app/(dashboard)/warehouse/page.tsx`: сортировка по всем колонкам таблицы, кнопка «Сформировать заявку» в плавающей панели.
+  - `frontend/src/components/repairs/detail/PartsTable.tsx`: бейдж «Нет в наличии», быстрое действие «Отметить для заказа» / индикатор «В закупке».
+
 
 
