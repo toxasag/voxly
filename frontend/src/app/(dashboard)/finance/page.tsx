@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { BalanceCards } from "@/components/finance/BalanceCards";
+import { CreateAccountModal } from "@/components/finance/CreateAccountModal";
 import { TransactionsTable } from "@/components/finance/TransactionsTable";
 import { CreateTransactionModal } from "@/components/finance/CreateTransactionModal";
 import { TransferModal } from "@/components/finance/TransferModal";
@@ -134,6 +135,7 @@ function toInvoice(dto: InvoiceDTO): Invoice {
 function FinancePageContent() {
   const [tab, setTab] = useState<FinanceTab>("transactions");
   const [txModalOpen, setTxModalOpen] = useState(false);
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
   const [invoiceViewId, setInvoiceViewId] = useState<string | null>(null);
@@ -474,7 +476,7 @@ function FinancePageContent() {
           <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs"><div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-[#4a38f5]" /></div><span className="text-xs font-medium text-[#666666]">Чистая прибыль</span></div><p className={cn("mt-2 text-2xl font-bold", monthlyPnL >= 0 ? "text-emerald-600" : "text-rose-600")}>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyPnL)}</p></div>
         </div>
 
-        <BalanceCards accounts={accounts} />
+        <BalanceCards accounts={accounts} onAddAccount={() => setAccountModalOpen(true)} />
 
         {/* Tab Switcher */}
         <div className="flex items-center gap-1 rounded-lg bg-white border border-[#e5e5e5] p-1 w-fit">
@@ -525,6 +527,7 @@ function FinancePageContent() {
           accounts={accounts}
           onOpenCategories={() => setCategoriesModalOpen(true)}
         />
+        <CreateAccountModal open={accountModalOpen} onClose={() => setAccountModalOpen(false)} />
         <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSubmit={handleTransfer} accounts={accounts} />
         <InvoiceCreateModal open={invoiceCreateOpen} onClose={() => setInvoiceCreateOpen(false)} onSubmit={handleCreateInvoice} />
         <InvoiceEditModal

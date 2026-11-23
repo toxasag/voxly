@@ -301,6 +301,70 @@ export class FinanceOrganizationsService {
     });
   }
 
+  /**
+   * Синхронизирует расчётный счёт организации (`bank_name` + `settlement_account`)
+   * с безналичным счётом (`account_type = 'bank'`) в `cash_accounts`, чтобы
+   * карточка расчётного счёта автоматически появлялась на главной странице «Финансы».
+   */
+  private async syncOrganizationBankAccountInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    org: OrgRow,
+  ): Promise<void> {
+    const cleanBank = (org.bank_name || "").trim();
+    const cleanSettlement = (org.settlement_account || "").trim();
+    if (!cleanBank && !cleanSettlement) return;
+
+    const displayName = cleanBank ? `Расчётный счёт (${cleanBank})` : "Расчётный счёт";
+
+    const existingByOrg = await tx.queryOne<{ id: string }>(
+      `SELECT id
+       FROM cash_accounts
+       WHERE tenant_id = $1 AND organization_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tenantId, org.id],
+    );
+
+    if (existingByOrg) {
+      await tx.query(
+        `UPDATE cash_accounts
+         SET name = $3, account_number = $4, updated_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, existingByOrg.id, displayName, cleanSettlement],
+      );
+      return;
+    }
+
+    if (cleanSettlement) {
+      const existingByNumber = await tx.queryOne<{ id: string }>(
+        `SELECT id
+         FROM cash_accounts
+         WHERE tenant_id = $1
+           AND account_type = 'bank'
+           AND organization_id IS NULL
+           AND trim(account_number) = $2
+           AND deleted_at IS NULL
+         LIMIT 1`,
+        [tenantId, cleanSettlement],
+      );
+      if (existingByNumber) {
+        await tx.query(
+          `UPDATE cash_accounts
+           SET organization_id = $3, name = $4, account_number = $5, updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, existingByNumber.id, org.id, displayName, cleanSettlement],
+        );
+        return;
+      }
+    }
+
+    await tx.query(
+      `INSERT INTO cash_accounts (tenant_id, organization_id, name, account_type, account_number, currency, balance, is_default)
+       VALUES ($1, $2, $3, 'bank', $4, 'RUB', 0, false)`,
+      [tenantId, org.id, displayName, cleanSettlement],
+    );
+  }
+
   async create(
     tenantId: string,
     payload: CreateOrganizationPayload,
@@ -387,6 +451,8 @@ export class FinanceOrganizationsService {
         ],
       );
 
+      await this.syncOrganizationBankAccountInTx(tx, tenantId, row);
+
       return toDto(row);
     });
   }
@@ -469,7 +535,10 @@ export class FinanceOrganizationsService {
       if (payload.elba_auto_sync_invoices !== undefined)
         push("elba_auto_sync_invoices", payload.elba_auto_sync_invoices);
 
-      if (sets.length === 0) return toDto(current);
+      if (sets.length === 0) {
+        await this.syncOrganizationBankAccountInTx(tx, tenantId, current);
+        return toDto(current);
+      }
       sets.push("updated_at = now()");
 
       const row = await tx.queryOneOrThrow<OrgRow>(
@@ -479,6 +548,8 @@ export class FinanceOrganizationsService {
          RETURNING ${ORG_COLS}`,
         params,
       );
+
+      await this.syncOrganizationBankAccountInTx(tx, tenantId, row);
 
       return toDto(row);
     });
