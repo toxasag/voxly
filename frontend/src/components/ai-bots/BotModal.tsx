@@ -74,7 +74,7 @@ const ACCENTS: { value: CreateBotPayload["accent"]; swatch: string }[] = [
 const DEFAULT_VALUES: CreateBotPayload = {
   name: "Ассистент",
   description: "Консультирует клиентов по услугам, отвечает на вопросы и квалифицирует лиды",
-  model: "gemini-3.5-flash",
+  model: "glm-4.5",
   mode: "autoreply",
   status: "active",
   accent: "amber",
@@ -88,9 +88,9 @@ const DEFAULT_VALUES: CreateBotPayload = {
   whatsapp_chat_text: "",
   company_name_override: "",
   consultant_source: "manual",
-  consultant_name: "Алексей",
-  consultant_role: "ведущий специалист",
-  fallback_models: ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
+  consultant_name: "Даниил",
+  consultant_role: "Онлайн-консультант",
+  fallback_models: ["qwen3.8-27b", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
   target_page_url: "",
   generated_system_prompt: "",
   knowledge_base_md: "",
@@ -184,6 +184,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
   const tenantName = tenant?.tenantName ?? "Компания";
 
   const [showTechnicalParams, setShowTechnicalParams] = useState(false);
+  const [showAdvancedForNew, setShowAdvancedForNew] = useState(false);
   const [promptTab, setPromptTab] = useState<"wizard" | "editor" | "feedbacks">("wizard");
   const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
@@ -245,6 +246,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
     if (!open) return;
     form.reset(bot !== null ? toFormValues(bot) : DEFAULT_VALUES);
     setShowTechnicalParams(false);
+    setShowAdvancedForNew(false);
     setPromptTab(bot?.wizard_config?.isCustomEdited ? "editor" : "wizard");
     setPendingPreset(null);
   }, [open, bot, form]);
@@ -364,8 +366,10 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
     if (modelsList.length > 0) {
       const currentModel = form.getValues("model");
       const isKnown = modelsList.some((m) => m.id === currentModel);
-      if (!isKnown || currentModel === "gpt-4o-mini") {
+      if (!isKnown || currentModel === "gpt-4o-mini" || currentModel === "gemini-3.5-flash-lite") {
         const preferred =
+          modelsList.find((m) => m.id === "glm-4.5")?.id ??
+          modelsList.find((m) => m.id === "qwen3.8-27b")?.id ??
           modelsList.find((m) => m.id === activeProvider?.chatModel)?.id ??
           modelsList[0]?.id;
         if (preferred && preferred !== currentModel) {
@@ -528,6 +532,146 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
       <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
         <form onSubmit={form.handleSubmit(submit, onInvalid)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            {!isEdit && !showAdvancedForNew ? (
+              <div className="space-y-4">
+                <div className="rounded-[10px] border border-[#4a38f5]/20 bg-[#4a38f5]/[0.02] p-5 space-y-4 shadow-2xs">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-[#4a38f5]/10 text-[#4a38f5]">
+                      <Sparkles className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-[#111111]">
+                        Быстрый старт: Создание AI-консультанта
+                      </h3>
+                      <p className="text-xs text-[#666666] mt-0.5 leading-relaxed">
+                        Достаточно указать название компании, сайт и имя ассистента. Агент сразу начнет отвечать как живой человек, а тонкие настройки всегда доступны по кнопке «Конфигурация».
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 1. Название компании */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-xs font-semibold text-[#111111]">
+                      1. Название компании
+                    </label>
+                    <input
+                      type="text"
+                      value={companyNameOverride}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        form.setValue("company_name_override", val, { shouldDirty: true, shouldValidate: true });
+                        const currentWc = form.getValues("wizard_config") || {};
+                        form.setValue("wizard_config", { ...currentWc, companyName: val, company_name_override: val }, { shouldDirty: true });
+                        const currentName = form.getValues("name");
+                        if (!currentName || currentName === "Ассистент" || currentName.startsWith("Консультант ")) {
+                          form.setValue("name", val.trim() ? `Консультант ${val.trim()}` : "Ассистент", { shouldDirty: true });
+                        }
+                      }}
+                      placeholder={tenantName || "Например: MPRO или Team BiG"}
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    />
+                    <p className="text-[11px] text-[#888888]">
+                      Переменная {"{{tenant.name}}"} — агент будет представляться сотрудником этой компании.
+                    </p>
+                  </div>
+
+                  {/* 2. Сайт компании */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-[#111111]">
+                      2. Сайт компании (для базы знаний)
+                    </label>
+                    <input
+                      type="text"
+                      {...form.register("target_page_url")}
+                      placeholder="https://example.com"
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    />
+                    <p className="text-[11px] text-[#888888]">
+                      Система соберет материалы с сайта для базы знаний и подготовит проект паспорта компании.
+                    </p>
+                  </div>
+
+                  {/* 3. Имя консультанта */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-[#111111]">
+                        3. Имя ассистента (консультанта)
+                      </label>
+                      {webchatConsultantName && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            form.setValue("consultant_name", webchatConsultantName, { shouldDirty: true });
+                            form.setValue("consultant_source", "chat_widget", { shouldDirty: true });
+                            toast.success(`Имя «${webchatConsultantName}» подставлено из виджета сайта!`);
+                          }}
+                          className="text-[11px] font-medium text-[#4a38f5] hover:underline cursor-pointer"
+                        >
+                          Взять из виджета сайта («{webchatConsultantName}»)
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      {...form.register("consultant_name")}
+                      placeholder="Даниил"
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    />
+                    <p className="text-[11px] text-[#888888]">
+                      Имя реального или виртуального специалиста, от лица которого бот ведет диалог.
+                    </p>
+                  </div>
+
+                  {/* 4. Модель интеллекта */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-[#111111]">
+                      4. Модель интеллекта (приоритет NoirLight с авто-фоллбэком на Gemini)
+                    </label>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => form.setValue("model", e.target.value as BotModel, { shouldValidate: true, shouldDirty: true })}
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    >
+                      {modelsList.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label} ({getProviderLabel(m.provider)})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-[#888888]">
+                      При сбоях или перегрузках модели запрос мгновенно переключается на резервные ключи Gemini.
+                    </p>
+                  </div>
+
+                  {/* Кнопка раскрытия расширенных настроек */}
+                  <div className="pt-2 border-t border-[#e5e5e5]">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedForNew(true)}
+                      className="text-xs font-medium text-[#4a38f5] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Sliders className="h-3.5 w-3.5" />
+                      Показать расширенную конфигурацию (Промпт, Роль, CRM-контекст) ↓
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                {!isEdit && (
+                  <div className="flex items-center justify-between pb-2 border-b border-[#e5e5e5]">
+                    <span className="text-xs font-semibold text-[#111111]">
+                      Расширенная конфигурация агента
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedForNew(false)}
+                      className="text-xs text-[#4a38f5] hover:underline cursor-pointer"
+                    >
+                      ← Вернуться к простому режиму
+                    </button>
+                  </div>
+                )}
             {/* Название + Акцент */}
             <div className="grid grid-cols-[1fr_auto] gap-4">
               <div className="space-y-1.5">
@@ -1572,7 +1716,9 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                 </div>
               )}
             </div>
-          </div>
+          </>
+        )}
+      </div>
 
           {/* Footer */}
           <div className="sticky bottom-0 flex items-center justify-between border-t border-[#e5e5e5] bg-white px-6 py-4">

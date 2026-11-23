@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  ShieldCheck,
   Sparkles,
   Star,
   Trash2,
@@ -32,6 +33,9 @@ import {
   useAddKnowledgeText,
   useAgentFeedbacks,
   useApproveFeedback,
+  useCompanyProfile,
+  useSynthesizeCompanyProfile,
+  useApproveCompanyProfile,
   useCrawlSite,
   useCrawlStatus,
   useCrmKnowledgeStats,
@@ -191,7 +195,20 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const rebuildPrompt = useRebuildAgentPrompt(agentId);
   const syncKnowledgeMd = useSyncKnowledgeMd(agentId);
 
-  const [activeSubTab, setActiveSubTab] = useState<"documents" | "markdown" | "feedback" | "sales" | "inspector">("documents");
+  const { data: profileData, isLoading: isProfileLoading } = useCompanyProfile(agentId);
+  const synthesizeProfileMutation = useSynthesizeCompanyProfile(agentId);
+  const approveProfileMutation = useApproveCompanyProfile(agentId);
+
+  const [activeSubTab, setActiveSubTab] = useState<"documents" | "profile" | "markdown" | "feedback" | "sales" | "inspector">("documents");
+  const [profileSummary, setProfileSummary] = useState("");
+  const [isProfileDirty, setIsProfileDirty] = useState(false);
+
+  useEffect(() => {
+    if (profileData?.summary !== undefined && !isProfileDirty) {
+      setProfileSummary(profileData.summary || "");
+    }
+  }, [profileData, isProfileDirty]);
+
   const [markdownContent, setMarkdownContent] = useState("");
   const [isMarkdownDirty, setIsMarkdownDirty] = useState(false);
   const [feedbackFilter, setFeedbackFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
@@ -489,6 +506,28 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
         >
           <FileText className="h-3.5 w-3.5" />
           Документы и файлы ({documents.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("profile")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "profile"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Паспорт компании (Саммери)
+          {profileData?.isApproved ? (
+            <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] text-emerald-700 font-medium">
+              Утверждён
+            </span>
+          ) : profileData?.summary ? (
+            <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-700 font-medium">
+              На проверке
+            </span>
+          ) : null}
         </button>
         <button
           type="button"
@@ -1142,6 +1181,130 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Вкладка: ПАСПОРТ КОМПАНИИ (САММЕРИ БАЗЫ ЗНАНИЙ) */}
+      {activeSubTab === "profile" && (
+        <div className="space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4 shadow-2xs">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-[#4a38f5]/10 text-[#4a38f5] border border-[#4a38f5]/20">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-[#111111]">
+                    Паспорт компании для AI-консультанта
+                  </h3>
+                  {profileData?.isApproved ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                      <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                      Утверждено
+                      {profileData.approvedAt && ` (${new Date(profileData.approvedAt).toLocaleDateString("ru-RU")})`}
+                    </span>
+                  ) : profileData?.summary ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                      <AlertTriangle className="h-3 w-3 text-amber-600" />
+                      Ожидает утверждения
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                      Не сформировано
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-[#666666] leading-relaxed max-w-2xl">
+                  Единое утверждённое резюме о вашей компании: бренд, сфера деятельности, прайс, услуги, контакты и правила.
+                  Обладает наивысшим приоритетом над сырыми документами RAG и исключает галлюцинации со сторонними брендами.
+                </p>
+              </div>
+            </div>
+
+            {canEdit && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await synthesizeProfileMutation.mutateAsync();
+                      setProfileSummary(res.summary);
+                      setIsProfileDirty(true);
+                      toast.success(
+                        `Саммери успешно сформировано из ${res.documentsCount} документов! Проверьте и нажмите «Утвердить».`,
+                      );
+                    } catch (err: unknown) {
+                      toast.error(err instanceof Error ? err.message : "Не удалось сформировать саммери");
+                    }
+                  }}
+                  disabled={synthesizeProfileMutation.isPending || isBusy}
+                  className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] disabled:opacity-50 cursor-pointer shadow-2xs"
+                >
+                  {synthesizeProfileMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  )}
+                  Сформировать из базы знаний
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!profileSummary.trim()) {
+                      toast.error("Текст паспорта не может быть пустым");
+                      return;
+                    }
+                    try {
+                      await approveProfileMutation.mutateAsync({ summary: profileSummary });
+                      setIsProfileDirty(false);
+                      toast.success("Паспорт компании успешно утверждён! Агент теперь опирается строго на эти данные.");
+                    } catch (err: unknown) {
+                      toast.error(err instanceof Error ? err.message : "Не удалось утвердить паспорт");
+                    }
+                  }}
+                  disabled={approveProfileMutation.isPending || !profileSummary.trim()}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer shadow-2xs"
+                >
+                  {approveProfileMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  Утвердить паспорт компании
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-[#111111]">
+                Содержание паспорта компании (Markdown)
+              </label>
+              {isProfileDirty && (
+                <span className="text-[11px] font-medium text-amber-600">
+                  Есть несохранённые правки — нажмите «Утвердить» для применения
+                </span>
+              )}
+            </div>
+
+            <textarea
+              value={profileSummary}
+              onChange={(e) => {
+                setProfileSummary(e.target.value);
+                setIsProfileDirty(true);
+              }}
+              placeholder={`# Паспорт компании: [Название бренда]\n\n## 1. О компании и специализация\n...\n\n## 2. Услуги и прайс-лист\n...\n\n## 3. График работы и контакты\n...\n\n## 4. Ограничения консультанта\n...`}
+              disabled={!canEdit}
+              rows={20}
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4 text-xs font-mono leading-relaxed text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+            />
+
+            <div className="rounded-[6px] border border-blue-100 bg-blue-50/50 p-3 text-[11px] text-[#555555] leading-relaxed">
+              💡 <strong>Как это защищает от ошибок:</strong> Когда клиент задает вопросы («как вас зовут?», «какие цены?», «где находитесь?», «какие реквизиты?»), агент в первую очередь берёт факты из этого утвержденного паспорта. Если в старых загруженных коммерческих предложениях или сметах фигурировали чужие реквизиты или субподрядчики, бот их проигнорирует.
+            </div>
           </div>
         </div>
       )}
