@@ -86,7 +86,13 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
   app.post("/accounts/:id/auto-activate", { onRequest: guards }, async (request, reply) => {
     const { id } = accountParamsSchema.parse(request.params);
     const body = autoActivateBotSchema.parse(request.body ?? {});
-    const account = await service.autoActivatePending(request.tenant_id, id, body.name);
+    const account = await service.autoActivatePending(
+      request.tenant_id,
+      id,
+      body.name,
+      body.token,
+      body.bot_id,
+    );
     return reply.send({ data: account });
   });
 }

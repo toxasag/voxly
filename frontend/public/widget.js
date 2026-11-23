@@ -2302,7 +2302,7 @@
     var pendingQueueWhileReplying = [];
     var sendTimer = null;
     var proactiveTimer = null;
-    var BUFFER_WAIT_MS = 3500;
+    var BUFFER_WAIT_MS = 1750;
 
     // Ненавязчивый сбор точных GPS-координат (только если разрешение уже выдано пользователем ранее)
     var clientGpsCoords = null;
@@ -3089,7 +3089,7 @@
           textEl.appendChild(cursorSpan);
 
           var charIdx = 0;
-          var speed = 25;
+          var speed = 12;
           function typeNextChar() {
             if (charIdx < text.length) {
               charIdx++;
@@ -4484,7 +4484,7 @@
               ) {
                 continue;
               }
-              var typingDelay = Math.min(Math.max(replyText.length * 6, 200), 700);
+              var typingDelay = Math.min(Math.max(Math.round(replyText.length * 3), 100), 350);
 
               showTypingIndicator(true, t('typingText'));
               await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
@@ -4492,7 +4492,7 @@
 
               saveAndRenderMessage(replyText, false);
               if (i < result.replies.length - 1) {
-                await new Promise(function (resolve) { setTimeout(resolve, 300); });
+                await new Promise(function (resolve) { setTimeout(resolve, 150); });
               }
             }
           } else if (result && result.status === 'operator_needed') {
@@ -4532,7 +4532,7 @@
             pendingQueueWhileReplying = [];
             clearTimeout(sendTimer);
             showTypingIndicator(true, t('typingText'));
-            sendTimer = setTimeout(flushMessageBuffer, 3000);
+            sendTimer = setTimeout(flushMessageBuffer, 1500);
           }
         }
       }
