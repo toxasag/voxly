@@ -417,6 +417,8 @@ CREATE TABLE IF NOT EXISTS deals (
   position DOUBLE PRECISION NOT NULL DEFAULT 0,
   closed_at TIMESTAMPTZ,
   ai_paused_until TIMESTAMPTZ,
+  chat_thread_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

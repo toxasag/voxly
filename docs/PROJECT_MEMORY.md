@@ -883,6 +883,21 @@
   - `frontend/src/components/repairs/detail/ServiceCatalogDialog.tsx`
   - `frontend/src/lib/api/use-services.ts`
 
+### 2026-11-23 — Дедупликация заявок с сайта и скрытие дубликатов сделок в CRM (/crm/deals)
+- **Контекст и задача:** На странице `https://vertexsiam.getvoxly.ru/crm/deals` в канбан-колонке «Новый лид» появились две сделки с одинаковым номером телефона `+66962095187` (клиент Ruslan): первая — `Calculator BOQ Estimate (EN)`, вторая — через 31 секунду `Modal: Book Audit (EN)`. Монограмма «З» («Заявка...») выглядела как цифра «3».
+- **Root causes & архитектурные решения:**
+  1. В `backend/src/modules/channels/sites/sites.service.ts` метод `submitForm` находил существующий контакт по номеру телефона, но всегда безусловно создавал новую сделку (`INSERT INTO deals`), даже если у контакта уже была активная открытая сделка в воронке.
+  2. Добавлена проверка активной незакрытой сделки (`s.is_won = false AND s.is_lost = false AND (d.status IS NULL OR d.status != 'duplicate') AND d.deleted_at IS NULL`) для контакта. При наличии активной сделки повторная форма не плодит карточки в канбане, а обогащает существующую сделку (описание, метаданные, бюджет), записывает системное сообщение в `deal_messages` и активность в `contact_activities`.
+  3. Учтён флаг `contacts.suppress_deal_creation`: при его наличии новые сделки не создаются.
+  4. В `backend/src/modules/crm/deals/deals.service.ts` запросы `list`, `kanban` и `kanbanStage` дополнены предикатом `(d.status IS NULL OR d.status != 'duplicate')`, гарантирующим, что объединённые дубликаты сделок не загромождают воронку.
+  5. Создана миграция `0128_site_leads_deduplication_and_duplicate_status.sql`, которая объединила дублирующую сделку `2d4a26b8-7660-4b35-b069-4adcc535267b` в основную `a9dae40a-c037-4fe8-8e41-7ebad6c9d198` для тенанта vertexsiam, перенесла историю сообщений/активностей и пометила сделку как `status = 'duplicate'`.
+- **Измененные файлы:**
+  - `backend/src/modules/channels/sites/sites.service.ts`
+  - `backend/src/modules/crm/deals/deals.service.ts`
+  - `backend/src/db/schema.sql`
+  - `backend/src/db/migrations/0128_site_leads_deduplication_and_duplicate_status.sql`
+
+
 
 
 
