@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { query, queryOne, withTenant, runWithPlatformScope, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError, AppError } from "../../../plugins/errorHandler.js";
+import { quotaService } from "../../quotas/quota.service.js";
 import { normalizePhoneToE164 } from "../../crm/contacts/dedupe.service.js";
 import { leadNotificationQueue } from "../../crm/leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
@@ -80,6 +81,8 @@ export class SitesService {
     payload: CreateSitePayload,
     apiBase?: string,
   ): Promise<SiteIntegrationDTO> {
+    await quotaService.assertQuota(tenantId, "site_integrations", "сайтов");
+
     const token = crypto.randomBytes(24).toString("hex");
 
     let targetPipelineId = payload.target_pipeline_id || null;
