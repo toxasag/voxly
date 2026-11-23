@@ -747,3 +747,23 @@
     - Добавлен блок «Всего наименований ..., на сумму ... руб.» и «Всего к оплате: ...» прописью.
   - `backend/src/modules/finance/invoices.service.ts`: проброс флага `show_basis: issuer.invoiceConfig.showBasis` в `PrintSettings`.
   - `backend/src/tests/invoice-pdf.test.ts`: автоматический тест генерации A4 PDF, проверяющий корректность структуры, заголовков, MediaBox A4 и динамических ширин `/W`.
+
+
+### 2026-11-23 — Поддержка Drag & Drop прикрепления файлов в чате сделки CRM (CrmChatView + TelegramComposer)
+- **Контекст и задача:** В окне переписки по сделке (`CrmChatView`) прикрепление файлов работало только через клик по кнопке скрепки. Требовалось реализовать прямое перетаскивание файлов (Drag & Drop) в окно чата с визуальным оверлеем в стилистике Twenty CRM Light Canvas, поддержкой мульти-файлов, защитой от случайного открытия файлов в новой вкладке браузера и единым пайплайном отправки.
+- **Root causes & архитектурные ограничения:**
+  1. `TelegramComposer` поддерживал только одиночный файл `attachedFile: AttachedFile | null` и скрытый `<input type="file">` без атрибута `multiple`.
+  2. Перетаскивание файлов в окно чата браузер по умолчанию интерпретирует как навигацию на локальный файл (`e.preventDefault()` отсутствовал на уровне окна).
+  3. Мерцание (flicker) при перетаскивании над дочерними DOM-узлами чата (пузыри сообщений, скроллбар) требовало точного счетчика `dragCounterRef` и `pointer-events-none` на оверлее.
+- **Исправлено:**
+  - `frontend/src/components/crm/shared/TelegramComposer.tsx`:
+    - Вынесены и экспортированы утилиты `validateAndProcessFiles` (валидация 0 байт, лимит 50 МБ, блокировка опасных расширений `.exe/.bat/.cmd/.sh`, лимит 10 файлов, дедупликация) и `formatFileSize`.
+    - Поддержка `attachedFiles: AttachedFile[]` (внешнее управление через `attachedFilesProp`/`onAttachedFilesChange` либо внутренний стейт при автономном использовании).
+    - Добавлен атрибут `multiple` к `<input type="file">`, обработка вставки скриншотов/файлов из буфера обмена (`handleNativePaste`), удаление конкретного файла по индексу с освобождением `URL.revokeObjectURL`.
+    - Отрисовка компактных чипов прикрепленных файлов с превью/иконкой, именем, размером и кнопкой удаления как в обычном, так и в полноэкранном режиме.
+  - `frontend/src/components/crm/shared/CrmChatView.tsx`:
+    - Добавлен стейт `attachedFiles` и обработчики DnD: `handleDragEnter`, `handleDragOver` (`dropEffect = "copy"`), `handleDragLeave` со счетчиком `dragCounterRef`, `handleDrop`.
+    - Добавлен глобальный слушатель `window.addEventListener("dragover/drop", e.preventDefault())` для предотвращения случайного перехода браузера.
+    - Реализован визуальный оверлей перетаскивания в стилистике Twenty CRM Light Canvas (`bg-white/90 backdrop-blur-xs border-2 border-dashed border-[#4a38f5] bg-[#4a38f5]/5` с иконкой `UploadCloud` и пояснением).
+    - Доработан `handleSend`: последовательная загрузка и отправка каждого файла из списка вложений через `uploadMediaMutation` и `sendMessageMutation` с текстом сообщения на первом вложении.
+

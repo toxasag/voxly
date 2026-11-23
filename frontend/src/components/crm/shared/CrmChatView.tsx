@@ -32,6 +32,7 @@ import {
   Send,
   ShieldAlert,
   Sparkles,
+  UploadCloud,
   UserX,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -54,7 +55,11 @@ import {
   type DocumentInfoMetadata,
 } from "@/lib/api/use-crm-chat";
 import { useChatStream } from "@/lib/api/use-chat-stream";
-import { TelegramComposer, type AttachedFile } from "./TelegramComposer";
+import {
+  TelegramComposer,
+  type AttachedFile,
+  validateAndProcessFiles,
+} from "./TelegramComposer";
 import { DialogueFeedbackModal } from "@/components/ai-bots/DialogueFeedbackModal";
 
 export interface CrmChatViewProps {
@@ -974,11 +979,86 @@ export function CrmChatView({
   }, [isDeal, entityId, unmarkDealPersonalMutation, setContactPersonalMutation]);
 
   const [input, setInput] = useState("");
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
   const [selectedChannelAccountId, setSelectedChannelAccountId] = useState<string>("");
   const [activeChannel, setActiveChannel] = useState<string>("all");
   const hasUserSelectedTabRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasTriggeredTakeoverRef = useRef(false);
+
+  // Защита от случайного сброса файла мимо области чата (предотвращает переход браузера по URL файла)
+  useEffect(() => {
+    const preventBrowserDrop = (e: DragEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("dragover", preventBrowserDrop, false);
+    window.addEventListener("drop", preventBrowserDrop, false);
+    return () => {
+      window.removeEventListener("dragover", preventBrowserDrop, false);
+      window.removeEventListener("drop", preventBrowserDrop, false);
+    };
+  }, []);
+
+  const handleFilesSelected = useCallback(
+    (files: FileList | File[]) => {
+      const { validFiles, error } = validateAndProcessFiles(files, attachedFiles);
+      if (error) {
+        toast.error(error);
+        return;
+      }
+      if (validFiles.length > 0) {
+        setAttachedFiles((prev) => [...prev, ...validFiles]);
+        toast.success(
+          validFiles.length === 1
+            ? `Файл "${validFiles[0].name}" прикреплен`
+            : `Прикреплено файлов: ${validFiles.length}`,
+        );
+      }
+    },
+    [attachedFiles],
+  );
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer?.types?.includes("Files")) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        handleFilesSelected(e.dataTransfer.files);
+      }
+    },
+    [handleFilesSelected],
+  );
 
   // Сброс флага ручного перехвата при переключении сущности/диалога
   useEffect(() => {
@@ -1273,17 +1353,24 @@ export function CrmChatView({
 
   // Отправка сообщения
   const handleSend = useCallback(
-    async (attached?: AttachedFile) => {
+    async (attachedInput?: AttachedFile | AttachedFile[]) => {
+      const attachedList: AttachedFile[] = Array.isArray(attachedInput)
+        ? attachedInput
+        : attachedInput
+          ? [attachedInput]
+          : attachedFiles;
       const text = input.trim();
-      if ((!text && !attached) || sendMessageMutation.isPending || uploadMediaMutation.isPending) return;
+      if (
+        (!text && attachedList.length === 0) ||
+        sendMessageMutation.isPending ||
+        uploadMediaMutation.isPending
+      )
+        return;
 
       const lastMessageWithChannel = [...messages].reverse().find((m) => m.channel && m.channel !== "system");
       const fallbackChannel = lastMessageWithChannel?.channel ?? "telegram";
       const channel = selectedOption?.channel ?? (activeChannel !== "all" ? activeChannel : fallbackChannel);
       const channelAccountId = selectedOption?.channelAccountId;
-
-      let uploadedAttachmentUrl: string | undefined;
-      let uploadedAttachmentType: string | undefined;
 
       // Проверка доступности выбранного аккаунта отправки
       if (selectedOption && !selectedOption.available) {
@@ -1291,36 +1378,68 @@ export function CrmChatView({
         return;
       }
 
-      if (attached) {
-        try {
-          const uploadRes = await uploadMediaMutation.mutateAsync(attached.file);
-          uploadedAttachmentUrl = uploadRes.url;
-          uploadedAttachmentType = uploadRes.mimeType;
-        } catch (uploadErr) {
-          toast.error("Не удалось загрузить файл на сервер");
-          return;
-        }
-      }
+      if (attachedList.length > 0) {
+        let anySuccess = false;
+        for (let i = 0; i < attachedList.length; i++) {
+          const fileItem = attachedList[i];
+          let uploadedAttachmentUrl: string | undefined;
+          let uploadedAttachmentType: string | undefined;
 
-      try {
-        const sentMsg = await sendMessageMutation.mutateAsync({
-          content: text || (attached ? attached.name : "Вложение"),
-          channel,
-          channel_account_id: channelAccountId || undefined,
-          source: "manager",
-          direction: "outbound",
-          attachment: uploadedAttachmentUrl,
-          attachment_type: uploadedAttachmentType,
-        });
-        if (sentMsg && "deliveryStatus" in sentMsg && sentMsg.deliveryStatus === "failed") {
-          toast.error(sentMsg.deliveryError || "Ошибка отправки сообщения клиенту");
+          try {
+            const uploadRes = await uploadMediaMutation.mutateAsync(fileItem.file);
+            uploadedAttachmentUrl = uploadRes.url;
+            uploadedAttachmentType = uploadRes.mimeType;
+          } catch {
+            toast.error(`Не удалось загрузить файл "${fileItem.name}" на сервер`);
+            continue;
+          }
+
+          // Первое вложение отправляется с введенным текстом (если есть), остальные — с именем файла
+          const messageContent = i === 0 && text ? text : fileItem.name;
+
+          try {
+            const sentMsg = await sendMessageMutation.mutateAsync({
+              content: messageContent,
+              channel,
+              channel_account_id: channelAccountId || undefined,
+              source: "manager",
+              direction: "outbound",
+              attachment: uploadedAttachmentUrl,
+              attachment_type: uploadedAttachmentType,
+            });
+            if (sentMsg && "deliveryStatus" in sentMsg && sentMsg.deliveryStatus === "failed") {
+              toast.error(sentMsg.deliveryError || `Ошибка отправки файла "${fileItem.name}" клиенту`);
+            } else {
+              anySuccess = true;
+            }
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : `Не удалось отправить файл "${fileItem.name}"`);
+          }
         }
-        setInput("");
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");
+
+        if (anySuccess) {
+          setInput("");
+          setAttachedFiles([]);
+        }
+      } else {
+        try {
+          const sentMsg = await sendMessageMutation.mutateAsync({
+            content: text,
+            channel,
+            channel_account_id: channelAccountId || undefined,
+            source: "manager",
+            direction: "outbound",
+          });
+          if (sentMsg && "deliveryStatus" in sentMsg && sentMsg.deliveryStatus === "failed") {
+            toast.error(sentMsg.deliveryError || "Ошибка отправки сообщения клиенту");
+          }
+          setInput("");
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");
+        }
       }
     },
-    [input, sendMessageMutation, uploadMediaMutation, selectedOption, activeChannel, messages],
+    [input, attachedFiles, sendMessageMutation, uploadMediaMutation, selectedOption, activeChannel, messages],
   );
 
   // Вызов AI-Copilot (генерация подсказки/черновика ответа)
@@ -1424,7 +1543,30 @@ export function CrmChatView({
   }, [displayedMessages]);
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}>
+    <div
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={cn("relative flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}
+    >
+      {/* Оверлей при перетаскивании файлов (Twenty CRM Light Canvas) */}
+      {isDragging && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/90 backdrop-blur-xs p-6 select-none">
+          <div className="flex h-full w-full flex-col items-center justify-center rounded-[12px] border-2 border-dashed border-[#4a38f5] bg-[#4a38f5]/5 text-center p-8 transition-all">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#4a38f5]/10 text-[#4a38f5] shadow-xs mb-4">
+              <UploadCloud className="h-8 w-8 animate-bounce text-[#4a38f5]" />
+            </div>
+            <h3 className="text-base font-semibold text-[#111111]">
+              Перетащите файлы сюда для прикрепления к сообщению
+            </h3>
+            <p className="mt-1 text-xs text-[#666666]">
+              Поддерживаются документы, изображения и архивы (до 10 файлов, до 50 МБ каждый)
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Шапка: статус AI-автопилота и управление */}
       <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fbfbfb] px-4 py-2.5">
         <div className="flex items-center gap-3">
@@ -2132,10 +2274,12 @@ export function CrmChatView({
             }}
             onFocus={handleInputActivity}
             onSend={(attached) => void handleSend(attached)}
-            isSending={sendMessageMutation.isPending}
+            isSending={sendMessageMutation.isPending || uploadMediaMutation.isPending}
             onAiDraft={handleGenerateAiDraft}
             isAiDraftPending={aiDraftMutation.isPending}
             placeholder="Написать сообщение"
+            attachedFiles={attachedFiles}
+            onAttachedFilesChange={setAttachedFiles}
           />
         </div>
       </div>
