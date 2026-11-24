@@ -819,6 +819,9 @@ export interface BulkUpdateWarehouseItemsPayload {
   min_stock?: number;
   retail_price_action?: PriceAdjustmentAction;
   cost_price_action?: PriceAdjustmentAction;
+  models?: string[];
+  model_ids?: string[];
+  models_mode?: "replace" | "add" | "remove";
 }
 
 export interface BulkDeleteWarehouseItemsPayload {

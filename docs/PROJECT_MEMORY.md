@@ -1323,3 +1323,25 @@
 - **Верификация:**
   - TypeScript build frontend и backend: 0 ошибок.
   - Деплой на боевой VPS через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Поле «Подходит к моделям» в модалке массового редактирования товаров склада
+- **Контекст и проблема:**
+  - На странице `/warehouse` в диалоге массового редактирования товаров («Изменить выбранные») отсутствовало поле «Подходит к моделям».
+- **Root Cause:**
+  - Схема `bulkUpdateWarehouseItemsSchema` и сервис `bulkUpdateItems` принимали только категорию, бренд, ед. изм., мин. остаток и действия над ценами. Связи `warehouse_item_models` в массовом обновлении не обрабатывались.
+  - Компонент `ProductBulkEditDialog` не содержал чекбокса и селектора моделей, а `DictionarySelectField` требовал обязательного выбора бренда для категории `model`.
+- **Что сделано:**
+  1. **Бэкенд:**
+     - В `bulkUpdateWarehouseItemsSchema` добавлены опциональные поля `models`, `model_ids`, `modelIds`, `models_mode`, `modelsMode` (`replace` | `add` | `remove`).
+     - В `warehouse.service.ts:bulkUpdateItems` добавлена поддержка обновления моделей: эффективная резолюция недостающих моделей в `equipment_models` и пакетная вставка/удаление связей в `warehouse_item_models` через SQL-кросс-джойн `unnest(...)`.
+     - Добавлены модульные тесты валидации в `warehouse-model-filter.test.ts`.
+  2. **Фронтенд:**
+     - В `use-warehouse.ts` расширен тип `BulkUpdateWarehouseItemsPayload` полями `models`, `model_ids`, `models_mode`.
+     - В `DictionarySelectField.tsx` добавлен флаг `allowAllBrands`, позволяющий при необходимости выбирать модели без предварительного выбора бренда (с отображением бренда рядом с моделью).
+     - В `ProductBulkEditDialog.tsx` добавлена секция «Подходит к моделям» с поддержкой режимов «Заменить» и «Добавить», мультивыбором через `DictionarySelectField` с чипами и поиском, и динамическим предзаполнением при выборе 1 товара.
+- **Верификация:**
+  - `cd backend && npx tsc --noEmit && cd ../frontend && npx tsc --noEmit` — 0 ошибок.
+  - Тестирование и деплой на сервер.
+
