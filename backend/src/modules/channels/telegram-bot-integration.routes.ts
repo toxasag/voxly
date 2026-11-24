@@ -58,6 +58,16 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       return reply.status(200).send({ ok: true });
     }
 
+    const updateKeys = Object.keys(update);
+    request.log.info(
+      {
+        accountId: id,
+        updateId: update.update_id,
+        updateKeys,
+      },
+      "Telegram bot webhook update received",
+    );
+
     const account = await runWithPlatformScope(() =>
       queryOne<{
         id: string;
@@ -105,11 +115,16 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       await runWithTenantContext(tenantId, async () => {
         const { query: dbQuery } = await import("../../db/client.js");
         const creds = { ...(account.credentials || {}) };
-        creds.business_connection_id = connId;
+        if (isEnabled) {
+          creds.business_connection_id = connId;
+        } else {
+          delete creds.business_connection_id;
+        }
         if (userId) creds.business_user_id = userId;
         if (username) creds.business_username = username;
         creds.business_can_reply = canReply;
         creds.business_is_enabled = isEnabled;
+        account.credentials = creds;
         await dbQuery(
           `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
           [JSON.stringify(creds), id, tenantId],
@@ -129,6 +144,7 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     ) as Record<string, unknown> | undefined;
 
     if (!message || typeof message !== "object") {
+      request.log.info({ accountId: id, updateKeys }, "Telegram bot webhook: no message in update");
       return reply.status(200).send({ ok: true });
     }
 
@@ -139,33 +155,54 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
 
     const chat = message.chat as Record<string, unknown> | undefined;
     if (!chat || (chat.type !== "private" && chat.type !== undefined)) {
+      request.log.info({ accountId: id, chatType: chat?.type }, "Telegram bot webhook: ignoring non-private chat");
       return reply.status(200).send({ ok: true });
     }
 
     const chatId = String(chat.id);
     const senderId = String(from.id);
-    const businessConnectionId = isBusiness && typeof message.business_connection_id === "string"
-      ? message.business_connection_id
-      : (account.credentials?.business_connection_id as string | undefined);
 
-    // Если получили business_connection_id из входящего business_message, сохраняем в аккаунте
+    // business_connection_id извлекается из business_message или из credentials
+    const rawConnId = typeof message.business_connection_id === "string" ? message.business_connection_id.trim() : "";
+    const businessConnectionId = isBusiness
+      ? (rawConnId || (account.credentials?.business_connection_id as string | undefined))
+      : undefined;
+
+    // Если получили свежий business_connection_id из входящего business_message, сохраняем в аккаунте
     if (businessConnectionId && account.credentials?.business_connection_id !== businessConnectionId) {
+      account.credentials = { ...(account.credentials || {}), business_connection_id: businessConnectionId };
       void runWithTenantContext(tenantId, async () => {
         const { query: dbQuery } = await import("../../db/client.js");
-        const creds = { ...(account.credentials || {}), business_connection_id: businessConnectionId };
         await dbQuery(
           `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
-          [JSON.stringify(creds), id, tenantId],
+          [JSON.stringify(account.credentials), id, tenantId],
         ).catch(() => null);
       });
     }
 
-    const senderUsername = typeof from.username === "string" ? from.username.replace(/^@/, "").trim() : undefined;
-    const firstName = typeof from.first_name === "string" ? from.first_name.trim() : "";
-    const lastName = typeof from.last_name === "string" ? from.last_name.trim() : "";
-    const senderName = [firstName, lastName].filter(Boolean).join(" ") || senderUsername || chatId;
+    const chatFirstName = typeof chat.first_name === "string" ? chat.first_name.trim() : "";
+    const chatLastName = typeof chat.last_name === "string" ? chat.last_name.trim() : "";
+    const chatUsername = typeof chat.username === "string" ? chat.username.replace(/^@/, "").trim() : undefined;
 
-    const rawText = typeof message.text === "string" ? message.text.trim() : typeof message.caption === "string" ? message.caption.trim() : "";
+    const fromFirstName = typeof from.first_name === "string" ? from.first_name.trim() : "";
+    const fromLastName = typeof from.last_name === "string" ? from.last_name.trim() : "";
+    const fromUsername = typeof from.username === "string" ? from.username.replace(/^@/, "").trim() : undefined;
+
+    let mediaTypeLabel = "";
+    if (message.voice) mediaTypeLabel = "[Голосовое сообщение]";
+    else if (message.video_note) mediaTypeLabel = "[Видеосообщение]";
+    else if (message.photo) mediaTypeLabel = "[Фотография]";
+    else if (message.document) mediaTypeLabel = "[Документ]";
+    else if (message.video) mediaTypeLabel = "[Видео]";
+    else if (message.audio) mediaTypeLabel = "[Аудиозапись]";
+    else if (message.sticker) mediaTypeLabel = "[Стикер]";
+
+    const rawText = typeof message.text === "string"
+      ? message.text.trim()
+      : typeof message.caption === "string"
+        ? message.caption.trim()
+        : mediaTypeLabel;
+
     const externalMessageId = typeof message.message_id === "number" ? String(message.message_id) : undefined;
     const messageTimestamp = typeof message.date === "number" ? new Date(message.date * 1000) : new Date();
 
@@ -173,8 +210,21 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     let isFromOperator = false;
     if (isBusiness) {
       const bizUserId = account.credentials?.business_user_id;
-      if (bizUserId && senderId === String(bizUserId)) {
+      // В Telegram Business в приватном чате:
+      // Если senderId !== chatId, значит сообщение отправлено владельцем бизнес-аккаунта (оператором).
+      // Если senderId === String(bizUserId), значит отправитель — владелец бизнес-аккаунта.
+      if (senderId !== chatId || (bizUserId && senderId === String(bizUserId))) {
         isFromOperator = true;
+        if (!bizUserId) {
+          account.credentials = { ...(account.credentials || {}), business_user_id: senderId };
+          void runWithTenantContext(tenantId, async () => {
+            const { query: dbQuery } = await import("../../db/client.js");
+            await dbQuery(
+              `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
+              [JSON.stringify(account.credentials), id, tenantId],
+            ).catch(() => null);
+          });
+        }
       } else {
         const ownCheck = await runWithPlatformScope(() =>
           queryOne<{ id: string }>(
@@ -202,7 +252,7 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     // AI агент НЕ должен отвечать на реплики оператора.
     if (isFromOperator) {
       request.log.info(
-        { accountId: id, chatId, senderId, text: rawText },
+        { accountId: id, chatId, senderId, text: rawText, isBusiness, businessConnectionId },
         "Telegram Bot business message: operator outbound message received",
       );
 
@@ -218,7 +268,7 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       ).catch(() => null);
 
       if (existingDeal) {
-        // Сделка уже существует — добавляем реплику оператора и ставим паузу AI (30 мин)
+        // Сделка уже существует — добавляем реплику оператора и ставим вечную паузу AI бота
         await runWithTenantContext(tenantId, async () => {
           const { query: dbQuery } = await import("../../db/client.js");
           await dbQuery(
@@ -266,6 +316,7 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
               timestamp: messageTimestamp.toISOString(),
             });
             await redis.set(bufferKey, JSON.stringify(list), "EX", 86400 * 7);
+            request.log.info({ accountId: id, chatId, count: list.length }, "Buffered operator message in Redis");
           }
         } catch (err) {
           request.log.warn({ err, chatId }, "Failed to buffer pending operator message in Redis");
@@ -276,6 +327,11 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     }
 
     // 5. Входящее сообщение от клиента / собеседника:
+    const effectiveFirstName = fromFirstName || chatFirstName;
+    const effectiveLastName = fromLastName || chatLastName;
+    const effectiveUsername = fromUsername || chatUsername;
+    const senderName = [effectiveFirstName, effectiveLastName].filter(Boolean).join(" ") || effectiveUsername || chatId;
+
     const contactObj = message.contact as Record<string, unknown> | undefined;
     let contactPhone: string | undefined = undefined;
     let contactName: string | undefined = undefined;
@@ -288,6 +344,19 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
 
     const effectiveText = rawText || (contactPhone ? `Контакт: ${contactName || "Без имени"} (${contactPhone})` : "Начало диалога");
 
+    request.log.info(
+      {
+        accountId: id,
+        chatId,
+        senderId,
+        senderName: contactName || senderName,
+        text: effectiveText,
+        isBusiness,
+        businessConnectionId,
+      },
+      "Telegram bot: processing client incoming message",
+    );
+
     const crmPipeline = new CrmPipelineService(request.log);
     const crmResult = await runWithTenantContext(tenantId, () =>
       crmPipeline.processIncoming({
@@ -299,12 +368,12 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
         text: effectiveText,
         senderName: contactName || senderName,
         senderTelegramChatId: senderId,
-        senderTelegramUsername: senderUsername,
+        senderTelegramUsername: effectiveUsername,
         senderPhone: contactPhone,
         profile: {
-          firstName: firstName || undefined,
-          lastName: lastName || undefined,
-          username: senderUsername,
+          firstName: effectiveFirstName || undefined,
+          lastName: effectiveLastName || undefined,
+          username: effectiveUsername,
           phone: contactPhone,
           isBot: false,
         },
@@ -315,6 +384,11 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       request.log.error({ err, accountId: id, chatId }, "Telegram bot webhook: failed to process CRM incoming");
       return null;
     });
+
+    request.log.info(
+      { accountId: id, chatId, crmResult },
+      "Telegram bot: CRM pipeline processIncoming finished",
+    );
 
     if (!crmResult || crmResult.isPersonal || crmResult.isBot) {
       return reply.status(200).send({ ok: true });
@@ -350,6 +424,10 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
                 }
               });
               await redis.del(bufferKey);
+              request.log.info(
+                { dealId: crmResult.dealId, count: buffered.length },
+                "Flushed pending operator messages from Redis to deal",
+              );
             }
           }
         }
@@ -365,7 +443,9 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
         ),
       ).catch(() => null);
 
-      if (!isPaused) {
+      if (isPaused) {
+        request.log.info({ dealId: crmResult.dealId }, "Telegram bot: AI reply skipped because deal is paused");
+      } else {
         try {
           const agentService = new AgentPipelineService(request.log);
           const outcome = await runWithTenantContext(tenantId, () =>
@@ -377,6 +457,11 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
               channelType: "Telegram Bot",
               dealId: crmResult.dealId!,
             }),
+          );
+
+          request.log.info(
+            { dealId: crmResult.dealId, outcomeKind: outcome.kind },
+            "Telegram bot: agent prepareReply outcome",
           );
 
           if (outcome.kind === "replied") {
@@ -391,9 +476,17 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
             );
 
             for (const msg of outcome.reply.messages) {
-              await service.sendMessage(account.credentials!.token!, chatId, msg, {
+              const sendResult = await service.sendMessage(account.credentials!.token!, chatId, msg, {
                 business_connection_id: businessConnectionId,
               });
+              request.log.info(
+                {
+                  chatId,
+                  businessConnectionId,
+                  sendResult,
+                },
+                "Telegram bot: sent reply message result",
+              );
             }
           }
         } catch (agentErr) {

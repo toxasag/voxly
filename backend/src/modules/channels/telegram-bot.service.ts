@@ -889,7 +889,7 @@ export class TelegramBotService {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: webhookUrl,
-          drop_pending_updates: true,
+          drop_pending_updates: false,
           allowed_updates: TelegramBotService.ALLOWED_UPDATES,
           ...(secretToken ? { secret_token: secretToken } : {}),
         }),
