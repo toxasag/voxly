@@ -12,6 +12,14 @@ import {
   type InAppNotificationDTO,
 } from "./push-notification.service.js";
 import { notificationQueue } from "./notification.queue.js";
+import { notificationPreferencesService } from "./notification-preferences.service.js";
+
+const updatePreferencesSchema = z.object({
+  notifications_enabled: z.boolean().optional(),
+  sound_enabled: z.boolean().optional(),
+  inapp_enabled: z.boolean().optional(),
+  push_enabled: z.boolean().optional(),
+});
 
 const subscribeSchema = z.object({
   endpoint: z.string().url("Некорректный endpoint подписки"),
@@ -150,6 +158,55 @@ export async function pushNotificationRoutes(app: FastifyInstance): Promise<void
       },
     );
 
+    // Получение настроек пользователя (мастер-выключатель, звук, in-app, push)
+    authApp.get(
+      "/notifications/preferences",
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const prefs = await notificationPreferencesService.getUserPreferences(
+          request.tenant_id,
+          request.authUser.id,
+        );
+        return reply.send({ data: prefs, ...prefs });
+      },
+    );
+
+    authApp.patch(
+      "/notifications/preferences",
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const body = updatePreferencesSchema.parse(request.body ?? {});
+        const updated = await notificationPreferencesService.updateUserPreferences(
+          request.tenant_id,
+          request.authUser.id,
+          body,
+        );
+        return reply.send({ data: updated, ...updated });
+      },
+    );
+
+    authApp.get(
+      "/notifications/settings",
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const prefs = await notificationPreferencesService.getUserPreferences(
+          request.tenant_id,
+          request.authUser.id,
+        );
+        return reply.send({ data: prefs, ...prefs });
+      },
+    );
+
+    authApp.patch(
+      "/notifications/settings",
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const body = updatePreferencesSchema.parse(request.body ?? {});
+        const updated = await notificationPreferencesService.updateUserPreferences(
+          request.tenant_id,
+          request.authUser.id,
+          body,
+        );
+        return reply.send({ data: updated, ...updated });
+      },
+    );
+
     // Realtime SSE поток уведомлений для активных вкладок браузера (In-App Toaster & Bell badge)
     authApp.get(
       "/notifications/stream",
@@ -164,16 +221,28 @@ export async function pushNotificationRoutes(app: FastifyInstance): Promise<void
 
         reply.raw.write(`: connected\n\n`);
 
-        const onNotification = (notification: InAppNotificationDTO) => {
-          if (!reply.raw.destroyed) {
+        const onNotification = async (notification: InAppNotificationDTO) => {
+          if (reply.raw.destroyed) return;
+          try {
+            const isEnabled = await notificationPreferencesService.isUserNotificationsEnabled(
+              tenantId,
+              userId,
+              "inapp",
+            );
+            if (!isEnabled) {
+              return; // Пользователь отключил уведомления
+            }
             reply.raw.write(`event: notification\ndata: ${JSON.stringify(notification)}\n\n`);
+          } catch {
+            // Безопасный перехват
           }
         };
 
-        const unsubUser = notificationEventBus.subscribeUser(tenantId, userId, onNotification);
+        const unsubUser = notificationEventBus.subscribeUser(tenantId, userId, (n) => {
+          void onNotification(n);
+        });
         const unsubTenant = notificationEventBus.subscribeTenant(tenantId, (n) => {
-          // Если это broadcast-уведомление без конкретного userId
-          onNotification(n);
+          void onNotification(n);
         });
 
         const unregisterStream = registerSseStream(reply.raw);
