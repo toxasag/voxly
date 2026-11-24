@@ -10,20 +10,22 @@ import {
   Plus,
   ChevronDown,
   Check,
-  Search,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useCreateSupplierOrder,
+  useWarehouseItems,
   type AggregatedPurchaseRequestDTO,
 } from "@/lib/api/use-warehouse";
 import { useCompanies, useCreateCompany, type CompanyDTO } from "@/lib/api/use-companies";
 import { cn } from "@/lib/utils";
+import { formatRub } from "@/lib/utils/format";
 
 interface CreateSupplierOrderModalProps {
   open: boolean;
   onClose: () => void;
-  selectedRequests: AggregatedPurchaseRequestDTO[];
+  selectedRequests?: AggregatedPurchaseRequestDTO[];
   onSuccess: () => void;
 }
 
@@ -40,12 +42,10 @@ interface FormItemState {
   requestIds: string[];
 }
 
-import { formatRub } from "@/lib/utils/format";
-
 export function CreateSupplierOrderModal({
   open,
   onClose,
-  selectedRequests,
+  selectedRequests = [],
   onSuccess,
 }: CreateSupplierOrderModalProps) {
   // Поставщик
@@ -56,6 +56,8 @@ export function CreateSupplierOrderModal({
   const [newCompanyInn, setNewCompanyInn] = useState("");
   const [newCompanyPhone, setNewCompanyPhone] = useState("");
 
+  // Статус и примечания
+  const [status, setStatus] = useState<"pending_payment" | "draft">("pending_payment");
   const [notes, setNotes] = useState("");
 
   // Редактируемые позиции
@@ -66,34 +68,53 @@ export function CreateSupplierOrderModal({
     search: supplierInput.trim() || undefined,
     limit: 50,
   });
+  const { data: allWarehouseItems = [] } = useWarehouseItems();
   const createCompanyMutation = useCreateCompany();
   const createOrderMutation = useCreateSupplierOrder();
 
-  // Инициализация позиций из выбранных заявок
+  // Инициализация позиций
   useEffect(() => {
     if (!open) return;
-    const initialItems: FormItemState[] = selectedRequests.map((r, idx) => {
-      const reqQty = Number(r.quantity) || 1;
-      const unitPrice = Number(r.estimatedPrice) || 0;
-      const reqIds = r.requestIds && r.requestIds.length > 0 ? r.requestIds : r.id ? [r.id] : [];
-      return {
-        key: r.id || `${r.itemName}_${idx}`,
-        itemId: r.itemId ?? null,
-        itemName: r.itemName,
-        sku: r.sku || "",
-        unit: r.unit || "шт",
-        requestedQuantity: reqQty,
-        quantity: reqQty,
-        price: unitPrice,
-        repairOrders: r.repairOrders || undefined,
-        requestIds: reqIds,
-      };
-    });
-    setItems(initialItems);
+    if (selectedRequests && selectedRequests.length > 0) {
+      const initialItems: FormItemState[] = selectedRequests.map((r, idx) => {
+        const reqQty = Number(r.quantity) || 1;
+        const unitPrice = Number(r.estimatedPrice) || 0;
+        const reqIds = r.requestIds && r.requestIds.length > 0 ? r.requestIds : r.id ? [r.id] : [];
+        return {
+          key: r.id || `${r.itemName}_${idx}`,
+          itemId: r.itemId ?? null,
+          itemName: r.itemName,
+          sku: r.sku || "",
+          unit: r.unit || "шт",
+          requestedQuantity: reqQty,
+          quantity: reqQty,
+          price: unitPrice,
+          repairOrders: r.repairOrders || undefined,
+          requestIds: reqIds,
+        };
+      });
+      setItems(initialItems);
+    } else {
+      setItems([
+        {
+          key: `item_${Date.now()}_0`,
+          itemId: null,
+          itemName: "",
+          sku: "",
+          unit: "шт",
+          requestedQuantity: 0,
+          quantity: 1,
+          price: 0,
+          repairOrders: undefined,
+          requestIds: [],
+        },
+      ]);
+    }
     setSelectedCompany(null);
     setSupplierInput("");
     setIsCompanyDropdownOpen(false);
     setIsCreatingCompany(false);
+    setStatus("pending_payment");
     setNotes("");
   }, [open, selectedRequests]);
 
@@ -102,6 +123,71 @@ export function CreateSupplierOrderModal({
   }, [items]);
 
   if (!open) return null;
+
+  const handleAddItem = () => {
+    setItems((prev) => [
+      ...prev,
+      {
+        key: `item_${Date.now()}_${prev.length}`,
+        itemId: null,
+        itemName: "",
+        sku: "",
+        unit: "шт",
+        requestedQuantity: 0,
+        quantity: 1,
+        price: 0,
+        repairOrders: undefined,
+        requestIds: [],
+      },
+    ]);
+  };
+
+  const handleRemoveItem = (idx: number) => {
+    setItems((prev) => {
+      const filtered = prev.filter((_, i) => i !== idx);
+      if (filtered.length === 0) {
+        return [
+          {
+            key: `item_${Date.now()}_0`,
+            itemId: null,
+            itemName: "",
+            sku: "",
+            unit: "шт",
+            requestedQuantity: 0,
+            quantity: 1,
+            price: 0,
+            repairOrders: undefined,
+            requestIds: [],
+          },
+        ];
+      }
+      return filtered;
+    });
+  };
+
+  const handleItemNameChange = (idx: number, val: string) => {
+    setItems((prev) => {
+      const copy = [...prev];
+      const cur = copy[idx];
+      if (!cur) return prev;
+      const matched = allWarehouseItems.find(
+        (it) => it.name.trim().toLowerCase() === val.trim().toLowerCase(),
+      );
+      if (matched) {
+        copy[idx] = {
+          ...cur,
+          itemName: matched.name,
+          itemId: matched.id,
+          sku: matched.sku || cur.sku,
+          unit: matched.unit || cur.unit || "шт",
+          price: Number(matched.costPrice || matched.price || matched.retailPrice || cur.price || 0),
+        };
+      } else {
+        copy[idx] = { ...cur, itemName: val };
+      }
+      return copy;
+    });
+  };
 
   const handleItemQuantityChange = (idx: number, val: number) => {
     setItems((prev) => {
@@ -121,6 +207,26 @@ export function CreateSupplierOrderModal({
       if (!cur) return prev;
       const cleanVal = Math.max(0, isNaN(val) ? 0 : val);
       copy[idx] = { ...cur, price: cleanVal };
+      return copy;
+    });
+  };
+
+  const handleItemSkuChange = (idx: number, val: string) => {
+    setItems((prev) => {
+      const copy = [...prev];
+      const cur = copy[idx];
+      if (!cur) return prev;
+      copy[idx] = { ...cur, sku: val };
+      return copy;
+    });
+  };
+
+  const handleItemUnitChange = (idx: number, val: string) => {
+    setItems((prev) => {
+      const copy = [...prev];
+      const cur = copy[idx];
+      if (!cur) return prev;
+      copy[idx] = { ...cur, unit: val };
       return copy;
     });
   };
@@ -162,18 +268,19 @@ export function CreateSupplierOrderModal({
       return;
     }
 
-    if (items.length === 0) {
-      toast.error("Не выбраны позиции для заказа");
+    const validItems = items.filter((it) => it.itemName.trim().length > 0);
+    if (validItems.length === 0) {
+      toast.error("Добавьте хотя бы одну позицию в заказ");
       return;
     }
 
     // Собираем все уникальные ID заявок
     const allRequestIds: string[] = [];
-    items.forEach((it) => {
+    validItems.forEach((it) => {
       allRequestIds.push(...it.requestIds);
     });
 
-    const payloadItems = items.map((it) => {
+    const payloadItems = validItems.map((it) => {
       const reqQty = it.requestedQuantity;
       const totalQty = it.quantity;
       const extraQty = Math.max(0, totalQty - reqQty);
@@ -181,12 +288,12 @@ export function CreateSupplierOrderModal({
         purchase_request_ids: it.requestIds,
         purchase_request_id: it.requestIds[0] ?? null,
         item_id: it.itemId ?? null,
-        item_name: it.itemName,
-        sku: it.sku,
+        item_name: it.itemName.trim(),
+        sku: it.sku.trim(),
         requested_quantity: reqQty,
         extra_quantity: extraQty,
         quantity: totalQty,
-        unit: it.unit,
+        unit: it.unit || "шт",
         price: it.price,
         repair_orders: it.repairOrders,
       };
@@ -197,6 +304,7 @@ export function CreateSupplierOrderModal({
         supplier_name: finalSupplierName,
         supplier_company_id: selectedCompany?.id ?? null,
         purchase_request_ids: Array.from(new Set(allRequestIds)),
+        status,
         items: payloadItems,
         notes: notes.trim(),
       });
@@ -210,6 +318,7 @@ export function CreateSupplierOrderModal({
   };
 
   const companiesList = companiesData?.items ?? [];
+  const isFromPurchases = selectedRequests && selectedRequests.length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs animate-in fade-in-0 duration-150">
@@ -225,17 +334,19 @@ export function CreateSupplierOrderModal({
             </div>
             <div>
               <h2 className="text-base font-semibold text-[#111111]">
-                Сформировать заказ поставщику
+                {isFromPurchases ? "Сформировать заказ поставщику" : "Новый заказ поставщику"}
               </h2>
               <p className="text-xs text-[#666666]">
-                Объединение {selectedRequests.length} позиций с возможностью пополнения склада
+                {isFromPurchases
+                  ? `Объединение ${selectedRequests.length} позиций с возможностью пополнения склада`
+                  : "Прямой заказ поставщику на закупку и пополнение склада"}
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"
+            className="rounded-lg p-1.5 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -267,7 +378,7 @@ export function CreateSupplierOrderModal({
               <button
                 type="button"
                 onClick={() => setIsCompanyDropdownOpen((v) => !v)}
-                className="absolute right-2 text-[#888888] hover:text-[#111111] p-1"
+                className="absolute right-2 text-[#888888] hover:text-[#111111] p-1 cursor-pointer"
               >
                 <ChevronDown className="h-4 w-4" />
               </button>
@@ -276,7 +387,6 @@ export function CreateSupplierOrderModal({
             {/* Выпадающий список компаний */}
             {isCompanyDropdownOpen && (
               <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-60 overflow-y-auto rounded-xl border border-[#e5e5e5] bg-white shadow-lg py-1.5 text-xs divide-y divide-[#f5f5f5]">
-                {/* Список существующих компаний */}
                 {companiesList.length > 0 && (
                   <div className="py-1">
                     <div className="px-3 py-1 text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
@@ -287,7 +397,7 @@ export function CreateSupplierOrderModal({
                         key={comp.id}
                         type="button"
                         onClick={() => handleSelectCompany(comp)}
-                        className="w-full text-left px-3 py-2 hover:bg-[#fbfbfb] flex items-center justify-between transition-colors"
+                        className="w-full text-left px-3 py-2 hover:bg-[#fbfbfb] flex items-center justify-between transition-colors cursor-pointer"
                       >
                         <div>
                           <div className="font-medium text-[#111111]">{comp.name}</div>
@@ -317,7 +427,7 @@ export function CreateSupplierOrderModal({
                     <button
                       type="button"
                       onClick={() => setIsCreatingCompany(true)}
-                      className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/5 rounded-[6px] transition-colors"
+                      className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/5 rounded-[6px] transition-colors cursor-pointer"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       Создать компанию «{supplierInput.trim() || "новую"}»
@@ -357,7 +467,7 @@ export function CreateSupplierOrderModal({
                       <button
                         type="button"
                         onClick={() => setIsCreatingCompany(false)}
-                        className="px-2.5 py-1 rounded-[6px] border border-[#e5e5e5] bg-white text-xs text-[#666666] hover:bg-neutral-50"
+                        className="px-2.5 py-1 rounded-[6px] border border-[#e5e5e5] bg-white text-xs text-[#666666] hover:bg-neutral-50 cursor-pointer"
                       >
                         Отмена
                       </button>
@@ -365,7 +475,7 @@ export function CreateSupplierOrderModal({
                         type="button"
                         onClick={handleQuickCreateCompany}
                         disabled={createCompanyMutation.isPending || !supplierInput.trim()}
-                        className="px-3 py-1 rounded-[6px] bg-[#4a38f5] text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50"
+                        className="px-3 py-1 rounded-[6px] bg-[#4a38f5] text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
                       >
                         {createCompanyMutation.isPending ? "Создание..." : "Создать и выбрать"}
                       </button>
@@ -376,11 +486,27 @@ export function CreateSupplierOrderModal({
             )}
           </div>
 
+          {/* Datalist для быстрого выбора товаров из номенклатуры */}
+          <datalist id="warehouse-supplier-order-catalog">
+            {allWarehouseItems.map((wi) => (
+              <option key={wi.id} value={wi.name}>
+                {wi.sku ? `[${wi.sku}] ` : ""}Остаток: {wi.availableStock} {wi.unit}
+              </option>
+            ))}
+          </datalist>
+
           {/* Таблица позиций с редактированием количества и цен */}
           <div className="flex-1 flex flex-col overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white">
             <div className="flex items-center justify-between border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-2 text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
               <span>Состав закупки ({items.length} поз.)</span>
-              <span>Количество и сумма</span>
+              <button
+                type="button"
+                onClick={handleAddItem}
+                className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-semibold text-[#4a38f5] hover:bg-[#4a38f5]/20 transition-colors cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Добавить товар</span>
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto divide-y divide-[#f0f0f0] p-1">
@@ -389,29 +515,76 @@ export function CreateSupplierOrderModal({
                 const totalQty = it.quantity;
                 const extraQty = Math.max(0, totalQty - reqQty);
                 const itemTotal = totalQty * it.price;
+                const isManual = reqQty === 0;
 
                 return (
                   <div key={it.key} className="p-3 hover:bg-[#fbfbfb] transition-colors space-y-2">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium text-[13px] text-[#111111] truncate">
-                          {it.itemName}
-                        </div>
-                        <div className="flex items-center gap-2 text-[11px] text-[#666666] mt-0.5">
-                          {it.sku && <span className="font-mono">{it.sku}</span>}
-                          {it.repairOrders && (
-                            <span className="font-medium text-sky-700">
-                              Наряды: {it.repairOrders}
-                            </span>
-                          )}
-                        </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        {isManual ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              required
+                              value={it.itemName}
+                              list="warehouse-supplier-order-catalog"
+                              onChange={(e) => handleItemNameChange(idx, e.target.value)}
+                              placeholder="Начните ввод или выберите товар из каталога..."
+                              className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] placeholder:text-[#aaaaaa] focus:border-[#4a38f5] focus:outline-none"
+                            />
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="font-medium text-[13px] text-[#111111] truncate">
+                              {it.itemName}
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] text-[#666666] mt-0.5">
+                              {it.sku && <span className="font-mono">{it.sku}</span>}
+                              {it.repairOrders && (
+                                <span className="font-medium text-sky-700">
+                                  Наряды: {it.repairOrders}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {isManual && (
+                          <div className="flex items-center gap-2 text-[11px] text-[#666666]">
+                            <input
+                              type="text"
+                              value={it.sku}
+                              onChange={(e) => handleItemSkuChange(idx, e.target.value)}
+                              placeholder="Артикул"
+                              className="w-28 rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[11px] font-mono text-[#111111] placeholder:text-[#cccccc] focus:border-[#4a38f5] focus:outline-none"
+                            />
+                            <input
+                              type="text"
+                              value={it.unit}
+                              onChange={(e) => handleItemUnitChange(idx, e.target.value)}
+                              placeholder="Ед. (шт)"
+                              className="w-16 rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[11px] text-[#111111] placeholder:text-[#cccccc] focus:border-[#4a38f5] focus:outline-none"
+                            />
+                          </div>
+                        )}
                       </div>
 
-                      {/* Сумма по позиции */}
-                      <div className="text-right shrink-0">
-                        <span className="font-mono text-[13px] font-bold text-[#111111]">
-                          {formatRub(itemTotal)}
-                        </span>
+                      {/* Сумма по позиции и кнопка удаления */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-right">
+                          <span className="font-mono text-[13px] font-bold text-[#111111]">
+                            {formatRub(itemTotal)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(idx)}
+                          className="rounded-[4px] p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Удалить позицию"
+                          aria-label="Удалить позицию"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
 
@@ -428,9 +601,13 @@ export function CreateSupplierOrderModal({
                           <span className="inline-flex items-center rounded-[4px] border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                             +{extraQty} {it.unit} на склад (свободный остаток)
                           </span>
-                        ) : (
+                        ) : reqQty > 0 ? (
                           <span className="text-[11px] text-[#888888]">
                             Увеличьте количество, чтобы заказать на склад
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-[#888888]">
+                            Прямой заказ на склад
                           </span>
                         )}
                       </div>
@@ -439,7 +616,7 @@ export function CreateSupplierOrderModal({
                       <div className="flex items-center gap-2 shrink-0">
                         {/* Количество */}
                         <div className="flex items-center gap-1">
-                          <span className="text-[11px] text-[#888888]">Всего:</span>
+                          <span className="text-[11px] text-[#888888]">Кол-во:</span>
                           <input
                             type="number"
                             min={1}
@@ -474,20 +651,44 @@ export function CreateSupplierOrderModal({
                 );
               })}
             </div>
+
+            <button
+              type="button"
+              onClick={handleAddItem}
+              className="flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/5 border-t border-[#f0f0f0] transition-colors cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Добавить ещё одну позицию</span>
+            </button>
           </div>
 
-          {/* Примечания */}
-          <div>
-            <label className="block text-xs font-medium text-[#111111] mb-1">
-              Примечания к заказу
-            </label>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Условия доставки, трек-номер, контакт менеджера..."
-              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-none"
-            />
+          {/* Статус и примечания */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-[#111111] mb-1">
+                Статус заказа
+              </label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as "pending_payment" | "draft")}
+                className="w-full h-8 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
+              >
+                <option value="pending_payment">Ожидает оплаты</option>
+                <option value="draft">Черновик</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-[#111111] mb-1">
+                Примечания к заказу
+              </label>
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Условия доставки, трек-номер, контакт менеджера..."
+                className="w-full h-8 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+              />
+            </div>
           </div>
 
           {/* Footer */}
@@ -502,14 +703,14 @@ export function CreateSupplierOrderModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-medium text-[#111111] hover:bg-[#fafafa] transition-colors"
+                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-medium text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
               >
                 Отмена
               </button>
               <button
                 type="submit"
                 disabled={createOrderMutation.isPending}
-                className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors disabled:opacity-50"
+                className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {createOrderMutation.isPending ? (
                   <>
@@ -519,7 +720,7 @@ export function CreateSupplierOrderModal({
                 ) : (
                   <>
                     <ShoppingCart className="h-4 w-4" />
-                    Создать заказ поставщику
+                    {isFromPurchases ? "Сформировать заказ" : "Создать заказ"}
                   </>
                 )}
               </button>

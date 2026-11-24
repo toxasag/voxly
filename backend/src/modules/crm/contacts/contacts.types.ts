@@ -93,6 +93,7 @@ export const createContactSchema = z.object({
   /** Мессенджеры и соцсети списком. */
   socials: z.array(contactSocialSchema).max(20, "Too many social profiles").optional(),
   telegram_chat_id: z.string().max(30).optional().or(z.literal("")),
+  telegram_username: z.string().max(100).optional().or(z.literal("")),
   job_title: z.string().max(150).optional().or(z.literal("")),
   /** Компания необязательна: у физлица её нет. */
   company_name: z.string().max(200).optional().or(z.literal("")),

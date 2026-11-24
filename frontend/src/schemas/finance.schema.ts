@@ -22,15 +22,15 @@ export const createTransactionSchema = z.object({
     .number({ invalid_type_error: "Amount must be a number" })
     .min(0.01, "Amount must be greater than 0"),
   currency: z.string().length(3).default("RUB"),
-  category_id: z.string().uuid().optional().or(z.literal("")),
+  category_id: z.string().optional().nullable().or(z.literal("")),
   category_name: z.string().min(1, "Category is required").max(120),
-  description: z.string().max(500).optional().or(z.literal("")),
-  counterparty_name: z.string().max(200).optional().or(z.literal("")),
-  counterparty_inn: z.string().max(20).optional().or(z.literal("")),
-  deal_id: z.string().uuid().optional().or(z.literal("")),
-  repair_order_id: z.string().uuid().optional().or(z.literal("")),
-  invoice_id: z.string().uuid().optional().or(z.literal("")),
-  occurred_at: z.string().optional(),
+  description: z.string().max(500).optional().nullable().or(z.literal("")),
+  counterparty_name: z.string().max(200).optional().nullable().or(z.literal("")),
+  counterparty_inn: z.string().max(20).optional().nullable().or(z.literal("")),
+  deal_id: z.string().optional().nullable().or(z.literal("")),
+  repair_order_id: z.string().optional().nullable().or(z.literal("")),
+  invoice_id: z.string().optional().nullable().or(z.literal("")),
+  occurred_at: z.string().optional().nullable().or(z.literal("")),
 });
 
 export type CreateTransactionPayload = z.infer<typeof createTransactionSchema>;
@@ -43,15 +43,15 @@ export const updateTransactionSchema = z.object({
     .min(0.01, "Amount must be greater than 0")
     .optional(),
   currency: z.string().length(3).default("RUB").optional(),
-  category_id: z.string().uuid().optional().or(z.literal("")),
+  category_id: z.string().optional().nullable().or(z.literal("")),
   category_name: z.string().min(1, "Category is required").max(120).optional(),
-  description: z.string().max(500).optional().or(z.literal("")),
-  counterparty_name: z.string().max(200).optional().or(z.literal("")),
-  counterparty_inn: z.string().max(20).optional().or(z.literal("")),
-  deal_id: z.string().uuid().optional().or(z.literal("")),
-  repair_order_id: z.string().uuid().optional().or(z.literal("")),
-  invoice_id: z.string().uuid().optional().or(z.literal("")),
-  occurred_at: z.string().optional(),
+  description: z.string().max(500).optional().nullable().or(z.literal("")),
+  counterparty_name: z.string().max(200).optional().nullable().or(z.literal("")),
+  counterparty_inn: z.string().max(20).optional().nullable().or(z.literal("")),
+  deal_id: z.string().optional().nullable().or(z.literal("")),
+  repair_order_id: z.string().optional().nullable().or(z.literal("")),
+  invoice_id: z.string().optional().nullable().or(z.literal("")),
+  occurred_at: z.string().optional().nullable().or(z.literal("")),
 });
 
 export type UpdateTransactionPayload = z.infer<typeof updateTransactionSchema>;

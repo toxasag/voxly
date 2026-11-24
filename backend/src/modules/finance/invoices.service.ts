@@ -8,6 +8,7 @@ import type {
 } from "./finance.types.js";
 import { query, queryOne, withTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
+import { dealsService } from "../crm/deals/deals.service.js";
 import { generateInvoicePdfBuffer } from "./invoice-pdf.service.js";
 import { renderInvoiceRfHtml } from "./invoice-html.service.js";
 import {
@@ -1463,21 +1464,140 @@ export class InvoicesService {
         [tenant, id, p.occurred_at || null, account.id],
       );
 
-      await tx.query(
-        `INSERT INTO transactions(tenant_id,cash_account_id,category_id,category_name,amount,currency,direction,description,invoice_id,repair_order_id,deal_id,occurred_at)
-         VALUES($1,$2,NULL,'Оплата счёта',$3,$4,'income',$5,$6,$7,$8,COALESCE($9::timestamptz,now()))`,
-        [
-          tenant,
-          account.id,
-          Number(inv.total),
-          inv.currency,
-          p.description || `Оплата счёта №${inv.invoice_number}`,
-          id,
-          inv.repair_order_id,
-          inv.deal_id,
-          p.occurred_at || null,
-        ],
+      // Получаем позиции счёта для категоризации платежа (работы / запчасти)
+      const items = await tx.query<{
+        id: string;
+        description: string;
+        quantity: number;
+        unit_price: number;
+        total: number;
+        source: string;
+      }>(
+        `SELECT id, description, quantity, unit_price, total, source
+         FROM invoice_items
+         WHERE invoice_id = $1
+         ORDER BY created_at ASC`,
+        [id],
       );
+
+      // Получаем доходные статьи тенанта из справочника finance_categories
+      const categories = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name
+         FROM finance_categories
+         WHERE tenant_id = $1 AND type = 'income'
+         ORDER BY created_at ASC`,
+        [tenant],
+      );
+      const worksCategory = categories.find((c) => /работ|услуг/i.test(c.name)) ?? null;
+      const partsCategory = categories.find((c) => /запчаст|детал|продаж|товар/i.test(c.name)) ?? null;
+      const defaultIncomeCategory = categories[0] ?? null;
+
+      let worksSum = 0;
+      let partsSum = 0;
+      let otherSum = 0;
+
+      for (const it of items) {
+        const itemTotal = Number(it.total) || (Number(it.quantity) * Number(it.unit_price)) || 0;
+        if (it.source === "repair_work" || /работ|услуг|ремонт|диагностик/i.test(it.description)) {
+          worksSum += itemTotal;
+        } else if (it.source === "repair_part" || /запчаст|детал|товар|расходник/i.test(it.description)) {
+          partsSum += itemTotal;
+        } else {
+          otherSum += itemTotal;
+        }
+      }
+
+      if (worksSum > 0 && partsSum === 0) {
+        worksSum += otherSum;
+      } else if (partsSum > 0 && worksSum === 0) {
+        partsSum += otherSum;
+      } else if (worksSum === 0 && partsSum === 0) {
+        if (inv.repair_order_id) {
+          worksSum = Number(inv.total);
+        } else {
+          otherSum = Number(inv.total);
+        }
+      }
+
+      const counterpartyName = (inv.company_name?.trim() || inv.contact_name?.trim() || "");
+      const counterpartyInn = (inv.company_inn?.trim() || "");
+      const invTotal = Number(inv.total);
+
+      interface TxToInsert {
+        amount: number;
+        categoryId: string | null;
+        categoryName: string;
+        description: string;
+      }
+      const txsToInsert: TxToInsert[] = [];
+
+      const baseDescription = p.description || `Оплата счёта №${inv.invoice_number}`;
+
+      if (worksSum > 0 && partsSum > 0) {
+        const rawWorks = Math.round(invTotal * (worksSum / (worksSum + partsSum)) * 100) / 100;
+        const rawParts = Math.round((invTotal - rawWorks) * 100) / 100;
+
+        txsToInsert.push({
+          amount: rawWorks,
+          categoryId: worksCategory?.id ?? null,
+          categoryName: worksCategory?.name ?? "Оплата выполненных работ",
+          description: baseDescription,
+        });
+        txsToInsert.push({
+          amount: rawParts,
+          categoryId: partsCategory?.id ?? null,
+          categoryName: partsCategory?.name ?? "Продажа запчастей",
+          description: baseDescription,
+        });
+      } else if (worksSum > 0) {
+        txsToInsert.push({
+          amount: invTotal,
+          categoryId: worksCategory?.id ?? defaultIncomeCategory?.id ?? null,
+          categoryName: worksCategory?.name ?? defaultIncomeCategory?.name ?? "Оплата выполненных работ",
+          description: baseDescription,
+        });
+      } else if (partsSum > 0) {
+        txsToInsert.push({
+          amount: invTotal,
+          categoryId: partsCategory?.id ?? defaultIncomeCategory?.id ?? null,
+          categoryName: partsCategory?.name ?? defaultIncomeCategory?.name ?? "Продажа запчастей",
+          description: baseDescription,
+        });
+      } else {
+        txsToInsert.push({
+          amount: invTotal,
+          categoryId: defaultIncomeCategory?.id ?? null,
+          categoryName: defaultIncomeCategory?.name ?? "Оплата счёта",
+          description: baseDescription,
+        });
+      }
+
+      for (const txData of txsToInsert) {
+        await tx.query(
+          `INSERT INTO transactions(
+             tenant_id, cash_account_id, category_id, category_name, amount, currency, direction,
+             description, counterparty_name, counterparty_inn, invoice_id, repair_order_id, deal_id,
+             occurred_at, created_by
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10, $11, $12, COALESCE($13::timestamptz, now()), $14)`,
+          [
+            tenant,
+            account.id,
+            txData.categoryId,
+            txData.categoryName,
+            txData.amount,
+            inv.currency,
+            txData.description,
+            counterpartyName,
+            counterpartyInn,
+            id,
+            inv.repair_order_id,
+            inv.deal_id,
+            p.occurred_at || null,
+            _user || null,
+          ],
+        );
+      }
 
       // Пересчитываем баланс счёта строго по активным операциям
       await tx.query(
@@ -1508,6 +1628,16 @@ export class InvoicesService {
            WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
           [tenant, Array.from(linkedOrderIds)],
         );
+
+        const roRows = await tx.query<{ deal_id: string }>(
+          `SELECT DISTINCT deal_id FROM repair_orders WHERE tenant_id = $1 AND id = ANY($2) AND deal_id IS NOT NULL AND deleted_at IS NULL`,
+          [tenant, Array.from(linkedOrderIds)],
+        );
+        for (const { deal_id } of roRows) {
+          void dealsService.syncDealCompletionFromRepairs(tenant, deal_id, _user);
+        }
+      } else if (inv.deal_id) {
+        void dealsService.syncDealCompletionFromRepairs(tenant, inv.deal_id, _user);
       }
 
       const updated = {

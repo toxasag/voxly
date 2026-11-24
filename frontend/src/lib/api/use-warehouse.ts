@@ -119,6 +119,49 @@ export interface IntakeBatchPayload {
   cash_account_id?: string;
 }
 
+export type IntakeDocumentBasis =
+  | "supplier_order"
+  | "initial_balance"
+  | "direct_purchase"
+  | "inventory_adjustment";
+
+export interface IntakeDocumentItemPayload {
+  item_id?: string;
+  name: string;
+  sku?: string;
+  category?: string;
+  unit?: string;
+  quantity: number;
+  purchase_price: number;
+  retail_price?: number;
+  batch_number?: string;
+}
+
+export interface IntakeDocumentPayload {
+  basis: IntakeDocumentBasis;
+  supplier_order_id?: string | null;
+  supplier_name?: string;
+  supplier_company_id?: string | null;
+  incoming_document_number?: string;
+  document_date?: string;
+  notes?: string;
+  items: IntakeDocumentItemPayload[];
+  record_finance_expense?: boolean;
+  cash_account_id?: string | null;
+  payment_comment?: string;
+}
+
+export interface IntakeDocumentResultDTO {
+  success: boolean;
+  documentNumber: string;
+  basis: IntakeDocumentBasis;
+  batchesCreated: number;
+  totalQuantity: number;
+  totalAmount: number;
+  transactionId?: string;
+  supplierOrderId?: string;
+}
+
 export interface CreatePurchaseRequestPayload {
   repair_order_id?: string;
   deal_id?: string;
@@ -194,6 +237,7 @@ export interface CreateSupplierOrderPayload {
   supplier_name: string;
   supplier_company_id?: string | null;
   purchase_request_ids?: string[];
+  status?: "draft" | "pending_payment" | "paid";
   items?: {
     purchase_request_id?: string | null;
     purchase_request_ids?: string[];
@@ -449,6 +493,21 @@ export function useIntakeWarehouseBatch() {
   });
 }
 
+export function useIntakeWarehouseDocument() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: IntakeDocumentPayload) => {
+      const res = await apiClient.post<IntakeDocumentResultDTO>("/api/v1/warehouse/intake-document", payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+}
+
 export function useWarehouseBatches(itemId?: string) {
   return useQuery({
     queryKey: warehouseKeys.batches(itemId),
@@ -614,6 +673,8 @@ export function useCreateSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
     },
   });
 }
@@ -638,6 +699,8 @@ export function useUpdateSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
     },
   });
 }
@@ -819,6 +882,9 @@ export interface BulkUpdateWarehouseItemsPayload {
   min_stock?: number;
   retail_price_action?: PriceAdjustmentAction;
   cost_price_action?: PriceAdjustmentAction;
+  models?: string[];
+  model_ids?: string[];
+  models_mode?: "replace" | "add" | "remove";
 }
 
 export interface BulkDeleteWarehouseItemsPayload {

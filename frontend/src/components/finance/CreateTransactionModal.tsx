@@ -17,6 +17,7 @@ import {
   FileText,
   Link as LinkIcon,
   HelpCircle,
+  AlertCircle,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -41,7 +42,7 @@ import { cn } from "@/lib/utils";
 interface CreateTransactionModalProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (payload: CreateTransactionPayload) => void;
+  onSubmit: (payload: CreateTransactionPayload) => Promise<void> | void;
   accounts?: AccountDTO[];
   onOpenCategories?: () => void;
 }
@@ -72,6 +73,8 @@ export function CreateTransactionModal({
 
   const [createAccountOpen, setCreateAccountOpen] = useState(false);
   const [showLinks, setShowLinks] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const form = useForm<CreateTransactionPayload>({
     resolver: zodResolver(createTransactionSchema),
@@ -115,31 +118,61 @@ export function CreateTransactionModal({
     }
   }, [open, accounts, form]);
 
-  // When type changes, clear category selection
+  // When type or categoriesList changes, ensure category selection is valid
   useEffect(() => {
-    if (categoriesList.length > 0 && !form.getValues("category_id")) {
-      form.setValue("category_id", categoriesList[0].id, { shouldValidate: true });
-      form.setValue("category_name", categoriesList[0].name);
+    if (categoriesList.length > 0) {
+      const currentCatId = form.getValues("category_id");
+      const currentCatExists = categoriesList.some((c) => c.id === currentCatId);
+      if (!currentCatId || !currentCatExists) {
+        form.setValue("category_id", categoriesList[0].id, { shouldValidate: true });
+        form.setValue("category_name", categoriesList[0].name, { shouldValidate: true });
+      }
     }
   }, [txType, categoriesList, form]);
 
   const handleSubmit = useCallback(
-    (values: CreateTransactionPayload) => {
-      // Ensure category_name is populated
-      const matchedCat = categoriesList.find((c) => c.id === values.category_id);
-      const payload: CreateTransactionPayload = {
-        ...values,
-        category_name: matchedCat?.name || values.category_name || "Прочее",
-      };
-      onSubmit(payload);
-      form.reset();
-      onClose();
+    async (values: CreateTransactionPayload) => {
+      setSubmitError(null);
+      setSubmitting(true);
+      try {
+        const matchedCat = categoriesList.find((c) => c.id === values.category_id);
+        const isUuid = (val?: string | null): boolean =>
+          typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
+        let occurredAtIso: string | undefined = undefined;
+        if (values.occurred_at && values.occurred_at.trim()) {
+          const d = new Date(values.occurred_at);
+          occurredAtIso = !isNaN(d.getTime()) ? d.toISOString() : undefined;
+        }
+
+        const payload: CreateTransactionPayload = {
+          ...values,
+          category_id: isUuid(values.category_id) ? values.category_id : undefined,
+          category_name: matchedCat?.name || values.category_name || "Прочее",
+          deal_id: isUuid(values.deal_id) ? values.deal_id : undefined,
+          repair_order_id: isUuid(values.repair_order_id) ? values.repair_order_id : undefined,
+          invoice_id: isUuid(values.invoice_id) ? values.invoice_id : undefined,
+          occurred_at: occurredAtIso,
+        };
+
+        await onSubmit(payload);
+        form.reset();
+        setSubmitError(null);
+        onClose();
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Не удалось сохранить операцию";
+        setSubmitError(message);
+      } finally {
+        setSubmitting(false);
+      }
     },
     [onSubmit, form, onClose, categoriesList],
   );
 
   useEffect(() => {
     if (open) {
+      setSubmitError(null);
+      setSubmitting(false);
       form.reset({
         type: "income",
         category_name: "",
@@ -194,6 +227,16 @@ export function CreateTransactionModal({
         <SheetContent>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="flex flex-col h-full">
             <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+              {submitError && (
+                <div className="rounded-[8px] bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700 flex items-start gap-2.5">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">Ошибка при сохранении операции</p>
+                    <p className="mt-0.5 text-rose-600">{submitError}</p>
+                  </div>
+                </div>
+              )}
+
               {/* Type Switcher Segmented Control */}
               <div className="space-y-1.5">
                 <label className="block text-xs font-medium text-[#111111]">
@@ -510,7 +553,7 @@ export function CreateTransactionModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={!isValid || isSubmitting || amountValue <= 0}
+                  disabled={!isValid || isSubmitting || submitting || amountValue <= 0}
                   className={cn(
                     "inline-flex h-8 items-center gap-1.5 rounded-[8px] px-4 text-xs font-semibold text-white shadow-xs transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
                     isIncome
@@ -518,7 +561,7 @@ export function CreateTransactionModal({
                       : "bg-[#4a38f5] hover:bg-[#3d2ee0]",
                   )}
                 >
-                  {isSubmitting ? (
+                  {isSubmitting || submitting ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       <span>Сохранение...</span>

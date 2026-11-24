@@ -1736,6 +1736,7 @@ export default function RepairDetailPage() {
                     customerPhone={ticket.customer_phone}
                     dealId={ticket.deal_id}
                     paymentStatus={ticket.payment_status}
+                    dealPaymentStatus={ticket.deal_payment_status}
                     onRefresh={() => void refetchRepair()}
                   />
                 </div>

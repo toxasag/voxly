@@ -30,6 +30,7 @@ export interface DictionarySelectFieldProps {
   category: DictionaryCategory;
   brandName?: string;
   brandId?: string;
+  allowAllBrands?: boolean;
   items: (string | DictionaryItemDTO)[];
   placeholder?: string;
   mode: "single" | "multi";
@@ -54,6 +55,7 @@ export function DictionarySelectField({
   category,
   brandName,
   brandId,
+  allowAllBrands = false,
   items,
   placeholder,
   mode,
@@ -70,7 +72,7 @@ export function DictionarySelectField({
 
   const isModelCategory = category === "model";
   const isBrandSelected = Boolean((brandId && brandId.trim()) || (brandName && brandName.trim()));
-  const isLocked = isModelCategory && !isBrandSelected;
+  const isLocked = isModelCategory && !isBrandSelected && !allowAllBrands;
   const isEffectivelyDisabled = disabled || isLocked;
   const displayPlaceholder = isLocked
     ? "Сначала выберите бренд"
@@ -136,24 +138,27 @@ export function DictionarySelectField({
 
     if (isModelCategory) {
       if (!isBrandSelected) {
-        return [];
+        if (!allowAllBrands) {
+          return [];
+        }
+      } else {
+        const normBrandName = brandName?.trim().toLowerCase();
+        source = source.filter((item) => {
+          if (brandId && item.brandId) {
+            return item.brandId === brandId;
+          }
+          if (normBrandName && item.brandName) {
+            return item.brandName.trim().toLowerCase() === normBrandName;
+          }
+          return false;
+        });
       }
-      const normBrandName = brandName?.trim().toLowerCase();
-      source = source.filter((item) => {
-        if (brandId && item.brandId) {
-          return item.brandId === brandId;
-        }
-        if (normBrandName && item.brandName) {
-          return item.brandName.trim().toLowerCase() === normBrandName;
-        }
-        return false;
-      });
     }
 
     const term = searchTerm.trim().toLowerCase();
     if (!term) return source;
     return source.filter((item) => item.name.toLowerCase().includes(term));
-  }, [normalizedItems, isModelCategory, isBrandSelected, brandId, brandName, searchTerm]);
+  }, [normalizedItems, isModelCategory, isBrandSelected, allowAllBrands, brandId, brandName, searchTerm]);
 
   const handleSelectSingle = (item: NormalizedItem) => {
     onChange(item.name);
@@ -195,11 +200,17 @@ export function DictionarySelectField({
     if (!trimmed) return;
 
     try {
+      let bName = brandName?.trim();
+      let bId = brandId?.trim();
+      if (isModelCategory && !bName && !bId && allowAllBrands) {
+        bName = "Общий";
+      }
+
       await addMutation.mutateAsync({
         category,
         name: trimmed,
-        brand_name: brandName?.trim(),
-        brand_id: brandId?.trim(),
+        brand_name: bName,
+        brand_id: bId,
       });
 
       if (mode === "single") {
@@ -530,6 +541,9 @@ export function DictionarySelectField({
                   >
                     <div className="flex items-center gap-2 truncate mr-2">
                       <span>{item.name}</span>
+                      {allowAllBrands && !isBrandSelected && item.brandName && (
+                        <span className="text-[10px] text-slate-400 font-normal">({item.brandName})</span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">

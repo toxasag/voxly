@@ -53,6 +53,7 @@ interface FinancialSummaryProps {
   customerPhone?: string;
   dealId?: string | null;
   paymentStatus?: string;
+  dealPaymentStatus?: string | null;
   onRefresh?: () => void;
 }
 
@@ -90,6 +91,7 @@ export const FinancialSummary = memo(function FinancialSummary({
   customerPhone = "",
   dealId = null,
   paymentStatus = "unpaid",
+  dealPaymentStatus = null,
   onRefresh,
 }: FinancialSummaryProps) {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -193,6 +195,26 @@ export const FinancialSummary = memo(function FinancialSummary({
   }, [workItems, parts]);
 
   const hasData = workItems.length > 0 || parts.length > 0;
+
+  // Заказ или вся сделка полностью оплачены
+  const isFullyPaid = useMemo(() => {
+    if (paymentStatus === "paid" || dealPaymentStatus === "paid") {
+      return true;
+    }
+    const paidInvoicesTotal = invoices
+      .filter((i) => i.status === "paid")
+      .reduce((sum, i) => sum + Number(i.total), 0);
+
+    if (summary.totalClient > 0 && paidInvoicesTotal >= summary.totalClient) {
+      return true;
+    }
+
+    if (invoices.length > 0 && invoices.every((i) => i.status === "paid" || i.status === "cancelled")) {
+      return true;
+    }
+
+    return false;
+  }, [paymentStatus, dealPaymentStatus, invoices, summary.totalClient]);
 
   const handleDownloadPdf = useCallback(async (inv: InvoiceDTO) => {
     try {
@@ -329,7 +351,7 @@ export const FinancialSummary = memo(function FinancialSummary({
             <span className="text-sm font-semibold text-[#111111]">Финансовый итог наряда</span>
           </div>
           <div>
-            {paymentStatus === "paid" ? (
+            {isFullyPaid || paymentStatus === "paid" ? (
               <TagPill color="emerald">Оплачен</TagPill>
             ) : paymentStatus === "invoiced" ? (
               <TagPill color="sky">Счёт выставлен</TagPill>
@@ -409,22 +431,30 @@ export const FinancialSummary = memo(function FinancialSummary({
           <div className="mt-5 grid grid-cols-2 gap-3">
             <button
               type="button"
-              onClick={() => setIsPaymentModalOpen(true)}
+              disabled={isFullyPaid}
+              onClick={isFullyPaid ? undefined : () => setIsPaymentModalOpen(true)}
+              title={isFullyPaid ? "Вся сумма по сделке уже оплачена" : "Принять оплату"}
               className={cn(
-                "flex items-center justify-center gap-2 rounded-[8px] py-2.5 px-4 text-xs font-semibold transition-colors cursor-pointer",
-                "bg-emerald-600 text-white hover:bg-emerald-700 shadow-2xs",
+                "flex items-center justify-center gap-2 rounded-[8px] py-2.5 px-4 text-xs font-semibold transition-colors select-none",
+                isFullyPaid
+                  ? "bg-[#f5f5f5] text-[#888888] border border-[#e5e5e5] cursor-not-allowed opacity-70 shadow-none"
+                  : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-2xs cursor-pointer",
               )}
             >
               <CheckCircle2 className="h-4 w-4" />
-              Принять оплату
+              {isFullyPaid ? "Оплачено" : "Принять оплату"}
             </button>
 
             <button
               type="button"
-              onClick={() => setIsInvoiceModalOpen(true)}
+              disabled={isFullyPaid}
+              onClick={isFullyPaid ? undefined : () => setIsInvoiceModalOpen(true)}
+              title={isFullyPaid ? "Вся сумма по сделке уже оплачена" : "Сформировать счёт"}
               className={cn(
-                "flex items-center justify-center gap-2 rounded-[8px] py-2.5 px-4 text-xs font-semibold transition-colors cursor-pointer",
-                "bg-[#4a38f5] text-white hover:bg-[#3d2ee0] shadow-2xs",
+                "flex items-center justify-center gap-2 rounded-[8px] py-2.5 px-4 text-xs font-semibold transition-colors select-none",
+                isFullyPaid
+                  ? "bg-[#f5f5f5] text-[#888888] border border-[#e5e5e5] cursor-not-allowed opacity-70 shadow-none"
+                  : "bg-[#4a38f5] text-white hover:bg-[#3d2ee0] shadow-2xs cursor-pointer",
               )}
             >
               <Receipt className="h-4 w-4" />
@@ -452,7 +482,7 @@ export const FinancialSummary = memo(function FinancialSummary({
                 Счета на оплату ({invoices.length})
               </h3>
             </div>
-            {invoices.length > 0 && (
+            {invoices.length > 0 && !isFullyPaid && (
               <button
                 type="button"
                 onClick={() => setIsInvoiceModalOpen(true)}
@@ -471,14 +501,16 @@ export const FinancialSummary = memo(function FinancialSummary({
             <div className="rounded-[8px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-6 text-center">
               <FileText className="h-8 w-8 text-[#888888] mx-auto mb-2 opacity-40" />
               <p className="text-xs text-[#666666]">По этому наряд-заказу ещё не выставлено ни одного счёта.</p>
-              <button
-                type="button"
-                onClick={() => setIsInvoiceModalOpen(true)}
-                className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-[#4a38f5] hover:underline cursor-pointer"
-              >
-                <Receipt className="h-3.5 w-3.5" />
-                Сформировать счёт на оплату
-              </button>
+              {!isFullyPaid && (
+                <button
+                  type="button"
+                  onClick={() => setIsInvoiceModalOpen(true)}
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-[#4a38f5] hover:underline cursor-pointer"
+                >
+                  <Receipt className="h-3.5 w-3.5" />
+                  Сформировать счёт на оплату
+                </button>
+              )}
             </div>
           ) : (
             <div className="divide-y divide-[#f0f0f0] border border-[#e5e5e5] rounded-[8px]">

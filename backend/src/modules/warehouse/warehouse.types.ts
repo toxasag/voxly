@@ -55,6 +55,53 @@ export const intakeBatchSchema = z.object({
 });
 export type IntakeBatchPayload = z.infer<typeof intakeBatchSchema>;
 
+export const intakeDocumentItemSchema = z.object({
+  item_id: z.string().uuid().optional(),
+  name: z.string().min(1, "Наименование товара обязательно").max(300),
+  sku: z.string().max(100).optional().default(""),
+  category: z.string().max(100).optional().default(""),
+  unit: z.string().max(20).default("шт"),
+  quantity: z.number().positive("Количество должно быть больше 0"),
+  purchase_price: z.number().nonnegative("Закупочная цена не может быть отрицательной"),
+  retail_price: z.number().nonnegative().optional(),
+  batch_number: z.string().max(100).optional(),
+});
+export type IntakeDocumentItemPayload = z.infer<typeof intakeDocumentItemSchema>;
+
+export const intakeDocumentBasisSchema = z.enum([
+  "supplier_order",
+  "initial_balance",
+  "direct_purchase",
+  "inventory_adjustment",
+]);
+export type IntakeDocumentBasis = z.infer<typeof intakeDocumentBasisSchema>;
+
+export const intakeDocumentSchema = z.object({
+  basis: intakeDocumentBasisSchema.default("direct_purchase"),
+  supplier_order_id: z.string().uuid().optional().nullable(),
+  supplier_name: z.string().max(200).optional().default(""),
+  supplier_company_id: z.string().uuid().optional().nullable(),
+  incoming_document_number: z.string().max(100).optional().default(""),
+  document_date: z.string().optional(),
+  notes: z.string().max(1000).optional().default(""),
+  items: z.array(intakeDocumentItemSchema).min(1, "Укажите хотя бы один товар для оприходования"),
+  record_finance_expense: z.boolean().default(false),
+  cash_account_id: z.string().uuid().optional().nullable(),
+  payment_comment: z.string().max(500).optional(),
+});
+export type IntakeDocumentPayload = z.infer<typeof intakeDocumentSchema>;
+
+export interface IntakeDocumentResultDTO {
+  success: boolean;
+  documentNumber: string;
+  basis: IntakeDocumentBasis;
+  batchesCreated: number;
+  totalQuantity: number;
+  totalAmount: number;
+  transactionId?: string;
+  supplierOrderId?: string;
+}
+
 export const purchaseRequestStatusSchema = z.enum(["pending", "ordered", "received", "cancelled"]);
 export type PurchaseRequestStatus = z.infer<typeof purchaseRequestStatusSchema>;
 
@@ -88,22 +135,23 @@ export type SupplierOrderStatus = z.infer<typeof supplierOrderStatusSchema>;
 
 export const createSupplierOrderSchema = z.object({
   supplier_name: z.string().min(1, "Имя поставщика обязательно").max(200),
-  supplier_company_id: z.string().uuid().optional().nullable(),
+  supplier_company_id: z.string().uuid().optional().nullable().or(z.literal("")),
   purchase_request_ids: z.array(z.string().uuid()).optional(),
+  status: supplierOrderStatusSchema.optional().default("pending_payment"),
   items: z
     .array(
       z.object({
-        purchase_request_id: z.string().uuid().optional().nullable(),
+        purchase_request_id: z.string().uuid().optional().nullable().or(z.literal("")),
         purchase_request_ids: z.array(z.string().uuid()).optional(),
-        item_id: z.string().uuid().optional().nullable(),
-        item_name: z.string().min(1),
+        item_id: z.string().uuid().optional().nullable().or(z.literal("")),
+        item_name: z.string().min(1, "Наименование позиции обязательно"),
         sku: z.string().default(""),
         requested_quantity: z.number().nonnegative().default(0),
         extra_quantity: z.number().nonnegative().default(0),
-        quantity: z.number().positive(),
+        quantity: z.number().positive("Количество должно быть больше нуля"),
         unit: z.string().default("шт"),
-        price: z.number().nonnegative(),
-        repair_order_id: z.string().uuid().optional().nullable(),
+        price: z.number().nonnegative("Цена не может быть отрицательной"),
+        repair_order_id: z.string().uuid().optional().nullable().or(z.literal("")),
         repair_orders: z.string().optional(),
       }),
     )
@@ -600,6 +648,11 @@ export const bulkUpdateWarehouseItemsSchema = z.object({
   min_stock: z.number().nonnegative().optional(),
   retail_price_action: priceAdjustmentActionSchema.optional(),
   cost_price_action: priceAdjustmentActionSchema.optional(),
+  models: z.array(z.string().max(100)).optional(),
+  model_ids: z.array(z.string().uuid()).optional(),
+  modelIds: z.array(z.string().uuid()).optional(),
+  models_mode: z.enum(["replace", "add", "remove"]).optional().default("replace"),
+  modelsMode: z.enum(["replace", "add", "remove"]).optional(),
 });
 export type BulkUpdateWarehouseItemsPayload = z.infer<typeof bulkUpdateWarehouseItemsSchema>;
 

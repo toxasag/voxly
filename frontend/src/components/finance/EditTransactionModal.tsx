@@ -116,7 +116,7 @@ export function EditTransactionModal({
     return fallbackCategories.map((c) => ({ id: c.value, name: c.label }));
   }, [dbCategories, fallbackCategories]);
 
-  // Pre-fill form when transaction changes
+  // Pre-fill form once when modal opens for a transaction
   useEffect(() => {
     if (open && transaction) {
       const type: "income" | "expense" = transaction.type === "income" ? "income" : "expense";
@@ -125,7 +125,7 @@ export function EditTransactionModal({
         amount: transaction.amount,
         account_id: transaction.account_id,
         category_name: transaction.category || "",
-        category_id: "",
+        category_id: transaction.category_id || "",
         description: transaction.description || "",
         counterparty_name: transaction.counterparty || "",
         counterparty_inn: transaction.counterparty_inn || "",
@@ -134,13 +134,30 @@ export function EditTransactionModal({
     }
   }, [open, transaction, form]);
 
+  // Match category_id by category name once categories finish loading without resetting user edits
+  useEffect(() => {
+    if (!open || !transaction || categoriesList.length === 0) return;
+    const currentId = form.getValues("category_id");
+    if (currentId && categoriesList.some((c) => c.id === currentId)) return;
+
+    const currentName = (form.getValues("category_name") || transaction.category || "").trim().toLowerCase();
+    if (!currentName) return;
+
+    const matched = categoriesList.find((c) => c.name.trim().toLowerCase() === currentName);
+    if (matched) {
+      form.setValue("category_id", matched.id);
+    }
+  }, [open, transaction, categoriesList, form]);
+
   const handleSubmit = useCallback(
     async (values: UpdateTransactionPayload) => {
       if (!transaction) return;
       try {
-        const matchedCat = categoriesList.find((c) => c.id === values.category_id);
+        const selectedCatId = values.category_id?.trim() || "";
+        const matchedCat = categoriesList.find((c) => c.id === selectedCatId);
         const payload: UpdateTransactionPayload = {
           ...values,
+          category_id: selectedCatId ? selectedCatId : undefined,
           category_name: matchedCat?.name || values.category_name || transaction.category || "Прочее",
           occurred_at: values.occurred_at
             ? new Date(values.occurred_at).toISOString()

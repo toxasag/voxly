@@ -1269,3 +1269,332 @@
   - Next.js build frontend: 45/45 static pages успешно собрано.
   - Тест `backend/src/tests/chat-from-me.test.ts` обновлен под бессрочную паузу ручного перехвата.
   - Деплой на боевой VPS через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Синхронизация платежей счетов, автора и категорий операций, запрет ручной смены оплаты в нарядах
+- **Контекст и проблема:**
+  1. На странице `https://remtoua.getvoxly.ru/finance` в таблице «Операции» отображалась только дата без времени (`24.11.26`).
+  2. При оплате счёта колонка «Контрагент» оставалась пустой (`—`), отсутствовала колонка «Автор», а категория операции хардкодилась как «Оплата счёта» с `category_id = NULL`.
+  3. При удалении финансовой операции оплаты счёт оставался в статусе `paid` («Оплачен»), кнопка «Принять оплату» не возвращалась (ни в финансах, ни в карточке наряда), а статус наряда оставался «Оплачен».
+  4. В таблице наряд-заказов `https://remtoua.getvoxly.ru/repairs` и на тулбаре массовых действий была ручная смена статуса оплаты через `<select>`.
+- **Root Cause:**
+  1. `TransactionsTable.tsx` форматировал дату через `Intl.DateTimeFormat` только с `day, month, year` без времени.
+  2. В `invoices.service.ts:markPaid` аргумент `_user` игнорировался, в `INSERT INTO transactions` не передавались `counterparty_name`, `counterparty_inn`, `created_by`, а категории не подтягивались из `finance_categories`. В таблице `transactions` отсутствовала колонка `created_by`.
+  3. `finance.service.ts:bulkDeleteTransactions` только ставил `deleted_at = now()` на транзакциях и пересчитывал баланс кассы, не проверяя `invoice_id` и не откатывая статус счёта и связанных наряд-заказов.
+  4. В `RepairsTable.tsx` `PaymentStatusBadge` рендерил выпадающий список `<select>`, а в тулбаре присутствовал селект смены оплаты.
+- **Что сделано:**
+  1. **База данных:**
+     - Создана миграция `0132_transactions_created_by_and_payment_status_sync.sql`: добавлена колонка `created_by UUID REFERENCES users(id)` с индексом, бэкфилл автора, контрагента и категорий, а также сверка статусов зависших счетов и нарядов.
+     - Обновлён `backend/src/db/schema.sql`.
+  2. **Бэкенд:**
+     - `finance.types.ts`: в `TransactionDTO` добавлены `createdById` и `createdByName`.
+     - `finance.routes.ts`: в роут создания транзакций передаётся `req.authUser?.id`.
+     - `finance.service.ts`: при выборке операций добавлен `LEFT JOIN users u ON u.id = t.created_by`, маппинг в `toTx`, поддержка поиска по автору.
+     - В `bulkDeleteTransactions` реализован автоматический откат статуса счёта в `sent` / `overdue` (со сбросом `paid_at` и `paid_account_id`), если сумма активных оплат стала меньше суммы счёта, и синхронизация `payment_status` связанных нарядов через `syncRepairOrderPaymentStatusInTx`.
+     - `invoices.service.ts`: в `markPaid` теперь анализируются позиции счёта (`repair_work` vs `repair_part`), выбираются доходные статьи из `finance_categories` тенанта, операция разделяется при наличии и работ, и запчастей, записываются контрагент (компания/контакт, ИНН) и автор (`created_by`).
+  3. **Фронтенд:**
+     - `TransactionsTable.tsx`: дата форматируется с временем (`formatDateTime`: `dd.mm.yy HH:mm`), ширина колонки расширена до 125px; добавлена колонка «Автор» с иконкой `User`; автор включён в поиск и экспорт в CSV.
+     - `RepairsTable.tsx`: `PaymentStatusBadge` заменён на статический read-only бейдж (`<span>`); селект «Оплата» удалён из тулбара групповых действий; удалены неиспользуемые мутации ручной смены оплаты наряда.
+     - `use-invoices.ts`: хуки удаления транзакций инвалидируют `["invoices"]` и `["repairs"]`.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+  - Проверка отката счёта `СЧ-2026-0006` в `sent` и нарядов №0020, №0021 в `invoiced` на базе `remtoua`.
+
+---
+
+### 24.11.2026 — Блокировка кнопок оплаты и выставления счета при полной оплате наряда/сделки
+- **Контекст и проблема:**
+  - В карточке наряд-заказа (`/repairs/[id]`, вкладка «Финансы») после отметки счёта или наряда как оплаченных кнопки «Принять оплату» и «Сформировать счёт» оставались активными (зелёной и синей).
+  - При наличии и работ, и запчастей в счёте суффиксы `(работы)` / `(запчасти)` в описании операций отличались, хотя все остальные метаданные должны быть абсолютно одинаковыми.
+- **Root Cause:**
+  - В `FinancialSummary.tsx` кнопки «Принять оплату» и «Сформировать счёт» не проверяли флаг `isFullyPaid` (`disabled={isFullyPaid}`).
+  - В `repairs/[id]/page.tsx` в `FinancialSummary` не пробрасывался проп `dealPaymentStatus`.
+- **Что сделано:**
+  1. **Фронтенд:**
+     - В `FinancialSummary.tsx` вычисляется `isFullyPaid` (статус наряда или сделки `paid`, либо все счета оплачены).
+     - При `isFullyPaid === true` кнопки «Принять оплату» и «Сформировать счёт» переводятся в неактивное состояние (`disabled`, серый фон `#f5f5f5`, `cursor-not-allowed`, подпись «Оплачено»).
+     - Кнопка «+ Новый счёт» скрывается при полной оплате заказа/сделки.
+     - Бейдж карточки «Финансовый итог наряда» гарантированно окрашивается в зеленый цвет «Оплачен».
+     - В `repairs/[id]/page.tsx` проброшен `dealPaymentStatus={ticket.deal_payment_status}`.
+  2. **Бэкенд:**
+     - В `invoices.service.ts:markPaid` при разделении платежа на работы и запчасти базовое описание `baseDescription = p.description || \`Оплата счёта №\${inv.invoice_number}\`` передается в обе операции без изменения остальных полей.
+- **Верификация:**
+  - TypeScript build frontend и backend: 0 ошибок.
+  - Деплой на боевой VPS через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Исправление дедупликации, этапа сделок и обогащения Telegram Bot
+- **Контекст и проблема:**
+  - При создании сделки через Telegram Bot в режиме секретаря (`telegram_bot`) никнейм и телефон оставались пустыми, дедупликация не находила ранее удаленный контакт, а сделка ошибочно падала на этап «Новый лид» вместо «Первый контакт».
+- **Root Cause:**
+  - В `channel-identity.ts` константы `CONTACT_CHANNEL_BY_SLUG` и `SOCIAL_KIND_BY_SLUG` не содержали слага `telegram_bot`. Из-за этого `contactSocialsFrom` возвращал пустой массив, а `socialValue(socials, "telegram")` записывал `null` в поле `telegram_username` таблицы `contacts`.
+  - В `crm-pipeline.service.ts` выбор этапа проверял `input.channel === "webchat"`: любые другие каналы без телефона и email отправлялись на этап «Новый лид», порождая ложные уведомления менеджерам.
+  - При повторном обращении клиента, чей контакт был ранее soft-deleted (`deleted_at IS NOT NULL`), `findContact` создавал дублирующую запись без истории и контактов.
+- **Что сделано:**
+  1. В `channel-identity.ts` добавлен маппинг `telegram_bot: "telegram"` в `CONTACT_CHANNEL_BY_SLUG` и `SOCIAL_KIND_BY_SLUG`.
+  2. В `telegram-bot.service.ts` добавлен метод `getChat` для ресёрча полного профиля и никнейма из Telegram API.
+  3. В `crm-pipeline.service.ts` реализовано восстановление soft-deleted контактов при повторном входящем обращении по `telegram_chat_id`, а также выбор системного нулевого этапа «Первый контакт» для всех обращений без телефона и email.
+- **Верификация:**
+  - `npm --prefix backend run build` — 0 ошибок.
+  - Деплой на боевой VPS через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Исправление интеграции Telegram Business Bot в режиме секретаря
+- **Контекст и проблема:**
+  - При подключении Telegram-бота в качестве секретаря (Telegram Business) сообщения от оператора и клиента не регистрировались корректно в воронке, сбрасывалась очередь Telegram обновлений, и возникали ошибки отправки ответов через Bot API.
+- **Root Cause:**
+  - В `telegram-bot.service.ts` стоял `drop_pending_updates: true` при установке вебхука, что приводило к сбросу накопившихся сообщений Telegram при рестартах бэкенда.
+  - В `channel_accounts.credentials` для аккаунта `7c3e7432-8740-4b49-9472-08edfdd2877d` находился тестовый `bc_live_test_01`, вызывавший 400 Bad Request при отправке через Bot API.
+  - В `telegram-bot-integration.routes.ts` отсутствовало сквозное логирование входящих вебхуков, определение `isFromOperator` зависело от предварительного наличия `business_user_id` в базе данных, а несовпадение `senderId !== chatId` в приватном чате Telegram Business не фиксировалось как исходящее сообщение оператора.
+  - Сообщения без текстового поля (голосовые, кружочки, фото) получали пустое `rawText`, а результат отправки сообщений ботом не логировался.
+- **Что сделано:**
+  1. **Бэкенд:**
+     - В `telegram-bot.service.ts` флаг `drop_pending_updates` переключен на `false` (сохранение очереди сообщений при перезапусках).
+     - В `telegram-bot-integration.routes.ts` добавлено верхнеуровневое логирование входящих обновлений (`update_id`, `updateKeys`), обработка `business_connection` с удалением connection_id при `isEnabled: false`, извлечение `business_connection_id` из `business_message` без операторной неоднозначности.
+     - Улучшена детекция сообщений оператора в режиме секретаря (`senderId !== chatId` в 1-to-1 чате Telegram Business однозначно идентифицирует оператора) с автосохранением `business_user_id`.
+     - Добавлено распознавание медиа-сообщений (`voice`, `video_note`, `photo`, `document` и др.) с метками `[Голосовое сообщение]`, `[Видеосообщение]` и т.д.
+     - Добавлено логирование результатов `crmPipeline.processIncoming`, исхода `prepareReply` и вызова `service.sendMessage`.
+- **Верификация:**
+  - `npm --prefix backend run build` — 0 ошибок компиляции TypeScript.
+  - Деплой на боевой VPS через `/usr/local/bin/vf-deploy GETVOXLY`.
+  - Проверка https://api.getvoxly.ru/health (HTTP 200) и https://getvoxly.ru/login (HTTP 200).
+
+---
+
+### 24.11.2026 — Поле «Подходит к моделям» в модалке массового редактирования товаров склада
+- **Контекст и проблема:**
+  - На странице `/warehouse` в диалоге массового редактирования товаров («Изменить выбранные») отсутствовало поле «Подходит к моделям».
+- **Root Cause:**
+  - Схема `bulkUpdateWarehouseItemsSchema` и сервис `bulkUpdateItems` принимали только категорию, бренд, ед. изм., мин. остаток и действия над ценами. Связи `warehouse_item_models` в массовом обновлении не обрабатывались.
+  - Компонент `ProductBulkEditDialog` не содержал чекбокса и селектора моделей, а `DictionarySelectField` требовал обязательного выбора бренда для категории `model`.
+- **Что сделано:**
+  1. **Бэкенд:**
+     - В `bulkUpdateWarehouseItemsSchema` добавлены опциональные поля `models`, `model_ids`, `modelIds`, `models_mode`, `modelsMode` (`replace` | `add` | `remove`).
+     - В `warehouse.service.ts:bulkUpdateItems` добавлена поддержка обновления моделей: эффективная резолюция недостающих моделей в `equipment_models` и пакетная вставка/удаление связей в `warehouse_item_models` через SQL-кросс-джойн `unnest(...)`.
+     - Добавлены модульные тесты валидации в `warehouse-model-filter.test.ts`.
+  2. **Фронтенд:**
+     - В `use-warehouse.ts` расширен тип `BulkUpdateWarehouseItemsPayload` полями `models`, `model_ids`, `models_mode`.
+     - В `DictionarySelectField.tsx` добавлен флаг `allowAllBrands`, позволяющий при необходимости выбирать модели без предварительного выбора бренда (с отображением бренда рядом с моделью).
+     - В `ProductBulkEditDialog.tsx` добавлена секция «Подходит к моделям» с поддержкой режимов «Заменить» и «Добавить», мультивыбором через `DictionarySelectField` с чипами и поиском, и динамическим предзаполнением при выборе 1 товара.
+- **Верификация:**
+  - `cd backend && npx tsc --noEmit && cd ../frontend && npx tsc --noEmit` — 0 ошибок.
+  - Тестирование и деплой на сервер.
+
+---
+
+### 24.11.2026 — Полноценный документ оприходования партий (приходная накладная, основания, связка с кассой и остатками)
+- **Контекст и проблема:**
+  - Кнопка «Оприходовать партию» на `/warehouse` открывала устаревший модал `IntakeModal` на 1 позицию с плоским текстом поставщика.
+  - Отсутствовали основания («Заказ поставщику», «Ввод начальных остатков», «Прямое поступление», «Излишки»).
+  - Не было связи со статусом оплаты заказов поставщикам (риск повторного списания денег). При начальных остатках не должно списываться движение из кассы.
+- **Что сделано:**
+  1. **БД и Миграция:**
+     - Создана миграция `0133_transactions_supplier_order_id.sql`, связывающая транзакции расхода ДДС с заказами поставщикам.
+  2. **Бэкенд:**
+     - В `warehouse.types.ts` добавлены схемы `intakeDocumentSchema`, `intakeDocumentItemSchema`, `intakeDocumentBasisSchema`, DTO результата.
+     - В `warehouse.service.ts` реализован метод `intakeDocument`, поддерживающий многострочное оприходование, 4 вида оснований (`supplier_order`, `initial_balance`, `direct_purchase`, `inventory_adjustment`), резервирование под заказ-наряды ремонтов, обновление цен номенклатуры и кассовый контур.
+     - В `warehouse.routes.ts` зарегистрирован роут `POST /api/v1/warehouse/intake-document`.
+  3. **Фронтенд:**
+     - В `use-warehouse.ts` добавлен хук `useIntakeWarehouseDocument` с инвалидацией всех складских и финансовых кэшей.
+     - Создан компонент `WarehouseIntakeDialog.tsx`:
+       - Переключатель оснований (Заказ поставщику / Прямое поступление / Начальные остатки / Излишки).
+       - Поиск и быстрое создание контрагента-поставщика (`useCompanies`).
+       - Подтягивание заказов поставщикам с контролем оплаты (предотвращение двойного списания).
+       - Многострочная таблица с инлайн-редактированием, расчетом сумм и модалкой множественного выбора из каталога номенклатуры.
+       - Блок кассы/ДДС с автоматическим отключением при вводе остатков.
+     - В `warehouse/page.tsx` кнопка «Оприходовать партию» переведена на `WarehouseIntakeDialog`.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+
+
+---
+
+### 24.11.2026 — Автоматический перевод сделок в «Успешно реализовано» при выдаче и оплате наряд-заказов
+- **Контекст и проблема:**
+  - Наряды ремонтов выдавались (статус `issued`) и оплачивались (статус оплаты `paid`), но связанная сделка CRM оставалась в начальной стадии («Новый лид»).
+  - Требовалось обеспечить сквозную синхронизацию: если все не удалённые наряды сделки выданы и оплачены, сделка обязана автоматически переходить в стадию «Успешно реализовано» (is_won = true) с сохранением аудита, истории и запуском всех обработчиков закрытия.
+- **Что сделано:**
+  1. **БД и Миграция:**
+     - Создана миграция `0134_sync_completed_repairs_to_won_deals.sql`, переводящая исторические сделки (включая `a65dc0a4-14a4-4013-bc61-ee7c10c404e8`) с полностью выданными и оплаченными нарядами в стадию «Успешно реализовано» с записью в `deal_stage_history`.
+  2. **Бэкенд:**
+     - В `DealsService` добавлен метод `syncDealCompletionFromRepairs(tenantId, dealId, authorId)`: проверяет наряды сделки, при полном завершении и оплате всех нарядов переводит сделку в won-стадию через `moveStage` (запуск `dealWonHandlers`, списание товаров, фиксация даты `closed_at`, аудит в `deal_stage_history`, уведомления).
+     - В `RepairsService` подключён вызов `dealsService.syncDealCompletionFromRepairs` во всех точках изменения статусов нарядов: `changeStatus`, `batchUpdateStatus`, `updatePaymentStatus`, `batchUpdatePaymentStatus`, `update`, `softDelete`, `batchDelete`.
+     - В `FinanceService` (`batchPayment`, `syncRepairOrderPaymentStatusInTx`) и `InvoicesService` (`updateStatus` при оплате счетов) подключён вызов синхронизации завершения сделки.
+  3. **Фронтенд:**
+     - В `use-repairs.ts` и `use-invoices.ts` добавлена инвалидация запросов `["deals"]` при пакетных сменах статусов нарядов, оплаты и приёме платежей.
+  4. **Тесты:**
+     - Добавлен юнит-тест `backend/src/tests/deals-repair-completion-sync.test.ts`.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Поддержка нескольких Telegram Business подключений в одном боте и изоляция операторов
+- **Контекст и root cause:**
+  - Официальный Telegram-бот может быть подключен в качестве секретаря (Telegram Business) сразу к нескольким аккаунтам менеджеров.
+  - Ранее в `channel_accounts.credentials` хранился только один `business_connection_id` и `business_user_id`. При подключении второго аккаунта старое подключение перезаписывалось.
+  - При обмене сообщениями между подключенными бизнес-аккаунтами или сообщениях от операторов условие `isFromOperator` использовало глобальный `business_user_id` и проверку `senderId !== chatId`, из-за чего входящие сообщения от других аккаунтов ошибочно маркировались как исходящие оператора и буферизовались в Redis вместо создания сделки/контакта в CRM.
+- **Что сделано:**
+  1. В `TelegramBotService` добавлен метод `getBusinessConnection(token, connectionId)` для динамической загрузки актуальных метаданных подключения из Telegram Bot API.
+  2. В `TelegramBotService.sendOutbound` добавлено определение `business_connection_id` из сделки (`custom_fields->>'business_connection_id'`) или метаданных сообщения.
+  3. В `telegram-bot-integration.routes.ts` реализована карта `credentials.business_connections`: теперь бот поддерживает неограниченное число одновременных бизнес-подключений.
+  4. Определение оператора изолировано в контекст конкретного `business_connection_id`: отправитель считается оператором только если `senderId === operatorUserId` данного подключения.
+  5. При создании сделки `business_connection_id` сохраняется в `deals.custom_fields`, а при ответе оператора — в `deal_messages.metadata`.
+  6. Буферизация и сброс сообщений оператора в Redis изолированы по `business_connection_id`.
+- **Верификация:**
+  - `npm --prefix backend run build` (tsc): 0 ошибок.
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Исправление ошибки React Rules of Hooks в диалоге оприходования склада
+- **Контекст и проблема:**
+  - При нажатии на кнопку «Оприходовать партию» на странице `/warehouse` приложение падало с ошибкой «Не удалось отобразить раздел» (ErrorBoundary).
+  - Root Cause: В `WarehouseIntakeDialog.tsx` хук `useMemo` для фильтрации товаров каталога (`filteredCatalogItems`) находился ПОСЛЕ раннего выхода `if (!open) return null;`. При смене `open` с `false` на `true` React фиксировал изменение порядка и количества хуков («Rendered more hooks than during the previous render»).
+- **Что сделано:**
+  - В `WarehouseIntakeDialog.tsx` все хуки (`useState`, `useMemo`, `useEffect`, `useRef`) перенесены на верхний уровень до любых условий и условных выходов.
+  - Ранний возврат `if (!open) return null;` перенесён непосредственно перед финальным JSX `return (...)`.
+  - Добавлена строгая проверка `Array.isArray` для `safeSupplierOrders`, `safeItems`, `safeAccounts`.
+  - В `warehouse/page.tsx` добавлено условное монтирование `{intakeModalOpen && <WarehouseIntakeDialog ... />}`.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Разрешение входящих лидов/сделок в ботах для аккаунтов тенанта и сброс is_personal
+- **Контекст и root cause:**
+  - При тестировании Telegram Business бота пользователь отправлял сообщения со своего основного аккаунта Telegram (`@genadich_agency` / `5973721183`).
+  - В `crm-pipeline.service.ts` проверка `ownAccount` проверяла отправителя по таблицам `channel_accounts` и `users`. Поскольку владелец тенанта зарегистрирован в `users` и имеет подключенный MTProto-канал, пайплайн отбрасывал сообщение с логом `Skipping lead/contact creation: sender is tenant's own channel account or user`.
+  - Кроме того, в контактах для данного `telegram_chat_id` стоял флаг `is_personal = true`, что блокировало создание сделок даже при явном обращении к боту.
+- **Что сделано:**
+  1. В `backend/src/modules/crm/crm-pipeline.service.ts`: фильтрация `ownAccount` ограничена только личными каналами (MTProto), для `telegram_bot` и `webchat` она отключена, так как операторы и владельцы должны иметь возможность тестировать ботов или оформлять заказы через них.
+  2. Игнорирование сообщений по флагу `contact.is_personal` отключено для каналов `telegram_bot` и `webchat`.
+  3. В БД на боевом сервере сброшен флаг `is_personal = false` для контактов с `telegram_chat_id = '5973721183'`.
+- **Верификация:**
+  - `npm --prefix backend run build` (tsc): 0 ошибок.
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY`.
+  - Верификация создания сделки и сообщений в БД и CRM.
+
+---
+
+### 24.11.2026 — Добавление столбца «Мин. ост.» и сортировки в каталоге склада
+- **Контекст и задача:**
+  - На странице `/warehouse` в таблице номенклатуры отсутствовал столбец минимального остатка («Мин. ост.»), а также требовалась поддержка сортировки по данному столбцу.
+- **Что сделано:**
+  1. В `frontend/src/app/(dashboard)/warehouse/page.tsx` поле `minStock` добавлено в тип `ItemSortField`.
+  2. В заголовок таблицы номенклатуры (`<thead>`) добавлен интерактивный столбец «Мин. ост.» с сортировкой (переключение asc/desc/сброс, иконки `ArrowUp`/`ArrowDown`/`ArrowUpDown` и подсветка активного фильтра).
+  3. В строки таблицы (`<tbody>`) добавлена ячейка со значением `item.minStock` и единицей измерения `item.unit` (или `0` при отсутствии порога).
+  4. Обновлён `colSpan={12}` для строки пустого состояния таблицы номенклатуры.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Исправление сбоя расходных операций, снятие блокировки списания в минус и отладка UI
+- **Контекст и root cause:**
+  - На странице `/finance` при оформлении расхода и нажатии кнопки «Списать» операция не создавалась и не отображалась в списке (молчаливый отказ).
+  - Root Cause 1: В `finance.types.ts` поле `occurred_at` валидировалось через `z.string().datetime()`, требующий полного формата RFC 3339 с `Z`. Браузерный HTML5 `<input type="datetime-local">` передавал строку вида `YYYY-MM-DDTHH:mm` (`2026-11-24T16:14`), что приводило к `ZodError: Invalid datetime` и отказу Fastify с кодом HTTP 400.
+  - Root Cause 2: В `finance.service.ts` стояла блокировка `if (sign < 0 && Number(a.balance) < p.amount) throw new AppError(409, "INSUFFICIENT_FUNDS")`. Для кассы с нулевым остатком (например, «Основная касса (Наличные)» с балансом 0 ₽) списание стопорилось ошибкой 409.
+  - Root Cause 3: В схемах Zod поле `category_id` строго требовало UUID (`z.string().uuid()`), тогда как при отсутствии пользовательских категорий или переключении типа использовались fallback-слаги (`rent`, `parts_purchase`). Невалидный UUID блокировал валидацию формы на клиенте (`isValid: false`) и делал кнопку «Списать» неактивной или вызывал сбой.
+  - Root Cause 4: В `CreateTransactionModal.tsx` вызов `onSubmit(payload)` не ожидался через `await`, форма сбрасывалась и закрывалась синхронно, а ошибки API не перехватывались и проглатывались без отображения пользователю.
+- **Что сделано:**
+  1. **Backend:**
+     - В `finance.types.ts` валидация `occurred_at` заменена на гибкий `flexibleDate`, принимающий как ISO с часовым поясом, так и `datetime-local` (`YYYY-MM-DDTHH:mm`).
+     - Поля `category_id`, `deal_id`, `repair_order_id`, `invoice_id` сделаны опциональными и nullable.
+     - В `finance.service.ts` убрана блокировка `INSUFFICIENT_FUNDS` при списании и переводах: разрешён уход баланса в минус (овердрафт кассы). Добавлены безопасные парсеры `safeUuid` и `safeDate`, исключающие сбои синтаксиса UUID в PostgreSQL.
+  2. **Frontend:**
+     - В `finance.schema.ts` скорректирована схема `createTransactionSchema` и `updateTransactionSchema`.
+     - В `CreateTransactionModal.tsx` добавлен асинхронный `handleSubmit` с `try/catch`, отображением ошибки в alert-баннере, индикатором загрузки (`submitting`) на кнопке «Списать» и нормализацией даты в ISO.
+     - В `page.tsx` добавлены всплывающие уведомления `toast.success` / `toast.error` через Sonner.
+     - В `use-invoices.ts` обновлены типы и добавлена инвалидация кэшей счетов, транзакций и PnL.
+  3. **Тесты:**
+     - Добавлен юнит-тест `backend/src/tests/finance-negative-balance.test.ts`.
+- **Верификация:**
+  - `tsc --noEmit` в frontend и backend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+  - Проверка создания расхода с уходом в минус на живом сервере.
+
+---
+
+### 24.11.2026 — Реализация кнопки и прямого создания «Заказа поставщику» во вкладке склада
+- **Контекст и root cause:**
+  - На странице `https://remtoua.getvoxly.ru/warehouse` во вкладке «Заказы поставщикам» отсутствовала кнопка создания заказа. Пользователь мог сформировать заказ только опосредованно, перейдя во вкладку «Заявки на закупку» и выбрав существующие заявки.
+  - Модальное окно `CreateSupplierOrderModal.tsx` было рассчитано только на агрегированные заявки: при пустом списке заявок таблица позиций была пуста, отсутствовала возможность добавить произвольные товары или выбрать позиции из справочника номенклатуры.
+  - На бэкенде отсутствовал безопасный парсинг пустых строк в UUID-полях заказа (`safeUuid`).
+- **Что сделано:**
+  1. **UI и тулбар вкладки (`frontend/src/app/(dashboard)/warehouse/page.tsx`):**
+     - В панель инструментов вкладки «Заказы поставщикам» (справа от поисковой строки, в соответствии с макетом) добавлена основная кнопка `+ Заказ поставщику`.
+     - В блоке пустого состояния вкладки добавлена кнопка `+ Создать заказ поставщику`.
+     - При клике сбрасываются старые выборки заявок, и окно создания открывается в режиме нового прямого заказа на склад.
+  2. **Форма создания (`frontend/src/components/warehouse/CreateSupplierOrderModal.tsx`):**
+     - Реализован гибридный режим: работа как от выбранных заявок, так и прямое создание с нуля.
+     - Добавлен выбор статуса заказа («Ожидает оплаты» / «Черновик»).
+     - Добавлена возможность добавлять (`+ Добавить товар`), редактировать и удалять (`Trash2`) произвольные позиции.
+     - Интегрирован автокомплит / datalist по справочнику номенклатуры (`useWarehouseItems`): при выборе товара автоматически подставляются `itemId`, `sku`, `unit` и закупочная/розничная цена.
+     - Пересчёт итоговой суммы заказа и валидация на наличие хотя бы одного заполненного товара.
+  3. **Backend & Types (`backend/src/modules/warehouse/`):**
+     - В `createSupplierOrderSchema` поддержан выбор статуса (`draft`, `pending_payment`) и допустимость пустых строк для необязательных UUID-полей (`supplier_company_id`, `item_id`, `repair_order_id`, `purchase_request_id`).
+     - В `warehouse.service.ts` добавлены функции `safeUuid` и безопасное создание заказа со статусом из payload без обязательной привязки к заявкам на закупку.
+  4. **API клиент (`frontend/src/lib/api/use-warehouse.ts`):**
+     - В `CreateSupplierOrderPayload` добавлено поле `status`.
+- **Верификация:**
+  - `tsc --noEmit` в frontend и backend: 0 ошибок.
+
+
+---
+
+### 24.11.2026 — Персистентность фильтров на `/repairs` и `/crm/deals`
+- **Контекст и root cause:**
+  - На страницах `/repairs` (`filterStatus`, `filterPaymentStatus`, `searchQuery`) и `/crm/deals` (`presetView`, `pipelineId`, `search`, `sortBy`) фильтры хранились в локальном `useState`. При переходе на другой раздел, возврате «Назад» и перезагрузке страницы (F5) выбор пользователя сбрасывался.
+- **Что сделано:**
+  1. **Shared State Layer (`frontend/src/lib/hooks/use-persisted-filters.ts`):**
+     - Создан переиспользуемый строго типизированный хук `usePersistedFilters` с изоляцией ключа `localStorage` по `tenant` (`slug || tenantId`), `userId` и `pageKey` (`getvoxly:filters:v1:<tenant>:<userId>:<pageKey>`).
+     - Приоритет восстановления: явные URL query-параметры > `localStorage` > значения по умолчанию.
+     - Защита от SSR hydration mismatch (чтение строго в `useEffect` после завершения загрузки `useAuth`), защита от битого JSON и устаревших/невалидных значений через per-field `parse`.
+     - Синхронизация с URL через `window.history.replaceState` без затирания сторонних параметров (`?record=`, `?dealId=`, `?create=` и т.д.).
+     - Метод `resetFilters()` очищает и состояние, и запись в `localStorage`, и управляемые параметры URL.
+  2. **Интеграция `/repairs` (`frontend/src/app/(dashboard)/repairs/page.tsx`, `frontend/src/components/repairs/RepairsTable.tsx`, `frontend/src/lib/api/use-repairs.ts`):**
+     - Подключён `usePersistedFilters` для `status`, `paymentStatus`, `search`.
+     - В `useRepairs` добавлен опциональный второй аргумент `{ enabled?: boolean }` (обратно совместим со всеми потребителями `RecordRepairsTab.tsx`, `deal-tabs.tsx`); запрос не уходит с дефолтными параметрами до гидрации сохранённых фильтров.
+     - В `RepairsTable` добавлена кнопка «Сбросить» (видна при активных фильтрах) и очистка поля поиска (`X`).
+  3. **Интеграция `/crm/deals` (`frontend/src/app/(dashboard)/crm/deals/page.tsx`):**
+     - Подключён `usePersistedFilters` для `presetView`, `pipelineId`, `search`, `sortBy`.
+     - Добавлена защита от удалённой воронки (`pipelineId` валидируется против `pipelines.data`, при отсутствии автоматически сбрасывается на первую доступную).
+     - В строку срезов добавлена кнопка «Сбросить» при активных фильтрах.
+  4. **Тесты:**
+     - `frontend/src/lib/hooks/use-persisted-filters.test.tsx` (6 тестов), `frontend/src/app/(dashboard)/repairs/repairs-filters-persistence.test.tsx`, `frontend/src/app/(dashboard)/crm/deals/deals-filters-persistence.test.tsx` (2 теста).
+- **Где ещё используется:**
+  - `useRepairs` используется в `RecordRepairsTab.tsx`, `deal-tabs.tsx`, `repairs/page.tsx` (обратная совместимость сохранена).
+  - `RepairsTable` используется только в `repairs/page.tsx` (экспорт `formatOrderNumber` также в `deal-tabs.tsx` и `repairs/[id]/page.tsx`).
+
+---
+
+### 24.11.2026 — Аудит и исправление связки Склад (Заказы поставщикам → Оплатить) ↔ Финансы (Категория и Автор)
+- **Контекст и root cause:**
+  1. В `warehouse.service.ts` во всех 5 точках создания расходных проводок (`paySupplierOrder`, `createReceiptFromSupplierOrder`, `intakeBatch`, `intakeDocument` для `supplier_order` и `direct_purchase`) при `INSERT INTO transactions` передавался только `category_id` без `category_name` (оставалась пустая строка `''`), и создавалась категория `'Закупка запчастей и комплектующих'` вместо `'Закупка запчастей'`.
+  2. В `paySupplierOrder` параметр `_userId` игнорировался, а в `createReceiptFromSupplierOrder` и `intakeBatch` поле `created_by` не передавалось в `INSERT INTO transactions`. Кроме того, `paySupplierOrder` и `createReceiptFromSupplierOrder` не заполняли `supplier_order_id` и не защищали от повторной оплаты.
+  3. В `finance.routes.ts` / `finance.service.ts`: `updateTransaction`, `transfer`, `bulkDuplicateTransactions`, `createAccount` не передавали/не возвращали `created_by` / `created_by_name`; `transactions()` не делал `LEFT JOIN finance_categories` для фоллбэка пустого `category_name`; `bulkDeleteTransactions()` не откатывал статус связанных `supplier_orders`.
+  4. На фронтенде `EditTransactionModal.tsx` сбрасывал `category_id` в `""` при открытии, а `useUpdateSupplierOrder` и мутации удаления/редактирования транзакций в `use-invoices.ts` не инвалидировали кэш смежного модуля.
+- **Что сделано:**
+  1. **Backend (`warehouse.service.ts`):**
+     - Вынесены единые хелперы `resolvePartsPurchaseCategoryInTx` (приоритет «Закупка запчастей» → `%запчаст%` → автосоздание «Закупка запчастей»), `recalculateCashAccountBalanceInTx`, `resolveSupplierOrderRepairIdInTx`.
+     - Исправлены все 5 точек создания транзакций: всегда записываются `category_id`, `category_name`, `created_by`, `supplier_order_id` (и `repair_order_id` при однозначной связке), `occurred_at = now()`, пересчитывается баланс кассы.
+     - В `paySupplierOrder` и `createReceiptFromSupplierOrder` добавлена защита от двойной оплаты и отменённых заказов; в `updateSupplierOrder` (отмена/правка) и `deleteSupplierOrdersInTx` переведено на soft delete транзакций с пересчётом баланса.
+     - В `intakeDocument` исправлены несуществующие имена колонок `paid_cash_account_id`/`paid_comment` → `cash_account_id`/`finance_transaction_id`.
+  2. **Backend (`finance.service.ts`, `finance.routes.ts`, `finance.types.ts`, `tenant-defaults.ts`):**
+     - `req.authUser?.id` передаётся в `updateTransaction`, `transfer`, `bulkDuplicateTransactions`, `createAccount`.
+     - `updateTransaction` сохраняет/восстанавливает `created_by = COALESCE(created_by, $23)` и возвращает `created_by_id`, `created_by_name`, `supplier_order_id`, `category_name`.
+     - `transactions()` и `pnl()` используют `LEFT JOIN finance_categories` (`COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '')`).
+     - `bulkDeleteTransactions` при удалении расходной операции откатывает связанные `supplier_orders` из `paid` в `pending_payment` и сбрасывает `paid_at` / `finance_transaction_id`.
+     - Добавлена миграция-бэкфилл `backend/src/db/migrations/0135_sync_supplier_order_transactions_category_and_author.sql`.
+  3. **Frontend (`EditTransactionModal.tsx`, `TransactionsTable.tsx`, `finance/page.tsx`, `finance.types.ts`, `use-invoices.ts`, `use-warehouse.ts`):**
+     - Корректная предзагрузка `category_id` в `EditTransactionModal` без затирания при сохранении, отображение фоллбэка «Без категории», двусторонняя инвалидация кэшей `["finance"]` ↔ `["warehouse"]`.
+  4. **Тесты:** добавлен `backend/src/tests/warehouse-finance-sync.test.ts` (4 теста).
