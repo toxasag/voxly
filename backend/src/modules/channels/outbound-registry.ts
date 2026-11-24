@@ -39,6 +39,8 @@ export interface OutboundMessage {
   phone?: string;
   attachment?: string;
   attachmentType?: string;
+  dealId?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export type OutboundSender = (message: OutboundMessage) => Promise<OutboundSendResult>;
