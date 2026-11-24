@@ -1,5 +1,6 @@
 import { queryOne } from "../../../../db/client.js";
 import { decryptSecret } from "../../../../services/credentials-cipher.js";
+import { extractMaxIdentity, type MaxRawName } from "../../../channels/max-identity.js";
 import type {
   IMessagingAdapter,
   SendMessageParams,
@@ -36,9 +37,13 @@ const MAX_WS_ENDPOINT = "wss://ws-api.oneme.ru/websocket";
 const PROTOCOL_VERSION = 11;
 
 enum MaxOpcode {
+  PING = 1,
   INIT = 6,
   LOGIN = 19,
+  CONTACT_INFO = 32,
+  CONTACT_INFO_BY_PHONE = 46,
   GET_HISTORY = 49,
+  MARK_READ = 50,
   GET_CHATS = 53,
   MSG_SEND = 64,
   INCOMING_EVENT = 128,
@@ -72,6 +77,10 @@ export class MaxTsAdapter implements IMessagingAdapter {
 
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly eventSubscribers = new Set<(event: IncomingEvent) => void>();
+  private readonly contactCache = new Map<
+    string,
+    { firstName?: string; lastName?: string; senderName: string; phone?: string; expiresAt: number }
+  >();
 
   private sessionKey(tenantId: string, channelAccountId: string): string {
     return `${tenantId}:${channelAccountId}`;
@@ -158,10 +167,10 @@ export class MaxTsAdapter implements IMessagingAdapter {
             session.authorized = true;
             clearTimeout(timeout);
 
-            // Настройка Keep-Alive (heartbeat) каждые 30 секунд
+            // Настройка Keep-Alive (heartbeat) каждые 30 секунд через PING (opcode 1)
             session.heartbeatTimer = setInterval(() => {
               if (session.connected && session.ws.readyState === WebSocket.OPEN) {
-                this.sendPacket(session, MaxOpcode.INIT, { ping: true }).catch(() => {});
+                this.sendPacket(session, MaxOpcode.PING, { interactive: false }).catch(() => {});
               }
             }, 30_000);
             session.heartbeatTimer.unref?.();
@@ -268,34 +277,98 @@ export class MaxTsAdapter implements IMessagingAdapter {
       const pl = packet.payload as Record<string, unknown>;
       const rawMsg = (pl.message as Record<string, unknown>) || pl;
       const chatId = String(rawMsg.chatId || pl.chatId || "");
+      const senderId = String(rawMsg.sender ?? rawMsg.senderId ?? rawMsg.from ?? "");
+      const isOutbound = Boolean(rawMsg.out || rawMsg.fromMe);
 
-      const normalized: NormalizedMessage = {
-        id: String(rawMsg.id || rawMsg.messageId || Date.now()),
-        chatId,
-        senderId: String(rawMsg.senderId || rawMsg.from || ""),
-        senderName: (rawMsg.senderName as string) || undefined,
-        text: String(rawMsg.text || ""),
-        direction: rawMsg.out || rawMsg.fromMe ? "outbound" : "inbound",
-        fromMe: Boolean(rawMsg.out || rawMsg.fromMe),
-        timestamp: Number(rawMsg.date || Date.now()),
-        rawPayload: pl,
-      };
+      void this.dispatchIncomingWithContact(session, chatId, senderId, isOutbound, rawMsg, pl);
+    }
+  }
 
-      const event: IncomingEvent = {
-        tenantId: session.tenantId,
-        channelAccountId: session.channelAccountId,
-        channel: "max",
-        eventType: "message",
-        chatId,
-        message: normalized,
-        timestamp: Date.now(),
-      };
+  /**
+   * Загружает профиль контакта через `CONTACT_INFO (op 32)` с кэшированием (10 мин),
+   * извлекает `firstName`, `lastName` и `phone` и отправляет нормализованное событие подписчикам.
+   */
+  private async dispatchIncomingWithContact(
+    session: ActiveSession,
+    chatId: string,
+    senderId: string,
+    isOutbound: boolean,
+    rawMsg: Record<string, unknown>,
+    pl: Record<string, unknown>,
+  ): Promise<void> {
+    let profile: { firstName?: string; lastName?: string; senderName: string; phone?: string } | undefined;
 
-      for (const subscriber of this.eventSubscribers) {
+    if (!isOutbound && senderId && /^\d+$/.test(senderId)) {
+      const cacheKey = `${session.channelAccountId}:${senderId}`;
+      const cached = this.contactCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        profile = cached;
+      } else {
         try {
-          subscriber(event);
-        } catch {}
+          const contactRes = await this.sendPacket<{
+            contacts?: Array<{
+              id?: number | string;
+              names?: MaxRawName[];
+              phone?: number | string;
+              phones?: Array<{ number?: string }>;
+            }>;
+          }>(session, MaxOpcode.CONTACT_INFO, { contactIds: [Number(senderId)] });
+          const c = contactRes.contacts?.[0];
+          if (c) {
+            const extracted = extractMaxIdentity({
+              names: c.names,
+              phone: c.phone ?? c.phones?.[0]?.number,
+            });
+            profile = extracted;
+            this.contactCache.set(cacheKey, {
+              ...extracted,
+              expiresAt: Date.now() + 10 * 60_000,
+            });
+          }
+        } catch {
+          // Если CONTACT_INFO временно недоступен, используем данные из самого сообщения
+        }
       }
+    }
+
+    const fallbackIdentity = extractMaxIdentity({
+      senderName: (rawMsg.senderName as string) || undefined,
+    });
+    const finalIdentity = profile ?? fallbackIdentity;
+    const rawTime = Number(rawMsg.time || rawMsg.date || Date.now());
+
+    const normalized: NormalizedMessage = {
+      id: String(rawMsg.id || rawMsg.messageId || Date.now()),
+      chatId,
+      senderId,
+      senderName: finalIdentity.senderName,
+      senderPhone: finalIdentity.phone,
+      text: String(rawMsg.text || ""),
+      direction: isOutbound ? "outbound" : "inbound",
+      fromMe: isOutbound,
+      timestamp: rawTime > 1e11 ? rawTime : rawTime * 1000,
+      rawPayload: {
+        ...pl,
+        firstName: finalIdentity.firstName,
+        lastName: finalIdentity.lastName,
+        phone: finalIdentity.phone,
+      },
+    };
+
+    const event: IncomingEvent = {
+      tenantId: session.tenantId,
+      channelAccountId: session.channelAccountId,
+      channel: "max",
+      eventType: "message",
+      chatId,
+      message: normalized,
+      timestamp: Date.now(),
+    };
+
+    for (const subscriber of this.eventSubscribers) {
+      try {
+        subscriber(event);
+      } catch {}
     }
   }
 
@@ -305,25 +378,28 @@ export class MaxTsAdapter implements IMessagingAdapter {
     try {
       const session = await this.getOrCreateSession(params.tenantId, params.channelAccountId);
 
-      const payload: Record<string, unknown> = {
-        chatId: params.recipient,
+      const numericChatId = /^\d+$/.test(params.recipient) ? Number(params.recipient) : params.recipient;
+      const messageBody: Record<string, unknown> = {
         text: params.text,
+        cid: Date.now(),
+        elements: [],
+        attaches: [],
       };
 
-      if (params.replyToMessageId) {
-        payload.replyId = params.replyToMessageId;
-      }
-
-      if (params.attachments && params.attachments.length > 0 && params.attachments[0]) {
-        const att = params.attachments[0];
-        payload.media = {
-          type: att.type,
-          base64: att.base64,
-          name: att.fileName,
+      if (params.replyToMessageId && /^\d+$/.test(params.replyToMessageId)) {
+        messageBody.link = {
+          type: "REPLY",
+          messageId: Number(params.replyToMessageId),
         };
       }
 
-      const res = await this.sendPacket<{ messageId?: string }>(
+      const payload: Record<string, unknown> = {
+        chatId: numericChatId,
+        message: messageBody,
+        notify: true,
+      };
+
+      const res = await this.sendPacket<{ message?: { id?: string | number }; messageId?: string }>(
         session,
         MaxOpcode.MSG_SEND,
         payload,
@@ -331,7 +407,7 @@ export class MaxTsAdapter implements IMessagingAdapter {
 
       return {
         ok: true,
-        messageId: res.messageId || String(Date.now()),
+        messageId: String(res.message?.id ?? res.messageId ?? Date.now()),
         timestamp: Date.now(),
       };
     } catch (err) {
@@ -346,27 +422,34 @@ export class MaxTsAdapter implements IMessagingAdapter {
     try {
       const session = await this.getOrCreateSession(params.tenantId, params.channelAccountId);
 
+      const numericChatId = /^\d+$/.test(params.chatId) ? Number(params.chatId) : params.chatId;
       const res = await this.sendPacket<{ messages?: Record<string, unknown>[] }>(
         session,
         MaxOpcode.GET_HISTORY,
         {
-          chatId: params.chatId,
-          count: params.limit || 50,
+          chatId: numericChatId,
+          from: Date.now(),
+          forward: 0,
+          backward: params.limit || 50,
+          getMessages: true,
         },
       );
 
       const rawMessages = res.messages || [];
-      const messages: NormalizedMessage[] = rawMessages.map((m) => ({
-        id: String(m.id || m.messageId),
-        chatId: params.chatId,
-        senderId: String(m.senderId || m.from || ""),
-        senderName: (m.senderName as string) || undefined,
-        text: String(m.text || ""),
-        direction: m.out ? "outbound" : "inbound",
-        fromMe: Boolean(m.out),
-        timestamp: Number(m.date || Date.now()),
-        rawPayload: m,
-      }));
+      const messages: NormalizedMessage[] = rawMessages.map((m) => {
+        const rawTime = Number(m.time || m.date || Date.now());
+        return {
+          id: String(m.id || m.messageId),
+          chatId: params.chatId,
+          senderId: String(m.sender ?? m.senderId ?? m.from ?? ""),
+          senderName: (m.senderName as string) || undefined,
+          text: String(m.text || ""),
+          direction: m.out ? "outbound" : "inbound",
+          fromMe: Boolean(m.out),
+          timestamp: rawTime > 1e11 ? rawTime : rawTime * 1000,
+          rawPayload: m,
+        };
+      });
 
       return {
         messages,
@@ -381,16 +464,70 @@ export class MaxTsAdapter implements IMessagingAdapter {
   }
 
   async resolveContact(
-    _tenantId: string,
-    _channelAccountId: string,
+    tenantId: string,
+    channelAccountId: string,
     identifier: string,
   ): Promise<ResolvedContact | null> {
-    // В протоколе MAX поиск контакта по номеру телефона выполняется через синхронизацию контактов
-    return {
-      id: identifier,
-      phone: identifier.startsWith("+") ? identifier : undefined,
-      isRegistered: true,
-    };
+    try {
+      const session = await this.getOrCreateSession(tenantId, channelAccountId);
+      const clean = identifier.trim();
+
+      // Поиск по userId через CONTACT_INFO (opcode 32)
+      if (/^\d+$/.test(clean) && clean.length < 11) {
+        const res = await this.sendPacket<{
+          contacts?: Array<{
+            id?: number | string;
+            names?: MaxRawName[];
+            phone?: number | string;
+            phones?: Array<{ number?: string }>;
+          }>;
+        }>(session, MaxOpcode.CONTACT_INFO, { contactIds: [Number(clean)] });
+        const contact = res.contacts?.[0];
+        if (!contact) return null;
+        const identity = extractMaxIdentity({
+          names: contact.names,
+          phone: contact.phone ?? contact.phones?.[0]?.number,
+        });
+        return {
+          id: String(contact.id ?? clean),
+          name: identity.senderName,
+          phone: identity.phone,
+          isRegistered: true,
+        };
+      }
+
+      // Поиск по номеру телефона через CONTACT_INFO_BY_PHONE (opcode 46)
+      const digits = clean.replace(/\D/g, "");
+      if (digits.length >= 10) {
+        const phoneE164 = digits.length === 11 && digits.startsWith("8") ? `+7${digits.slice(1)}` : `+${digits}`;
+        const res = await this.sendPacket<{
+          contact?: {
+            id?: number | string;
+            names?: MaxRawName[];
+            phone?: number | string;
+          };
+        }>(session, MaxOpcode.CONTACT_INFO_BY_PHONE, { phone: phoneE164 });
+        if (!res.contact?.id) return null;
+        const identity = extractMaxIdentity({
+          names: res.contact.names,
+          phone: res.contact.phone ?? phoneE164,
+        });
+        return {
+          id: String(res.contact.id),
+          name: identity.senderName,
+          phone: identity.phone ?? phoneE164,
+          isRegistered: true,
+        };
+      }
+
+      return null;
+    } catch {
+      return {
+        id: identifier,
+        phone: identifier.startsWith("+") ? identifier : undefined,
+        isRegistered: true,
+      };
+    }
   }
 
   subscribeToEvents(handler: (event: IncomingEvent) => void): Unsubscribe {
