@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api/apiClient";
+import { useNotificationPreferences } from "@/lib/api/use-notification-preferences";
 import type { AppNotification } from "@/types";
 
 interface NotificationsResponse {
@@ -50,6 +51,12 @@ function playNotificationChime() {
 export function useInAppNotifications() {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const { preferences } = useNotificationPreferences();
+
+  const preferencesRef = useRef(preferences);
+  useEffect(() => {
+    preferencesRef.current = preferences;
+  }, [preferences]);
 
   const { data, isLoading, refetch } = useQuery<NotificationsResponse>({
     queryKey: ["inapp-notifications"],
@@ -72,13 +79,13 @@ export function useInAppNotifications() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if ("setAppBadge" in navigator) {
-      if (unreadCount > 0) {
+      if (preferences.notifications_enabled && unreadCount > 0) {
         navigator.setAppBadge(unreadCount).catch(() => {});
       } else if ("clearAppBadge" in navigator) {
         navigator.clearAppBadge().catch(() => {});
       }
     }
-  }, [unreadCount]);
+  }, [unreadCount, preferences.notifications_enabled]);
 
   // Realtime SSE подключение для мгновенной доставки уведомлений во вкладку
   useEffect(() => {
@@ -93,18 +100,30 @@ export function useInAppNotifications() {
       try {
         const item = JSON.parse(event.data) as AppNotification & { data?: { url?: string } };
 
+        const currentPrefs = preferencesRef.current;
+        if (!currentPrefs.notifications_enabled) {
+          // Мастер-выключатель выключен: полный режим тишины
+          return;
+        }
+
         // Звуковой сигнал
-        playNotificationChime();
+        if (currentPrefs.sound_enabled) {
+          playNotificationChime();
+        }
 
         // Всплывающий In-App Toaster
-        const targetUrl = item.data?.url || (item.entity_type === "deal" ? `/crm/deals/${item.entity_id}` : "/dashboard");
-        toast(item.title, {
-          description: item.description,
-          action: {
-            label: "Открыть",
-            onClick: () => router.push(targetUrl),
-          },
-        });
+        if (currentPrefs.inapp_enabled) {
+          const targetUrl =
+            item.data?.url ||
+            (item.entity_type === "deal" ? `/crm/deals/${item.entity_id}` : "/dashboard");
+          toast(item.title, {
+            description: item.description,
+            action: {
+              label: "Открыть",
+              onClick: () => router.push(targetUrl),
+            },
+          });
+        }
 
         // Мгновенное обновление кеша в памяти
         queryClient.setQueryData<NotificationsResponse>(["inapp-notifications"], (old) => {
