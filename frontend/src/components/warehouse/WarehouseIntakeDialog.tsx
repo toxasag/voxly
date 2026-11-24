@@ -114,14 +114,19 @@ export function WarehouseIntakeDialog({
   const createCompanyMutation = useCreateCompany();
   const intakeMutation = useIntakeWarehouseDocument();
 
+  // Защита от непредвиденных форматов ответов
+  const safeItems = useMemo(() => (Array.isArray(allWarehouseItems) ? allWarehouseItems : []), [allWarehouseItems]);
+  const safeSupplierOrders = useMemo(() => (Array.isArray(supplierOrders) ? supplierOrders : []), [supplierOrders]);
+  const safeAccounts = useMemo(() => (Array.isArray(accounts) ? accounts : []), [accounts]);
+
   // Реф для клика снаружи дропдауна компании
   const companyDropdownRef = useRef<HTMLDivElement>(null);
 
   // Выбранный заказ поставщику
   const selectedOrder = useMemo(() => {
     if (!selectedSupplierOrderId) return null;
-    return supplierOrders.find((o) => o.id === selectedSupplierOrderId) ?? null;
-  }, [supplierOrders, selectedSupplierOrderId]);
+    return safeSupplierOrders.find((o) => o.id === selectedSupplierOrderId) ?? null;
+  }, [safeSupplierOrders, selectedSupplierOrderId]);
 
   // Заказ уже оплачен через кассу?
   const isOrderAlreadyPaid = Boolean(selectedOrder?.paidAt || selectedOrder?.status === "paid");
@@ -193,11 +198,11 @@ export function WarehouseIntakeDialog({
     setRecordFinanceExpense(false);
     setPaymentComment("");
 
-    if (accounts.length > 0) {
-      const def = accounts.find((a) => a.isDefault) ?? accounts[0];
+    if (safeAccounts.length > 0) {
+      const def = safeAccounts.find((a) => a.isDefault) ?? safeAccounts[0];
       setCashAccountId(def.id);
     }
-  }, [open, initialSupplierOrderId, initialItem, purchaseRequestId, initialName, initialSku, initialQty, initialPrice, accounts]);
+  }, [open, initialSupplierOrderId, initialItem, purchaseRequestId, initialName, initialSku, initialQty, initialPrice, safeAccounts]);
 
   // Обновление номера документа при смене основания
   useEffect(() => {
@@ -263,7 +268,17 @@ export function WarehouseIntakeDialog({
     };
   }, [rows]);
 
-  if (!open) return null;
+  // Фильтрация товаров каталога для модалки множественного выбора (хук всегда вызывается на верхнем уровне)
+  const filteredCatalogItems = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!q) return safeItems;
+    return safeItems.filter(
+      (it) =>
+        it.name.toLowerCase().includes(q) ||
+        (it.sku && it.sku.toLowerCase().includes(q)) ||
+        (it.category && it.category.toLowerCase().includes(q)),
+    );
+  }, [safeItems, catalogSearch]);
 
   // Управление строками таблицы
   const handleAddRow = () => {
@@ -316,7 +331,7 @@ export function WarehouseIntakeDialog({
 
   // Быстрое добавление нескольких позиций из каталога
   const handleApplyCatalogSelection = () => {
-    const selectedItems = allWarehouseItems.filter((it) => selectedCatalogItemIds.has(it.id));
+    const selectedItems = safeItems.filter((it) => selectedCatalogItemIds.has(it.id));
     if (selectedItems.length > 0) {
       const newRows: IntakeTableRow[] = selectedItems.map((it) => ({
         id: String(Date.now() + Math.random()),
@@ -460,18 +475,6 @@ export function WarehouseIntakeDialog({
     }
   };
 
-  // Фильтрация товаров каталога для модалки множественного выбора
-  const filteredCatalogItems = useMemo(() => {
-    const q = catalogSearch.trim().toLowerCase();
-    if (!q) return allWarehouseItems;
-    return allWarehouseItems.filter(
-      (it) =>
-        it.name.toLowerCase().includes(q) ||
-        (it.sku && it.sku.toLowerCase().includes(q)) ||
-        (it.category && it.category.toLowerCase().includes(q)),
-    );
-  }, [allWarehouseItems, catalogSearch]);
-
   const toggleCatalogItem = (id: string) => {
     setSelectedCatalogItemIds((prev) => {
       const next = new Set(prev);
@@ -480,6 +483,8 @@ export function WarehouseIntakeDialog({
       return next;
     });
   };
+
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4 backdrop-blur-xs animate-in fade-in-0 duration-150">
@@ -670,7 +675,7 @@ export function WarehouseIntakeDialog({
                   className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
                 >
                   <option value="">-- Выберите заказ из списка --</option>
-                  {supplierOrders
+                  {safeSupplierOrders
                     .filter((o) => o.status !== "cancelled")
                     .map((o) => {
                       const isPaid = Boolean(o.paidAt) || o.status === "paid";
@@ -914,7 +919,7 @@ export function WarehouseIntakeDialog({
                                 className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#111111] placeholder:text-[#aaaaaa] focus:border-[#4a38f5] focus:outline-none"
                               />
                               <datalist id={`items-datalist-${row.id}`}>
-                                {allWarehouseItems.map((it) => (
+                                {safeItems.map((it) => (
                                   <option key={it.id} value={it.name}>
                                     {it.sku ? `[${it.sku}] ` : ""}Остаток: {it.availableStock} {it.unit}
                                   </option>
@@ -1072,7 +1077,7 @@ export function WarehouseIntakeDialog({
                             onChange={(e) => setCashAccountId(e.target.value)}
                             className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
                           >
-                            {accounts.map((acc) => (
+                            {safeAccounts.map((acc) => (
                               <option key={acc.id} value={acc.id}>
                                 {acc.name} ({formatRub(acc.balance)})
                               </option>
