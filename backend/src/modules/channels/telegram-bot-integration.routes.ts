@@ -182,11 +182,25 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
 
     const chatFirstName = typeof chat.first_name === "string" ? chat.first_name.trim() : "";
     const chatLastName = typeof chat.last_name === "string" ? chat.last_name.trim() : "";
-    const chatUsername = typeof chat.username === "string" ? chat.username.replace(/^@/, "").trim() : undefined;
+    let chatUsername = typeof chat.username === "string" ? chat.username.replace(/^@/, "").trim() : undefined;
 
     const fromFirstName = typeof from.first_name === "string" ? from.first_name.trim() : "";
     const fromLastName = typeof from.last_name === "string" ? from.last_name.trim() : "";
-    const fromUsername = typeof from.username === "string" ? from.username.replace(/^@/, "").trim() : undefined;
+    let fromUsername = typeof from.username === "string" ? from.username.replace(/^@/, "").trim() : undefined;
+
+    let effectiveUsername = fromUsername || chatUsername;
+
+    // Ресёрч профиля собеседника через getChat, если username отсутствует в теле входящего события
+    if (!effectiveUsername && chatId && account.credentials?.token) {
+      try {
+        const chatInfo = await service.getChat(account.credentials.token, chatId);
+        if (chatInfo.ok && chatInfo.result?.username) {
+          effectiveUsername = chatInfo.result.username.replace(/^@/, "").trim();
+        }
+      } catch {
+        // не блокируем основной поток
+      }
+    }
 
     let mediaTypeLabel = "";
     if (message.voice) mediaTypeLabel = "[Голосовое сообщение]";
@@ -329,7 +343,6 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     // 5. Входящее сообщение от клиента / собеседника:
     const effectiveFirstName = fromFirstName || chatFirstName;
     const effectiveLastName = fromLastName || chatLastName;
-    const effectiveUsername = fromUsername || chatUsername;
     const senderName = [effectiveFirstName, effectiveLastName].filter(Boolean).join(" ") || effectiveUsername || chatId;
 
     const contactObj = message.contact as Record<string, unknown> | undefined;
@@ -487,6 +500,16 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
                 },
                 "Telegram bot: sent reply message result",
               );
+              if (!sendResult.ok && sendResult.reason?.includes("BUSINESS_PEER_INVALID")) {
+                request.log.warn(
+                  {
+                    chatId,
+                    reason: sendResult.reason,
+                    hint: "Telegram returned BUSINESS_PEER_INVALID: please verify that 'Can reply to messages' is enabled in Telegram Business Chatbots settings",
+                  },
+                  "Telegram bot: unable to send reply via business connection (can_reply disabled or peer excluded)",
+                );
+              }
             }
           }
         } catch (agentErr) {

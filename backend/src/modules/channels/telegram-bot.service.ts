@@ -902,6 +902,42 @@ export class TelegramBotService {
   }
 
   /**
+   * Получение информации о чате/пользователе через Telegram Bot API (getChat).
+   * Позволяет обогатить профиль username, bio и актуальным именем.
+   */
+  async getChat(
+    token: string,
+    chatId: string | number,
+  ): Promise<{
+    ok: boolean;
+    result?: {
+      id: number;
+      username?: string;
+      first_name?: string;
+      last_name?: string;
+      bio?: string;
+    };
+  }> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/getChat?chat_id=${chatId}`;
+    try {
+      const res = await fetch(url, { method: "GET" });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{
+        id: number;
+        username?: string;
+        first_name?: string;
+        last_name?: string;
+        bio?: string;
+      }> | null;
+      if (data?.ok && data.result) {
+        return { ok: true, result: data.result };
+      }
+      return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  /**
    * Отправка текстового сообщения в Telegram через Bot API.
    * Поддерживает business_connection_id для ответа от имени подключенного аккаунта (Telegram Business).
    */
