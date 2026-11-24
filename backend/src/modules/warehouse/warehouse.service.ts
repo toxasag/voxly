@@ -16,6 +16,8 @@ import {
   type ImportValidatePayload,
   type ImportValidateResultDTO,
   type IntakeBatchPayload,
+  type IntakeDocumentPayload,
+  type IntakeDocumentResultDTO,
   type PaginatedWarehouseItemsDTO,
   type PaySupplierOrderPayload,
   type PurchaseRequestDTO,
@@ -926,6 +928,351 @@ export class WarehouseService {
         remainingQuantity: Number(batch.remaining_quantity),
         receivedAt: toIso(batch.received_at),
         createdAt: toIso(batch.created_at),
+      };
+    });
+  }
+
+  async intakeDocument(
+    tenantId: string,
+    userId: string | null,
+    payload: IntakeDocumentPayload,
+  ): Promise<IntakeDocumentResultDTO> {
+    if (!payload.items || payload.items.length === 0) {
+      throw new Error("Укажите хотя бы один товар для оприходования");
+    }
+
+    return withTenant(tenantId, async (tx) => {
+      let docNumber = payload.incoming_document_number?.trim();
+      const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+      const randSuffix = Math.floor(100 + Math.random() * 900);
+
+      let supplierOrderRow: SupplierOrderRow | null = null;
+      if (payload.basis === "supplier_order" && payload.supplier_order_id) {
+        supplierOrderRow = await tx.queryOne<SupplierOrderRow>(
+          `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+          [tenantId, payload.supplier_order_id],
+        );
+        if (supplierOrderRow && !docNumber) {
+          docNumber = supplierOrderRow.order_number;
+        }
+      }
+
+      if (!docNumber) {
+        if (payload.basis === "initial_balance") {
+          docNumber = `НАЧ-${dateStr}-${randSuffix}`;
+        } else if (payload.basis === "inventory_adjustment") {
+          docNumber = `ИЗЛ-${dateStr}-${randSuffix}`;
+        } else {
+          docNumber = `ПХ-${dateStr}-${randSuffix}`;
+        }
+      }
+
+      const supplierName =
+        payload.supplier_name?.trim() ||
+        supplierOrderRow?.supplier_name ||
+        (payload.basis === "initial_balance"
+          ? "Ввод начальных остатков"
+          : payload.basis === "inventory_adjustment"
+          ? "Инвентаризация (излишки)"
+          : "Поставщик");
+
+      let totalQty = 0;
+      let totalAmount = 0;
+      let batchesCount = 0;
+
+      for (const it of payload.items) {
+        const qty = Number(it.quantity);
+        const price = Number(it.purchase_price);
+        totalQty += qty;
+        totalAmount += qty * price;
+
+        let itemId = it.item_id;
+        if (!itemId) {
+          if (it.sku && it.sku.trim()) {
+            const existingBySku = await tx.queryOne<{ id: string }>(
+              `SELECT id FROM warehouse_items WHERE tenant_id = $1 AND lower(sku) = lower($2) AND deleted_at IS NULL`,
+              [tenantId, it.sku.trim()],
+            );
+            if (existingBySku) itemId = existingBySku.id;
+          }
+          if (!itemId) {
+            const existingByName = await tx.queryOne<{ id: string }>(
+              `SELECT id FROM warehouse_items WHERE tenant_id = $1 AND lower(name) = lower($2) AND deleted_at IS NULL LIMIT 1`,
+              [tenantId, it.name.trim()],
+            );
+            if (existingByName) itemId = existingByName.id;
+          }
+          if (!itemId) {
+            const newItem = await tx.queryOneOrThrow<{ id: string }>(
+              `INSERT INTO warehouse_items (tenant_id, sku, name, category, unit, cost_price, retail_price)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               RETURNING id`,
+              [
+                tenantId,
+                it.sku?.trim() ?? "",
+                it.name.trim(),
+                it.category?.trim() ?? "Запчасти",
+                it.unit?.trim() ?? "шт",
+                price,
+                it.retail_price && it.retail_price > 0 ? it.retail_price : Math.round(price * 1.4),
+              ],
+            );
+            itemId = newItem.id;
+          }
+        }
+
+        // Обновляем себестоимость и при наличии розницу
+        const updates: string[] = ["cost_price = $1", "updated_at = now()"];
+        const updateParams: SqlParam[] = [price, tenantId, itemId];
+        if (it.retail_price !== undefined && it.retail_price > 0) {
+          updateParams.push(it.retail_price);
+          updates.push(`retail_price = $${updateParams.length}`);
+        }
+        await tx.query(
+          `UPDATE warehouse_items SET ${updates.join(", ")} WHERE tenant_id = $2 AND id = $3`,
+          updateParams,
+        );
+
+        const itemBatchNum = it.batch_number?.trim() || docNumber;
+        const receivedAt = payload.document_date ? new Date(payload.document_date) : new Date();
+
+        const batch = await tx.queryOneOrThrow<WarehouseBatchRow>(
+          `INSERT INTO warehouse_batches
+             (tenant_id, item_id, supplier_order_id, batch_number, supplier_name, purchase_price, initial_quantity, remaining_quantity, received_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING *`,
+          [
+            tenantId,
+            itemId,
+            payload.basis === "supplier_order" ? supplierOrderRow?.id ?? null : null,
+            itemBatchNum,
+            supplierName,
+            price,
+            qty,
+            qty,
+            receivedAt,
+          ],
+        );
+        batchesCount++;
+
+        let desc = "";
+        if (payload.basis === "initial_balance") {
+          desc = `Ввод начальных остатков: ${it.name} (${qty} ${it.unit || "шт"}) [партия ${itemBatchNum}]`;
+        } else if (payload.basis === "inventory_adjustment") {
+          desc = `Оприходование излишков: ${it.name} (${qty} ${it.unit || "шт"}) [акт ${itemBatchNum}]`;
+        } else if (payload.basis === "supplier_order" && supplierOrderRow) {
+          desc = `Поступление по заказу поставщику ${supplierOrderRow.order_number}: ${it.name} (${qty} ${it.unit || "шт"})`;
+        } else {
+          desc = `Поступление по документу ${docNumber}: ${it.name} (${qty} ${it.unit || "шт"}) [${supplierName}]`;
+        }
+
+        await tx.query(
+          `INSERT INTO warehouse_movements
+             (tenant_id, item_id, batch_id, type, quantity, cost_price, description, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            tenantId,
+            itemId,
+            batch.id,
+            payload.basis === "inventory_adjustment" ? "adjustment" : "intake",
+            qty,
+            price,
+            desc,
+            userId,
+          ],
+        );
+
+        // Если это оприходование по заказу поставщику — связываем с заявками под наряды (repair_orders)
+        if (payload.basis === "supplier_order" && supplierOrderRow) {
+          const linkedRequests = await tx.query<PurchaseRequestRow>(
+            `SELECT * FROM purchase_requests
+             WHERE tenant_id = $1 AND supplier_order_id = $2
+               AND (item_id = $3 OR lower(btrim(item_name)) = lower(btrim($4)))
+               AND status IN ('ordered', 'pending')`,
+            [tenantId, supplierOrderRow.id, itemId, it.name],
+          );
+
+          let remainingToReserve = qty;
+          for (const req of linkedRequests) {
+            if (remainingToReserve <= 0) break;
+            const reqQty = Number(req.quantity);
+            const reserveQty = Math.min(remainingToReserve, reqQty);
+
+            if (req.repair_order_id && reserveQty > 0) {
+              await tx.query(
+                `INSERT INTO warehouse_reservations
+                   (tenant_id, repair_order_id, item_id, batch_id, quantity, status)
+                 VALUES ($1, $2, $3, $4, $5, 'reserved')`,
+                [tenantId, req.repair_order_id, itemId, batch.id, reserveQty],
+              );
+
+              await tx.query(
+                `INSERT INTO warehouse_movements
+                   (tenant_id, item_id, batch_id, repair_order_id, type, quantity, cost_price, description, created_by)
+                 VALUES ($1, $2, $3, $4, 'reserve', $5, $6, $7, $8)`,
+                [
+                  tenantId,
+                  itemId,
+                  batch.id,
+                  req.repair_order_id,
+                  reserveQty,
+                  price,
+                  `Резерв под наряд по заказу ${supplierOrderRow.order_number} (${it.name})`,
+                  userId,
+                ],
+              );
+
+              await tx.query(
+                `UPDATE repair_parts
+                 SET warehouse_item_id = $1, cost_price = $2, status = 'reserved'
+                 WHERE tenant_id = $3 AND repair_order_id = $4
+                   AND (warehouse_item_id = $1 OR lower(btrim(name)) = lower(btrim($5)))`,
+                [itemId, price, tenantId, req.repair_order_id, it.name],
+              );
+            }
+
+            await tx.query(
+              `UPDATE purchase_requests
+               SET status = 'received', item_id = COALESCE(item_id, $3), updated_at = now()
+               WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, req.id, itemId],
+            );
+
+            if (req.deal_id) {
+              await this.fulfillWonDealIfReadyInTx(
+                tx,
+                tenantId,
+                req.deal_id,
+                req.deal_item_id ?? null,
+                itemId,
+                userId,
+              );
+            }
+
+            remainingToReserve -= reserveQty;
+          }
+        }
+      }
+
+      let transactionId: string | undefined;
+
+      // ФИНАНСОВЫЙ КОНТУР:
+      // При 'initial_balance' и 'inventory_adjustment' списание средств никогда не производится!
+      if (payload.basis === "supplier_order" && supplierOrderRow) {
+        await tx.query(
+          `UPDATE supplier_orders SET status = 'received', updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, supplierOrderRow.id],
+        );
+
+        const isAlreadyPaid = Boolean(supplierOrderRow.paid_at) || supplierOrderRow.status === "paid";
+        if (!isAlreadyPaid && payload.record_finance_expense && payload.cash_account_id) {
+          const cashAccountId = payload.cash_account_id;
+          let cat = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM finance_categories
+             WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
+             LIMIT 1`,
+            [tenantId],
+          );
+          if (!cat) {
+            cat = await tx.queryOne<{ id: string }>(
+              `INSERT INTO finance_categories (tenant_id, name, type)
+               VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
+               RETURNING id`,
+              [tenantId],
+            );
+          }
+
+          const desc =
+            payload.payment_comment?.trim() ||
+            `Оплата заказа поставщику ${supplierOrderRow.order_number} (${supplierName})`;
+
+          const txRow = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO transactions
+               (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name, supplier_order_id, created_by)
+             VALUES ($1, $2, $3, $4, 'expense', $5, $6, $7, $8)
+             RETURNING id`,
+            [
+              tenantId,
+              cashAccountId,
+              cat?.id ?? null,
+              totalAmount,
+              desc,
+              supplierName,
+              supplierOrderRow.id,
+              userId,
+            ],
+          );
+          transactionId = txRow.id;
+
+          await tx.query(
+            `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
+            [totalAmount, tenantId, cashAccountId],
+          );
+
+          await tx.query(
+            `UPDATE supplier_orders
+             SET paid_at = now(), paid_cash_account_id = $1, paid_comment = $2
+             WHERE tenant_id = $3 AND id = $4`,
+            [cashAccountId, desc, tenantId, supplierOrderRow.id],
+          );
+        }
+      } else if (
+        payload.basis === "direct_purchase" &&
+        payload.record_finance_expense &&
+        payload.cash_account_id
+      ) {
+        const cashAccountId = payload.cash_account_id;
+        let cat = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM finance_categories
+           WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
+           LIMIT 1`,
+          [tenantId],
+        );
+        if (!cat) {
+          cat = await tx.queryOne<{ id: string }>(
+            `INSERT INTO finance_categories (tenant_id, name, type)
+             VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
+             RETURNING id`,
+            [tenantId],
+          );
+        }
+
+        const desc =
+          payload.payment_comment?.trim() ||
+          `Оприходование товаров по накладной ${docNumber} (${supplierName})`;
+
+        const txRow = await tx.queryOneOrThrow<{ id: string }>(
+          `INSERT INTO transactions
+             (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name, created_by)
+           VALUES ($1, $2, $3, $4, 'expense', $5, $6, $7)
+           RETURNING id`,
+          [
+            tenantId,
+            cashAccountId,
+            cat?.id ?? null,
+            totalAmount,
+            desc,
+            supplierName,
+            userId,
+          ],
+        );
+        transactionId = txRow.id;
+
+        await tx.query(
+          `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
+          [totalAmount, tenantId, cashAccountId],
+        );
+      }
+
+      return {
+        success: true,
+        documentNumber: docNumber,
+        basis: payload.basis,
+        batchesCreated: batchesCount,
+        totalQuantity: totalQty,
+        totalAmount,
+        transactionId,
+        supplierOrderId: supplierOrderRow?.id ?? undefined,
       };
     });
   }

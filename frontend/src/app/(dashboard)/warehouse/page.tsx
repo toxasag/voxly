@@ -87,7 +87,7 @@ import {
   type WarehouseLimit,
 } from "@/components/warehouse/WarehousePagination";
 import { CreateItemModal } from "@/components/warehouse/CreateItemModal";
-import { IntakeModal } from "@/components/warehouse/IntakeModal";
+import { WarehouseIntakeDialog } from "@/components/warehouse/WarehouseIntakeDialog";
 import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierOrderModal";
 import { EditSupplierOrderModal } from "@/components/warehouse/EditSupplierOrderModal";
 import { SupplierOrderDetailModal } from "@/components/warehouse/SupplierOrderDetailModal";
@@ -2741,7 +2741,7 @@ function WarehouseContent() {
         onClose={() => setCreateItemModalOpen(false)}
       />
 
-      <IntakeModal
+      <WarehouseIntakeDialog
         open={intakeModalOpen}
         onClose={() => {
           setIntakeModalOpen(false);

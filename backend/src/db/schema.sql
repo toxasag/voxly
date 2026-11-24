@@ -777,6 +777,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   category_id UUID REFERENCES finance_categories(id),
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  supplier_order_id UUID REFERENCES supplier_orders(id) ON DELETE SET NULL,
   amount NUMERIC NOT NULL,
   currency TEXT NOT NULL DEFAULT 'RUB',
   direction TEXT NOT NULL,
