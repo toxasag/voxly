@@ -1530,6 +1530,8 @@ export class InvoicesService {
       }
       const txsToInsert: TxToInsert[] = [];
 
+      const baseDescription = p.description || `Оплата счёта №${inv.invoice_number}`;
+
       if (worksSum > 0 && partsSum > 0) {
         const rawWorks = Math.round(invTotal * (worksSum / (worksSum + partsSum)) * 100) / 100;
         const rawParts = Math.round((invTotal - rawWorks) * 100) / 100;
@@ -1538,38 +1540,34 @@ export class InvoicesService {
           amount: rawWorks,
           categoryId: worksCategory?.id ?? null,
           categoryName: worksCategory?.name ?? "Оплата выполненных работ",
-          description: p.description
-            ? `${p.description} (работы)`
-            : `Оплата счёта №${inv.invoice_number} (работы)`,
+          description: baseDescription,
         });
         txsToInsert.push({
           amount: rawParts,
           categoryId: partsCategory?.id ?? null,
           categoryName: partsCategory?.name ?? "Продажа запчастей",
-          description: p.description
-            ? `${p.description} (запчасти)`
-            : `Оплата счёта №${inv.invoice_number} (запчасти)`,
+          description: baseDescription,
         });
       } else if (worksSum > 0) {
         txsToInsert.push({
           amount: invTotal,
           categoryId: worksCategory?.id ?? defaultIncomeCategory?.id ?? null,
           categoryName: worksCategory?.name ?? defaultIncomeCategory?.name ?? "Оплата выполненных работ",
-          description: p.description || `Оплата счёта №${inv.invoice_number}`,
+          description: baseDescription,
         });
       } else if (partsSum > 0) {
         txsToInsert.push({
           amount: invTotal,
           categoryId: partsCategory?.id ?? defaultIncomeCategory?.id ?? null,
           categoryName: partsCategory?.name ?? defaultIncomeCategory?.name ?? "Продажа запчастей",
-          description: p.description || `Оплата счёта №${inv.invoice_number}`,
+          description: baseDescription,
         });
       } else {
         txsToInsert.push({
           amount: invTotal,
           categoryId: defaultIncomeCategory?.id ?? null,
           categoryName: defaultIncomeCategory?.name ?? "Оплата счёта",
-          description: p.description || `Оплата счёта №${inv.invoice_number}`,
+          description: baseDescription,
         });
       }
 
