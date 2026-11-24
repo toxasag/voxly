@@ -244,11 +244,25 @@ function FinancePageContent() {
   }, [searchParams]);
 
   const handleCreateTransaction = useCallback(async (p: CreateTransactionPayload) => {
-    await createTxMutation.mutateAsync(p);
+    try {
+      await createTxMutation.mutateAsync(p);
+      toast.success(p.type === "income" ? "Доходная операция создана" : "Расходная операция создана");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Не удалось создать операцию";
+      toast.error(msg);
+      throw err;
+    }
   }, [createTxMutation]);
 
   const handleTransfer = useCallback(async (p: { from_account_id: string; to_account_id: string; amount: number }) => {
-    await transferMutation.mutateAsync(p);
+    try {
+      await transferMutation.mutateAsync(p);
+      toast.success("Перевод успешно выполнен");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Не удалось выполнить перевод";
+      toast.error(msg);
+      throw err;
+    }
   }, [transferMutation]);
 
   const handleCreateInvoice = useCallback(async (p: PrefilledInvoicePayload) => {

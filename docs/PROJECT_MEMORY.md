@@ -1495,3 +1495,29 @@
 - **Верификация:**
   - `tsc --noEmit` в backend и frontend: 0 ошибок.
   - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Исправление сбоя расходных операций, снятие блокировки списания в минус и отладка UI
+- **Контекст и root cause:**
+  - На странице `/finance` при оформлении расхода и нажатии кнопки «Списать» операция не создавалась и не отображалась в списке (молчаливый отказ).
+  - Root Cause 1: В `finance.types.ts` поле `occurred_at` валидировалось через `z.string().datetime()`, требующий полного формата RFC 3339 с `Z`. Браузерный HTML5 `<input type="datetime-local">` передавал строку вида `YYYY-MM-DDTHH:mm` (`2026-11-24T16:14`), что приводило к `ZodError: Invalid datetime` и отказу Fastify с кодом HTTP 400.
+  - Root Cause 2: В `finance.service.ts` стояла блокировка `if (sign < 0 && Number(a.balance) < p.amount) throw new AppError(409, "INSUFFICIENT_FUNDS")`. Для кассы с нулевым остатком (например, «Основная касса (Наличные)» с балансом 0 ₽) списание стопорилось ошибкой 409.
+  - Root Cause 3: В схемах Zod поле `category_id` строго требовало UUID (`z.string().uuid()`), тогда как при отсутствии пользовательских категорий или переключении типа использовались fallback-слаги (`rent`, `parts_purchase`). Невалидный UUID блокировал валидацию формы на клиенте (`isValid: false`) и делал кнопку «Списать» неактивной или вызывал сбой.
+  - Root Cause 4: В `CreateTransactionModal.tsx` вызов `onSubmit(payload)` не ожидался через `await`, форма сбрасывалась и закрывалась синхронно, а ошибки API не перехватывались и проглатывались без отображения пользователю.
+- **Что сделано:**
+  1. **Backend:**
+     - В `finance.types.ts` валидация `occurred_at` заменена на гибкий `flexibleDate`, принимающий как ISO с часовым поясом, так и `datetime-local` (`YYYY-MM-DDTHH:mm`).
+     - Поля `category_id`, `deal_id`, `repair_order_id`, `invoice_id` сделаны опциональными и nullable.
+     - В `finance.service.ts` убрана блокировка `INSUFFICIENT_FUNDS` при списании и переводах: разрешён уход баланса в минус (овердрафт кассы). Добавлены безопасные парсеры `safeUuid` и `safeDate`, исключающие сбои синтаксиса UUID в PostgreSQL.
+  2. **Frontend:**
+     - В `finance.schema.ts` скорректирована схема `createTransactionSchema` и `updateTransactionSchema`.
+     - В `CreateTransactionModal.tsx` добавлен асинхронный `handleSubmit` с `try/catch`, отображением ошибки в alert-баннере, индикатором загрузки (`submitting`) на кнопке «Списать» и нормализацией даты в ISO.
+     - В `page.tsx` добавлены всплывающие уведомления `toast.success` / `toast.error` через Sonner.
+     - В `use-invoices.ts` обновлены типы и добавлена инвалидация кэшей счетов, транзакций и PnL.
+  3. **Тесты:**
+     - Добавлен юнит-тест `backend/src/tests/finance-negative-balance.test.ts`.
+- **Верификация:**
+  - `tsc --noEmit` в frontend и backend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+  - Проверка создания расхода с уходом в минус на живом сервере.

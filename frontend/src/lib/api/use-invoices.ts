@@ -315,31 +315,31 @@ export interface CreateTransactionPayload {
   type: TransactionType;
   amount: number;
   currency?: string;
-  category_id?: string;
+  category_id?: string | null;
   category_name: string;
-  description?: string;
-  counterparty_name?: string;
-  counterparty_inn?: string;
-  deal_id?: string;
-  repair_order_id?: string;
-  invoice_id?: string;
-  occurred_at?: string;
+  description?: string | null;
+  counterparty_name?: string | null;
+  counterparty_inn?: string | null;
+  deal_id?: string | null;
+  repair_order_id?: string | null;
+  invoice_id?: string | null;
+  occurred_at?: string | null;
 }
 
 export interface UpdateTransactionPayload {
-  account_id?: string;
+  account_id?: string | null;
   type?: TransactionType;
   amount?: number;
   currency?: string;
-  category_id?: string;
-  category_name?: string;
-  description?: string;
-  counterparty_name?: string;
-  counterparty_inn?: string;
-  deal_id?: string;
-  repair_order_id?: string;
-  invoice_id?: string;
-  occurred_at?: string;
+  category_id?: string | null;
+  category_name?: string | null;
+  description?: string | null;
+  counterparty_name?: string | null;
+  counterparty_inn?: string | null;
+  deal_id?: string | null;
+  repair_order_id?: string | null;
+  invoice_id?: string | null;
+  occurred_at?: string | null;
 }
 
 export interface CreateInvoicePayload {
@@ -562,6 +562,9 @@ export function useTransfer(): UseMutationResult<{ from: AccountDTO; to: Account
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: ["finance", "transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["finance", "pnl"] });
     },
   });
 }
@@ -576,6 +579,9 @@ export function useCreateTransaction(): UseMutationResult<TransactionDTO, ApiCli
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: financeKeys.accounts });
+      void queryClient.invalidateQueries({ queryKey: ["finance", "transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["finance", "pnl"] });
     },
   });
 }

@@ -12,7 +12,7 @@ import type {
   UpdateTransactionPayload,
 } from "./finance.types.js";
 import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
-import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
+import { NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import { dealsService } from "../crm/deals/deals.service.js";
 
 interface AccountRow {
@@ -46,6 +46,14 @@ interface TxRow {
 }
 const iso = (value: Date | string) => value instanceof Date ? value.toISOString() : value;
 const blank = (v: string | undefined) => v === undefined || v === "" ? null : v;
+const isUuid = (v: string | undefined | null): boolean =>
+  typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+const safeUuid = (v: string | undefined | null): string | null => (isUuid(v) ? v!.trim() : null);
+const safeDate = (v: string | undefined | null): string | null => {
+  if (!v || !v.trim()) return null;
+  const d = new Date(v);
+  return !isNaN(d.getTime()) ? d.toISOString() : null;
+};
 
 export class FinanceService {
   /**
@@ -508,8 +516,7 @@ export class FinanceService {
     return withTenant(tenantId, async (tx) => {
       const a = await this.account(tx, tenantId, p.account_id);
       if (a.currency !== p.currency) throw new ValidationError("Account currency differs from transaction currency");
-      const sign = p.type === "income" ? 1 : -1;
-      if (sign < 0 && Number(a.balance) < p.amount) throw new AppError(409, "INSUFFICIENT_FUNDS", "Insufficient account balance");
+      // Разрешено списание в минус (овердрафт / отрицательный остаток кассы) согласно бизнес-требованию
       const row = await tx.queryOneOrThrow<TxRow>(
         `INSERT INTO transactions
            (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction,
@@ -525,7 +532,7 @@ export class FinanceService {
         [
           tenantId,
           p.account_id,
-          blank(p.category_id),
+          safeUuid(p.category_id),
           p.category_name,
           p.amount,
           p.currency,
@@ -533,10 +540,10 @@ export class FinanceService {
           p.description ?? "",
           p.counterparty_name ?? "",
           p.counterparty_inn ?? "",
-          blank(p.deal_id),
-          blank(p.repair_order_id),
-          blank(p.invoice_id),
-          p.occurred_at ?? null,
+          safeUuid(p.deal_id),
+          safeUuid(p.repair_order_id),
+          safeUuid(p.invoice_id),
+          safeDate(p.occurred_at),
           blank(userId),
         ],
       );
@@ -599,7 +606,7 @@ export class FinanceService {
           p.amount !== undefined ? p.amount : null,
           p.currency ?? null,
           p.category_id !== undefined,
-          blank(p.category_id),
+          safeUuid(p.category_id),
           p.category_name ?? null,
           p.description !== undefined,
           p.description ?? "",
@@ -608,12 +615,12 @@ export class FinanceService {
           p.counterparty_inn !== undefined,
           p.counterparty_inn ?? "",
           p.deal_id !== undefined,
-          blank(p.deal_id),
+          safeUuid(p.deal_id),
           p.repair_order_id !== undefined,
-          blank(p.repair_order_id),
+          safeUuid(p.repair_order_id),
           p.invoice_id !== undefined,
-          blank(p.invoice_id),
-          p.occurred_at ?? null,
+          safeUuid(p.invoice_id),
+          safeDate(p.occurred_at),
         ],
       );
 
@@ -631,8 +638,8 @@ export class FinanceService {
       const from = await this.account(tx, tenantId, p.from_account_id);
       const to = await this.account(tx, tenantId, p.to_account_id);
       if (from.currency !== to.currency) throw new ValidationError("Cross-currency transfers are not supported");
-      if (Number(from.balance) < p.amount) throw new AppError(409, "INSUFFICIENT_FUNDS", "Insufficient account balance");
-      const occurred = new Date().toISOString();
+      // Разрешено списание в минус при переводах
+      const occurred = safeDate(p.occurred_at) ?? new Date().toISOString();
       for (const [accountId, direction, description] of [
         [from.id, "expense", `Transfer to ${to.name}`],
         [to.id, "income", `Transfer from ${from.name}`],
@@ -882,7 +889,7 @@ export class FinanceService {
       const account = await this.account(tx, tenantId, payload.cash_account_id);
 
       const resolveCategory = async (
-        catId: string | undefined,
+        catId: string | undefined | null,
         fallbackName: string,
       ): Promise<{ id: string | null; name: string }> => {
         if (catId && catId.trim().length > 0) {

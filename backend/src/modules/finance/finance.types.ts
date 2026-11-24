@@ -10,8 +10,12 @@ export const accountTypeSchema = z.enum(["bank", "cash", "acquiring", "safe"]);
 export const transactionTypeSchema = z.enum(["income", "expense"]);
 export const invoiceStatusSchema = z.enum(["draft", "sent", "paid", "overdue", "cancelled"]);
 
-const optionalUuid = z.string().uuid().optional().or(z.literal(""));
+const optionalUuid = z.string().uuid().optional().nullable().or(z.literal(""));
 const isoDate = z.string().datetime("Use an ISO 8601 timestamp");
+const flexibleDate = z.string().optional().nullable().or(z.literal("")).refine((val) => {
+  if (!val || !val.trim()) return true;
+  return !isNaN(Date.parse(val));
+}, "Use a valid timestamp (ISO 8601 or YYYY-MM-DDTHH:mm)");
 
 export const createAccountSchema = z.object({
   name: z.string().min(1).max(120),
@@ -25,8 +29,8 @@ export const transferSchema = z.object({
   from_account_id: accountIdSchema,
   to_account_id: accountIdSchema,
   amount: z.number().positive("Transfer amount must be positive"),
-  description: z.string().max(500).optional().or(z.literal("")),
-  occurred_at: isoDate.optional(),
+  description: z.string().max(500).optional().nullable().or(z.literal("")),
+  occurred_at: flexibleDate.optional(),
 }).refine((value) => value.from_account_id !== value.to_account_id, {
   message: "Source and destination accounts must differ",
   path: ["to_account_id"],
@@ -37,15 +41,15 @@ export const createTransactionSchema = z.object({
   type: transactionTypeSchema,
   amount: z.number().positive(),
   currency: z.string().length(3).default("RUB"),
-  category_id: optionalUuid,
+  category_id: z.string().optional().nullable().or(z.literal("")),
   category_name: z.string().min(1).max(120),
-  description: z.string().max(500).optional().or(z.literal("")),
-  counterparty_name: z.string().max(200).optional().or(z.literal("")),
-  counterparty_inn: z.string().max(20).optional().or(z.literal("")),
+  description: z.string().max(500).optional().nullable().or(z.literal("")),
+  counterparty_name: z.string().max(200).optional().nullable().or(z.literal("")),
+  counterparty_inn: z.string().max(20).optional().nullable().or(z.literal("")),
   deal_id: optionalUuid,
   repair_order_id: optionalUuid,
   invoice_id: optionalUuid,
-  occurred_at: isoDate.optional(),
+  occurred_at: flexibleDate.optional(),
 });
 
 export const updateTransactionSchema = z.object({
@@ -53,15 +57,15 @@ export const updateTransactionSchema = z.object({
   type: transactionTypeSchema.optional(),
   amount: z.number().positive().optional(),
   currency: z.string().length(3).optional(),
-  category_id: optionalUuid,
+  category_id: z.string().optional().nullable().or(z.literal("")),
   category_name: z.string().min(1).max(120).optional(),
-  description: z.string().max(500).optional().or(z.literal("")),
-  counterparty_name: z.string().max(200).optional().or(z.literal("")),
-  counterparty_inn: z.string().max(20).optional().or(z.literal("")),
+  description: z.string().max(500).optional().nullable().or(z.literal("")),
+  counterparty_name: z.string().max(200).optional().nullable().or(z.literal("")),
+  counterparty_inn: z.string().max(20).optional().nullable().or(z.literal("")),
   deal_id: optionalUuid,
   repair_order_id: optionalUuid,
   invoice_id: optionalUuid,
-  occurred_at: isoDate.optional(),
+  occurred_at: flexibleDate.optional(),
 });
 
 export const pnlQuerySchema = z.object({
