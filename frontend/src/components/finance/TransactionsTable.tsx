@@ -257,11 +257,14 @@ export const TransactionsTable = memo(function TransactionsTable({
         sortValue: (tx) => tx.category,
         render: (tx) => {
           const CategoryIcon = CATEGORY_ICONS[tx.category] ?? Banknote;
+          const label = getCategoryLabel(tx.category).trim();
           return (
             <RecordCellShell>
               <div className="flex items-center gap-1.5 truncate text-xs text-[#111111]">
                 <CategoryIcon className="h-3 w-3 shrink-0 text-[#888888]" />
-                <span className="truncate">{getCategoryLabel(tx.category)}</span>
+                <span className={cn("truncate", !label && "text-[#888888]")}>
+                  {label || "Без категории"}
+                </span>
               </div>
             </RecordCellShell>
           );

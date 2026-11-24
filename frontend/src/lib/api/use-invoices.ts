@@ -182,6 +182,7 @@ export interface TransactionDTO {
   dealId: string | null;
   repairOrderId: string | null;
   invoiceId: string | null;
+  supplierOrderId?: string | null;
   counterpartyName?: string;
   counterpartyInn?: string;
   occurredAt: string;
@@ -600,6 +601,7 @@ export function useUpdateTransaction(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
     },
   });
 }
@@ -928,6 +930,7 @@ export function useDeleteTransaction(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["invoices"] });
       void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
     },
   });
 }
@@ -947,6 +950,7 @@ export function useBulkDeleteTransactions(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["invoices"] });
       void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
     },
   });
 }

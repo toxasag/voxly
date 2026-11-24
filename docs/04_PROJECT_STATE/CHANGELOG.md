@@ -1,3 +1,9 @@
+### Fixed · Связка Склад ↔ Финансы: автокатегория «Закупка запчастей» и автор операции (2026-11-24)
+
+- **Auto-Category for Supplier Orders**: При оплате заказа поставщику (`paySupplierOrder`, `createReceiptFromSupplierOrder`) и при оприходовании с расходом (`intakeBatch`, `intakeDocument`) расходная операция автоматически получает `category_id` и `category_name` категории «Закупка запчастей» (существующей категории тенанта либо создаваемой автоматически), а также `supplier_order_id` и `repair_order_id`.
+- **Transaction Author Preservation**: Исправлена запись `created_by` при оплате заказа поставщику, переводах между счетами, дублировании и редактировании операций (`updateTransaction` возвращает `createdById`/`createdByName` и восстанавливает пустого автора).
+- **Bidirectional Warehouse ↔ Finance Consistency**: Удаление расходной операции в `/finance` откатывает статус связанного заказа поставщику из `paid` в `pending_payment`; отмена/удаление оплаченного заказа мягко удаляет проводку и пересчитывает баланс кассы; добавлена двусторонняя инвалидация кэшей TanStack Query и миграция-бэкфилл `0135`.
+
 ### Added · Персистентность фильтров на страницах ремонтов и сделок (2026-11-24)
 
 - **Shared Persisted Filters Hook**: Добавлен хук `usePersistedFilters` (`frontend/src/lib/hooks/use-persisted-filters.ts`) с изоляцией `localStorage` по `tenant:userId:page`, приоритетом явных URL-параметров, безопасной SSR-гидрацией, защитой от битых/устаревших значений и сохранением сторонних параметров URL (`?record=`, `?dealId=`).

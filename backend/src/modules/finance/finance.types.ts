@@ -211,6 +211,7 @@ export interface TransactionDTO {
   dealId: string | null;
   repairOrderId: string | null;
   invoiceId: string | null;
+  supplierOrderId?: string | null;
   counterpartyName: string;
   counterpartyInn: string;
   occurredAt: string;

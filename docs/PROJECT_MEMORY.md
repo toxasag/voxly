@@ -1574,3 +1574,27 @@
 - **Где ещё используется:**
   - `useRepairs` используется в `RecordRepairsTab.tsx`, `deal-tabs.tsx`, `repairs/page.tsx` (обратная совместимость сохранена).
   - `RepairsTable` используется только в `repairs/page.tsx` (экспорт `formatOrderNumber` также в `deal-tabs.tsx` и `repairs/[id]/page.tsx`).
+
+---
+
+### 24.11.2026 — Аудит и исправление связки Склад (Заказы поставщикам → Оплатить) ↔ Финансы (Категория и Автор)
+- **Контекст и root cause:**
+  1. В `warehouse.service.ts` во всех 5 точках создания расходных проводок (`paySupplierOrder`, `createReceiptFromSupplierOrder`, `intakeBatch`, `intakeDocument` для `supplier_order` и `direct_purchase`) при `INSERT INTO transactions` передавался только `category_id` без `category_name` (оставалась пустая строка `''`), и создавалась категория `'Закупка запчастей и комплектующих'` вместо `'Закупка запчастей'`.
+  2. В `paySupplierOrder` параметр `_userId` игнорировался, а в `createReceiptFromSupplierOrder` и `intakeBatch` поле `created_by` не передавалось в `INSERT INTO transactions`. Кроме того, `paySupplierOrder` и `createReceiptFromSupplierOrder` не заполняли `supplier_order_id` и не защищали от повторной оплаты.
+  3. В `finance.routes.ts` / `finance.service.ts`: `updateTransaction`, `transfer`, `bulkDuplicateTransactions`, `createAccount` не передавали/не возвращали `created_by` / `created_by_name`; `transactions()` не делал `LEFT JOIN finance_categories` для фоллбэка пустого `category_name`; `bulkDeleteTransactions()` не откатывал статус связанных `supplier_orders`.
+  4. На фронтенде `EditTransactionModal.tsx` сбрасывал `category_id` в `""` при открытии, а `useUpdateSupplierOrder` и мутации удаления/редактирования транзакций в `use-invoices.ts` не инвалидировали кэш смежного модуля.
+- **Что сделано:**
+  1. **Backend (`warehouse.service.ts`):**
+     - Вынесены единые хелперы `resolvePartsPurchaseCategoryInTx` (приоритет «Закупка запчастей» → `%запчаст%` → автосоздание «Закупка запчастей»), `recalculateCashAccountBalanceInTx`, `resolveSupplierOrderRepairIdInTx`.
+     - Исправлены все 5 точек создания транзакций: всегда записываются `category_id`, `category_name`, `created_by`, `supplier_order_id` (и `repair_order_id` при однозначной связке), `occurred_at = now()`, пересчитывается баланс кассы.
+     - В `paySupplierOrder` и `createReceiptFromSupplierOrder` добавлена защита от двойной оплаты и отменённых заказов; в `updateSupplierOrder` (отмена/правка) и `deleteSupplierOrdersInTx` переведено на soft delete транзакций с пересчётом баланса.
+     - В `intakeDocument` исправлены несуществующие имена колонок `paid_cash_account_id`/`paid_comment` → `cash_account_id`/`finance_transaction_id`.
+  2. **Backend (`finance.service.ts`, `finance.routes.ts`, `finance.types.ts`, `tenant-defaults.ts`):**
+     - `req.authUser?.id` передаётся в `updateTransaction`, `transfer`, `bulkDuplicateTransactions`, `createAccount`.
+     - `updateTransaction` сохраняет/восстанавливает `created_by = COALESCE(created_by, $23)` и возвращает `created_by_id`, `created_by_name`, `supplier_order_id`, `category_name`.
+     - `transactions()` и `pnl()` используют `LEFT JOIN finance_categories` (`COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '')`).
+     - `bulkDeleteTransactions` при удалении расходной операции откатывает связанные `supplier_orders` из `paid` в `pending_payment` и сбрасывает `paid_at` / `finance_transaction_id`.
+     - Добавлена миграция-бэкфилл `backend/src/db/migrations/0135_sync_supplier_order_transactions_category_and_author.sql`.
+  3. **Frontend (`EditTransactionModal.tsx`, `TransactionsTable.tsx`, `finance/page.tsx`, `finance.types.ts`, `use-invoices.ts`, `use-warehouse.ts`):**
+     - Корректная предзагрузка `category_id` в `EditTransactionModal` без затирания при сохранении, отображение фоллбэка «Без категории», двусторонняя инвалидация кэшей `["finance"]` ↔ `["warehouse"]`.
+  4. **Тесты:** добавлен `backend/src/tests/warehouse-finance-sync.test.ts` (4 теста).

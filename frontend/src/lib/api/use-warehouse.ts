@@ -673,6 +673,8 @@ export function useCreateSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
     },
   });
 }
@@ -697,6 +699,8 @@ export function useUpdateSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: ["finance"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
     },
   });
 }

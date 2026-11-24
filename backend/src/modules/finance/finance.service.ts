@@ -38,6 +38,7 @@ interface TxRow {
   deal_id: string | null;
   repair_order_id: string | null;
   invoice_id: string | null;
+  supplier_order_id?: string | null;
   counterparty_name: string;
   counterparty_inn: string;
   occurred_at: Date | string;
@@ -82,6 +83,7 @@ export class FinanceService {
   async createAccount(
     tenantId: string,
     p: { name: string; account_type?: AccountType; currency: string; opening_balance: number; is_default: boolean },
+    userId?: string,
   ): Promise<AccountDTO> {
     const accType = p.account_type ?? "cash";
     const opening = Number(p.opening_balance ?? 0);
@@ -99,9 +101,9 @@ export class FinanceService {
       if (opening > 0) {
         await tx.query(
           `INSERT INTO transactions
-             (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, occurred_at)
-           VALUES ($1, $2, NULL, 'Начальный остаток', $3, $4, 'income', $5, now())`,
-          [tenantId, row.id, opening, p.currency, `Начальный остаток при открытии счёта «${p.name}»`],
+             (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, occurred_at, created_by)
+           VALUES ($1, $2, NULL, 'Начальный остаток', $3, $4, 'income', $5, now(), $6)`,
+          [tenantId, row.id, opening, p.currency, `Начальный остаток при открытии счёта «${p.name}»`, safeUuid(userId)],
         );
         balance = await this.recalculateAccountBalanceInTx(tx, tenantId, row.id);
       }
@@ -165,25 +167,33 @@ export class FinanceService {
     if (options?.search && options.search.trim()) {
       params.push(`%${options.search.trim()}%`);
       conditions.push(
-        `(t.description ILIKE $${params.length} OR t.counterparty_name ILIKE $${params.length} OR t.category_name ILIKE $${params.length} OR a.name ILIKE $${params.length} OR u.name ILIKE $${params.length})`,
+        `(t.description ILIKE $${params.length} OR t.counterparty_name ILIKE $${params.length} OR COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '') ILIKE $${params.length} OR a.name ILIKE $${params.length} OR u.name ILIKE $${params.length})`,
       );
     }
 
     const whereSql = conditions.join(" AND ");
 
-    const countSql = `SELECT COUNT(*)::text AS total FROM transactions t JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id WHERE ${whereSql}`;
+    const countSql = `SELECT COUNT(*)::text AS total
+                      FROM transactions t
+                      JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+                      LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
+                      LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
+                      WHERE ${whereSql}`;
     const total = await queryOne<{ total: string }>(countSql, params);
 
     const selectParams: SqlParam[] = [...params, limit, offset];
-    const rowsSql = `SELECT t.id, t.direction, t.amount, t.currency, t.category_id, t.category_name, t.description,
+    const rowsSql = `SELECT t.id, t.direction, t.amount, t.currency, t.category_id,
+                            COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '') AS category_name,
+                            t.description,
                             COALESCE(t.counterparty_name, '') AS counterparty_name,
                             COALESCE(t.counterparty_inn, '') AS counterparty_inn,
                             t.cash_account_id, a.name AS account_name,
-                            t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at,
+                            t.deal_id, t.repair_order_id, t.invoice_id, t.supplier_order_id, t.occurred_at,
                             t.created_by AS created_by_id,
                             COALESCE(u.name, u.email, '') AS created_by_name
                      FROM transactions t
                      JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+                     LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
                      LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
                      WHERE ${whereSql}
                      ORDER BY t.occurred_at DESC
@@ -207,6 +217,7 @@ export class FinanceService {
       dealId: row.deal_id,
       repairOrderId: row.repair_order_id,
       invoiceId: row.invoice_id,
+      supplierOrderId: row.supplier_order_id ?? null,
       counterpartyName: row.counterparty_name || "",
       counterpartyInn: row.counterparty_inn || "",
       occurredAt: iso(row.occurred_at),
@@ -307,11 +318,12 @@ export class FinanceService {
         amount: string;
         invoice_id: string | null;
         repair_order_id: string | null;
+        supplier_order_id: string | null;
       }>(
         `UPDATE transactions
          SET deleted_at = now()
          WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
-         RETURNING id, cash_account_id, direction, amount, invoice_id, repair_order_id`,
+         RETURNING id, cash_account_id, direction, amount, invoice_id, repair_order_id, supplier_order_id`,
         [tenantId, ids],
       );
 
@@ -380,36 +392,70 @@ export class FinanceService {
         await this.syncRepairOrderPaymentStatusInTx(tx, tenantId, orderId);
       }
 
+      // Синхронизируем связанные заказы поставщикам: при удалении расходной проводки
+      // снимаем оплату и возвращаем статус из 'paid' обратно в 'pending_payment'
+      const deletedTxIds = deleted.map((r) => r.id);
+      const affectedSupplierOrderIds = Array.from(
+        new Set(deleted.map((r) => r.supplier_order_id).filter((sid): sid is string => Boolean(sid))),
+      );
+      if (deletedTxIds.length > 0 || affectedSupplierOrderIds.length > 0) {
+        await tx.query(
+          `UPDATE supplier_orders
+           SET status = CASE WHEN status = 'paid' THEN 'pending_payment' ELSE status END,
+               paid_at = NULL,
+               finance_transaction_id = NULL,
+               updated_at = now()
+           WHERE tenant_id = $1
+             AND (
+               finance_transaction_id = ANY($2::uuid[])
+               OR id = ANY($3::uuid[])
+             )`,
+          [tenantId, deletedTxIds, affectedSupplierOrderIds],
+        );
+      }
+
       return { count: deleted.length };
     });
   }
 
-  async bulkDuplicateTransactions(tenantId: string, ids: string[]): Promise<TransactionDTO[]> {
+  async bulkDuplicateTransactions(
+    tenantId: string,
+    ids: string[],
+    userId?: string,
+  ): Promise<TransactionDTO[]> {
     if (ids.length === 0) return [];
     return withTenant(tenantId, async (tx) => {
       const sources = await tx.query<TxRow>(
-        `SELECT t.id, t.direction, t.amount, t.currency, t.category_id, t.category_name, t.description,
+        `SELECT t.id, t.direction, t.amount, t.currency, t.category_id,
+                COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '') AS category_name,
+                t.description,
                 COALESCE(t.counterparty_name, '') AS counterparty_name,
                 COALESCE(t.counterparty_inn, '') AS counterparty_inn,
                 t.cash_account_id, a.name AS account_name,
-                t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at
+                t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at,
+                t.created_by AS created_by_id
          FROM transactions t
          JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+         LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
          WHERE t.tenant_id = $1 AND t.id = ANY($2) AND t.deleted_at IS NULL`,
         [tenantId, ids],
       );
 
+      const resolvedAuthorId = safeUuid(userId);
       const results: TransactionDTO[] = [];
       for (const src of sources) {
+        const authorId = resolvedAuthorId ?? safeUuid(src.created_by_id);
         const row = await tx.queryOneOrThrow<TxRow>(
           `INSERT INTO transactions
              (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction,
-              description, counterparty_name, counterparty_inn, deal_id, repair_order_id, invoice_id, occurred_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
+              description, counterparty_name, counterparty_inn, deal_id, repair_order_id, invoice_id, occurred_at, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), $14)
            RETURNING id, direction, amount, currency, category_id, category_name, description,
                      counterparty_name, counterparty_inn, cash_account_id,
                      (SELECT name FROM cash_accounts WHERE id = $2) AS account_name,
-                     deal_id, repair_order_id, invoice_id, occurred_at`,
+                     deal_id, repair_order_id, invoice_id, supplier_order_id, occurred_at,
+                     created_by AS created_by_id,
+                     (SELECT COALESCE(name, email, '') FROM users WHERE id = created_by AND tenant_id = $1) AS created_by_name`,
           [
             tenantId,
             src.cash_account_id,
@@ -424,6 +470,7 @@ export class FinanceService {
             src.deal_id,
             src.repair_order_id,
             src.invoice_id,
+            authorId,
           ],
         );
 
@@ -552,14 +599,20 @@ export class FinanceService {
     });
   }
 
-  async updateTransaction(tenantId: string, id: string, p: UpdateTransactionPayload): Promise<TransactionDTO> {
+  async updateTransaction(
+    tenantId: string,
+    id: string,
+    p: UpdateTransactionPayload,
+    userId?: string,
+  ): Promise<TransactionDTO> {
     return withTenant(tenantId, async (tx) => {
       const current = await tx.queryOne<TxRow>(
         `SELECT t.id, t.direction, t.amount, t.currency, t.category_id, t.category_name, t.description,
                 COALESCE(t.counterparty_name, '') AS counterparty_name,
                 COALESCE(t.counterparty_inn, '') AS counterparty_inn,
                 t.cash_account_id, a.name AS account_name,
-                t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at
+                t.deal_id, t.repair_order_id, t.invoice_id, t.supplier_order_id, t.occurred_at,
+                t.created_by AS created_by_id
          FROM transactions t
          JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
          WHERE t.tenant_id = $1 AND t.id = $2 AND t.deleted_at IS NULL
@@ -577,6 +630,22 @@ export class FinanceService {
         }
       }
 
+      const resolvedCategoryId = p.category_id !== undefined ? safeUuid(p.category_id) : undefined;
+      let resolvedCategoryName = p.category_name;
+      if (resolvedCategoryId && (!resolvedCategoryName || !resolvedCategoryName.trim())) {
+        const catRow = await tx.queryOne<{ name: string }>(
+          `SELECT name FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, resolvedCategoryId],
+        );
+        if (catRow?.name) {
+          resolvedCategoryName = catRow.name;
+        }
+      }
+
+      // Не затираем существующий category_id пустой строкой из формы, если пользователь не менял категорию
+      const shouldUpdateCategoryId =
+        p.category_id !== undefined && (p.category_id === null || resolvedCategoryId !== null);
+
       const updated = await tx.queryOneOrThrow<TxRow>(
         `UPDATE transactions
          SET cash_account_id = COALESCE($3, cash_account_id),
@@ -591,13 +660,22 @@ export class FinanceService {
              deal_id = CASE WHEN $16::boolean THEN $17 ELSE deal_id END,
              repair_order_id = CASE WHEN $18::boolean THEN $19 ELSE repair_order_id END,
              invoice_id = CASE WHEN $20::boolean THEN $21 ELSE invoice_id END,
-             occurred_at = COALESCE($22::timestamptz, occurred_at)
+             occurred_at = COALESCE($22::timestamptz, occurred_at),
+             created_by = COALESCE(created_by, $23)
          WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-         RETURNING id, direction, amount, currency, category_id, category_name, description,
+         RETURNING id, direction, amount, currency, category_id,
+                   COALESCE(
+                     NULLIF(BTRIM(category_name), ''),
+                     (SELECT name FROM finance_categories WHERE id = category_id AND tenant_id = $1),
+                     ''
+                   ) AS category_name,
+                   description,
                    COALESCE(counterparty_name, '') AS counterparty_name,
                    COALESCE(counterparty_inn, '') AS counterparty_inn,
                    cash_account_id, (SELECT name FROM cash_accounts WHERE id = cash_account_id) AS account_name,
-                   deal_id, repair_order_id, invoice_id, occurred_at`,
+                   deal_id, repair_order_id, invoice_id, supplier_order_id, occurred_at,
+                   created_by AS created_by_id,
+                   (SELECT COALESCE(name, email, '') FROM users WHERE id = created_by AND tenant_id = $1) AS created_by_name`,
         [
           tenantId,
           id,
@@ -605,9 +683,9 @@ export class FinanceService {
           p.type ?? null,
           p.amount !== undefined ? p.amount : null,
           p.currency ?? null,
-          p.category_id !== undefined,
-          safeUuid(p.category_id),
-          p.category_name ?? null,
+          shouldUpdateCategoryId,
+          resolvedCategoryId ?? null,
+          resolvedCategoryName ?? null,
           p.description !== undefined,
           p.description ?? "",
           p.counterparty_name !== undefined,
@@ -621,6 +699,7 @@ export class FinanceService {
           p.invoice_id !== undefined,
           safeUuid(p.invoice_id),
           safeDate(p.occurred_at),
+          safeUuid(userId),
         ],
       );
 
@@ -633,21 +712,26 @@ export class FinanceService {
     });
   }
 
-  async transfer(tenantId: string, p: TransferPayload): Promise<{ from: AccountDTO; to: AccountDTO }> {
+  async transfer(
+    tenantId: string,
+    p: TransferPayload,
+    userId?: string,
+  ): Promise<{ from: AccountDTO; to: AccountDTO }> {
     return withTenant(tenantId, async (tx) => {
       const from = await this.account(tx, tenantId, p.from_account_id);
       const to = await this.account(tx, tenantId, p.to_account_id);
       if (from.currency !== to.currency) throw new ValidationError("Cross-currency transfers are not supported");
       // Разрешено списание в минус при переводах
       const occurred = safeDate(p.occurred_at) ?? new Date().toISOString();
+      const authorId = safeUuid(userId);
       for (const [accountId, direction, description] of [
         [from.id, "expense", `Transfer to ${to.name}`],
         [to.id, "income", `Transfer from ${from.name}`],
       ] as const) {
         await tx.query(
-          `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, occurred_at)
-           VALUES ($1, $2, NULL, 'Internal transfer', $3, $4, $5, $6, $7)`,
-          [tenantId, accountId, p.amount, from.currency, direction, p.description || description, occurred],
+          `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, occurred_at, created_by)
+           VALUES ($1, $2, NULL, 'Internal transfer', $3, $4, $5, $6, $7, $8)`,
+          [tenantId, accountId, p.amount, from.currency, direction, p.description || description, occurred, authorId],
         );
       }
       const fromBalance = await this.recalculateAccountBalanceInTx(tx, tenantId, from.id);
@@ -675,10 +759,13 @@ export class FinanceService {
   async pnl(tenantId: string, from: string, to: string): Promise<PnlDTO> {
     return withTenant(tenantId, async (tx) => {
       const rows = await tx.query<{ direction: "income" | "expense"; category_name: string; amount: string }>(
-        `SELECT direction, category_name, SUM(amount)::text AS amount
-         FROM transactions
-         WHERE tenant_id = $1 AND deleted_at IS NULL AND occurred_at >= $2 AND occurred_at <= $3
-         GROUP BY direction, category_name`,
+        `SELECT t.direction,
+                COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, 'Без категории') AS category_name,
+                SUM(t.amount)::text AS amount
+         FROM transactions t
+         LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
+         WHERE t.tenant_id = $1 AND t.deleted_at IS NULL AND t.occurred_at >= $2 AND t.occurred_at <= $3
+         GROUP BY t.direction, COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, 'Без категории')`,
         [tenantId, from, to],
       );
       const incomeRows = rows.filter((r) => r.direction === "income");

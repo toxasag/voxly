@@ -1,5 +1,6 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
 import { query, queryOne, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
+import { ValidationError } from "../../plugins/errorHandler.js";
 import {
   type AggregatedPurchaseRequestDTO,
   type BulkDeleteWarehouseItemsPayload,
@@ -75,6 +76,76 @@ function safeUuid(val: unknown): string | null {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)
     ? trimmed
     : null;
+}
+
+const DEFAULT_PARTS_PURCHASE_CATEGORY_NAME = "Закупка запчастей";
+
+/**
+ * Находит или создаёт расходную категорию «Закупка запчастей» в рамках тенанта.
+ * Приоритет: точное совпадение «Закупка запчастей», затем любая расходная категория со словом «запчаст».
+ */
+async function resolvePartsPurchaseCategoryInTx(
+  tx: TransactionClient,
+  tenantId: string,
+): Promise<{ id: string; name: string }> {
+  const existing = await tx.queryOne<{ id: string; name: string }>(
+    `SELECT id, name
+     FROM finance_categories
+     WHERE tenant_id = $1
+       AND type = 'expense'
+       AND lower(name) LIKE '%запчаст%'
+     ORDER BY CASE WHEN lower(btrim(name)) = 'закупка запчастей' THEN 0 ELSE 1 END,
+              created_at ASC
+     LIMIT 1`,
+    [tenantId],
+  );
+  if (existing) return existing;
+
+  return tx.queryOneOrThrow<{ id: string; name: string }>(
+    `INSERT INTO finance_categories (tenant_id, name, type)
+     VALUES ($1, $2, 'expense')
+     RETURNING id, name`,
+    [tenantId, DEFAULT_PARTS_PURCHASE_CATEGORY_NAME],
+  );
+}
+
+/**
+ * Пересчитывает баланс кассового счёта по всем активным (не удалённым) операциям.
+ */
+async function recalculateCashAccountBalanceInTx(
+  tx: TransactionClient,
+  tenantId: string,
+  accountId: string,
+): Promise<void> {
+  await tx.query(
+    `UPDATE cash_accounts
+     SET balance = COALESCE((
+       SELECT SUM(CASE WHEN direction = 'income' THEN amount ELSE -amount END)
+       FROM transactions
+       WHERE tenant_id = $1 AND cash_account_id = $2 AND deleted_at IS NULL
+     ), 0)
+     WHERE tenant_id = $1 AND id = $2`,
+    [tenantId, accountId],
+  );
+}
+
+/**
+ * Если все позиции заказа поставщику, привязанные к наряду, относятся к одному наряду — возвращает его ID.
+ */
+async function resolveSupplierOrderRepairIdInTx(
+  tx: TransactionClient,
+  tenantId: string,
+  supplierOrderId: string,
+): Promise<string | null> {
+  const rows = await tx.query<{ repair_order_id: string }>(
+    `SELECT DISTINCT repair_order_id
+     FROM supplier_order_items
+     WHERE tenant_id = $1
+       AND supplier_order_id = $2
+       AND repair_order_id IS NOT NULL`,
+    [tenantId, supplierOrderId],
+  );
+  return rows.length === 1 ? (rows[0]?.repair_order_id ?? null) : null;
 }
 
 function extractRowFields(
@@ -886,42 +957,25 @@ export class WarehouseService {
       if (payload.record_finance_expense && payload.cash_account_id) {
         const totalAmount = payload.purchase_price * payload.quantity;
         if (totalAmount > 0) {
-          let cat = await tx.queryOne<{ id: string }>(
-            `SELECT id FROM finance_categories
-             WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
-             LIMIT 1`,
-            [tenantId],
+          const cat = await resolvePartsPurchaseCategoryInTx(tx, tenantId);
+
+          await tx.query(
+            `INSERT INTO transactions
+               (tenant_id, cash_account_id, category_id, category_name, amount, direction, description, counterparty_name, occurred_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'expense', $6, $7, now(), $8)`,
+            [
+              tenantId,
+              payload.cash_account_id,
+              cat.id,
+              cat.name,
+              totalAmount,
+              `Оприходование запчастей: ${payload.name} (${payload.quantity} ${payload.unit || "шт"})`,
+              payload.supplier_name || "",
+              safeUuid(userId),
+            ],
           );
 
-          if (!cat) {
-            cat = await tx.queryOne<{ id: string }>(
-              `INSERT INTO finance_categories (tenant_id, name, type)
-               VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
-               RETURNING id`,
-              [tenantId],
-            );
-          }
-
-          if (cat) {
-            await tx.query(
-              `INSERT INTO transactions
-                 (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name)
-               VALUES ($1, $2, $3, $4, 'expense', $5, $6)`,
-              [
-                tenantId,
-                payload.cash_account_id,
-                cat.id,
-                totalAmount,
-                `Оприходование запчастей: ${payload.name} (${payload.quantity} ${payload.unit || "шт"})`,
-                payload.supplier_name || "",
-              ],
-            );
-
-            await tx.query(
-              `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
-              [totalAmount, tenantId, payload.cash_account_id],
-            );
-          }
+          await recalculateCashAccountBalanceInTx(tx, tenantId, payload.cash_account_id);
         }
       }
 
@@ -1172,23 +1226,18 @@ export class WarehouseService {
           [tenantId, supplierOrderRow.id],
         );
 
-        const isAlreadyPaid = Boolean(supplierOrderRow.paid_at) || supplierOrderRow.status === "paid";
+        const isAlreadyPaid =
+          Boolean(supplierOrderRow.paid_at) ||
+          Boolean(supplierOrderRow.finance_transaction_id) ||
+          supplierOrderRow.status === "paid";
         if (!isAlreadyPaid && payload.record_finance_expense && payload.cash_account_id) {
           const cashAccountId = payload.cash_account_id;
-          let cat = await tx.queryOne<{ id: string }>(
-            `SELECT id FROM finance_categories
-             WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
-             LIMIT 1`,
-            [tenantId],
+          const cat = await resolvePartsPurchaseCategoryInTx(tx, tenantId);
+          const linkedRepairOrderId = await resolveSupplierOrderRepairIdInTx(
+            tx,
+            tenantId,
+            supplierOrderRow.id,
           );
-          if (!cat) {
-            cat = await tx.queryOne<{ id: string }>(
-              `INSERT INTO finance_categories (tenant_id, name, type)
-               VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
-               RETURNING id`,
-              [tenantId],
-            );
-          }
 
           const desc =
             payload.payment_comment?.trim() ||
@@ -1196,32 +1245,31 @@ export class WarehouseService {
 
           const txRow = await tx.queryOneOrThrow<{ id: string }>(
             `INSERT INTO transactions
-               (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name, supplier_order_id, created_by)
-             VALUES ($1, $2, $3, $4, 'expense', $5, $6, $7, $8)
+               (tenant_id, cash_account_id, category_id, category_name, amount, direction, description, counterparty_name, supplier_order_id, repair_order_id, occurred_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'expense', $6, $7, $8, $9, now(), $10)
              RETURNING id`,
             [
               tenantId,
               cashAccountId,
-              cat?.id ?? null,
+              cat.id,
+              cat.name,
               totalAmount,
               desc,
               supplierName,
               supplierOrderRow.id,
-              userId,
+              linkedRepairOrderId,
+              safeUuid(userId) ?? safeUuid(supplierOrderRow.created_by),
             ],
           );
           transactionId = txRow.id;
 
-          await tx.query(
-            `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
-            [totalAmount, tenantId, cashAccountId],
-          );
+          await recalculateCashAccountBalanceInTx(tx, tenantId, cashAccountId);
 
           await tx.query(
             `UPDATE supplier_orders
-             SET paid_at = now(), paid_cash_account_id = $1, paid_comment = $2
+             SET paid_at = now(), cash_account_id = $1, finance_transaction_id = $2, updated_at = now()
              WHERE tenant_id = $3 AND id = $4`,
-            [cashAccountId, desc, tenantId, supplierOrderRow.id],
+            [cashAccountId, txRow.id, tenantId, supplierOrderRow.id],
           );
         }
       } else if (
@@ -1230,20 +1278,7 @@ export class WarehouseService {
         payload.cash_account_id
       ) {
         const cashAccountId = payload.cash_account_id;
-        let cat = await tx.queryOne<{ id: string }>(
-          `SELECT id FROM finance_categories
-           WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
-           LIMIT 1`,
-          [tenantId],
-        );
-        if (!cat) {
-          cat = await tx.queryOne<{ id: string }>(
-            `INSERT INTO finance_categories (tenant_id, name, type)
-             VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
-             RETURNING id`,
-            [tenantId],
-          );
-        }
+        const cat = await resolvePartsPurchaseCategoryInTx(tx, tenantId);
 
         const desc =
           payload.payment_comment?.trim() ||
@@ -1251,25 +1286,23 @@ export class WarehouseService {
 
         const txRow = await tx.queryOneOrThrow<{ id: string }>(
           `INSERT INTO transactions
-             (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name, created_by)
-           VALUES ($1, $2, $3, $4, 'expense', $5, $6, $7)
+             (tenant_id, cash_account_id, category_id, category_name, amount, direction, description, counterparty_name, occurred_at, created_by)
+           VALUES ($1, $2, $3, $4, $5, 'expense', $6, $7, now(), $8)
            RETURNING id`,
           [
             tenantId,
             cashAccountId,
-            cat?.id ?? null,
+            cat.id,
+            cat.name,
             totalAmount,
             desc,
             supplierName,
-            userId,
+            safeUuid(userId),
           ],
         );
         transactionId = txRow.id;
 
-        await tx.query(
-          `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
-          [totalAmount, tenantId, cashAccountId],
-        );
+        await recalculateCashAccountBalanceInTx(tx, tenantId, cashAccountId);
       }
 
       return {
@@ -2654,28 +2687,46 @@ export class WarehouseService {
       }
 
       // Синхронизируем кассовую проводку, если заказ уже был оплачен
-      if (order.finance_transaction_id) {
-        const txRow = await tx.queryOne<{ amount: string; cash_account_id: string | null }>(
-          `SELECT amount::text, cash_account_id FROM transactions WHERE tenant_id = $1 AND id = $2`,
-          [tenantId, order.finance_transaction_id],
-        );
-        if (txRow) {
-          const oldAmount = Number(txRow.amount);
-          const diffAmount = Math.round((newTotalAmount - oldAmount) * 100) / 100;
-          await tx.query(
+      if (order.finance_transaction_id || order.paid_at) {
+        if (payload.status === "cancelled" && !isReceived) {
+          const cancelledTxs = await tx.query<{ cash_account_id: string }>(
             `UPDATE transactions
-             SET amount = $3,
-                 counterparty_name = COALESCE($4, counterparty_name)
-             WHERE tenant_id = $1 AND id = $2`,
-            [tenantId, order.finance_transaction_id, newTotalAmount, payload.supplier_name ?? null],
+             SET deleted_at = now()
+             WHERE tenant_id = $1
+               AND deleted_at IS NULL
+               AND (id = $2 OR supplier_order_id = $3)
+             RETURNING cash_account_id`,
+            [tenantId, order.finance_transaction_id, order.id],
           );
-          if (diffAmount !== 0 && (txRow.cash_account_id || order.cash_account_id)) {
+          await tx.query(
+            `UPDATE supplier_orders
+             SET paid_at = NULL, finance_transaction_id = NULL, updated_at = now()
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, order.id],
+          );
+          const affectedAccs = Array.from(new Set(cancelledTxs.map((r) => r.cash_account_id)));
+          for (const accId of affectedAccs) {
+            await recalculateCashAccountBalanceInTx(tx, tenantId, accId);
+          }
+        } else if (order.finance_transaction_id) {
+          const txRow = await tx.queryOne<{ amount: string; cash_account_id: string | null }>(
+            `SELECT amount::text, cash_account_id
+             FROM transactions
+             WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+            [tenantId, order.finance_transaction_id],
+          );
+          if (txRow) {
             await tx.query(
-              `UPDATE cash_accounts
-               SET balance = balance - $1
-               WHERE tenant_id = $2 AND id = $3`,
-              [diffAmount, tenantId, txRow.cash_account_id || order.cash_account_id],
+              `UPDATE transactions
+               SET amount = $3,
+                   counterparty_name = COALESCE($4, counterparty_name)
+               WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+              [tenantId, order.finance_transaction_id, newTotalAmount, payload.supplier_name ?? null],
             );
+            const targetAccountId = txRow.cash_account_id || order.cash_account_id;
+            if (targetAccountId) {
+              await recalculateCashAccountBalanceInTx(tx, tenantId, targetAccountId);
+            }
           }
         }
       }
@@ -2749,21 +2800,25 @@ export class WarehouseService {
         [tenantId, order.id],
       );
 
-      // 3. Если была создана кассовая проводка — удаляем её и возвращаем точную сумму транзакции на счёт
-      if (order.finance_transaction_id) {
-        const txRow = await tx.queryOne<{ amount: string; cash_account_id: string | null }>(
-          `DELETE FROM transactions
-           WHERE tenant_id = $1 AND id = $2
-           RETURNING amount::text, cash_account_id`,
-          [tenantId, order.finance_transaction_id],
+      // 3. Если была создана кассовая проводка — помечаем её удалённой (soft delete) и пересчитываем баланс счёта
+      if (order.finance_transaction_id || order.paid_at) {
+        const removedTxs = await tx.query<{ cash_account_id: string }>(
+          `UPDATE transactions
+           SET deleted_at = now()
+           WHERE tenant_id = $1
+             AND deleted_at IS NULL
+             AND (id = $2 OR supplier_order_id = $3)
+           RETURNING cash_account_id`,
+          [tenantId, order.finance_transaction_id, order.id],
         );
-        const refundAmount = txRow ? Number(txRow.amount) : Number(order.total_amount);
-        const targetAccountId = txRow?.cash_account_id || order.cash_account_id;
-        if (targetAccountId && refundAmount > 0) {
-          await tx.query(
-            `UPDATE cash_accounts SET balance = balance + $1 WHERE tenant_id = $2 AND id = $3`,
-            [refundAmount, tenantId, targetAccountId],
-          );
+        const affectedAccs = Array.from(
+          new Set([
+            ...removedTxs.map((r) => r.cash_account_id),
+            ...(order.cash_account_id ? [order.cash_account_id] : []),
+          ]),
+        );
+        for (const accId of affectedAccs) {
+          await recalculateCashAccountBalanceInTx(tx, tenantId, accId);
         }
       }
     }
@@ -2893,7 +2948,7 @@ export class WarehouseService {
   async paySupplierOrder(
     tenantId: string,
     id: string,
-    _userId: string | null,
+    userId: string | null,
     payload: PaySupplierOrderPayload,
   ): Promise<{ order: SupplierOrderDTO; transactionId: string; status: string }> {
     return withTenant(tenantId, async (tx) => {
@@ -2901,6 +2956,20 @@ export class WarehouseService {
         `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
         [tenantId, id],
       );
+
+      if (order.status === "cancelled") {
+        throw new ValidationError("Нельзя оплатить отменённый заказ поставщику");
+      }
+
+      if (order.finance_transaction_id) {
+        const existingTx = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM transactions WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, order.finance_transaction_id],
+        );
+        if (existingTx) {
+          throw new ValidationError("Заказ поставщику уже оплачен");
+        }
+      }
 
       const totalAmount = Number(order.total_amount);
 
@@ -2924,51 +2993,43 @@ export class WarehouseService {
         }
       }
 
-      // Категория расхода
-      let cat = await tx.queryOne<{ id: string }>(
-        `SELECT id FROM finance_categories
-         WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
-         LIMIT 1`,
-        [tenantId],
-      );
-      if (!cat) {
-        cat = await tx.queryOne<{ id: string }>(
-          `INSERT INTO finance_categories (tenant_id, name, type)
-           VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
-           RETURNING id`,
-          [tenantId],
-        );
-      }
+      // Категория расхода: «Закупка запчастей» (существующая категория тенанта или автосоздание)
+      const cat = await resolvePartsPurchaseCategoryInTx(tx, tenantId);
+      const linkedRepairOrderId = await resolveSupplierOrderRepairIdInTx(tx, tenantId, order.id);
+      const authorId = safeUuid(userId) ?? safeUuid(order.created_by);
 
-      // Проводка в transactions (РКО)
-      const description = payload.comment || `Оплата заказа поставщику ${order.order_number} (${order.supplier_name})`;
+      // Проводка в transactions (РКО) с category_id, category_name, supplier_order_id и created_by
+      const description =
+        payload.comment || `Оплата заказа поставщику ${order.order_number} (${order.supplier_name})`;
       const txRow = await tx.queryOneOrThrow<{ id: string }>(
         `INSERT INTO transactions
-           (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name)
-         VALUES ($1, $2, $3, $4, 'expense', $5, $6)
+           (tenant_id, cash_account_id, category_id, category_name, amount, direction, description, counterparty_name, supplier_order_id, repair_order_id, occurred_at, created_by)
+         VALUES ($1, $2, $3, $4, $5, 'expense', $6, $7, $8, $9, now(), $10)
          RETURNING id`,
         [
           tenantId,
           cashAccountId,
-          cat?.id ?? null,
+          cat.id,
+          cat.name,
           totalAmount,
           description,
           order.supplier_name,
+          order.id,
+          linkedRepairOrderId,
+          authorId,
         ],
       );
 
-      // Списание с кассы
-      await tx.query(
-        `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
-        [totalAmount, tenantId, cashAccountId],
-      );
+      // Пересчитываем баланс кассы по активным операциям
+      await recalculateCashAccountBalanceInTx(tx, tenantId, cashAccountId);
 
-      // Переводим заказ в статус 'paid'
+      // Переводим заказ в статус 'paid' (если уже 'received' — сохраняем 'received')
+      const nextStatus = order.status === "received" ? "received" : "paid";
       await tx.query(
         `UPDATE supplier_orders
-         SET status = 'paid', cash_account_id = $1, finance_transaction_id = $2, paid_at = now(), updated_at = now()
-         WHERE tenant_id = $3 AND id = $4`,
-        [cashAccountId, txRow.id, tenantId, id],
+         SET status = $1, cash_account_id = $2, finance_transaction_id = $3, paid_at = now(), updated_at = now()
+         WHERE tenant_id = $4 AND id = $5`,
+        [nextStatus, cashAccountId, txRow.id, tenantId, id],
       );
 
       const refreshed = await this.getSupplierOrder(tenantId, id);
@@ -3172,8 +3233,17 @@ export class WarehouseService {
 
       let paidTransactionId: string | undefined;
 
-      // Если в модалке подтвердили оплату при оприходовании:
-      if (payload?.mark_paid || payload?.cash_account_id) {
+      // Если в модалке подтвердили оплату при оприходовании (и заказ ещё не оплачен активной проводкой):
+      const hasActivePaymentTx = order.finance_transaction_id
+        ? Boolean(
+            await tx.queryOne<{ id: string }>(
+              `SELECT id FROM transactions WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+              [tenantId, order.finance_transaction_id],
+            ),
+          )
+        : false;
+
+      if ((payload?.mark_paid || payload?.cash_account_id) && !hasActivePaymentTx) {
         let cashAccountId = payload?.cash_account_id || order.cash_account_id;
         if (!cashAccountId) {
           const defaultCash = await tx.queryOne<{ id: string }>(
@@ -3184,34 +3254,33 @@ export class WarehouseService {
         }
 
         if (cashAccountId) {
-          let cat = await tx.queryOne<{ id: string }>(
-            `SELECT id FROM finance_categories
-             WHERE tenant_id = $1 AND type = 'expense' AND lower(name) LIKE '%запчаст%'
-             LIMIT 1`,
-            [tenantId],
-          );
-          if (!cat) {
-            cat = await tx.queryOne<{ id: string }>(
-              `INSERT INTO finance_categories (tenant_id, name, type)
-               VALUES ($1, 'Закупка запчастей и комплектующих', 'expense')
-               RETURNING id`,
-              [tenantId],
-            );
-          }
+          const cat = await resolvePartsPurchaseCategoryInTx(tx, tenantId);
+          const linkedRepairOrderId = await resolveSupplierOrderRepairIdInTx(tx, tenantId, order.id);
+          const authorId = safeUuid(userId) ?? safeUuid(order.created_by);
 
-          const desc = payload?.comment || `Оплата при оприходовании заказа ${order.order_number} (${order.supplier_name})`;
+          const desc =
+            payload?.comment ||
+            `Оплата при оприходовании заказа ${order.order_number} (${order.supplier_name})`;
           const txRow = await tx.queryOneOrThrow<{ id: string }>(
             `INSERT INTO transactions
-               (tenant_id, cash_account_id, category_id, amount, direction, description, counterparty_name)
-             VALUES ($1, $2, $3, $4, 'expense', $5, $6)
+               (tenant_id, cash_account_id, category_id, category_name, amount, direction, description, counterparty_name, supplier_order_id, repair_order_id, occurred_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'expense', $6, $7, $8, $9, now(), $10)
              RETURNING id`,
-            [tenantId, cashAccountId, cat?.id ?? null, Number(order.total_amount), desc, order.supplier_name],
+            [
+              tenantId,
+              cashAccountId,
+              cat.id,
+              cat.name,
+              Number(order.total_amount),
+              desc,
+              order.supplier_name,
+              order.id,
+              linkedRepairOrderId,
+              authorId,
+            ],
           );
 
-          await tx.query(
-            `UPDATE cash_accounts SET balance = balance - $1 WHERE tenant_id = $2 AND id = $3`,
-            [Number(order.total_amount), tenantId, cashAccountId],
-          );
+          await recalculateCashAccountBalanceInTx(tx, tenantId, cashAccountId);
 
           paidTransactionId = txRow.id;
 

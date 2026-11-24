@@ -53,11 +53,11 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
   );
   app.post("/accounts", { onRequest: write }, async (req, reply) => {
     const p = createAccountSchema.parse(req.body);
-    const row = await service.createAccount(req.tenant_id, p);
+    const row = await service.createAccount(req.tenant_id, p, req.authUser?.id);
     return reply.status(201).send({ data: row });
   });
   app.post("/accounts/transfer", { onRequest: write }, async (req, reply) =>
-    reply.send({ data: await service.transfer(req.tenant_id, transferSchema.parse(req.body)) }),
+    reply.send({ data: await service.transfer(req.tenant_id, transferSchema.parse(req.body), req.authUser?.id) }),
   );
   app.get("/transactions", { onRequest: read }, async (req, reply) => {
     const p = page.parse(req.query);
@@ -84,13 +84,13 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
   });
   app.post("/transactions/bulk-duplicate", { onRequest: write }, async (req, reply) => {
     const { ids } = bulkTransactionsSchema.parse(req.body);
-    const items = await service.bulkDuplicateTransactions(req.tenant_id, ids);
+    const items = await service.bulkDuplicateTransactions(req.tenant_id, ids, req.authUser?.id);
     return reply.status(201).send({ data: items, count: items.length });
   });
   app.patch("/transactions/:id", { onRequest: write }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const p = updateTransactionSchema.parse(req.body);
-    const row = await service.updateTransaction(req.tenant_id, id, p);
+    const row = await service.updateTransaction(req.tenant_id, id, p, req.authUser?.id);
     return reply.send({ data: row });
   });
   app.delete("/transactions/:id", { onRequest: write }, async (req, reply) => {

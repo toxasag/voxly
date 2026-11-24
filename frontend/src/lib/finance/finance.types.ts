@@ -3,6 +3,7 @@ export type TransactionType = "income" | "expense" | "transfer";
 export type TransactionCategory =
   | "repair"
   | "parts_sale"
+  | "parts_purchase"
   | "rent"
   | "salary"
   | "equipment"
@@ -30,6 +31,7 @@ export interface Transaction {
   date: string;
   type: TransactionType;
   category: string;
+  category_id?: string | null;
   amount: number;
   account_id: string;
   account_name: string;
@@ -37,6 +39,7 @@ export interface Transaction {
   linked_entity_id: string | null;
   linked_entity_type: string | null;
   linked_entity_label: string | null;
+  supplier_order_id?: string | null;
   counterparty: string;
   counterparty_inn?: string;
   created_by_id?: string | null;
@@ -46,6 +49,7 @@ export interface Transaction {
 const CATEGORY_LABELS: Record<TransactionCategory, string> = {
   repair: "Услуги ремонта",
   parts_sale: "Продажа запчастей",
+  parts_purchase: "Закупка запчастей",
   rent: "Аренда",
   salary: "Заработная плата",
   equipment: "Оборудование и инструмент",
@@ -63,6 +67,7 @@ export const INCOME_CATEGORIES = [
 ];
 
 export const EXPENSE_CATEGORIES = [
+  { value: "parts_purchase" as const, label: "Закупка запчастей" },
   { value: "rent" as const, label: "Аренда" },
   { value: "salary" as const, label: "Заработная плата" },
   { value: "equipment" as const, label: "Оборудование и инструмент" },
