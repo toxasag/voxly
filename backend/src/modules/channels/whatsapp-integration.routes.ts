@@ -117,12 +117,15 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
     return tA - tB;
   });
 
+  let hasOutboundManager = false;
+
   await runWithTenantContext(params.tenantId, async () => {
     for (const item of list) {
       const msg = asRecord(item.message);
       if (!msg) continue;
       const key = asRecord(item.key);
       const isOutbound = asBoolean(key?.fromMe);
+      if (isOutbound) hasOutboundManager = true;
       const msgTimestamp = Number(item.messageTimestamp);
       const msgDate = msgTimestamp ? new Date(msgTimestamp * 1000) : new Date();
 
@@ -284,6 +287,22 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
           timestamp: new Date().toISOString(),
         });
       }
+    }
+
+    if (hasOutboundManager) {
+      await query(
+        `UPDATE deals
+         SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
+             custom_fields = jsonb_set(
+               COALESCE(custom_fields, '{}'::jsonb),
+               '{ai_paused_reason}',
+               to_jsonb('messenger_takeover'::text),
+               true
+             ),
+             updated_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [params.tenantId, params.dealId],
+      );
     }
   });
 
