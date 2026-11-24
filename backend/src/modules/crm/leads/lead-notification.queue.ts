@@ -373,10 +373,12 @@ export class LeadNotificationQueueService {
       [tenantId],
     );
 
-    // 2. Определение дефолтного получателя (владелец либо администратор) на случай отсутствия email-каналов
+    // 2. Определение дефолтного получателя (владелец либо администратор) на случай отсутствия email-каналов.
+    // Учитываем мастер-выключатель пользователя (если notifications_enabled = false, не отправляем).
     let defaultRecipient = await queryOne<{ email: string; name: string }>(
       `SELECT email, name FROM users
        WHERE tenant_id = $1 AND role = 'owner' AND deleted_at IS NULL AND email IS NOT NULL AND email != ''
+         AND (notifications_enabled IS NOT FALSE)
        ORDER BY created_at ASC
        LIMIT 1`,
       [tenantId],
@@ -386,6 +388,7 @@ export class LeadNotificationQueueService {
       defaultRecipient = await queryOne<{ email: string; name: string }>(
         `SELECT email, name FROM users
          WHERE tenant_id = $1 AND role = 'admin' AND deleted_at IS NULL AND email IS NOT NULL AND email != ''
+           AND (notifications_enabled IS NOT FALSE)
          ORDER BY created_at ASC
          LIMIT 1`,
         [tenantId],
