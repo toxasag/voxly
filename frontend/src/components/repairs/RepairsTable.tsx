@@ -18,7 +18,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { RepairTicket, RepairStatus, RepairFilterStatus, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
-import { getRepairStatusLabel } from "@/lib/repairs/repairs.types";
+import {
+  getRepairStatusLabel,
+  getRepairPaymentStatusColors,
+  getRepairPaymentStatusLabel,
+} from "@/lib/repairs/repairs.types";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -34,8 +38,6 @@ import {
   useBatchUpdateRepairStatus,
   useBatchDeleteRepairs,
   useUpdateRepair,
-  useUpdateRepairPaymentStatus,
-  useBatchUpdateRepairPaymentStatus,
 } from "@/lib/api/use-repairs";
 import { cn } from "@/lib/utils";
 
@@ -506,46 +508,21 @@ function renderStatusBadge(status: RepairStatus) {
 
 function PaymentStatusBadge({
   status,
-  onChange,
-  disabled,
 }: {
   status: RepairPaymentStatus;
-  onChange: (newStatus: RepairPaymentStatus) => void;
-  disabled?: boolean;
 }) {
-  const colorClass =
-    status === "paid"
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/80"
-      : status === "invoiced"
-        ? "bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100/80"
-        : "bg-[#f5f5f5] text-[#666666] border-[#e5e5e5] hover:bg-[#ebebeb]";
+  const colorClass = getRepairPaymentStatusColors(status);
+  const label = getRepairPaymentStatusLabel(status);
 
   return (
-    <div
-      className="relative inline-flex items-center"
-      onClick={(e) => e.stopPropagation()}
+    <span
+      className={cn(
+        "inline-flex items-center rounded-[4px] border px-1.5 py-0.5 text-[10px] font-medium leading-none select-none",
+        colorClass,
+      )}
     >
-      <select
-        value={status}
-        disabled={disabled}
-        onChange={(e) => {
-          e.stopPropagation();
-          onChange(e.target.value as RepairPaymentStatus);
-        }}
-        onClick={(e) => e.stopPropagation()}
-        title="Быстро сменить статус оплаты"
-        className={cn(
-          "h-5 appearance-none rounded-[4px] border pl-2 pr-4 text-[10px] font-medium leading-none cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-[#4a38f5]",
-          colorClass,
-          disabled && "opacity-60 cursor-not-allowed",
-        )}
-      >
-        <option value="unpaid">Не оплачен</option>
-        <option value="invoiced">Счет выставлен</option>
-        <option value="paid">Оплачен</option>
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-1 h-2.5 w-2.5 opacity-60" />
-    </div>
+      {label}
+    </span>
   );
 }
 
@@ -572,38 +549,17 @@ export const RepairsTable = memo(function RepairsTable({
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [selectedTicketForSettings, setSelectedTicketForSettings] = useState<RepairTicket | null>(null);
   const [selectedBulkStatus, setSelectedBulkStatus] = useState<string>("");
-  const [selectedBulkPaymentStatus, setSelectedBulkPaymentStatus] = useState<string>("");
 
   const { data: printSettings } = usePrintTemplateSettings();
 
   const batchStatusMutation = useBatchUpdateRepairStatus();
   const batchDeleteMutation = useBatchDeleteRepairs();
-  const updatePaymentStatusMutation = useUpdateRepairPaymentStatus();
-  const batchPaymentStatusMutation = useBatchUpdateRepairPaymentStatus();
 
   const handleRowClick = useCallback(
     (id: string) => {
       router.push(`/repairs/${id}`);
     },
     [router],
-  );
-
-  const handleSinglePaymentStatusChange = useCallback(
-    async (id: string, newStatus: RepairPaymentStatus) => {
-      try {
-        await updatePaymentStatusMutation.mutateAsync({
-          id,
-          paymentStatus: newStatus,
-        });
-        const label =
-          newStatus === "paid" ? "Оплачен" : newStatus === "invoiced" ? "Счет выставлен" : "Не оплачен";
-        toast.success(`Статус оплаты изменен на «${label}»`);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Ошибка обновления статуса оплаты";
-        toast.error(msg);
-      }
-    },
-    [updatePaymentStatusMutation],
   );
 
   const handleBulkStatusChange = async (newStatus: RepairStatus) => {
@@ -618,22 +574,6 @@ export const RepairsTable = memo(function RepairsTable({
       setSelectedBulkStatus("");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Ошибка при смене статуса";
-      toast.error(msg);
-    }
-  };
-
-  const handleBulkPaymentStatusChange = async (newPaymentStatus: RepairPaymentStatus) => {
-    if (selectedIds.size === 0) return;
-    try {
-      await batchPaymentStatusMutation.mutateAsync({
-        ids: Array.from(selectedIds),
-        paymentStatus: newPaymentStatus,
-      });
-      toast.success(`Статус оплаты обновлен для ${selectedIds.size} наряд-заказов`);
-      setSelectedIds(new Set());
-      setSelectedBulkPaymentStatus("");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Ошибка при смене статуса оплаты";
       toast.error(msg);
     }
   };
@@ -840,8 +780,6 @@ export const RepairsTable = memo(function RepairsTable({
               </span>
               <PaymentStatusBadge
                 status={ticket.payment_status || (ticket.status === "issued" ? "paid" : "unpaid")}
-                onChange={(newStatus) => handleSinglePaymentStatusChange(ticket.id, newStatus)}
-                disabled={updatePaymentStatusMutation.isPending}
               />
             </div>
           </RecordCellShell>
@@ -885,8 +823,6 @@ export const RepairsTable = memo(function RepairsTable({
     [
       onPrintReceipt,
       onPrintWorkOrder,
-      handleSinglePaymentStatusChange,
-      updatePaymentStatusMutation.isPending,
       printSettings?.numberingFormat,
       printSettings?.numberingPrefix,
     ],
@@ -1038,26 +974,7 @@ export const RepairsTable = memo(function RepairsTable({
                 </select>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[#666666]">Оплата:</span>
-                <select
-                  value={selectedBulkPaymentStatus}
-                  onChange={(e) => {
-                    const val = e.target.value as RepairPaymentStatus;
-                    if (val) {
-                      setSelectedBulkPaymentStatus(val);
-                      void handleBulkPaymentStatusChange(val);
-                    }
-                  }}
-                  disabled={batchPaymentStatusMutation.isPending}
-                  className="h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none cursor-pointer"
-                >
-                  <option value="">Сменить оплату...</option>
-                  <option value="unpaid">Не оплачен</option>
-                  <option value="invoiced">Счет выставлен</option>
-                  <option value="paid">Оплачен</option>
-                </select>
-              </div>
+
 
               <div className="ml-auto flex items-center gap-2">
                 {selectedIds.size === 1 && onCopyTicket && (

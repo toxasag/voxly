@@ -86,6 +86,8 @@ function toTransaction(dto: TransactionDTO): Transaction {
     linked_entity_label: null,
     counterparty: dto.counterpartyName ?? "",
     counterparty_inn: dto.counterpartyInn ?? "",
+    created_by_id: dto.createdById ?? null,
+    created_by_name: dto.createdByName ?? "",
   };
 }
 

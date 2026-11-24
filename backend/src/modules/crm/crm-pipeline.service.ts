@@ -1643,6 +1643,21 @@ export class CrmPipelineService {
       );
 
       if (existingOutbound) {
+        // Убеждаемся, что при повторном событии или дубле сделка и контакт гарантированно остаются на паузе
+        await tx.query(
+          `UPDATE deals
+           SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
+               custom_fields = jsonb_set(
+                 COALESCE(custom_fields, '{}'::jsonb),
+                 '{ai_paused_reason}',
+                 to_jsonb($3::text),
+                 true
+               ),
+               updated_at = now()
+           WHERE tenant_id = $1 AND (id = $2 OR ($4::uuid IS NOT NULL AND contact_id = $4::uuid AND deleted_at IS NULL))`,
+          [input.tenantId, activeDeal.id, "messenger_takeover", contact.id],
+        );
+
         return {
           dealId: activeDeal.id,
           messageId: existingOutbound.id,
@@ -1653,23 +1668,21 @@ export class CrmPipelineService {
         };
       }
 
-      const pauseMins = input.pauseMinutes ?? 60;
+      // При ответе оператора из нативного мессенджера (fromMe) ставим AI на бессрочную паузу (ручной перехват)
+      // до явного возобновления оператором («Снять с паузы» в CRM).
       const pauseRes = await tx.queryOne<{ paused_until: string }>(
         `UPDATE deals
-         SET ai_paused_until = CASE
-               WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '2090-01-01'::timestamptz THEN ai_paused_until
-               ELSE now() + ($1 || ' minutes')::interval
-             END,
+         SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
              custom_fields = jsonb_set(
                COALESCE(custom_fields, '{}'::jsonb),
                '{ai_paused_reason}',
-               to_jsonb($4::text),
+               to_jsonb($3::text),
                true
              ),
              updated_at = now()
-         WHERE id = $2 AND tenant_id = $3
+         WHERE tenant_id = $1 AND (id = $2 OR ($4::uuid IS NOT NULL AND contact_id = $4::uuid AND deleted_at IS NULL))
          RETURNING ai_paused_until::text AS paused_until`,
-        [pauseMins.toString(), activeDeal.id, input.tenantId, "messenger_takeover"],
+        [input.tenantId, activeDeal.id, "messenger_takeover", contact.id],
       );
 
       const msgRes = await tx.queryOne<{ id: string; created_at: Date | string }>(

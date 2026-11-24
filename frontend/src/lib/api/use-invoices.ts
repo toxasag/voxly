@@ -185,6 +185,8 @@ export interface TransactionDTO {
   counterpartyName?: string;
   counterpartyInn?: string;
   occurredAt: string;
+  createdById?: string | null;
+  createdByName?: string | null;
 }
 
 export interface InvoiceItemDTO {
@@ -917,6 +919,8 @@ export function useDeleteTransaction(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
     },
   });
 }
@@ -934,6 +938,8 @@ export function useBulkDeleteTransactions(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
     },
   });
 }

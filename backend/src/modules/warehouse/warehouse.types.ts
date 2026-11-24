@@ -600,6 +600,11 @@ export const bulkUpdateWarehouseItemsSchema = z.object({
   min_stock: z.number().nonnegative().optional(),
   retail_price_action: priceAdjustmentActionSchema.optional(),
   cost_price_action: priceAdjustmentActionSchema.optional(),
+  models: z.array(z.string().max(100)).optional(),
+  model_ids: z.array(z.string().uuid()).optional(),
+  modelIds: z.array(z.string().uuid()).optional(),
+  models_mode: z.enum(["replace", "add", "remove"]).optional().default("replace"),
+  modelsMode: z.enum(["replace", "add", "remove"]).optional(),
 });
 export type BulkUpdateWarehouseItemsPayload = z.infer<typeof bulkUpdateWarehouseItemsSchema>;
 

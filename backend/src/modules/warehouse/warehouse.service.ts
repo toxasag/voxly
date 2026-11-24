@@ -3822,20 +3822,119 @@ export class WarehouseService {
         }
       }
 
-      if (updates.length === 0) {
+      const hasModelsUpdate =
+        payload.models !== undefined ||
+        payload.model_ids !== undefined ||
+        payload.modelIds !== undefined;
+
+      if (hasModelsUpdate) {
+        const targetModelIds = new Set<string>();
+        const rawModelIds = payload.model_ids ?? payload.modelIds ?? [];
+        for (const mid of rawModelIds) {
+          if (mid) targetModelIds.add(mid);
+        }
+
+        if (payload.models && payload.models.length > 0) {
+          for (const name of payload.models) {
+            const trimmed = name.trim();
+            if (!trimmed) continue;
+
+            let modelRow = await tx.queryOne<{ id: string }>(
+              `SELECT id FROM equipment_models WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+              [tenantId, trimmed],
+            );
+
+            if (!modelRow) {
+              const bName = payload.brand?.trim() || "Общий";
+              let brandRow = await tx.queryOne<{ id: string }>(
+                `SELECT id FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2) LIMIT 1`,
+                [tenantId, bName],
+              );
+              if (!brandRow) {
+                brandRow = await tx.queryOneOrThrow<{ id: string }>(
+                  `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2)
+                   ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+                   RETURNING id`,
+                  [tenantId, bName],
+                );
+              }
+
+              modelRow = await tx.queryOneOrThrow<{ id: string }>(
+                `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (tenant_id, brand_id, lower(name)) DO UPDATE SET name = EXCLUDED.name
+                 RETURNING id`,
+                [tenantId, brandRow.id, bName, trimmed],
+              );
+            }
+
+            targetModelIds.add(modelRow.id);
+          }
+        }
+
+        const modelsMode = payload.models_mode ?? payload.modelsMode ?? "replace";
+
+        if (modelsMode === "replace") {
+          await tx.query(
+            `DELETE FROM warehouse_item_models WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
+            [tenantId, payload.ids],
+          );
+          if (targetModelIds.size > 0) {
+            await tx.query(
+              `INSERT INTO warehouse_item_models (tenant_id, item_id, model_id)
+               SELECT $1, i.item_id, m.model_id
+               FROM unnest($2::uuid[]) AS i(item_id)
+               CROSS JOIN unnest($3::uuid[]) AS m(model_id)
+               ON CONFLICT DO NOTHING`,
+              [tenantId, payload.ids, Array.from(targetModelIds)],
+            );
+          }
+        } else if (modelsMode === "add") {
+          if (targetModelIds.size > 0) {
+            await tx.query(
+              `INSERT INTO warehouse_item_models (tenant_id, item_id, model_id)
+               SELECT $1, i.item_id, m.model_id
+               FROM unnest($2::uuid[]) AS i(item_id)
+               CROSS JOIN unnest($3::uuid[]) AS m(model_id)
+               ON CONFLICT DO NOTHING`,
+              [tenantId, payload.ids, Array.from(targetModelIds)],
+            );
+          }
+        } else if (modelsMode === "remove") {
+          if (targetModelIds.size > 0) {
+            await tx.query(
+              `DELETE FROM warehouse_item_models
+               WHERE tenant_id = $1 AND item_id = ANY($2::uuid[]) AND model_id = ANY($3::uuid[])`,
+              [tenantId, payload.ids, Array.from(targetModelIds)],
+            );
+          }
+        }
+      }
+
+      if (updates.length === 0 && !hasModelsUpdate) {
         return { updatedCount: 0 };
       }
 
-      updates.push("updated_at = now()");
+      if (updates.length > 0) {
+        updates.push("updated_at = now()");
 
-      const res = await tx.query(
-        `UPDATE warehouse_items
-         SET ${updates.join(", ")}
-         WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
-        params,
-      );
+        const res = await tx.query(
+          `UPDATE warehouse_items
+           SET ${updates.join(", ")}
+           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+          params,
+        );
 
-      return { updatedCount: res.length };
+        return { updatedCount: res.length };
+      } else {
+        const res = await tx.query(
+          `UPDATE warehouse_items
+           SET updated_at = now()
+           WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
+          [tenantId, payload.ids],
+        );
+        return { updatedCount: res.length };
+      }
     });
   }
 
