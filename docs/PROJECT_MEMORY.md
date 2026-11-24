@@ -1465,3 +1465,19 @@
 - **Верификация:**
   - `tsc --noEmit` в backend и frontend: 0 ошибок.
   - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Разрешение входящих лидов/сделок в ботах для аккаунтов тенанта и сброс is_personal
+- **Контекст и root cause:**
+  - При тестировании Telegram Business бота пользователь отправлял сообщения со своего основного аккаунта Telegram (`@genadich_agency` / `5973721183`).
+  - В `crm-pipeline.service.ts` проверка `ownAccount` проверяла отправителя по таблицам `channel_accounts` и `users`. Поскольку владелец тенанта зарегистрирован в `users` и имеет подключенный MTProto-канал, пайплайн отбрасывал сообщение с логом `Skipping lead/contact creation: sender is tenant's own channel account or user`.
+  - Кроме того, в контактах для данного `telegram_chat_id` стоял флаг `is_personal = true`, что блокировало создание сделок даже при явном обращении к боту.
+- **Что сделано:**
+  1. В `backend/src/modules/crm/crm-pipeline.service.ts`: фильтрация `ownAccount` ограничена только личными каналами (MTProto), для `telegram_bot` и `webchat` она отключена, так как операторы и владельцы должны иметь возможность тестировать ботов или оформлять заказы через них.
+  2. Игнорирование сообщений по флагу `contact.is_personal` отключено для каналов `telegram_bot` и `webchat`.
+  3. В БД на боевом сервере сброшен флаг `is_personal = false` для контактов с `telegram_chat_id = '5973721183'`.
+- **Верификация:**
+  - `npm --prefix backend run build` (tsc): 0 ошибок.
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY`.
+  - Верификация создания сделки и сообщений в БД и CRM.
