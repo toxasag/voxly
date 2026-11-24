@@ -23,7 +23,7 @@ import {
 
 export default function WidgetPage() {
   const [language, setLanguage] = useState<WidgetLanguage>("ru");
-  const [typingSpeed, setTypingSpeed] = useState<number>(12);
+  const [typingSpeed, setTypingSpeed] = useState<number>(24);
   const [typingEffectEnabled, setTypingEffectEnabled] = useState<boolean>(true);
   const [mounted, setMounted] = useState<boolean>(false);
 
