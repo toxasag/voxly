@@ -1,3 +1,10 @@
+### Fixed · Бессрочная пауза AI при ответе с телефона и пауза по кнопке в CRM (2026-11-24)
+
+- **Indefinite Native Takeover Pause**: При ответе оператора с телефона (WhatsApp, Telegram, MAX) в `processNativeOutbound` и `telegram-bot-integration` выставляется бессрочная пауза (`ai_paused_until = '9999-12-31'`) с причиной `messenger_takeover` на все активные сделки контакта. AI-агент не возобновляет ответы, пока оператор явно не нажмет «Снять с паузы» в интерфейсе.
+- **Explicit Button Pause in System**: В `CrmChatView.tsx` удален автоматический вызов паузы `handleInputActivity` при фокусе или наборе текста в `TelegramComposer`. Открытие чата в веб-CRM не ставит автопаузу; пауза включается исключительно по клику на кнопку «Пауза».
+- **Accurate AI Status & Manual Takeover**: В `deal-messaging.service.ts` метод `getAiStatus` возвращает `status: 'paused'` и `isPaused: true` для причин `messenger_takeover` и `manual_takeover` вне зависимости от даты. Ручная пауза в CRM и отправка исходящих сообщений через CRM переводят диалог в режим ручного перехвата.
+- **Migration of Active Deals**: Все 30 активных сделок MPRO, находившиеся в режиме ручного перехвата, переведены на бессрочную паузу до явного снятия оператором.
+
 ### Fixed · Каскадное удаление сообщений чата при soft-delete сделок и точный подсчёт CRM (2026-11-24)
 
 - **Cascade Deal Messages Cleanup**: Создана миграция 0131 и триггер `trg_deals_soft_delete_messages`: при soft-delete сделки (`deleted_at = now()`) все сообщения переписок (`deal_messages`) автоматически каскадно удаляются. Удалены 1082 осиротевших сообщения удалённых сделок.

@@ -207,8 +207,8 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       );
 
       const existingDeal = await runWithTenantContext(tenantId, () =>
-        queryOne<{ id: string }>(
-          `SELECT d.id FROM deals d
+        queryOne<{ id: string; contact_id: string | null }>(
+          `SELECT d.id, d.contact_id FROM deals d
            LEFT JOIN contacts c ON d.contact_id = c.id
            WHERE d.tenant_id = $1 AND d.deleted_at IS NULL
              AND (d.chat_thread_id = $2 OR c.telegram_chat_id = $2)
@@ -235,8 +235,17 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
             ],
           );
           await dbQuery(
-            `UPDATE deals SET ai_paused_until = now() + interval '30 minutes', updated_at = now() WHERE id = $1 AND tenant_id = $2`,
-            [existingDeal.id, tenantId],
+            `UPDATE deals
+             SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
+                 custom_fields = jsonb_set(
+                   COALESCE(custom_fields, '{}'::jsonb),
+                   '{ai_paused_reason}',
+                   to_jsonb('messenger_takeover'::text),
+                   true
+                 ),
+                 updated_at = now()
+             WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
+            [tenantId, existingDeal.id, existingDeal.contact_id],
           );
         }).catch((err) => {
           request.log.warn({ err, dealId: existingDeal.id }, "Failed to append operator business message to deal");

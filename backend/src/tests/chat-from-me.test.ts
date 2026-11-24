@@ -19,7 +19,7 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
     service = new CrmPipelineService();
   });
 
-  it("mirrors native operator outbound message and pauses AI bot for 30 minutes", async () => {
+  it("mirrors native operator outbound message and pauses AI bot indefinitely", async () => {
     // 1. mock findContact
     mockQueryOne.mockResolvedValueOnce({
       id: "contact-1",
@@ -37,7 +37,7 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
     mockQueryOne.mockResolvedValueOnce(null);
 
     // 3. mock update deals ai_paused_until
-    const futureDate = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const futureDate = "9999-12-31 23:59:59+00";
     mockQueryOne.mockResolvedValueOnce({
       paused_until: futureDate,
     });
@@ -54,7 +54,6 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
       chatId: "12345678",
       text: "Здравствуйте! Я подключился к диалогу, сейчас решим ваш вопрос.",
       senderName: "Менеджер Алексей",
-      pauseMinutes: 30,
     });
 
     expect(result.dealId).toBe("deal-1");
@@ -64,11 +63,13 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
     // Проверяем вызовы (findContact, findActiveDeal, dedupCheck, updatePausedUntil, insertMessage)
     expect(mockQueryOne).toHaveBeenCalledTimes(5);
 
-    // Проверяем установку паузы с причиной ручного перехвата из мессенджера
+    // Проверяем установку бессрочной паузы с причиной ручного перехвата из мессенджера
     const updateArgs = mockQueryOne.mock.calls[3];
     expect(updateArgs?.[0]).toContain("ai_paused_reason");
+    expect(updateArgs?.[0]).toContain("9999-12-31");
     const updateParams = updateArgs?.[1] as unknown[];
-    expect(updateParams[3]).toBe("messenger_takeover");
+    expect(updateParams[2]).toBe("messenger_takeover");
+    expect(updateParams[3]).toBe("contact-1");
 
     // Проверяем параметры вставки сообщения
     const insertArgs = mockQueryOne.mock.calls[4];
