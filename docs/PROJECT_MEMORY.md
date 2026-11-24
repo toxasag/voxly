@@ -1548,3 +1548,29 @@
 - **Верификация:**
   - `tsc --noEmit` в frontend и backend: 0 ошибок.
 
+
+---
+
+### 24.11.2026 — Персистентность фильтров на `/repairs` и `/crm/deals`
+- **Контекст и root cause:**
+  - На страницах `/repairs` (`filterStatus`, `filterPaymentStatus`, `searchQuery`) и `/crm/deals` (`presetView`, `pipelineId`, `search`, `sortBy`) фильтры хранились в локальном `useState`. При переходе на другой раздел, возврате «Назад» и перезагрузке страницы (F5) выбор пользователя сбрасывался.
+- **Что сделано:**
+  1. **Shared State Layer (`frontend/src/lib/hooks/use-persisted-filters.ts`):**
+     - Создан переиспользуемый строго типизированный хук `usePersistedFilters` с изоляцией ключа `localStorage` по `tenant` (`slug || tenantId`), `userId` и `pageKey` (`getvoxly:filters:v1:<tenant>:<userId>:<pageKey>`).
+     - Приоритет восстановления: явные URL query-параметры > `localStorage` > значения по умолчанию.
+     - Защита от SSR hydration mismatch (чтение строго в `useEffect` после завершения загрузки `useAuth`), защита от битого JSON и устаревших/невалидных значений через per-field `parse`.
+     - Синхронизация с URL через `window.history.replaceState` без затирания сторонних параметров (`?record=`, `?dealId=`, `?create=` и т.д.).
+     - Метод `resetFilters()` очищает и состояние, и запись в `localStorage`, и управляемые параметры URL.
+  2. **Интеграция `/repairs` (`frontend/src/app/(dashboard)/repairs/page.tsx`, `frontend/src/components/repairs/RepairsTable.tsx`, `frontend/src/lib/api/use-repairs.ts`):**
+     - Подключён `usePersistedFilters` для `status`, `paymentStatus`, `search`.
+     - В `useRepairs` добавлен опциональный второй аргумент `{ enabled?: boolean }` (обратно совместим со всеми потребителями `RecordRepairsTab.tsx`, `deal-tabs.tsx`); запрос не уходит с дефолтными параметрами до гидрации сохранённых фильтров.
+     - В `RepairsTable` добавлена кнопка «Сбросить» (видна при активных фильтрах) и очистка поля поиска (`X`).
+  3. **Интеграция `/crm/deals` (`frontend/src/app/(dashboard)/crm/deals/page.tsx`):**
+     - Подключён `usePersistedFilters` для `presetView`, `pipelineId`, `search`, `sortBy`.
+     - Добавлена защита от удалённой воронки (`pipelineId` валидируется против `pipelines.data`, при отсутствии автоматически сбрасывается на первую доступную).
+     - В строку срезов добавлена кнопка «Сбросить» при активных фильтрах.
+  4. **Тесты:**
+     - `frontend/src/lib/hooks/use-persisted-filters.test.tsx` (6 тестов), `frontend/src/app/(dashboard)/repairs/repairs-filters-persistence.test.tsx`, `frontend/src/app/(dashboard)/crm/deals/deals-filters-persistence.test.tsx` (2 теста).
+- **Где ещё используется:**
+  - `useRepairs` используется в `RecordRepairsTab.tsx`, `deal-tabs.tsx`, `repairs/page.tsx` (обратная совместимость сохранена).
+  - `RepairsTable` используется только в `repairs/page.tsx` (экспорт `formatOrderNumber` также в `deal-tabs.tsx` и `repairs/[id]/page.tsx`).

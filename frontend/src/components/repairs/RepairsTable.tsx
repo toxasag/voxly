@@ -15,6 +15,8 @@ import {
   ChevronDown,
   FileText,
   CheckSquare,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { RepairTicket, RepairStatus, RepairFilterStatus, RepairPaymentStatus } from "@/lib/repairs/repairs.types";
@@ -49,6 +51,8 @@ interface RepairsTableProps {
   onFilterPaymentStatusChange?: (status: RepairPaymentStatus | "all") => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  hasActiveFilters?: boolean;
+  onResetFilters?: () => void;
   onPrintReceipt: (ticket: RepairTicket) => void;
   onPrintWorkOrder?: (ticket: RepairTicket) => void;
   onCopyTicket?: (ticket: RepairTicket) => void;
@@ -534,6 +538,8 @@ export const RepairsTable = memo(function RepairsTable({
   onFilterPaymentStatusChange,
   searchQuery,
   onSearchChange,
+  hasActiveFilters,
+  onResetFilters,
   onPrintReceipt,
   onPrintWorkOrder,
   onCopyTicket,
@@ -880,8 +886,19 @@ export const RepairsTable = memo(function RepairsTable({
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Поиск по наряду, клиенту, бренду..."
-              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-9 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-9 pr-7 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
             />
+            {searchQuery !== "" && (
+              <button
+                type="button"
+                title="Очистить поиск"
+                aria-label="Очистить поиск"
+                onClick={() => onSearchChange("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[#888888] hover:text-[#111111] cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1 flex-wrap">
@@ -918,6 +935,17 @@ export const RepairsTable = memo(function RepairsTable({
                 <option value="paid">Оплачен</option>
               </select>
             </div>
+          )}
+
+          {hasActiveFilters && onResetFilters && (
+            <button
+              type="button"
+              onClick={onResetFilters}
+              className="inline-flex items-center gap-1 h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#666666] hover:border-[#cccccc] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Сбросить
+            </button>
           )}
 
           <span className="ml-auto text-xs text-[#888888]">
