@@ -40,7 +40,7 @@ export const WidgetSettings: React.FC<WidgetSettingsProps> = ({
   onTypingEffectChange,
   language = "ru",
   onLanguageChange,
-  typingSpeed = 12,
+  typingSpeed = 24,
   onTypingSpeedChange,
   className,
 }) => {
@@ -182,9 +182,9 @@ export const WidgetSettings: React.FC<WidgetSettingsProps> = ({
               </span>
               <div className="inline-flex rounded-lg border border-[#e5e5e5] p-0.5 bg-[#fbfbfb]">
                 {[
-                  { speed: 22, label: isRu ? "Плавная" : "Smooth" },
-                  { speed: 12, label: isRu ? "Норм" : "Normal" },
-                  { speed: 6, label: isRu ? "Быстрая" : "Fast" },
+                  { speed: 48, label: isRu ? "Плавная" : "Smooth" },
+                  { speed: 24, label: isRu ? "Норм" : "Normal" },
+                  { speed: 12, label: isRu ? "Быстрая" : "Fast" },
                 ].map((item) => (
                   <button
                     key={item.speed}

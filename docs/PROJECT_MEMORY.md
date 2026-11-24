@@ -1658,3 +1658,56 @@
      - Добавлено визуальное отображение бейджа «Черновик» в шапке пузыря и предупреждения «Неотправленный черновик (посетитель покинул сайт)» для входящих сообщений с `metadata.is_draft: true`.
   5. **Исправление существующей сделки:**
      - В сделке `68bc2e8a-3a7c-4821-a941-250bf2d00cd1` сообщение `314b6a24-4155-40cd-a10f-aed4292c919c` помечено как черновик и сгенерирован/сохранён ответ от подключенного агента «Банкирро Бот».
+
+---
+
+### 24.11.2026 — Автоскролл при печати и 2x замедление набора в онлайн-виджете
+- **Контекст и задача:**
+  - В процессе посимвольного вывода сообщения бота (`typeWriter`) текст сообщений накапливался и уходил вниз под поле ввода, если пользователь не прокручивал чат вручную.
+  - Скорость набора текста была слишком быстрой (12 мс/символ), требовалось замедлить печать в 2 раза (до 24 мс/символ) во всех компонентах и скриптах виджета с поддержкой sticky-автоскролла (без перехвата скролла при ручном изучении истории пользователем, порог 100px).
+- **Что сделано:**
+  1. **Standalone Embed Script (`frontend/public/widget.js`, `backend/src/modules/channels/widget-script.ts`):**
+     - Внедрён трекер ручной прокрутки `userScrolledUp = dist > 100` на `messagesContainer`.
+     - Функция `scrollToBottom(smooth, force)` учитывает положение пользователя и сбрасывает флаг при принудительном скролле.
+     - В `typeNextChar` скорость изменена с 12 мс на 24 мс на символ, и на каждом символе/переносе строки вызывается автоскролл `messagesContainer.scrollTop = messagesContainer.scrollHeight` (если пользователь не отмотал наверх).
+     - При отправке и получении нового сообщения вызывается гарантированный скролл вниз.
+  2. **React UI (`ChatWidget.tsx`, `WidgetSettings.tsx`, `widget/page.tsx`):**
+     - В `ChatWidget.tsx` добавлен `scrollContainerRef` с обработчиком `onScroll={handleScroll}` и флагом `isNearBottomRef` (порог 100px).
+     - В `typeWriter` на каждом шаге `step()` вызывается `scrollToBottom(false)`, удерживая нижний край печатаемого текста над полем ввода.
+     - При отправке пользователем и приходе нового ответа бота вызывается `scrollToBottom(true)`.
+     - Дефолтное значение `typingSpeed` изменено с 12 мс на 24 мс во всех местах (`ChatWidget`, `WidgetSettings`, `widget/page.tsx`).
+     - В `WidgetSettings.tsx` обновлены пресеты скорости: 48 мс (Плавная), 24 мс (Норм), 12 мс (Быстрая).
+  3. **Тесты:**
+     - В `frontend/__tests__/ChatWidget.typing.test.tsx` добавлены тесты на пресеты скорости (48/24/12 мс) и автоскролл во время набора `ChatWidget auto-scrolls down during typewriter typing ticks`. Все 10 тестов проходят успешно.
+
+---
+
+### 24.11.2026 — Мастер-выключатель уведомлений пользователя на /settings/notifications (Full Silence & Preferences)
+- **Контекст и взаимосвязи:**
+  - На странице `https://mpro.getvoxly.ru/settings/notifications` уведомления пользователю были включены по умолчанию без возможности их глобально отключить единым тумблером.
+  - В проекте действуют несколько уровней уведомлений:
+    1. **In-App (SSE + Toaster + Колокольчик):** создание записей в `inapp_notifications`, realtime-шина `notificationEventBus`, стрим `/api/v1/notifications/stream`, хук `useInAppNotifications`, двухтоновый синтезированный звук `playNotificationChime()`.
+    2. **Web Push & PWA (VAPID):** подписки `push_subscriptions`, фоновая доставка через `webpush.sendNotification`, `sendNotificationToUser` и `sendNotificationToTenant`.
+    3. **Каналы лид-уведомлений команды:** `tenant_notification_channels` (Email, Telegram Bot, WhatsApp, Битрикс24) и фолбэк на email владельца/админа (`defaultRecipient`) в `lead-notification.queue.ts`.
+- **Что реализовано:**
+  1. **БД и миграция `0136_user_notifications_master_toggle.sql`:**
+     - Колонка `notifications_enabled BOOLEAN NOT NULL DEFAULT true` в таблице `users` (нулевые накладные расходы при проверках).
+     - Таблица `user_notification_settings` с RLS (`tenant_isolation`), уникальным ограничением `(tenant_id, user_id)` и флагами `notifications_enabled`, `sound_enabled`, `inapp_enabled`, `push_enabled` (все `DEFAULT true`).
+     - Сохранена обратная совместимость: для существующих и новых пользователей без явного отказа всё включено по умолчанию.
+  2. **Backend API и диспетчеры:**
+     - Сервис `NotificationPreferencesService` (`getUserPreferences`, `updateUserPreferences` с UPSERT, `isUserNotificationsEnabled`).
+     - Эндпоинты `GET/PATCH/PUT /api/v1/settings/notifications/preferences` и `/api/v1/notifications/preferences`.
+     - `push-notification.service.ts`: `sendNotificationToUser` прерывает отправку при отключенных уведомлениях; `sendNotificationToTenant` исключает устройства пользователей с `notifications_enabled = false` или `push_enabled = false`; `createInAppNotification` пропускает создание и эмит в шину, если пользователь отключил уведомления.
+     - `push-notification.routes.ts`: в SSE-стриме `/notifications/stream` проверяется мастер-выключатель подключенного пользователя.
+     - `lead-notification.queue.ts`: дефолтный email владельца исключает пользователей с `notifications_enabled IS NOT FALSE`.
+     - Юнит-тест `backend/src/tests/notification-preferences.test.ts`.
+  3. **Frontend UI (Twenty CRM Light Canvas):**
+     - Хук `useNotificationPreferences` с оптимистичным обновлением TanStack Query (`queryKey: ["notification-preferences"]`).
+     - Компонент `UserMasterNotificationToggle.tsx`: мастер-тумблер «Все уведомления пользователя», баннер «Режим полной тишины активирован», переключатели «Звуковые сигналы», «Всплывающий Toaster», «Web Push & PWA» с автоматической блокировкой дочерних каналов при выключенном мастере.
+     - `WebPushDeviceSettings.tsx`: добавлен предупреждающий баннер при выключенном мастер-тумблере.
+     - `useInAppNotifications.ts`: при выключенном мастере блокируется вызов `playNotificationChime()`, блокируется всплывающий тост `toast()`, вызывается `clearAppBadge()`.
+     - Страница `/settings/notifications/page.tsx`: мастер-блок размещен во главе настроек.
+- **Верификация:**
+  - Деплой на `150.241.98.135` выполнен через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Миграция `0136` применена на продакшене.
+  - Живая проверка в `ego-browser`: открытие `https://mpro.getvoxly.ru/settings/notifications`, проверка дефолта (включено), переключение в «Отключено», проверка блокировки дочерних каналов и появления баннера тишины, проверка сохранения после перезагрузки F5 и возврата во включенное состояние.
