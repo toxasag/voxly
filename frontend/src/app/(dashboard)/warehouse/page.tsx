@@ -1437,6 +1437,22 @@ function WarehouseContent() {
             ))}
           </div>
         )}
+
+        {activeTab === "supplier_orders" && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedAggregatedIds(new Set());
+                setCreateSupplierOrderModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Заказ поставщику</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Активные фильтры (чипы) */}
@@ -2534,9 +2550,31 @@ function WarehouseContent() {
                 {filteredSupplierOrders.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#888888]">
-                      {isSupplierOrdersLoading
-                        ? "Загрузка заказов поставщикам..."
-                        : "Заказов поставщикам пока нет. Выберите заявки на закупку и нажмите «Сформировать заказ поставщику»."}
+                      {isSupplierOrdersLoading ? (
+                        "Загрузка заказов поставщикам..."
+                      ) : (
+                        <div className="flex flex-col items-center justify-center gap-3">
+                          <Truck className="h-8 w-8 text-[#cccccc]" />
+                          <div>
+                            {searchQuery.trim()
+                              ? "Заказов по вашему запросу не найдено."
+                              : "Заказов поставщикам пока нет."}
+                          </div>
+                          {!searchQuery.trim() && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAggregatedIds(new Set());
+                                setCreateSupplierOrderModalOpen(true);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+                            >
+                              <Plus className="h-4 w-4" />
+                              <span>Создать заказ поставщику</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )}

@@ -135,22 +135,23 @@ export type SupplierOrderStatus = z.infer<typeof supplierOrderStatusSchema>;
 
 export const createSupplierOrderSchema = z.object({
   supplier_name: z.string().min(1, "Имя поставщика обязательно").max(200),
-  supplier_company_id: z.string().uuid().optional().nullable(),
+  supplier_company_id: z.string().uuid().optional().nullable().or(z.literal("")),
   purchase_request_ids: z.array(z.string().uuid()).optional(),
+  status: supplierOrderStatusSchema.optional().default("pending_payment"),
   items: z
     .array(
       z.object({
-        purchase_request_id: z.string().uuid().optional().nullable(),
+        purchase_request_id: z.string().uuid().optional().nullable().or(z.literal("")),
         purchase_request_ids: z.array(z.string().uuid()).optional(),
-        item_id: z.string().uuid().optional().nullable(),
-        item_name: z.string().min(1),
+        item_id: z.string().uuid().optional().nullable().or(z.literal("")),
+        item_name: z.string().min(1, "Наименование позиции обязательно"),
         sku: z.string().default(""),
         requested_quantity: z.number().nonnegative().default(0),
         extra_quantity: z.number().nonnegative().default(0),
-        quantity: z.number().positive(),
+        quantity: z.number().positive("Количество должно быть больше нуля"),
         unit: z.string().default("шт"),
-        price: z.number().nonnegative(),
-        repair_order_id: z.string().uuid().optional().nullable(),
+        price: z.number().nonnegative("Цена не может быть отрицательной"),
+        repair_order_id: z.string().uuid().optional().nullable().or(z.literal("")),
         repair_orders: z.string().optional(),
       }),
     )

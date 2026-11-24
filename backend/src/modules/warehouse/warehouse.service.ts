@@ -69,6 +69,14 @@ function parseCleanNumber(val: unknown): number {
   return isNaN(num) ? 0 : num;
 }
 
+function safeUuid(val: unknown): string | null {
+  if (typeof val !== "string") return null;
+  const trimmed = val.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
+}
+
 function extractRowFields(
   row: string[],
   mapping: Record<string, string>,
@@ -2370,16 +2378,21 @@ export class WarehouseService {
       const nextNum = (Number(countRow?.count ?? 0) + 1).toString().padStart(4, "0");
       const orderNumber = `ЗП-${year}-${nextNum}`;
 
+      const statusToSet = payload.status && ["draft", "pending_payment"].includes(payload.status)
+        ? payload.status
+        : "pending_payment";
+
       const orderRow = await tx.queryOneOrThrow<SupplierOrderRow>(
         `INSERT INTO supplier_orders
            (tenant_id, order_number, supplier_name, supplier_company_id, status, total_amount, notes, created_by)
-         VALUES ($1, $2, $3, $4, 'pending_payment', 0, $5, $6)
+         VALUES ($1, $2, $3, $4, $5, 0, $6, $7)
          RETURNING *`,
         [
           tenantId,
           orderNumber,
           payload.supplier_name,
-          payload.supplier_company_id ?? null,
+          safeUuid(payload.supplier_company_id),
+          statusToSet,
           payload.notes ?? "",
           userId,
         ],
@@ -2431,6 +2444,11 @@ export class WarehouseService {
           }
           linkedRequestIds.push(...reqIds);
 
+          const safeItemId = safeUuid(it.item_id);
+          const safeRepairOrderId = safeUuid(it.repair_order_id);
+          const primaryReqId = safeUuid(reqIds[0] ?? it.purchase_request_id);
+          const validReqIds = reqIds.map(safeUuid).filter((id): id is string => id !== null);
+
           const itemRow = await tx.queryOneOrThrow<SupplierOrderItemRow>(
             `INSERT INTO supplier_order_items
                (tenant_id, supplier_order_id, purchase_request_id, item_id, item_name, sku,
@@ -2441,8 +2459,8 @@ export class WarehouseService {
             [
               tenantId,
               orderRow.id,
-              reqIds[0] ?? it.purchase_request_id ?? null,
-              it.item_id ?? null,
+              primaryReqId,
+              safeItemId,
               it.item_name,
               it.sku ?? "",
               reqQty,
@@ -2451,8 +2469,8 @@ export class WarehouseService {
               it.unit ?? "шт",
               unitPrice,
               itemTotal,
-              it.repair_order_id ?? null,
-              reqIds,
+              safeRepairOrderId,
+              validReqIds,
             ],
           );
 

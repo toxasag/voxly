@@ -237,6 +237,7 @@ export interface CreateSupplierOrderPayload {
   supplier_name: string;
   supplier_company_id?: string | null;
   purchase_request_ids?: string[];
+  status?: "draft" | "pending_payment" | "paid";
   items?: {
     purchase_request_id?: string | null;
     purchase_request_ids?: string[];
