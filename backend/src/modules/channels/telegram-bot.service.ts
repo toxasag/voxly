@@ -128,7 +128,7 @@ export class TelegramBotService {
    */
   async getMe(token: string): Promise<TelegramBotInfoDTO> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
+    const timeout = setTimeout(() => controller.abort(), 30_000);
 
     try {
       const res = await fetch(`${TELEGRAM_API_BASE}/bot${token.trim()}/getMe`, {
@@ -889,7 +889,7 @@ export class TelegramBotService {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: webhookUrl,
-          drop_pending_updates: false,
+          drop_pending_updates: true,
           allowed_updates: TelegramBotService.ALLOWED_UPDATES,
           ...(secretToken ? { secret_token: secretToken } : {}),
         }),
