@@ -1170,6 +1170,7 @@ export function useBatchUpdateRepairStatus(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -1191,6 +1192,7 @@ export function useBatchUpdateRepairPaymentStatus(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -1209,6 +1211,7 @@ export function useBatchDeleteRepairs(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

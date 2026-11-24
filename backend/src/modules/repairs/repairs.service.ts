@@ -59,6 +59,7 @@ import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHan
 import { normalizePhoneToE164 } from "../crm/contacts/dedupe.service.js";
 import { CrmEnrichmentService } from "../crm/enrichment.service.js";
 import { ensureTenantDefaults } from "../tenant/tenant-defaults.js";
+import { dealsService } from "../crm/deals/deals.service.js";
 
 const ORDER_COLUMNS = `
   id, tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
@@ -1563,7 +1564,10 @@ export class RepairsService {
     }
 
     const updated = await this.get(tenantId, id);
-    if (updated?.dealId) void this.syncDealBudgetFromRepairs(tenantId, updated.dealId);
+    if (updated?.dealId) {
+      void this.syncDealBudgetFromRepairs(tenantId, updated.dealId);
+      void dealsService.syncDealCompletionFromRepairs(tenantId, updated.dealId);
+    }
     return updated;
   }
 
@@ -1656,7 +1660,10 @@ export class RepairsService {
       );
 
       const dto = toRepairOrderDTO(row);
-      if (dto.dealId) void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
+      if (dto.dealId) {
+        void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
+        void dealsService.syncDealCompletionFromRepairs(tenantId, dto.dealId, author.id);
+      }
       return dto;
     });
   }
@@ -2247,12 +2254,17 @@ export class RepairsService {
   }
 
   async softDelete(tenantId: string, id: string): Promise<boolean> {
-    const row = await queryOne<{ id: string }>(
+    const row = await queryOne<{ id: string; deal_id: string | null }>(
       `UPDATE repair_orders SET deleted_at = now()
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-       RETURNING id`,
+       RETURNING id, deal_id`,
       [tenantId, id],
     );
+
+    if (row?.deal_id) {
+      void this.syncDealBudgetFromRepairs(tenantId, row.deal_id);
+      void dealsService.syncDealCompletionFromRepairs(tenantId, row.deal_id);
+    }
 
     return row !== null;
   }
@@ -2262,12 +2274,17 @@ export class RepairsService {
    */
   async batchDelete(tenantId: string, ids: string[]): Promise<{ count: number; ids: string[] }> {
     if (ids.length === 0) return { count: 0, ids: [] };
-    const rows = await query<{ id: string }>(
+    const rows = await query<{ id: string; deal_id: string | null }>(
       `UPDATE repair_orders SET deleted_at = now()
        WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
-       RETURNING id`,
+       RETURNING id, deal_id`,
       [tenantId, ids],
     );
+    const dealIds = Array.from(new Set(rows.map((r) => r.deal_id).filter((d): d is string => Boolean(d))));
+    for (const dealId of dealIds) {
+      void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      void dealsService.syncDealCompletionFromRepairs(tenantId, dealId);
+    }
     return { count: rows.length, ids: rows.map((r) => r.id) };
   }
 
@@ -2343,6 +2360,23 @@ export class RepairsService {
       }
     }
 
+    if (updatedIds.length > 0) {
+      void (async () => {
+        try {
+          const dealRows = await query<{ deal_id: string }>(
+            `SELECT DISTINCT deal_id FROM repair_orders WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deal_id IS NOT NULL AND deleted_at IS NULL`,
+            [tenantId, updatedIds],
+          );
+          for (const { deal_id } of dealRows) {
+            void this.syncDealBudgetFromRepairs(tenantId, deal_id);
+            void dealsService.syncDealCompletionFromRepairs(tenantId, deal_id, author.id);
+          }
+        } catch (e) {
+          console.error("Failed to sync deals after batch status update", e);
+        }
+      })();
+    }
+
     return { updated: updatedIds.length, ids: updatedIds, errors };
   }
 
@@ -2389,6 +2423,9 @@ export class RepairsService {
     if (!updated) {
       throw new NotFoundError("Repair order not found after update");
     }
+    if (updated.dealId) {
+      void dealsService.syncDealCompletionFromRepairs(tenantId, updated.dealId);
+    }
     return updated;
   }
 
@@ -2406,6 +2443,22 @@ export class RepairsService {
        WHERE tenant_id = $2 AND id = ANY($3::uuid[]) AND deleted_at IS NULL`,
       [paymentStatus, tenantId, ids],
     );
+
+    if (ids.length > 0) {
+      void (async () => {
+        try {
+          const dealRows = await query<{ deal_id: string }>(
+            `SELECT DISTINCT deal_id FROM repair_orders WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deal_id IS NOT NULL AND deleted_at IS NULL`,
+            [tenantId, ids],
+          );
+          for (const { deal_id } of dealRows) {
+            void dealsService.syncDealCompletionFromRepairs(tenantId, deal_id);
+          }
+        } catch (e) {
+          console.error("Failed to sync deals after batch payment status update", e);
+        }
+      })();
+    }
 
     return { updated: ids.length, ids };
   }

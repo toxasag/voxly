@@ -822,6 +822,7 @@ export function useBatchPayment(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: ["repairs"] });
       void queryClient.invalidateQueries({ queryKey: ["invoices"] });
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

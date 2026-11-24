@@ -13,6 +13,7 @@ import type {
 } from "./finance.types.js";
 import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
+import { dealsService } from "../crm/deals/deals.service.js";
 
 interface AccountRow {
   id: string;
@@ -225,11 +226,15 @@ export class FinanceService {
     );
 
     if (paidInvoice) {
-      await tx.query(
+      const updatedOrder = await tx.queryOne<{ deal_id: string | null }>(
         `UPDATE repair_orders SET payment_status = 'paid', updated_at = now()
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         RETURNING deal_id`,
         [tenantId, orderId],
       );
+      if (updatedOrder?.deal_id) {
+        void dealsService.syncDealCompletionFromRepairs(tenantId, updatedOrder.deal_id);
+      }
       return;
     }
 
@@ -251,11 +256,15 @@ export class FinanceService {
       Number(directPaid?.total_paid ?? 0) >= Number(orderCost.cost) &&
       Number(orderCost.cost) > 0
     ) {
-      await tx.query(
+      const updatedOrder = await tx.queryOne<{ deal_id: string | null }>(
         `UPDATE repair_orders SET payment_status = 'paid', updated_at = now()
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         RETURNING deal_id`,
         [tenantId, orderId],
       );
+      if (updatedOrder?.deal_id) {
+        void dealsService.syncDealCompletionFromRepairs(tenantId, updatedOrder.deal_id);
+      }
       return;
     }
 
@@ -1017,6 +1026,11 @@ export class FinanceService {
 
       if (totalPaid > 0) {
         await this.recalculateAccountBalanceInTx(tx, tenantId, account.id);
+      }
+
+      const uniqueDealIds = Array.from(new Set(orders.map((o) => o.deal_id).filter((d): d is string => Boolean(d))));
+      for (const dealId of uniqueDealIds) {
+        void dealsService.syncDealCompletionFromRepairs(tenantId, dealId, _user);
       }
 
       return { success: true, totalPaid, count: orders.length, transactionsCount };

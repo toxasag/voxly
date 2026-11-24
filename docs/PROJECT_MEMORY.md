@@ -1394,3 +1394,24 @@
   - `tsc --noEmit` в backend и frontend: 0 ошибок.
   - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
 
+
+---
+
+### 24.11.2026 — Автоматический перевод сделок в «Успешно реализовано» при выдаче и оплате наряд-заказов
+- **Контекст и проблема:**
+  - Наряды ремонтов выдавались (статус `issued`) и оплачивались (статус оплаты `paid`), но связанная сделка CRM оставалась в начальной стадии («Новый лид»).
+  - Требовалось обеспечить сквозную синхронизацию: если все не удалённые наряды сделки выданы и оплачены, сделка обязана автоматически переходить в стадию «Успешно реализовано» (is_won = true) с сохранением аудита, истории и запуском всех обработчиков закрытия.
+- **Что сделано:**
+  1. **БД и Миграция:**
+     - Создана миграция `0134_sync_completed_repairs_to_won_deals.sql`, переводящая исторические сделки (включая `a65dc0a4-14a4-4013-bc61-ee7c10c404e8`) с полностью выданными и оплаченными нарядами в стадию «Успешно реализовано» с записью в `deal_stage_history`.
+  2. **Бэкенд:**
+     - В `DealsService` добавлен метод `syncDealCompletionFromRepairs(tenantId, dealId, authorId)`: проверяет наряды сделки, при полном завершении и оплате всех нарядов переводит сделку в won-стадию через `moveStage` (запуск `dealWonHandlers`, списание товаров, фиксация даты `closed_at`, аудит в `deal_stage_history`, уведомления).
+     - В `RepairsService` подключён вызов `dealsService.syncDealCompletionFromRepairs` во всех точках изменения статусов нарядов: `changeStatus`, `batchUpdateStatus`, `updatePaymentStatus`, `batchUpdatePaymentStatus`, `update`, `softDelete`, `batchDelete`.
+     - В `FinanceService` (`batchPayment`, `syncRepairOrderPaymentStatusInTx`) и `InvoicesService` (`updateStatus` при оплате счетов) подключён вызов синхронизации завершения сделки.
+  3. **Фронтенд:**
+     - В `use-repairs.ts` и `use-invoices.ts` добавлена инвалидация запросов `["deals"]` при пакетных сменах статусов нарядов, оплаты и приёме платежей.
+  4. **Тесты:**
+     - Добавлен юнит-тест `backend/src/tests/deals-repair-completion-sync.test.ts`.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.

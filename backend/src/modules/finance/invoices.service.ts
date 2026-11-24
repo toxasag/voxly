@@ -8,6 +8,7 @@ import type {
 } from "./finance.types.js";
 import { query, queryOne, withTenant, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
+import { dealsService } from "../crm/deals/deals.service.js";
 import { generateInvoicePdfBuffer } from "./invoice-pdf.service.js";
 import { renderInvoiceRfHtml } from "./invoice-html.service.js";
 import {
@@ -1627,6 +1628,16 @@ export class InvoicesService {
            WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
           [tenant, Array.from(linkedOrderIds)],
         );
+
+        const roRows = await tx.query<{ deal_id: string }>(
+          `SELECT DISTINCT deal_id FROM repair_orders WHERE tenant_id = $1 AND id = ANY($2) AND deal_id IS NOT NULL AND deleted_at IS NULL`,
+          [tenant, Array.from(linkedOrderIds)],
+        );
+        for (const { deal_id } of roRows) {
+          void dealsService.syncDealCompletionFromRepairs(tenant, deal_id, _user);
+        }
+      } else if (inv.deal_id) {
+        void dealsService.syncDealCompletionFromRepairs(tenant, inv.deal_id, _user);
       }
 
       const updated = {
