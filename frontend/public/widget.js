@@ -4565,12 +4565,6 @@
         }
 
         var current = e.target.value.trim();
-        if (current === '' && lastDraft.length > 3 && !sentDrafts[lastDraft]) {
-          sentDrafts[lastDraft] = true;
-          executeSendMessage(lastDraft, true);
-          lastDraft = '';
-          return;
-        }
         if (current.length > 3) {
           lastDraft = current;
         }

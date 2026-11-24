@@ -812,6 +812,7 @@ export class WebchatService {
         utmTags: effectiveUtmTags,
         sourceMetadata,
         geo: geoData || undefined,
+        isDraft: input.isDraft,
       }),
     );
 
@@ -861,16 +862,6 @@ export class WebchatService {
     if (crmResult.isPersonal || crmResult.isBot) {
       return {
         dealId: "",
-        contactId: crmResult.contactId,
-        replies: [],
-        status: "queued",
-      };
-    }
-
-    // Если это неотправленный черновик (lead salvage) — фиксируем в CRM, но не шлем автоответ клиенту
-    if (input.isDraft) {
-      return {
-        dealId: crmResult.dealId,
         contactId: crmResult.contactId,
         replies: [],
         status: "queued",
@@ -995,12 +986,27 @@ export class WebchatService {
       return {
         dealId: crmResult.dealId,
         contactId: crmResult.contactId,
-        replies: outcome.reply.messages,
+        replies: input.isDraft ? [] : outcome.reply.messages,
         status: "replied",
       };
     }
 
-    // 4. Если AI-агент не ответил (нет агента, агент на паузе, ошибка модели, недостаточный баланс) —
+    // Если это неотправленный черновик (isDraft) и AI-агент не ответил — не отправляем шаблонный автоответ виджета,
+    // чтобы не засорять CRM лишними заглушками, оставляем диалог оператору.
+    if (input.isDraft) {
+      this.log.info(
+        { channelAccountId: account.id, visitorId: input.visitorId, outcomeKind: outcome.kind },
+        "[WebchatService] Salvaged draft: AI did not reply, skipping fallback auto-reply",
+      );
+      return {
+        dealId: crmResult.dealId,
+        contactId: crmResult.contactId,
+        replies: [],
+        status: "operator_needed",
+      };
+    }
+
+    // 5. Если AI-агент не ответил (нет агента, агент на паузе, ошибка модели, недостаточный баланс) —
     // отправляем автоответ виджета и ОБЯЗАТЕЛЬНО фиксируем его в CRM в deal_messages.
     if (crmResult.dealId) {
       this.log.warn(
