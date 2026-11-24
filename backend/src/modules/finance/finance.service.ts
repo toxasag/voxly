@@ -39,6 +39,7 @@ interface TxRow {
   repair_order_id: string | null;
   invoice_id: string | null;
   supplier_order_id?: string | null;
+  is_capitalized_cost?: boolean;
   counterparty_name: string;
   counterparty_inn: string;
   occurred_at: Date | string;
@@ -188,7 +189,9 @@ export class FinanceService {
                             COALESCE(t.counterparty_name, '') AS counterparty_name,
                             COALESCE(t.counterparty_inn, '') AS counterparty_inn,
                             t.cash_account_id, a.name AS account_name,
-                            t.deal_id, t.repair_order_id, t.invoice_id, t.supplier_order_id, t.occurred_at,
+                            t.deal_id, t.repair_order_id, t.invoice_id, t.supplier_order_id,
+                            COALESCE(t.is_capitalized_cost, false) AS is_capitalized_cost,
+                            t.occurred_at,
                             t.created_by AS created_by_id,
                             COALESCE(u.name, u.email, '') AS created_by_name
                      FROM transactions t
@@ -218,6 +221,7 @@ export class FinanceService {
       repairOrderId: row.repair_order_id,
       invoiceId: row.invoice_id,
       supplierOrderId: row.supplier_order_id ?? null,
+      isCapitalizedCost: Boolean(row.is_capitalized_cost),
       counterpartyName: row.counterparty_name || "",
       counterpartyInn: row.counterparty_inn || "",
       occurredAt: iso(row.occurred_at),

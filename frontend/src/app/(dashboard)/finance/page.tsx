@@ -94,6 +94,7 @@ function toTransaction(dto: TransactionDTO): Transaction {
             : null,
     linked_entity_label: null,
     supplier_order_id: dto.supplierOrderId ?? null,
+    is_capitalized_cost: Boolean(dto.isCapitalizedCost),
     counterparty: dto.counterpartyName ?? "",
     counterparty_inn: dto.counterpartyInn ?? "",
     created_by_id: dto.createdById ?? null,
