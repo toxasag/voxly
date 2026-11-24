@@ -6,6 +6,14 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { NotificationChannelsService } from "./notification-channels.service.js";
+import { notificationPreferencesService } from "./notification-preferences.service.js";
+
+const updatePreferencesBody = z.object({
+  notifications_enabled: z.boolean().optional(),
+  sound_enabled: z.boolean().optional(),
+  inapp_enabled: z.boolean().optional(),
+  push_enabled: z.boolean().optional(),
+});
 
 const channelTypeSchema = z.enum(["email", "telegram", "whatsapp", "bitrix24"]);
 
@@ -107,5 +115,34 @@ export default async function notificationChannelsRoutes(app: FastifyInstance): 
   app.get("/telegram/bind-link", { onRequest: admin }, async (request, reply) => {
     const linkInfo = service.getTelegramBindLink(request.tenant_id);
     return reply.send({ data: linkInfo, ok: true, ...linkInfo });
+  });
+
+  // Персональные настройки пользователя (мастер-выключатель, звук, in-app, push)
+  app.get("/preferences", async (request, reply) => {
+    const prefs = await notificationPreferencesService.getUserPreferences(
+      request.tenant_id,
+      request.authUser.id,
+    );
+    return reply.send({ data: prefs, ...prefs });
+  });
+
+  app.patch("/preferences", async (request, reply) => {
+    const body = updatePreferencesBody.parse(request.body ?? {});
+    const updated = await notificationPreferencesService.updateUserPreferences(
+      request.tenant_id,
+      request.authUser.id,
+      body,
+    );
+    return reply.send({ data: updated, ...updated });
+  });
+
+  app.put("/preferences", async (request, reply) => {
+    const body = updatePreferencesBody.parse(request.body ?? {});
+    const updated = await notificationPreferencesService.updateUserPreferences(
+      request.tenant_id,
+      request.authUser.id,
+      body,
+    );
+    return reply.send({ data: updated, ...updated });
   });
 }
