@@ -320,6 +320,64 @@ export class CrmPipelineService {
       };
     }
 
+    // Защита CRM-воронки: запрет автогенерации контактов и сделок для собственных подключенных аккаунтов и сотрудников тенанта
+    const senderPeerId = enrichedInput.senderTelegramChatId || enrichedInput.chatId;
+    const senderCleanUsername = (
+      enrichedInput.senderTelegramUsername ||
+      enrichedInput.senderUsername ||
+      ""
+    )
+      .replace(/^@/, "")
+      .toLowerCase()
+      .trim();
+    const senderPhoneNormalized = enrichedInput.senderPhone || undefined;
+
+    const ownAccount = await queryOne<{ id: string }>(
+      `SELECT id FROM (
+         SELECT id FROM channel_accounts
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+           AND (
+             (remote_user_id IS NOT NULL AND remote_user_id <> '' AND remote_user_id = $2)
+             OR ($3::text <> '' AND LOWER(REPLACE(external_id, '@', '')) = $3)
+             OR ($4::text IS NOT NULL AND external_id = $4)
+           )
+         UNION ALL
+         SELECT id FROM users
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+           AND (
+             (telegram_chat_id IS NOT NULL AND telegram_chat_id::text = $2)
+             OR ($3::text <> '' AND LOWER(telegram_username) = $3)
+             OR ($4::text IS NOT NULL AND phone = $4)
+           )
+       ) t LIMIT 1`,
+      [
+        input.tenantId,
+        senderPeerId,
+        senderCleanUsername,
+        senderPhoneNormalized ?? null,
+      ],
+    ).catch(() => null);
+
+    if (ownAccount) {
+      this.log.info(
+        {
+          tenantId: input.tenantId,
+          channel: input.channel,
+          chatId: input.chatId,
+          senderPeerId,
+          senderCleanUsername,
+        },
+        "Skipping lead/contact creation: sender is tenant's own channel account or user",
+      );
+      return {
+        contactId: "",
+        dealId: "",
+        isNewContact: false,
+        isNewDeal: false,
+        isPersonal: true,
+      };
+    }
+
     const result = await transaction(async (tx) => {
       const contact = await this.findContact(tx, input.tenantId, enrichedInput);
 

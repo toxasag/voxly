@@ -9,7 +9,7 @@ import { TelegramService, escapeHtml } from "./telegram.service.js";
 import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
-import { query, queryOne } from "../../db/client.js";
+import { query, queryOne, runWithPlatformScope } from "../../db/client.js";
 import { AppError, UnauthorizedError, PermissionDeniedError, NotFoundError } from "../../plugins/errorHandler.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import {
@@ -186,6 +186,21 @@ const telegramUpdate = z.object({
       text: z.string().optional(),
     })
     .optional(),
+  /**
+   * Обновление о создании управляемого бота через Bot Manager.
+   * Telegram отправляет этот апдейт, когда пользователь переходит по deep-link
+   * и создаёт нового managed bot через @GetVoxlybot.
+   */
+  managed_bot: z
+    .object({
+      bot: z.object({
+        id: z.number(),
+        username: z.string(),
+        first_name: z.string().optional(),
+      }),
+      creator: z.object({ id: z.number() }).optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -358,7 +373,73 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
 
     // Telegram повторяет доставку при не-2xx. Некорректный апдейт повторять
     // бессмысленно, поэтому отвечаем 200 и просто игнорируем его.
-    if (!parsed.success || parsed.data.message === undefined) {
+    if (!parsed.success) {
+      return reply.status(200).send({ ok: true });
+    }
+
+    // Обработка managed_bot: бот создан через Telegram Bot Manager.
+    // Получаем реальный токен и активируем pending channel_account.
+    if (parsed.data.managed_bot !== undefined) {
+      const managedBot = parsed.data.managed_bot;
+      const botId = managedBot.bot.id;
+      const botUsername = `@${managedBot.bot.username}`;
+
+      app.log.info({ botId, botUsername }, "Telegram webhook: managed_bot update received");
+
+      try {
+        const realToken = await telegram.getManagedBotToken(botId);
+        if (realToken !== null) {
+          // Ищем pending channel_account по username среди всех тенантов
+          const account = await runWithPlatformScope(() =>
+            queryOne<{ id: string; tenant_id: string }>(
+              `SELECT id, tenant_id FROM channel_accounts
+               WHERE channel = 'telegram_bot' AND external_id = $1 AND status = 'pending' AND deleted_at IS NULL
+               LIMIT 1`,
+              [botUsername],
+            ),
+          );
+
+          if (account !== null) {
+            await runWithPlatformScope(async () => {
+              await query(
+                `UPDATE channel_accounts SET
+                   status = 'connected',
+                   status_message = 'Бот создан и подключен через Telegram Bot Manager',
+                   credentials = credentials || $1::jsonb,
+                   remote_user_id = $2,
+                   connected_at = now(),
+                   updated_at = now()
+                 WHERE id = $3`,
+                [
+                  JSON.stringify({ token: realToken, bot_id: botId, username: managedBot.bot.username }),
+                  botId.toString(),
+                  account.id,
+                ],
+              );
+              // Обновляем bots-таблицу, если запись существует
+              await query(
+                `UPDATE bots SET status = 'connected', token = $1, updated_at = now() WHERE channel_account_id = $2`,
+                [realToken, account.id],
+              ).catch((e: unknown) => {
+                app.log.warn({ err: e }, "managed_bot: bots table update skipped");
+              });
+            });
+
+            app.log.info({ botId, botUsername, accountId: account.id }, "Telegram webhook: managed_bot activated");
+          } else {
+            app.log.warn({ botId, botUsername }, "Telegram webhook: pending channel_account not found for managed_bot");
+          }
+        } else {
+          app.log.warn({ botId }, "Telegram webhook: getManagedBotToken returned null");
+        }
+      } catch (err) {
+        app.log.error({ err, botId, botUsername }, "Telegram webhook: managed_bot handling failed");
+      }
+
+      return reply.status(200).send({ ok: true });
+    }
+
+    if (parsed.data.message === undefined) {
       return reply.status(200).send({ ok: true });
     }
 

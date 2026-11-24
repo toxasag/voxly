@@ -883,6 +883,18 @@ CREATE TABLE IF NOT EXISTS ai_agents (
   -- Промпт в БД, а не в коде (.cursorrules §13).
   system_prompt TEXT NOT NULL,
   context_entities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  company_name_override TEXT DEFAULT NULL,
+  consultant_source TEXT NOT NULL DEFAULT 'manual',
+  consultant_name TEXT DEFAULT NULL,
+  consultant_role TEXT DEFAULT NULL,
+  fallback_models TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  target_page_url TEXT DEFAULT NULL,
+  generated_system_prompt TEXT DEFAULT NULL,
+  knowledge_base_md TEXT NOT NULL DEFAULT '',
+  company_profile_summary TEXT DEFAULT NULL,
+  company_profile_approved BOOLEAN NOT NULL DEFAULT FALSE,
+  company_profile_approved_at TIMESTAMPTZ DEFAULT NULL,
+  feedback_learning_enabled BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
@@ -2027,6 +2039,27 @@ CREATE POLICY bots_tenant_isolation ON bots
   FOR ALL
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- -----------------------------------------------------------------------------
+-- Автоматическое каскадное удаление сообщений чата при soft-delete сделки
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trg_deals_soft_delete_messages()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN
+    DELETE FROM deal_messages WHERE deal_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_deals_soft_delete_messages ON deals;
+
+CREATE TRIGGER trg_deals_soft_delete_messages
+AFTER UPDATE OF deleted_at ON deals
+FOR EACH ROW
+WHEN (NEW.deleted_at IS NOT NULL)
+EXECUTE FUNCTION trg_deals_soft_delete_messages();
 
 
 

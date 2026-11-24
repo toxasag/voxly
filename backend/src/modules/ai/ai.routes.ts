@@ -1167,8 +1167,14 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  const crmStatsQuerySchema = z.object({
+    agent_id: z.string().uuid().optional(),
+  });
+
   app.get("/knowledge/crm-stats", { onRequest: readAgents }, async (request, reply) => {
-    const stats = await knowledgeSynthesizerService.getCrmStats(request.tenant_id);
+    const queryParams = crmStatsQuerySchema.safeParse(request.query);
+    const agentId = queryParams.success ? queryParams.data.agent_id : undefined;
+    const stats = await knowledgeSynthesizerService.getCrmStats(request.tenant_id, agentId);
     return reply.send({ data: stats });
   });
 
@@ -1176,6 +1182,66 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     const { id } = agentParams.parse(request.params);
     const result = await knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, id);
     return reply.status(201).send({ data: result });
+  });
+
+  // Паспорт компании (Human-in-the-loop Company Profile Summary)
+  app.get("/agents/:id/company-profile", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const agent = await queryOne<{
+      company_profile_summary: string | null;
+      company_profile_approved: boolean;
+      company_profile_approved_at: Date | null;
+    }>(
+      `SELECT company_profile_summary, company_profile_approved, company_profile_approved_at
+       FROM ai_agents
+       WHERE id = $1 AND tenant_id = $2`,
+      [id, request.tenant_id],
+    );
+
+    if (!agent) {
+      throw new AppError(404, "AGENT_NOT_FOUND", "Агент не найден");
+    }
+
+    return reply.send({
+      data: {
+        summary: agent.company_profile_summary,
+        isApproved: Boolean(agent.company_profile_approved),
+        approvedAt: agent.company_profile_approved_at,
+      },
+    });
+  });
+
+  app.post("/agents/:id/company-profile/synthesize", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = z
+      .object({
+        customText: z.string().optional(),
+      })
+      .optional()
+      .parse(request.body ?? {});
+
+    const result = await knowledgeSynthesizerService.synthesizeCompanyProfile({
+      tenantId: request.tenant_id,
+      agentId: id,
+      customText: body?.customText,
+    });
+    return reply.status(200).send({ data: result });
+  });
+
+  app.post("/agents/:id/company-profile/approve", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = z
+      .object({
+        summary: z.string().min(1, "Текст паспорта компании не может быть пустым"),
+      })
+      .parse(request.body);
+
+    const result = await knowledgeSynthesizerService.approveCompanyProfile({
+      tenantId: request.tenant_id,
+      agentId: id,
+      summary: body.summary,
+    });
+    return reply.status(200).send({ data: result });
   });
 
   app.post("/agents/:id/knowledge/import-whatsapp", { onRequest: writeAgents }, async (request, reply) => {

@@ -914,6 +914,20 @@
       100% { transform: scale(1, 1); }
     }
 
+    @keyframes getvoxly-cursor-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    .getvoxly-typing-cursor {
+      display: inline-block;
+      margin-left: 2px;
+      font-weight: bold;
+      animation: getvoxly-cursor-blink 0.8s infinite;
+      color: #111111;
+      user-select: none;
+    }
+
     .getvoxly-chat-badge {
       position: relative !important;
       right: auto !important;
@@ -2288,7 +2302,7 @@
     var pendingQueueWhileReplying = [];
     var sendTimer = null;
     var proactiveTimer = null;
-    var BUFFER_WAIT_MS = 3500;
+    var BUFFER_WAIT_MS = 1750;
 
     // Ненавязчивый сбор точных GPS-координат (только если разрешение уже выдано пользователем ранее)
     var clientGpsCoords = null;
@@ -3002,7 +3016,7 @@
       return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
     }
 
-    function appendMessageToUI(text, isUser, attachment, attachmentType) {
+    function appendMessageToUI(text, isUser, attachment, attachmentType, animateTyping) {
       if (!messagesContainer) return;
 
       var row = document.createElement('div');
@@ -3059,7 +3073,40 @@
       if (text && !isTextPlaceholder) {
         var textEl = document.createElement('div');
         textEl.className = 'getvoxly-msg-text';
-        textEl.textContent = text;
+        textEl.setAttribute('role', 'status');
+        textEl.setAttribute('aria-live', 'polite');
+        textEl.setAttribute('aria-label', 'typing effect');
+
+        var isTypingEnabled = safeStorage.getItem('typingEffectEnabled') !== 'false';
+        if (!isUser && isTypingEnabled && animateTyping && text.length > 0) {
+          var cursorSpan = document.createElement('span');
+          cursorSpan.className = 'getvoxly-typing-cursor';
+          cursorSpan.setAttribute('aria-hidden', 'true');
+          cursorSpan.textContent = '|';
+
+          var textSpan = document.createElement('span');
+          textEl.appendChild(textSpan);
+          textEl.appendChild(cursorSpan);
+
+          var charIdx = 0;
+          var speed = 12;
+          function typeNextChar() {
+            if (charIdx < text.length) {
+              charIdx++;
+              textSpan.textContent = text.substring(0, charIdx);
+              scrollToBottom(true);
+              setTimeout(typeNextChar, speed);
+            } else {
+              if (cursorSpan.parentNode) {
+                cursorSpan.parentNode.removeChild(cursorSpan);
+              }
+              scrollToBottom(true);
+            }
+          }
+          typeNextChar();
+        } else {
+          textEl.textContent = text;
+        }
         bubble.appendChild(textEl);
       }
 
@@ -3097,7 +3144,7 @@
       if (!isUser && (text === 'Ошибка связи с сервером. Проверьте интернет-соединение.' || text === 'Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.')) {
         return;
       }
-      appendMessageToUI(text, isUser, attachment, attachmentType);
+      appendMessageToUI(text, isUser, attachment, attachmentType, !isUser);
       var hist = getLocalHistory();
       hist.push({
         id: id || null,
@@ -4437,7 +4484,7 @@
               ) {
                 continue;
               }
-              var typingDelay = Math.min(Math.max(replyText.length * 6, 200), 700);
+              var typingDelay = Math.min(Math.max(Math.round(replyText.length * 3), 100), 350);
 
               showTypingIndicator(true, t('typingText'));
               await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
@@ -4445,7 +4492,7 @@
 
               saveAndRenderMessage(replyText, false);
               if (i < result.replies.length - 1) {
-                await new Promise(function (resolve) { setTimeout(resolve, 300); });
+                await new Promise(function (resolve) { setTimeout(resolve, 150); });
               }
             }
           } else if (result && result.status === 'operator_needed') {
@@ -4485,7 +4532,7 @@
             pendingQueueWhileReplying = [];
             clearTimeout(sendTimer);
             showTypingIndicator(true, t('typingText'));
-            sendTimer = setTimeout(flushMessageBuffer, 3000);
+            sendTimer = setTimeout(flushMessageBuffer, 1500);
           }
         }
       }

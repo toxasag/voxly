@@ -11,6 +11,12 @@
 // ---------------------------------------------------------------------------
 
 export type AiModelId =
+  | "glm-4.5"
+  | "glm-5.3"
+  | "qwen3.8-27b"
+  | "qwen-omni-plus"
+  | "nemotron-super"
+  | "agnes-3.0-flash"
   | "gpt-4o"
   | "gpt-4o-mini"
   | "claude-sonnet-4"
@@ -24,6 +30,12 @@ export type AiModelId =
   | (string & {});
 
 export const AI_MODEL_IDS: readonly string[] = [
+  "glm-4.5",
+  "qwen3.8-27b",
+  "glm-5.3",
+  "qwen-omni-plus",
+  "nemotron-super",
+  "agnes-3.0-flash",
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-2.5-flash",
@@ -39,7 +51,7 @@ export const AI_MODEL_IDS: readonly string[] = [
 export interface AiModelPricing {
   id: AiModelId;
   label: string;
-  provider: "openai" | "anthropic" | "deepseek" | "google";
+  provider: "openai" | "anthropic" | "deepseek" | "google" | "custom";
   contextWindow: number;
   /** Себестоимость входных токенов у провайдера, копеек за 1000 токенов. */
   costInPer1k: number;
@@ -54,6 +66,54 @@ export interface AiModelPricing {
  * переведённому из рублей в копейки: там 0.45 ₽ — это 45 копеек.
  */
 export const AI_MODEL_CATALOG: Record<AiModelId, AiModelPricing> = {
+  "glm-4.5": {
+    id: "glm-4.5",
+    label: "GLM 4.5 (NoirLight)",
+    provider: "custom",
+    contextWindow: 128_000,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "qwen3.8-27b": {
+    id: "qwen3.8-27b",
+    label: "Qwen 3.8 27B (NoirLight)",
+    provider: "custom",
+    contextWindow: 128_000,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "glm-5.3": {
+    id: "glm-5.3",
+    label: "GLM 5.3 (NoirLight)",
+    provider: "custom",
+    contextWindow: 128_000,
+    costInPer1k: 10,
+    costOutPer1k: 30,
+  },
+  "qwen-omni-plus": {
+    id: "qwen-omni-plus",
+    label: "Qwen Omni Plus (NoirLight)",
+    provider: "custom",
+    contextWindow: 128_000,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "nemotron-super": {
+    id: "nemotron-super",
+    label: "Nemotron Super (NoirLight)",
+    provider: "custom",
+    contextWindow: 128_000,
+    costInPer1k: 10,
+    costOutPer1k: 30,
+  },
+  "agnes-3.0-flash": {
+    id: "agnes-3.0-flash",
+    label: "Agnes 3.0 Flash (NoirLight)",
+    provider: "custom",
+    contextWindow: 128_000,
+    costInPer1k: 3,
+    costOutPer1k: 10,
+  },
   "gpt-4o": {
     id: "gpt-4o",
     label: "GPT-4o",

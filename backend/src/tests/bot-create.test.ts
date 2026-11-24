@@ -36,6 +36,10 @@ describe("Bot Auto Registration & Creation", () => {
     assert.ok(custom.endsWith("bot"));
     assert.ok(custom.includes("freelancehuntervoxly"));
 
+    // Запрос с кириллицей — транслитерирует в латиницу и добавляет _bot
+    const cyrillic = await service.generateUniqueName("фриланс хантер");
+    assert.equal(cyrillic, "frilans_hanter_bot");
+
     // Запрос без базы — подбирает voxlyN_bot (где N = 1..10)
     const generated = await service.generateUniqueName();
     assert.ok(/^voxly\d+_bot$/.test(generated), `Generated name ${generated} should match voxlyN_bot pattern`);

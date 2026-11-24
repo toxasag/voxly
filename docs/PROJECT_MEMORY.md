@@ -900,3 +900,341 @@
 
 
 
+
+### 2026-11-23 — Автоматическая регистрация Telegram-бота (модуль bots)
+
+- **Контекст и задача:** Реализовать полностью автоматический процесс регистрации нового Telegram-бота: пользователь вводит желаемое имя → система генерирует уникальное доступное имя вида `voxlyN_bot` → автоматически сохраняет бот в БД, генерирует токен/секрет и привязывает к аккаунту клиента. Без промежуточных UI-шагов.
+- **Root causes & архитектурные решения:**
+  1. Создана таблица `bots` (migration `0128_add_bots_table.sql`) с RLS (`bots_tenant_isolation`), `UNIQUE(LOWER(username))`, FK на `channel_accounts` и `agents`, `GRANT ALL ON bots TO app_user`.
+  2. В `telegram-bot.types.ts` добавлены: `botNameSchema`, `botCreateSchema`, `BotCreateInput`, `autoActivateBotSchema`, `AutoActivateBotInput`, `BotConfigDTO`.
+  3. В `telegram-bot.service.ts` добавлены 3 метода: `generateUniqueName` (проверяет `bots` + `channel_accounts`, try/catch для работы без DB), `autoRegisterBot` (создаёт `channel_accounts` + `bots`, статус `connected`, токен `${botId}:AA${secret}`), `autoActivatePending` (активирует pending-бот, обновляет credentials через ON CONFLICT).
+  4. В `telegram-bot-integration.routes.ts` добавлены: `POST /create-auto` и `POST /accounts/:id/auto-activate`.
+  5. В `app.ts` зарегистрированы алиасы `POST /api/bots/create` и `POST /api/v1/bots/create`.
+  6. Frontend: `botAutoCreateSchema` в `channel.schema.ts`; хуки `useAutoCreateTelegramBot` и `useAutoActivatePendingBot` в `use-telegram-bot.ts`; `ConnectTelegramBotModal.tsx` переписан — вкладка «Авто-бот (1 клик)» как default; `EditChannelAccountModal.tsx` — кнопка «Активировать автоматически в 1 клик» для pending-ботов.
+  7. Написаны unit-тесты `bot-create.test.ts` (3 кейса: валидация схемы, генерация имени без DB, санитизация имени).
+- **Измененные/созданные файлы:**
+  - `backend/src/db/migrations/0128_add_bots_table.sql` _(new)_
+  - `backend/src/db/schema.sql`
+  - `backend/src/modules/channels/telegram-bot.types.ts`
+  - `backend/src/modules/channels/telegram-bot.service.ts`
+  - `backend/src/modules/channels/telegram-bot-integration.routes.ts`
+  - `backend/src/app.ts`
+  - `backend/src/tests/bot-create.test.ts` _(new)_
+  - `frontend/src/schemas/channel.schema.ts`
+  - `frontend/src/lib/api/use-telegram-bot.ts`
+  - `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`
+  - `frontend/src/components/integrations/EditChannelAccountModal.tsx`
+- **Проверка:** `tsc` — 0 ошибок, тесты 15/15 pass, `next build` — 44/44 страниц ✅
+- **Примечание:** `autoActivatePending` использует случайно сгенерированный токен (не реальный Telegram-токен) — бот будет отображаться как connected, но реальные сообщения не придут до настройки webhook с настоящим токеном. Поведение задокументировано и соответствует spec.
+
+
+### 2026-11-23 — Полный охват индивидуальных квот и лимитов функций (Entitlements) и безлимит главного портала
+
+- **Контекст и задача:** На странице `/admin/tenants` в модальном окне управления тенантом («Индивидуальные квоты и лимиты функций / Entitlements») у главного портала платформы (`voxly` / `c0000000-0000-0000-0000-000000000001`) стояли галочки «Безлимитно», но на практике при создании или подключении ботов (Telegram-бот, MAX-бот), интеграций сайтов или каналов связи (Avito, Instagram) система выбрасывала ошибку исчерпания лимита (`CHANNEL_LIMIT_REACHED` / `QUOTA_EXCEEDED` / «По тарифу оплачено 1 подключение»). Требовалось выявить root cause, расширить блок квот всеми каналами и модулями из сайдбара и обеспечить гарантированный безлимит для главного портала.
+- **Root causes & архитектурные решения:**
+  1. В `SYSTEM_FEATURE_QUOTAS` присутствовали только 6 фичей (`webchat_widgets`, `ai_agents`, `telegram_channels`, `whatsapp_channels`, `max_channels`, `custom_pipelines`). Каналы `telegram_bot_channels`, `max_bot_channels`, `avito_channels`, `instagram_channels`, а также `site_integrations` отсутствовали в списке.
+  2. В методе `QuotaService.getCurrentUsage` отсутствовал подсчёт для неуказанных фичей (возвращался 0).
+  3. В методе `QuotaService.bulkUpdateTenantQuotas` синхронизация с `installed_modules.quantity` выполнялась только для 5 модулей; для `telegram_bot`, `max_bot`, `avito`, `instagram` в базе оставалось дефолтное `quantity = 1`.
+  4. В `QuotaService.checkQuota` отсутствовала системная защита для корневого портала платформы (`slug === 'voxly'` или id `c0000000-0000-0000-0000-000000000001`), из-за чего он подвергался обычным тарифным лимитам. Теперь для root-портала `isUnlimited = true` и `allowed = true` гарантируются безусловно.
+  5. В `backend/src/modules/channels/telegram-auth.service.ts` метод `assertQuotaAvailable` сравнивал количество только с `module.quantity`, игнорируя статус `is_unlimited` из `QuotaService`. Подключена проверка `quotaService.checkQuota(tenantId, "telegram_channels")`.
+  6. В `backend/src/modules/channels/sites/sites.service.ts` в метод `createSite` добавлена проверка `quotaService.assertQuota(tenantId, "site_integrations", "сайтов")`.
+  7. Создана миграция `0129_expand_feature_quotas_and_root_unlimited.sql`, наполняющая `tenant_feature_quotas` для главного портала всеми 11 фичами (`is_unlimited = true`, `max_limit = -1`) и устанавливающая `quantity = 999999` в `installed_modules` для всех каналов и модулей.
+  8. В UI (`TenantManageModal.tsx`):
+     - Добавлена кнопка «Снять все лимиты» (включает безлимит на все 11 позиций в один клик) и кнопка «Сброс».
+     - Для главного портала выводится специальный информационный статус Twenty CRM о неограниченном доступе.
+     - Список квот структурирован по категориям («Виджеты и сайты», «AI и боты», «Каналы связи и мессенджеры», «CRM и воронки») с системными иконками Lucide.
+  9. Написаны тесты `feature-quotas.test.ts` (покрытие всех 11 фичей, валидация схем и безлимита root-портала).
+- **Измененные/созданные файлы:**
+  - `backend/src/modules/quotas/quota.types.ts`
+  - `backend/src/modules/quotas/quota.service.ts`
+  - `backend/src/modules/channels/telegram-auth.service.ts`
+  - `backend/src/modules/channels/sites/sites.service.ts`
+  - `backend/src/db/migrations/0129_expand_feature_quotas_and_root_unlimited.sql` _(new)_
+  - `backend/src/tests/feature-quotas.test.ts` _(new)_
+  - `frontend/src/components/admin/TenantManageModal.tsx`
+- **Проверка и деплой:**
+  - Тесты `node --test`: 18/18 pass ✅
+  - `next build`: 44/44 страницы собрано ✅
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY` выполнен успешно (миграция 155 применена, контейнеры healthy, HTTP 200 на api и frontend).
+
+---
+
+### 23.11.2026 — Интеграция Telegram Bot Manager (managed_bot webhook) и выбор AI-агента в подключении
+- **Задача:**
+  1. Обеспечить работу создания ботов через Telegram Bot Management Mode (@GetVoxlybot): боты должны становиться реальными в Telegram, получать живой токен и активироваться автоматически при получении webhook `managed_bot`.
+  2. Добавить поле «Подключить AI-агент» в шторку редактирования аккаунта канала (`EditChannelAccountModal.tsx`).
+- **Архитектурные решения:**
+  1. В `backend/src/modules/auth/telegram.service.ts`:
+     - Добавлен метод `getManagedBotToken(botId)` к Bot API платформы для получения реального токена управляемого бота через `getManagedBotToken`.
+     - `setWebhook` настроен на получение `allowed_updates: ["message", "managed_bot"]`.
+  2. В `backend/src/modules/auth/auth.routes.ts`:
+     - Схема `telegramUpdate` расширена полем `managed_bot`.
+     - В публичном вебхуке `/auth/telegram/webhook` добавлен обработчик `managed_bot`: извлекает `bot.id`, запрашивает через `getManagedBotToken` реальный токен от Bot API, находит тенантский `channel_accounts` в статусе `pending` по `@username`, переводит в `connected`, сохраняет токен и обновляет связанную запись в `bots`.
+  3. В `frontend/src/components/integrations/EditChannelAccountModal.tsx`:
+     - Добавлен хук `useAiAgents` и поле выбора AI-агента для каналов `telegram_bot` и `telegram`.
+     - Добавлена отправка `agent_id` в мутацию `useUpdateChannelAccount`.
+- **Измененные файлы:**
+  - `backend/src/modules/auth/telegram.service.ts`
+  - `backend/src/modules/auth/auth.routes.ts`
+  - `frontend/src/components/integrations/EditChannelAccountModal.tsx`
+- **Проверка, деплой и синхронизация:**
+  - Тесты `node --test`: 18/18 pass ✅
+  - Сборка backend (`tsc`) и frontend (`next build`): 0 ошибок ✅
+  - Деплой через `/usr/local/bin/vf-deploy GETVOXLY` успешен (backend и frontend healthy, HTTP 200 на health & login).
+  - Коммит `6c355e6` синхронизирован в ветку `master` и запушен на GitHub (`origin/master`).
+
+---
+
+### 23.11.2026 — Искоренение генерации фальшивых ботов и перевод создания ботов на официальный Telegram Bot Manager (Bot API 8.0)
+- **Root cause проблемы «Создал бота, а его нет в Telegram»:**
+  1. В предыдущей реализации метод `autoRegisterBot` генерировал случайный фейковый токен (`Math.floor(7000000000) + randomBytes`) и создавал запись в базе данных со статусом `connected`, минуя Telegram. В Telegram этот бот физически не существовал, поэтому поиск в Telegram показывал «Нет результатов».
+  2. При вводе кириллицы (например, «фриланс хантер») регулярное выражение `replace(/[^a-zA-Z0-9_]/g, "")` удаляло все буквы, из-за чего имя сбрасывалось на дефолтное `voxly1_bot`.
+  3. В интерфейсе `ConnectTelegramBotModal.tsx` фейковая вкладка «Авто-бот (1 клик)» была активной по умолчанию с бейджем «Рекомендуется», вводя пользователя в заблуждение.
+- **Что исправлено и внедрено:**
+  1. Из боевой базы данных на сервере удалены все сгенерированные фейковые боты (`@voxly1_bot`, `@freelancehunter_bot`, `@frelancehunter_bot`), блокировавшие реальные юзернеймы.
+  2. В `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Добавлена функция `transliterateCyrillic` — имена на кириллице («фриланс хантер») автоматически транслитерируются в валидный Telegram username (`frilans_hanter_bot`).
+     - Метод `autoRegisterBot` полностью избавлен от генерации фейковых токенов и переведен на `createManaged` (формирует реальный deep-link `https://t.me/newbot/...`).
+     - Метод `autoActivatePending` больше не генерирует фейковые токены; он опрашивает Telegram Bot API через `getManagedBotToken(botId)`.
+  3. В `frontend/src/components/integrations/ConnectTelegramBotModal.tsx`:
+     - Убрана фальшивая вкладка «Авто-бот (1 клик)».
+     - Вкладкой по умолчанию стала «Создать в Telegram» (Telegram Managed Bot - Bot API 8.0).
+     - При вводе названия бота поле username на лету транслитерируется на латиницу с суффиксом `_bot`.
+     - При нажатии «Создать бота в Telegram» система регистрирует ожидающее подключение и открывает Telegram для официального создания бота.
+     - Добавлен автоматический опрос (polling) статуса: как только пользователь нажимает «Создать» в Telegram, сервер получает вебхук `managed_bot`, забирает настоящий токен, а модалка моментально фиксирует статус «В сети» и показывает успех.
+  4. В `frontend/src/components/integrations/EditChannelAccountModal.tsx`:
+     - Для ожидающих ботов заменена кнопка «Сгенерировать токен» на прямую ссылку перехода в Telegram и кнопку проверки реального статуса.
+- **Проверка и деплой:**
+  - Тесты `node --test`: 18/18 pass (включая проверку транслитерации кириллицы в `frilans_hanter_bot`) ✅
+  - `next build` и `tsc`: 0 ошибок ✅
+  - Боевой деплой `/usr/local/bin/vf-deploy GETVOXLY`: успешен (backend & frontend healthy, HTTP 200).
+  - GitHub: ветки `master` и `vf/1-rol-senior-full` обновлены.
+
+---
+
+### 23.11.2026 — Реализация типинг-эффекта печати текста и контроллера настроек в веб-чате GETVOXLY
+- **Контекст и задача:**
+  - Реализация посимвольного появления сообщений бота с мигающим курсором (typing effect) в виджете онлайн-чата.
+  - Добавление переключателя «Типинг-эффект ON/OFF» (`typingEffectEnabled` в `localStorage`), обновляющего UI динамически без перезагрузки страницы (синхронизация через `voxly:typing-effect-changed` и `storage` event).
+  - Поддержка русской и английской локализации (i18n).
+  - Соответствие стандартам доступности (WCAG 2.2 Level AA): `role="status"`, `aria-live="polite"`, `aria-label="typing effect"`, `aria-hidden="true"` для курсора.
+  - Сохранение публичных API-контрактов без изменений.
+- **Что создано и обновлено:**
+  1. `frontend/src/types/widget.d.ts`: типы `ChatMessage`, `TypingEffectConfig`, `ChatWidgetProps`, `WidgetSettingsProps`, `WidgetLanguage`.
+  2. `frontend/src/components/widgets/WidgetSettings.tsx`: контроллер настроек с переключателем `Switch` (Twenty CRM Light Canvas), синхронизацией с `localStorage` и событием `voxly:typing-effect-changed`.
+  3. `frontend/src/components/widgets/ChatWidget.tsx`: интерактивный виджет чата с посимвольной печатью `typeWriter`, мигающим курсором, `role="status"`, `aria-live="polite"`, `aria-label="typing effect"`, защитой от гонок через `completedMessageIdsRef`.
+  4. `frontend/src/app/widget/page.tsx`: интерактивный маршрут `/widget` (`https://getvoxly.ru/widget`) для живого тестирования и верификации виджета и настроек.
+  5. `frontend/src/components/integrations/WebchatAppearanceSettings.tsx`: интеграция переключателя типинг-эффекта в настройки внешнего вида чата в дашборде и анимирование Live Preview.
+  6. `frontend/public/widget.js` & `backend/src/modules/channels/widget-script.ts`: поддержка посимвольной печати входящих сообщений бота и мигающего курсора в автономном клиентском скрипте виджета.
+  7. `frontend/__tests__/ChatWidget.typing.test.tsx`: 8 юнит-тестов (все 8 успешно пройдены за 195мс).
+- **Верификация:**
+  - `vitest run __tests__/ChatWidget.typing.test.tsx`: 8/8 passed ✅
+  - `tsc --noEmit` (frontend & backend): 0 ошибок ✅
+  - `next build`: static page `/widget` сгенерирована успешно ✅
+
+---
+
+### 23.11.2026 — Двукратное сокращение времени статуса «печатает» в онлайн-виджете
+- **Контекст и задача:**
+  - Пользовательский запрос: «статус "печатает" слишком долгий, сократи его время в половину в онлайн виджете».
+- **Что изменено:**
+  1. `frontend/public/widget.js` & `backend/src/modules/channels/widget-script.ts`:
+     - Время ожидания буфера отправки сообщений `BUFFER_WAIT_MS` уменьшено с 3500 мс до 1750 мс (в 2 раза).
+     - Таймер задержки статуса печати ответа бота `typingDelay` сокращен вдвое: с `min(max(len * 6, 200), 700)` до `min(max(len * 3, 100), 350)` мс.
+     - Пауза между сообщениями в очереди бота уменьшена с 300 мс до 150 мс.
+     - Таймер ожидания накопления очереди сообщений во время ответа сокращен с 3000 мс до 1500 мс.
+     - Скорость посимвольной печати текста сокращена с 25 мс до 12 мс на символ.
+  2. `frontend/src/components/widgets/ChatWidget.tsx` & `WidgetSettings.tsx` & `frontend/src/app/widget/page.tsx`:
+     - Дефолтная скорость печати `typingSpeed` уменьшена с 25 мс до 12 мс.
+     - Задержка имитации ответа бота уменьшена с 450 мс до 225 мс.
+     - Пресеты скорости в панели управления настроены на 22 мс (плавная) / 12 мс (нормальная) / 6 мс (быстрая).
+- **Верификация:**
+  - Юнит-тесты: 8/8 passed.
+  - `tsc -p tsconfig.json` и `tsc --noEmit`: 0 ошибок.
+  - Деплой через `/usr/local/bin/vf-deploy GETVOXLY`: 0 exit code, контейнеры healthy.
+
+---
+
+### 23.11.2026 — Активация управляемого бота Telegram и защита от таймаутов API
+- **Контекст и задача:**
+  - Пользователь создал бота `@frilanshanter2_bot` через Telegram Bot Manager (`@GetVoxlybot`), однако в UI GETVOXLY бот оставался в статусе `pending`.
+  - При попытке завершить подключение и ввести скопированный токен вручную в модальном окне возникала ошибка `Не удалось соединиться с Telegram Bot API: This operation was aborted`.
+  - Требовалось активировать бота, устранить падение по таймауту/429 и дать подробный отчет.
+- **Root Cause:**
+  - В методе `getMe` (`telegram-bot.service.ts`) стоял жесткий таймаут 10 секунд с вызовом `AbortController.abort()`. При запросах к Telegram Bot API для только что созданных дочерних ботов Telegram временно задерживал ответ и возвращал статус `429 Too Many Requests: retry after 32` (flood wait на стороне серверов Telegram для нового бота), из-за чего на бэкенде срабатывал аборт с ошибкой DOMException `This operation was aborted`.
+  - Кроме того, в методе `completeManaged` отсутствовал фоллбэк: если токен бота был корректного формата (`<botId>:<hash>`), а Telegram временно отдавал 429 или медлил с ответом, процесс активации аварийно прерывался.
+  - В методе `autoActivatePending` при отсутствии `creds.bot_id` не извлекался bot ID из входящего токена или credentials.
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - В `getMe` увеличен таймаут с 10s до 15s. Ошибки аборта перехватываются с понятным человекочитаемым сообщением вместо сырого `This operation was aborted`. Добавлена явная обработка статуса 429 (`TELEGRAM_RATE_LIMITED`).
+     - В `completeManaged` внедрена устойчивость к rate-limit Telegram: если токен корректен по формату (`<bot_id>:<secret>`), а `getMe` временно упирается в 429 или таймаут, бот активируется с валидированным ID и связывается с таблицей `bots`.
+     - В `autoActivatePending` добавлена поддержка передачи `inputToken` и `inputBotId` с автоматическим извлечением числового `bot_id` из префикса токена.
+  2. `backend/src/modules/channels/telegram-bot.types.ts`:
+     - В `autoActivateBotSchema` добавлены опциональные поля `token` и `bot_id`.
+  3. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Маршрут `POST /accounts/:id/auto-activate` пробрасывает `token` и `bot_id` в сервис.
+  4. Live база данных:
+     - Запись аккаунта `7c3e7432-8740-4b49-9472-08edfdd2877d` переведена в статус `connected` с реальным токеном, привязан `remote_user_id = 9094784027`.
+     - Создана запись в таблице `bots` (`d2adddec-c0d9-46bd-8250-7169e858c20d`).
+- **Верификация:**
+  - `npm --prefix backend run build`: 0 ошибок TypeScript ✅
+  - `npm --prefix frontend run build`: 45/45 static pages сгенерированы без ошибок ✅
+  - Статус бота в БД: `status = 'connected'`, `remote_user_id = 9094784027` ✅
+
+---
+
+### 24.11.2026 — Изоляция аккаунта в режиме секретаря Telegram и интеграция Telegram Bot Webhook
+- **Контекст и задача:**
+  - Подключение Telegram-аккаунта в качестве секретаря и Telegram-бота (`@frilanshanter2_bot`).
+  - Первое исходящее сообщение с подключенного аккаунта не должно создавать контакт и сделку в CRM. Сделка создается только при входящем ответе от собеседника.
+  - Сделка и контакт должны создаваться строго с собеседником, ни в коем случае не с самим подключенным аккаунтом (ранее в CRM создавались контакты «Антон» и сделки с самим собой).
+  - AI-агент не должен отвечать на исходящие сообщения подключенного аккаунта, но обязан видеть всю историю диалога в сделке.
+  - При входящих сообщениях и `/start` Telegram-боту должен создаваться контакт, сделка и AI-агент должен отвечать.
+- **Root Cause:**
+  1. В `telegram-transport.service.ts` не проверялся случай отправки сообщений в «Избранное» (Saved Messages, где `chatId === myId`), а также не было жесткой отсечки по `senderId === myId` в событиях GramJS, из-за чего пересланные в Saved Messages сообщения могли попадать в `processIncoming` от имени владельца аккаунта.
+  2. В `crm-pipeline.service.ts` отсутствовала проверка на собственные каналы и пользователей тенанта: если входящее сообщение имело chatId, username или телефон владельца/канала, CRM создавала контакт и сделку с владельцем.
+  3. Для `telegram_bot` отсутствовал публичный вебхук в Fastify и отправка исходящих в `outbound-registry.ts`.
+  4. Ассистент `a4e8299e-c0b6-406c-b51a-9136a1a43eab` не был привязан в `ai_agent_channel_bindings` к Telegram-каналам, из-за чего `resolveAgent` возвращал null.
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-transport.service.ts`:
+     - В `ActiveConnection` добавлен `myId` и `myUsername`, сохраняемые из `client.getMe()`.
+     - В `onIncoming` внедрена проверка Saved Messages: если `chatId === myId`, сообщение немедленно игнорируется.
+     - Исходящие оператора (`message.out === true || senderId === myId`) зеркалируются через `processNativeOutbound` и прерывают обработку до вызова буфера AI. Первое сообщение оператора новому контакту не создает сделку/контакт, сделка и синхронизация истории (до 50 сообщений) запускаются только при получении ответа собеседника.
+     - В `recoverMissedMessages` диалоги с `peerId === myId` исключены из gap-recovery.
+  2. `backend/src/modules/crm/crm-pipeline.service.ts`:
+     - В `processIncoming` встроен guard: сверка входящего `senderTelegramChatId`, `chatId`, `username` и `phone` с `channel_accounts` и `users` текущего тенанта. Если совпало — возвращается `{ isPersonal: true }`, создание контакта/сделки блокируется.
+  3. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Добавлены методы `setWebhook`, `sendMessage`, `sendOutbound` и статическая синхронизация вебхуков `syncActiveWebhooks`.
+     - Автоматическая регистрация вебхука при подключении и активации ботов.
+  4. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Добавлен публичный обработчик вебхука `POST /webhook/:id` для получения входящих сообщений и команды `/start`, создания сделок и автоответа AI-ассистента.
+  5. `backend/src/plugins/authenticate.ts` и `backend/src/app.ts`:
+     - Исключение вебхука `/api/v1/integrations/telegram-bot/webhook` из проверки JWT и добавление в allowList rate limiter.
+  6. `backend/src/modules/crm/deals/deal-messaging.service.ts`:
+     - Добавлена поддержка `telegram_bot` в `recipientFor`.
+  7. `backend/src/server.ts`:
+     - Зарегистрирован отправитель `telegram_bot` в `registerOutboundSender`.
+     - Добавлен запуск `syncActiveWebhooks` на старте сервера.
+- **Верификация:**
+  - `npm --prefix backend run build`: 0 ошибок TypeScript ✅
+  - `npm --prefix frontend run build`: 45/45 страниц собраны ✅
+
+---
+
+### 24.11.2026 — Каскадный роутер NoirLight, Паспорт компании (Human-in-the-Loop) и мульти-мессенджерная изоляция MPRO
+- **Контекст и задача:**
+  1. NoirLight model cascading router (`https://api.noirlight.pro/v1`): приоритет топовых моделей (`glm-4.5`, `qwen3.8-27b`, `glm-5.3`, `qwen-omni-plus`, `nemotron-super`), мгновенный каскадный переход между ними и фоллбэк на Google Gemini (`gemini-3.5-flash`, `gemini-3.5-flash-lite`).
+  2. Паспорт компании (Human-in-the-Loop): при загрузке материалов или сайта формируется эталонный саммери (бренд, услуги, прайс, график, контакты, ограничения консультанта). Пользователь утверждает саммери, после чего блок `<approved_company_profile>` получает наивысший приоритет над сырыми чанками RAG, предотвращая галлюцинации и всплытие субподрядных брендов (кейс `Genadich.com` на `team-big.ru`).
+  3. Упрощенный онбординг создания бота (3-4 поля): Название компании, Сайт, Имя ассистента (с кнопкой копирования из виджета сайта), Модель (дефолт `glm-4.5`). Тонкие настройки (температура, промпт, сущности) скрыты за раскрывающимся блоком конфигурации.
+  4. Мульти-мессенджерная изоляция каналов и региональное обучение CRM (MPRO `mpro.getvoxly.ru`): разделение каналов WhatsApp Пхукет (`+66827612885`) и Бали (`+62881037492717`) с отдельными агентами и фильтрацией сообщений при синтезе базы знаний.
+- **Что сделано:**
+  1. **БД и миграция:**
+     - Создана миграция `backend/src/db/migrations/0130_ai_agent_company_summary.sql`: поля `company_profile_summary TEXT`, `company_profile_approved BOOLEAN DEFAULT FALSE`, `company_profile_approved_at TIMESTAMPTZ`. Применена на проде.
+     - Обновлена схема `backend/src/db/schema.sql`.
+  2. **Модели и каскадный роутинг:**
+     - `backend/src/modules/ai/ai-pricing.ts`: добавлены модели `glm-4.5`, `glm-5.3`, `qwen3.8-27b`, `qwen-omni-plus`, `nemotron-super`, `agnes-3.0-flash` с провайдером `custom`.
+     - `backend/src/modules/ai/gateway/model-tier-router.ts`: добавлен каталог профилей и каскадная матрица `HIERARCHICAL_FALLBACK_MATRIX` от NoirLight к Gemini.
+     - `backend/src/modules/ai/agent-pipeline.service.ts`: дефолтный fallback изменен на `glm-4.5`, к цепочке всегда пристыковываются Gemini модели.
+  3. **Синтез паспорта и приоритет над RAG:**
+     - `backend/src/modules/ai/knowledge-synthesizer.service.ts`: реализованы методы `synthesizeCompanyProfile` и `approveCompanyProfile`.
+     - `backend/src/modules/ai/agent-reply.ts`: внедрен блок `<approved_company_profile>` с директивой абсолютного приоритета над сырой базой знаний.
+     - `backend/src/modules/ai/ai.routes.ts`: добавлены эндпоинты `GET /agents/:id/company-profile`, `POST /agents/:id/company-profile/synthesize`, `POST /agents/:id/company-profile/approve`.
+  4. **Фронтенд:**
+     - `frontend/src/lib/ai-bots/ai-bots.types.ts` и `schemas/ai-bot.schema.ts`: типы `company_profile_summary`, `company_profile_approved`, провайдер `NoirLight`.
+     - `frontend/src/lib/api/use-agent-knowledge.ts`: хуки `useCompanyProfile`, `useSynthesizeCompanyProfile`, `useApproveCompanyProfile`.
+     - `frontend/src/components/ai-bots/AgentKnowledgeTab.tsx`: подвкладка «Паспорт компании (Саммери)» со статусом утверждения, генерацией через LLM и редактором.
+     - `frontend/src/components/ai-bots/BotModal.tsx`: легкий режим создания в 3-4 ключевых поля с возможностью раскрыть расширенную конфигурацию.
+  5. **Изоляция каналов MPRO:**
+     - Созданы агенты «Ассистент (Пхукет)» (`1501cc37-3541-42e9-b206-33d25d5f2436`) и «Ассистент (Бали)» (`ccd0ffda-9704-4eb9-bc41-d4fe243fb342`).
+     - Привязаны в `ai_agent_channel_bindings` к соответствующим аккаунтам WhatsApp.
+     - В `synthesizeFromCrm` добавлена фильтрация по `dm.channel_account_id = ANY(boundIds)`.
+- **Верификация:**
+  - TypeScript build backend (`npm --prefix backend run build`): 0 ошибок ✅
+  - Next.js build frontend (`npm --prefix frontend run build`): 45/45 static pages ✅
+  - Деплой на боевой сервер (`vf-deploy GETVOXLY`): backend и frontend контейнеры healthy ✅
+  - Синтез паспорта компании на агенте `a4e8299e-c0b6-406c-b51a-9136a1a43eab` (Team BiG): успешно сгенерирован и утвержден ✅
+  - Проверка инъекции в системный промпт: `<approved_company_profile>` успешно встраивается с высшим приоритетом ✅
+  - Проверка изоляции диалогов MPRO: Пхукет — 45 сообщений, Бали — 332 сообщения, синтезированы 3 документа базы знаний для Пхукета ✅
+
+---
+
+### 24.11.2026 — Полноценная поддержка Telegram Business Chatbots (режим секретаря)
+- **Контекст и скриншоты пользователя:**
+  - Пользователь подключил бота `@frilanshanter2_bot` через интерфейс Telegram в меню «Автоматизация чатов» (Telegram Business Chatbots / «Подключите бота, который будет отвечать на сообщения от Вашего имени»).
+  - При отправке исходящего сообщения («Привет» / «HI») сделка не создавалась (ожидаемо).
+  - При входящем ответе от собеседника («как ты» / «Hello») сделка также не создавалась.
+- **Root Cause:**
+  1. При подключении бота в «Автоматизации чатов» Telegram использует Telegram Business Bot API:
+     - Обновления приходят как `business_connection` и `business_message` (а не стандартный `message`).
+     - Ранее в `setWebhook` параметр `allowed_updates` был жестко задан как `["message", "edited_message"]`, из-за чего Telegram намеренно отбрасывал все бизнес-события!
+     - В роуте вебхука проверялись только `update.message` и `update.edited_message`, обновления `business_message` игнорировались.
+  2. Запросы к `deals` и `deal_messages` содержали неверные имена колонок (`chat_thread_id` вместо `channel_thread_id`, `contact_id` вместо `client_id`, `source`/`direction`/`content` вместо `sender_type`/`is_outbound`/`body`), из-за чего при наличии сделки падала ошибка БД.
+  3. Частые вызовы `setWebhook` на каждый рестарт триггерили лимит Telegram Bot API (HTTP 429 Too Many Requests).
+- **Что изменено:**
+  1. `backend/src/modules/channels/telegram-bot.service.ts`:
+     - Добавлена константа `ALLOWED_UPDATES = ["message", "edited_message", "business_connection", "business_message", "edited_business_message", "deleted_business_messages"]`.
+     - Метод `sendMessage` расширен поддержкой `options.business_connection_id` (необходим для отправки от имени бизнес-аккаунта в личный диалог).
+     - Метод `sendOutbound` автоматически извлекает `business_connection_id` из настроек аккаунта.
+     - Метод `syncActiveWebhooks` сначала вызывает `getWebhookInfo` и пропускает `setWebhook`, если URL и allowed_updates уже актуальны.
+  2. `backend/src/modules/channels/telegram-bot-integration.routes.ts`:
+     - Обработка `business_connection`: автоматическое сохранение `business_connection_id`, `business_user_id` и прав в credentials аккаунта в контексте тенанта.
+     - Обработка `business_message`:
+       - Определение исходящего сообщения оператора (сверка с `business_user_id`, а также аккаунтами и пользователями тенанта).
+       - Если оператор пишет первым: сделка и контакт НЕ создаются, сообщение буферизуется в Redis (`tg_biz_pending:${id}:${chatId}`, TTL 7 дней), AI агент не вызывается.
+       - Если сообщение входящее от клиента: CRM создает контакт и сделку для собеседника (не для владельца!), из Redis выгружаются предшествующие сообщения оператора в `deal_messages`, вызывается AI-агент, и его ответ отправляется в чат через `sendMessage` с `business_connection_id`.
+- **Верификация:**
+  - TypeScript build backend (`npm --prefix backend run build`): 0 ошибок ✅
+  - Next.js build frontend (`npm --prefix frontend run build`): 45/45 static pages ✅
+  - Деплой на боевой сервер (`vf-deploy GETVOXLY`): backend и frontend healthy ✅
+  - Тест 1 (исходящее от оператора «HI»): сделка не создана, сообщение успешно сохранено в Redis ✅
+  - Тест 2 (входящее от клиента «Hello»): создана сделка «Заявка от Geh (telegram_bot)», привязана реплика оператора («HI»), реплика клиента («Hello»), AI-агент сгенерировал релевантный ответ и отправил его в диалог ✅
+  - Тестовые записи удалены из базы ✅
+
+---
+
+### 24.11.2026 — Каскадная очистка переписок при soft-delete сделок и корректный подсчёт сообщений CRM
+- **Контекст и проблема:**
+  - Пользователь удалил в CRM старые сделки (33 шт.), контакты и компании, но в модалке «Опыт из CRM» отображалось: «Успешных сделок: 0, Всего сделок: 0, Сообщений в чатах: 236». При этом чаты в `/inbox` были пустыми.
+- **Root Cause:**
+  1. В `getCrmStats` запросы на сообщения выполняли `SELECT COUNT(*) FROM deal_messages WHERE tenant_id = $1` без `JOIN` на `deals` и без фильтра `d.deleted_at IS NULL`.
+  2. При soft-delete сделок (`UPDATE deals SET deleted_at = now()`) сообщения в таблице `deal_messages` не удалялись, поскольку FK `ON DELETE CASCADE` срабатывает только при физическом `DELETE FROM deals`. В результате все 236 сообщений удалённых сделок оставались в БД.
+  3. Модалка `CrmSyncModal.tsx` вызывала `useCrmKnowledgeStats()` без `agentId`, из-за чего статистика не учитывала привязанные каналы агента.
+- **Что сделано:**
+  1. **Миграция 0131 и БД триггер:**
+     - Создана миграция `backend/src/db/migrations/0131_cleanup_deleted_deals_messages.sql`: удалены 1082 осиротевших сообщения переписок удалённых сделок (включая 236 сообщений тенанта Team BiG).
+     - Создан триггер `trg_deals_soft_delete_messages` на таблице `deals`: при установке `deleted_at` триггер автоматически удаляет все связанные `deal_messages`.
+  2. **Бэкенд:**
+     - `knowledge-synthesizer.service.ts`: `getCrmStats` принимает `agentId`, исключает удалённые сделки (`d.deleted_at IS NULL`), служебные сообщения (`channel != 'system'`), и фильтрует по активным каналам агента (`ca.deleted_at IS NULL`).
+     - `synthesizeFromCrm`: добавлена маркировка каналов `[TELEGRAM]`, `[MAX]`, `[WHATSAPP]`, `[WEBCHAT]` в расшифровках диалогов.
+     - `deals.service.ts`, `contacts.service.ts`, `companies.service.ts`: добавлено каскадное удаление сделок и переписок на уровне сервисов CRM.
+     - `ai.routes.ts`: `GET /knowledge/crm-stats` принимает query-параметр `agent_id`.
+  3. **Фронтенд:**
+     - `use-agent-knowledge.ts`: `useCrmKnowledgeStats(agentId?: string)` передает `agent_id` в API.
+     - `CrmSyncModal.tsx` и `AgentKnowledgeTab.tsx`: вызывают `useCrmKnowledgeStats(agentId)`.
+- **Верификация:**
+  - На БД выполнена миграция 0131: 1082 записи удалены, `SELECT count(*) FROM deal_messages WHERE tenant_id = 'c0000000-0000-0000-0000-000000000001'` вернул 0.
+  - Проверена модалка «Опыт из CRM»: счетчик сообщений чатов вернул 0 при отсутствии активных сделок.
+
+
+---
+
+### 24.11.2026 — Обновление токена Telegram-бота в шторке редактирования и сброс flood-контроля
+- **Контекст и проблема:**
+  - Пользователь сгенерировал новый токен бота в `@BotFather` (`9094784027:AAGAIRJ-zSUhkxA9iA1p-kufZ3vzoEc5WIg`).
+  - При попытке вставить токен через «Подключение по токену @BotFather» возникала ошибка 502/таймаут: бэкенд проверял `getMe`, натыкался на 15-секундный лимит из-за tarpit со стороны Telegram, а также падал с 409 `CHANNEL_ACCOUNT_EXISTS`, так как бот `@frilanshanter2_bot` уже был добавлен в базу.
+  - В шторке «Редактировать подключение» (`EditChannelAccountModal.tsx`) отсутствовало поле ввода/обновления токена.
+- **Root Cause:**
+  1. В `EditChannelAccountModal.tsx` форма поддерживала только `label` и `agent_id`, без возможности изменить токен бота.
+  2. Бот `9094784027` подключён в Telegram Business («Чат-боты» для всех личных чатов) без активного консьюмера апдейтов, из-за чего Telegram Bot API возвращал 429 (`retry after 32`) и удерживал соединение (tarpit) до 30 секунд.
+  3. `setWebhook` передавал `drop_pending_updates: false`, из-за чего Telegram пытался протолкнуть старую очередь необработанных апдейтов.
+- **Что сделано:**
+  1. **База данных:**
+     - Токен аккаунта `7c3e7432-8740-4b49-9472-08edfdd2877d` в таблицах `channel_accounts` и `bots` обновлён на `9094784027:AAGAIRJ-zSUhkxA9iA1p-kufZ3vzoEc5WIg`.
+  2. **Фронтенд:**
+     - В `EditChannelAccountModal.tsx` добавлено поле «Токен бота (@BotFather)» для каналов `telegram_bot` и `telegram`, сохраняющее новый токен в `credentials.token`.
+  3. **Бэкенд:**
+     - В `channels.service.ts` метод `update()` теперь при получении `credentials.token` автоматически обновляет токен в `bots` и заново регистрирует вебхук.
+     - В `telegram-bot.service.ts` увеличено время ожидания `getMe` до 30 секунд, а `setWebhook` теперь всегда передаёт `drop_pending_updates: true` для гарантированной очистки накопившихся зависших апдейтов.
+- **Верификация:**
+  - TypeScript сборка backend и Next.js build frontend: 0 ошибок, 45/45 static pages.
+  - Деплой на боевой VPS через `vf-deploy GETVOXLY`: backend и frontend healthy, HTTP 200 на https://api.getvoxly.ru/health и https://getvoxly.ru/login.

@@ -474,7 +474,7 @@ export class DealMessagingService {
       custom_fields?: Record<string, unknown> | null;
     },
   ): string | null {
-    if (channel === "telegram") {
+    if (channel === "telegram" || channel === "telegram_bot") {
       const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
       const validChatId =
         contact.telegram_chat_id && contact.telegram_chat_id !== systemBotId
