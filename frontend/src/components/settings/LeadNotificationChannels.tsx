@@ -46,6 +46,7 @@ import {
   type LeadSource,
 } from "@/lib/api/use-bitrix24";
 import { useTenantInfo } from "@/lib/api/use-team";
+import { useNotificationPreferences } from "@/lib/api/use-notification-preferences";
 import { SourceMultiSelect, SOURCE_MAP } from "@/components/settings/SourceMultiSelect";
 import { WidgetMultiSelect } from "@/components/settings/WidgetMultiSelect";
 import { Bitrix24SyncLogTable } from "@/components/settings/Bitrix24SyncLogTable";
@@ -765,6 +766,7 @@ function AddChannelModal({
 }
 
 export function LeadNotificationChannels() {
+  const { preferences } = useNotificationPreferences();
   const { data: channels, isLoading } = useNotificationChannels();
   const { data: tenantWidgets = [] } = useTenantWidgets();
   const { data: info } = useTenantInfo();
@@ -1468,8 +1470,18 @@ export function LeadNotificationChannels() {
                 Каналы уведомлений ещё не настроены
               </p>
               <p className="mt-1 text-xs text-[#666666] max-w-md mx-auto">
-                По умолчанию все заявки отправляются на основной email аккаунта. Подключите Telegram-бота,
-                WhatsApp или входящий вебхук Битрикс24 для автоматической выгрузки лидов в CRM.
+                {preferences.notifications_enabled ? (
+                  <>
+                    По умолчанию все заявки отправляются на основной email аккаунта. Подключите Telegram-бота,
+                    WhatsApp или входящий вебхук Битрикс24 для автоматической выгрузки лидов в CRM.
+                  </>
+                ) : (
+                  <>
+                    По умолчанию заявки отправляются на основной email аккаунта (
+                    <span className="font-medium text-rose-600">сейчас отправка отключена мастер-выключателем выше</span>
+                    ). Подключите Telegram-бота, WhatsApp или входящий вебхук Битрикс24 для автоматической выгрузки лидов в CRM.
+                  </>
+                )}
               </p>
             </div>
             <button
