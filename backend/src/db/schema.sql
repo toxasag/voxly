@@ -779,6 +779,8 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
   supplier_order_id UUID REFERENCES supplier_orders(id) ON DELETE SET NULL,
+  supplier_order_receipt_id UUID,
+  is_capitalized_cost BOOLEAN NOT NULL DEFAULT false,
   amount NUMERIC NOT NULL,
   currency TEXT NOT NULL DEFAULT 'RUB',
   direction TEXT NOT NULL,
@@ -1728,9 +1730,13 @@ CREATE TABLE IF NOT EXISTS warehouse_batches (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   item_id UUID NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
   supplier_order_id UUID NULL REFERENCES supplier_orders(id) ON DELETE SET NULL,
+  receipt_id UUID NULL,
   batch_number TEXT NOT NULL DEFAULT '',
   supplier_name TEXT NOT NULL DEFAULT '',
   purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  base_purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  landed_cost_per_unit NUMERIC(12, 4) NOT NULL DEFAULT 0,
+  landed_cost_total NUMERIC(12, 2) NOT NULL DEFAULT 0,
   initial_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
   remaining_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
   received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1826,9 +1832,51 @@ CREATE TABLE IF NOT EXISTS supplier_order_items (
   repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
   purchase_request_ids UUID[] DEFAULT '{}',
   quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  received_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
   unit TEXT NOT NULL DEFAULT 'шт',
   price NUMERIC(12, 2) NOT NULL DEFAULT 0,
   total_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_order_receipts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  supplier_order_id UUID NOT NULL REFERENCES supplier_orders(id) ON DELETE CASCADE,
+  receipt_number TEXT NOT NULL,
+  allocation_method VARCHAR(24) NOT NULL DEFAULT 'by_value',
+  extra_costs_total NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL DEFAULT '',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_order_receipt_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  receipt_id UUID NOT NULL REFERENCES supplier_order_receipts(id) ON DELETE CASCADE,
+  supplier_order_item_id UUID NOT NULL REFERENCES supplier_order_items(id) ON DELETE CASCADE,
+  batch_id UUID REFERENCES warehouse_batches(id) ON DELETE SET NULL,
+  item_id UUID REFERENCES warehouse_items(id) ON DELETE SET NULL,
+  item_name TEXT NOT NULL,
+  quantity NUMERIC(10, 2) NOT NULL,
+  base_unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  allocated_extra_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  unit_landed_cost NUMERIC(12, 4) NOT NULL DEFAULT 0,
+  effective_unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_order_receipt_costs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  receipt_id UUID NOT NULL REFERENCES supplier_order_receipts(id) ON DELETE CASCADE,
+  description TEXT NOT NULL DEFAULT '',
+  amount NUMERIC(12, 2) NOT NULL,
+  category_id UUID REFERENCES finance_categories(id) ON DELETE SET NULL,
+  category_name TEXT NOT NULL DEFAULT '',
+  cash_account_id UUID REFERENCES cash_accounts(id) ON DELETE SET NULL,
+  transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

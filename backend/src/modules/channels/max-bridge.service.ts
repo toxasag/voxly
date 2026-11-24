@@ -45,6 +45,13 @@ export interface MaxBridgeDialog {
   userId?: string;
   username?: string | null;
   firstName?: string | null;
+  lastName?: string | null;
+  names?: Array<{
+    firstName?: string | null;
+    lastName?: string | null;
+    name?: string | null;
+    type?: string | null;
+  }> | null;
   phone?: string | null;
   link?: string | null;
   messages: MaxBridgeDialogMessage[];

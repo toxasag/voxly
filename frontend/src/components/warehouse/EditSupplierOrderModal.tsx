@@ -152,7 +152,7 @@ export function EditSupplierOrderModal({
       return;
     }
 
-    const isReceived = order.status === "received";
+    const isItemsLocked = order.status === "received" || order.status === "partially_received";
 
     const payloadItems = items.map((it) => {
       const reqQty = it.requestedQuantity;
@@ -181,7 +181,7 @@ export function EditSupplierOrderModal({
           supplier_name: finalSupplierName,
           supplier_company_id: selectedCompany?.id ?? order.supplierCompanyId ?? null,
           notes: notes.trim(),
-          ...(isReceived ? {} : { items: payloadItems }),
+          ...(isItemsLocked ? {} : { items: payloadItems }),
         },
       });
 

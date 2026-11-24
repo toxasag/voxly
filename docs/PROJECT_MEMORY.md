@@ -1599,6 +1599,40 @@
      - Корректная предзагрузка `category_id` в `EditTransactionModal` без затирания при сохранении, отображение фоллбэка «Без категории», двусторонняя инвалидация кэшей `["finance"]` ↔ `["warehouse"]`.
   4. **Тесты:** добавлен `backend/src/tests/warehouse-finance-sync.test.ts` (4 теста).
 
+### 2026-11-24 — Частичное оприходование заказов поставщикам + Landed Cost (распределение доп. расходов)
+- **Root cause / задача:** Окно оприходования заказа поставщику принимало заказ только целиком и не позволяло учитывать дополнительные расходы поставки (доставка, курьер и др.) с распределением на себестоимость складских партий и отражением в `/finance`.
+- **Что сделано:**
+  1. **БД (`0137_supplier_order_partial_receipts_and_landed_cost.sql`, `schema.sql`):**
+     - Добавлена колонка `supplier_order_items.received_quantity` (с бэкфиллом для уже принятых заказов).
+     - Созданы таблицы `supplier_order_receipts`, `supplier_order_receipt_items`, `supplier_order_receipt_costs` с `tenant_id`, индексами и RLS.
+     - В `warehouse_batches` добавлены `receipt_id`, `base_purchase_price`, `landed_cost_per_unit`, `landed_cost_total` (с бэкфиллом `base_purchase_price = purchase_price`).
+     - В `transactions` добавлены `supplier_order_receipt_id`, `is_capitalized_cost`.
+  2. **Backend (`landed-cost.utils.ts`, `warehouse.service.ts`, `warehouse.types.ts`, `finance.service.ts`, `finance.types.ts`):**
+     - `allocateLandedCost` считает распределение доп. расходов в целых копейках (`by_value`, `by_quantity`, `manual`, остаток округления на последнюю активную строку).
+     - `createReceiptFromSupplierOrder` блокирует заказ и строки `FOR UPDATE`, защищает от переприёмки, создаёт запись приёмки, партии FIFO с `purchase_price = effectiveUnitPrice`, отдельные расходные транзакции по доп. расходам с `is_capitalized_cost = true` и переводит статус заказа в `partially_received` или `received`.
+     - `deleteSupplierOrdersInTx` откатывает в том числе транзакции доп. расходов по всем приёмкам и пересчитывает балансы затронутых счетов.
+     - `FinanceService.pnl` исключает `is_capitalized_cost = true` из операционных расходов и отдаёт их в `capitalizedCosts` (исключён двойной учёт с FIFO `partsCogs`).
+  3. **Frontend (`ReceiptSupplierOrderModal.tsx`, `warehouse/page.tsx`, `SupplierOrderDetailModal.tsx`, `EditSupplierOrderModal.tsx`, `ProfitLossView.tsx`, `use-warehouse.ts`, `use-invoices.ts`, `landed-cost.ts`):**
+     - Переработана модалка приёмки: частичные количества по строкам, блок доп. расходов (описание, сумма, категория, счёт), выбор метода распределения и live-предпросмотр себестоимости каждой партии.
+     - На `/warehouse` добавлен статус «Частично оприходован», прогресс `Принято X из Y`, бейдж доп. расходов, кнопка «Доприходовать» и разбивка `база + доп.` в таблице партий; в деталях заказа добавлена «История приёмок».
+     - В `ProfitLossView.tsx` добавлена информационная плашка для `pnl.capitalizedCosts`.
+  4. **Где ещё используется модель партий:** `repairs.service.ts` (`consumeFifo`), `warehouse.service.ts` (`fulfillWonDealIfReadyInTx`), оценка склада и `finance.service.ts` (`pnl` → `partsCogs`) читают `warehouse_batches.purchase_price`, поэтому новая себестоимость автоматически применяется без правок потребителей.
+  5. **Тесты:** добавлены `backend/src/tests/warehouse-partial-receipt-landed-cost.test.ts` (9 тестов) и `frontend/src/lib/warehouse/landed-cost.test.ts` (4 теста).
+
+---
+
+## 2026-11-24 — Реверс-аудит 7 репозиториев MAX и надёжное извлечение ФИО и телефона контакта
+- **Контекст и root cause:**
+  1. При входящем сообщении MAX (`PUSH_MESSAGE` opcode 128) сам протокол передаёт только `sender` (`userId`) без `phone` и `names`. В `max-integration.routes.ts` (`internalInboundSchema`) отсутствовали поля `lastName`, `fullName`, `names` и парсинг вложений `CONTACT` (`vcfBody`), а `maxProfile` не передавал `lastName` в `CrmPipelineService`.
+  2. В `MaxTsAdapter.ts` heartbeat использовал `INIT (op 6)` вместо `PING (op 1)`, `resolveContact` был заглушкой без `CONTACT_INFO (op 32)` и `CONTACT_INFO_BY_PHONE (op 46)`, а `handleIncomingMessage` не запрашивал профиль по `senderId`.
+  3. В `MaxBridgeAdapter.ts` поле `timestamp` жёстко умножалось на `1000` без проверки миллисекунд (`> 1e11`).
+- **Что сделано:**
+  1. Создан [max-identity.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-identity.ts): `extractMaxIdentity`, `normalizeMaxPhone`, `parseMaxVCard` (разбор `names[]` с приоритетом `ONEME` → `CUSTOM`, `firstName`/`lastName`/`fullName`, вложений `CONTACT`/`vcfBody`, защита от `selfPhone` INC-113, `isFakeOrDummyPhone`, `isBannedName`).
+  2. Обновлены [max-integration.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-integration.routes.ts) и [max-bridge.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-bridge.service.ts): расширена схема, добавлен best-effort дозапрос `getPrivateDialogs` при неполных ФИО/телефоне, передача `lastName` в `ChannelProfile`, учёт `tenantId` в ключе `isDuplicateInbound`.
+  3. Обновлены [MaxTsAdapter.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/messaging/adapters/max/MaxTsAdapter.ts) (опкоды `PING=1`, `CONTACT_INFO=32`, `CONTACT_INFO_BY_PHONE=46`, `MARK_READ=50`, кэш контактов 10 мин, формат `GET_HISTORY`/`MSG_SEND`) и [MaxBridgeAdapter.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/messaging/adapters/max/MaxBridgeAdapter.ts) (нормализация `timestamp`).
+  4. Добавлены unit-тесты [max-identity.test.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/tests/max-identity.test.ts).
+- **Проверка:** `npm --prefix backend run typecheck` (0 ошибок), `vitest` (`max-identity.test.ts` + `max-internal-auth.test.ts` — 13/13 passed), `tsx --test` (`messaging-adapters.test.ts` — 8/8 passed).
+
 ---
 
 ### 24.11.2026 — Расследование и исправление молчания AI-бота в онлайн-виджете (WebChat Lead Salvage & Drafts)
@@ -1624,6 +1658,27 @@
      - Добавлено визуальное отображение бейджа «Черновик» в шапке пузыря и предупреждения «Неотправленный черновик (посетитель покинул сайт)» для входящих сообщений с `metadata.is_draft: true`.
   5. **Исправление существующей сделки:**
      - В сделке `68bc2e8a-3a7c-4821-a941-250bf2d00cd1` сообщение `314b6a24-4155-40cd-a10f-aed4292c919c` помечено как черновик и сгенерирован/сохранён ответ от подключенного агента «Банкирро Бот».
+
+---
+
+### 24.11.2026 — Автоскролл при печати и 2x замедление набора в онлайн-виджете
+- **Контекст и задача:**
+  - В процессе посимвольного вывода сообщения бота (`typeWriter`) текст сообщений накапливался и уходил вниз под поле ввода, если пользователь не прокручивал чат вручную.
+  - Скорость набора текста была слишком быстрой (12 мс/символ), требовалось замедлить печать в 2 раза (до 24 мс/символ) во всех компонентах и скриптах виджета с поддержкой sticky-автоскролла (без перехвата скролла при ручном изучении истории пользователем, порог 100px).
+- **Что сделано:**
+  1. **Standalone Embed Script (`frontend/public/widget.js`, `backend/src/modules/channels/widget-script.ts`):**
+     - Внедрён трекер ручной прокрутки `userScrolledUp = dist > 100` на `messagesContainer`.
+     - Функция `scrollToBottom(smooth, force)` учитывает положение пользователя и сбрасывает флаг при принудительном скролле.
+     - В `typeNextChar` скорость изменена с 12 мс на 24 мс на символ, и на каждом символе/переносе строки вызывается автоскролл `messagesContainer.scrollTop = messagesContainer.scrollHeight` (если пользователь не отмотал наверх).
+     - При отправке и получении нового сообщения вызывается гарантированный скролл вниз.
+  2. **React UI (`ChatWidget.tsx`, `WidgetSettings.tsx`, `widget/page.tsx`):**
+     - В `ChatWidget.tsx` добавлен `scrollContainerRef` с обработчиком `onScroll={handleScroll}` и флагом `isNearBottomRef` (порог 100px).
+     - В `typeWriter` на каждом шаге `step()` вызывается `scrollToBottom(false)`, удерживая нижний край печатаемого текста над полем ввода.
+     - При отправке пользователем и приходе нового ответа бота вызывается `scrollToBottom(true)`.
+     - Дефолтное значение `typingSpeed` изменено с 12 мс на 24 мс во всех местах (`ChatWidget`, `WidgetSettings`, `widget/page.tsx`).
+     - В `WidgetSettings.tsx` обновлены пресеты скорости: 48 мс (Плавная), 24 мс (Норм), 12 мс (Быстрая).
+  3. **Тесты:**
+     - В `frontend/__tests__/ChatWidget.typing.test.tsx` добавлены тесты на пресеты скорости (48/24/12 мс) и автоскролл во время набора `ChatWidget auto-scrolls down during typewriter typing ticks`. Все 10 тестов проходят успешно.
 
 ---
 

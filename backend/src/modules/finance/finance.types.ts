@@ -299,6 +299,7 @@ export interface PnlCogsSummaryDTO {
 
 export interface PnlDTO {
   from: string; to: string; income: number; expenses: number; netProfit: number;
+  capitalizedCosts?: number;
   incomeByCategory: PnlCategoryDTO[]; expensesByCategory: PnlCategoryDTO[];
   cogs?: PnlCogsSummaryDTO;
 }

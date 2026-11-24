@@ -135,7 +135,7 @@ export class MaxBridgeAdapter implements IMessagingAdapter {
         text: m.text,
         direction: m.out ? "outbound" : "inbound",
         fromMe: m.out,
-        timestamp: m.date * 1000,
+        timestamp: m.date > 1e11 ? m.date : m.date * 1000,
         attachments: m.attachments?.map((a) => ({
           type: a.type,
           fileId: a.fileId,

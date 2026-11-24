@@ -636,16 +636,16 @@ function WarehouseContent() {
 
   const handleOpenEditModal = (order: SupplierOrderDTO) => {
     if (order.status === "received") {
-      toast.error("Нельзя редактировать заказ, товары по которому уже оприходованы на склад");
+      toast.error("Нельзя редактировать заказ, товары по которому уже полностью оприходованы на склад");
       return;
     }
     setSelectedOrderForEdit(order);
   };
 
   const handleDeleteSupplierOrder = async (order: SupplierOrderDTO) => {
-    const isReceived = order.status === "received";
-    const confirmMsg = isReceived
-      ? `Удалить оприходованный заказ №${order.orderNumber}? Все созданные им партии, движения прихода/резерва и кассовая оплата будут откачены, а заявки вернутся в «В ожидании».`
+    const hasReceipts = order.status === "received" || order.status === "partially_received";
+    const confirmMsg = hasReceipts
+      ? `Удалить оприходованный заказ №${order.orderNumber}? Все созданные им партии, движения прихода/резерва, кассовая оплата и доп. расходы будут откачены, а заявки вернутся в «В ожидании».`
       : `Удалить заказ поставщику №${order.orderNumber}? Все заявки на закупку вернутся в статус «В ожидании», а оплата (если была) будет отменена.`;
     if (!confirm(confirmMsg)) {
       return;
@@ -653,7 +653,7 @@ function WarehouseContent() {
     try {
       await deleteSupplierOrderMutation.mutateAsync(order.id);
       toast.success(
-        isReceived
+        hasReceipts
           ? `Заказ №${order.orderNumber} и связанные партии удалены, остатки и касса пересчитаны`
           : `Заказ №${order.orderNumber} удален, заявки возвращены в очередь`,
       );
@@ -2001,9 +2001,15 @@ function WarehouseContent() {
                         <span className="text-xs text-[#666666]">{b.supplierName || "—"}</span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <span className="font-mono text-[13px] text-[#111111]">
+                        <span className="font-mono tabular-nums text-[13px] font-medium text-[#111111]">
                           {formatRub(b.purchasePrice)}
                         </span>
+                        {(b.landedCostTotal ?? 0) > 0 && (
+                          <div className="font-mono tabular-nums text-[10px] text-[#4a38f5]">
+                            база {formatRub(b.basePurchasePrice ?? b.purchasePrice)} +{" "}
+                            {formatRub(b.landedCostPerUnit ?? 0)} доп.
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className="font-mono text-xs text-[#666666]">{b.initialQuantity}</span>
@@ -2380,13 +2386,22 @@ function WarehouseContent() {
                     draft: { label: "Черновик", color: "bg-neutral-100 text-neutral-700 border-neutral-300" },
                     pending_payment: { label: "Ожидает оплаты", color: "bg-amber-50 text-amber-700 border-amber-200" },
                     paid: { label: "Оплачен", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+                    partially_received: { label: "Частично оприходован", color: "bg-indigo-50 text-[#4a38f5] border-indigo-200" },
                     received: { label: "Поступил", color: "bg-sky-50 text-sky-700 border-sky-200" },
                     cancelled: { label: "Отменен", color: "bg-rose-50 text-rose-700 border-rose-200" },
                   };
                   const st = statusMap[order.status] ?? { label: order.status, color: "bg-neutral-100 text-neutral-700 border-neutral-200" };
 
-                  const isPaid = order.status === "paid" || order.status === "received";
+                  const isPaid = Boolean(order.paidAt) || order.status === "paid";
                   const isReceived = order.status === "received";
+                  const isPartiallyReceived = order.status === "partially_received";
+                  const orderedQtyTotal =
+                    order.orderedQuantityTotal ??
+                    (order.items ?? []).reduce((s, it) => s + Number(it.quantity ?? 0), 0);
+                  const receivedQtyTotal =
+                    order.receivedQuantityTotal ??
+                    (order.items ?? []).reduce((s, it) => s + Number(it.receivedQuantity ?? 0), 0);
+                  const extraCostsTotal = Number(order.extraCostsTotal ?? 0);
                   const isSelected = selectedSupplierOrderIds.has(order.id);
 
                   return (
@@ -2444,14 +2459,26 @@ function WarehouseContent() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <span className="font-mono text-[13px] font-bold text-[#111111]">
+                        <span className="font-mono tabular-nums text-[13px] font-bold text-[#111111]">
                           {formatRub(order.totalAmount)}
                         </span>
+                        {extraCostsTotal > 0 && (
+                          <div className="font-mono tabular-nums text-[10px] text-[#4a38f5]">
+                            +{formatRub(extraCostsTotal)} доп. расх.
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className={cn("inline-flex rounded px-2 py-0.5 text-xs font-semibold border", st.color)}>
-                          {st.label}
-                        </span>
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={cn("inline-flex rounded px-2 py-0.5 text-xs font-semibold border", st.color)}>
+                            {st.label}
+                          </span>
+                          {(isPartiallyReceived || (isReceived && orderedQtyTotal > 0)) && (
+                            <span className="font-mono tabular-nums text-[10px] text-[#666666]">
+                              Принято {receivedQtyTotal} из {orderedQtyTotal}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs">
                         {order.paidAt && (
@@ -2464,7 +2491,12 @@ function WarehouseContent() {
                             Принят: {formatDate(order.receivedAt)}
                           </div>
                         )}
-                        {!order.paidAt && !order.receivedAt && (
+                        {isPartiallyReceived && !order.receivedAt && (
+                          <div className="text-[#4a38f5] font-medium">
+                            Приёмок: {order.receipts?.length ?? 1}
+                          </div>
+                        )}
+                        {!order.paidAt && !order.receivedAt && !isPartiallyReceived && (
                           <span className="text-[#888888]">—</span>
                         )}
                       </td>
@@ -2507,17 +2539,21 @@ function WarehouseContent() {
                             </button>
                           )}
 
-                          {/* Кнопка Оприходовать */}
+                          {/* Кнопка Оприходовать / Доприходовать */}
                           {!isReceived && order.status !== "cancelled" && (
                             <button
                               type="button"
                               onClick={() => handleOpenReceiptModal(order)}
                               disabled={createReceiptMutation.isPending}
                               className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 h-7 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors cursor-pointer"
-                              title="Оприходовать заказ на склад"
+                              title={
+                                isPartiallyReceived
+                                  ? "Доприходовать оставшиеся позиции на склад"
+                                  : "Оприходовать заказ на склад"
+                              }
                             >
                               <ArrowDownToLine className="h-3 w-3" />
-                              Оприходовать
+                              {isPartiallyReceived ? "Доприходовать" : "Оприходовать"}
                             </button>
                           )}
 

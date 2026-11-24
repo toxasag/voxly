@@ -2,6 +2,10 @@ import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
 import { query, queryOne, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { ValidationError } from "../../plugins/errorHandler.js";
 import {
+  allocateLandedCost,
+  type LandedCostAllocationMethod,
+} from "./landed-cost.utils.js";
+import {
   type AggregatedPurchaseRequestDTO,
   type BulkDeleteWarehouseItemsPayload,
   type BulkUpdateWarehouseItemsPayload,
@@ -28,6 +32,9 @@ import {
   type SupplierOrderDTO,
   type SupplierOrderItemDTO,
   type SupplierOrderItemRow,
+  type SupplierOrderReceiptCostDTO,
+  type SupplierOrderReceiptDTO,
+  type SupplierOrderReceiptItemDTO,
   type SupplierOrderRow,
   type SupplierOrderStatus,
   type UpdatePurchaseRequestPayload,
@@ -79,6 +86,64 @@ function safeUuid(val: unknown): string | null {
 }
 
 const DEFAULT_PARTS_PURCHASE_CATEGORY_NAME = "Закупка запчастей";
+const DEFAULT_EXTRA_COST_CATEGORY_NAME = "Доставка и логистика";
+
+/**
+ * Находит или создаёт расходную категорию для доп. расхода приёмки (доставка, курьер и др.).
+ */
+async function resolveExtraCostCategoryInTx(
+  tx: TransactionClient,
+  tenantId: string,
+  categoryId?: string | null,
+  categoryName?: string | null,
+): Promise<{ id: string; name: string }> {
+  const validId = safeUuid(categoryId);
+  if (validId) {
+    const byId = await tx.queryOne<{ id: string; name: string }>(
+      `SELECT id, name FROM finance_categories WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, validId],
+    );
+    if (byId) return byId;
+  }
+
+  const trimmedName = categoryName?.trim();
+  if (trimmedName) {
+    const byName = await tx.queryOne<{ id: string; name: string }>(
+      `SELECT id, name
+       FROM finance_categories
+       WHERE tenant_id = $1 AND type = 'expense' AND lower(btrim(name)) = lower($2)
+       LIMIT 1`,
+      [tenantId, trimmedName],
+    );
+    if (byName) return byName;
+
+    return tx.queryOneOrThrow<{ id: string; name: string }>(
+      `INSERT INTO finance_categories (tenant_id, name, type)
+       VALUES ($1, $2, 'expense')
+       RETURNING id, name`,
+      [tenantId, trimmedName],
+    );
+  }
+
+  const existingDelivery = await tx.queryOne<{ id: string; name: string }>(
+    `SELECT id, name
+     FROM finance_categories
+     WHERE tenant_id = $1
+       AND type = 'expense'
+       AND (lower(name) LIKE '%доставк%' OR lower(name) LIKE '%логистик%' OR lower(name) LIKE '%курьер%')
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [tenantId],
+  );
+  if (existingDelivery) return existingDelivery;
+
+  return tx.queryOneOrThrow<{ id: string; name: string }>(
+    `INSERT INTO finance_categories (tenant_id, name, type)
+     VALUES ($1, $2, 'expense')
+     RETURNING id, name`,
+    [tenantId, DEFAULT_EXTRA_COST_CATEGORY_NAME],
+  );
+}
 
 /**
  * Находит или создаёт расходную категорию «Закупка запчастей» в рамках тенанта.
@@ -1328,8 +1393,12 @@ export class WarehouseService {
     }
 
     const rows = await query<WarehouseBatchRow>(
-      `SELECT b.id, b.tenant_id, b.item_id, b.supplier_order_id, b.batch_number, b.supplier_name,
-              b.purchase_price, b.initial_quantity, b.remaining_quantity,
+      `SELECT b.id, b.tenant_id, b.item_id, b.supplier_order_id, b.receipt_id, b.batch_number, b.supplier_name,
+              b.purchase_price,
+              COALESCE(b.base_purchase_price, b.purchase_price) AS base_purchase_price,
+              COALESCE(b.landed_cost_per_unit, 0) AS landed_cost_per_unit,
+              COALESCE(b.landed_cost_total, 0) AS landed_cost_total,
+              b.initial_quantity, b.remaining_quantity,
               b.received_at, b.created_at, i.name AS item_name
        FROM warehouse_batches b
        JOIN warehouse_items i ON i.id = b.item_id AND i.tenant_id = b.tenant_id
@@ -1342,10 +1411,14 @@ export class WarehouseService {
       id: r.id,
       itemId: r.item_id,
       supplierOrderId: r.supplier_order_id ?? null,
+      receiptId: r.receipt_id ?? null,
       itemName: r.item_name,
       batchNumber: r.batch_number,
       supplierName: r.supplier_name,
       purchasePrice: Number(r.purchase_price),
+      basePurchasePrice: Number(r.base_purchase_price ?? r.purchase_price),
+      landedCostPerUnit: Number(r.landed_cost_per_unit ?? 0),
+      landedCostTotal: Number(r.landed_cost_total ?? 0),
       initialQuantity: Number(r.initial_quantity),
       remainingQuantity: Number(r.remaining_quantity),
       receivedAt: toIso(r.received_at),
@@ -2520,6 +2593,8 @@ export class WarehouseService {
             purchaseRequestIds: reqIds,
             repairOrders: it.repair_orders,
             quantity: totalQty,
+            receivedQuantity: 0,
+            remainingQuantity: totalQty,
             unit: itemRow.unit,
             price: unitPrice,
             totalPrice: itemTotal,
@@ -2580,7 +2655,7 @@ export class WarehouseService {
         throw new Error("Заказ поставщику не найден");
       }
 
-      const isReceived = order.status === "received";
+      const isReceived = order.status === "received" || order.status === "partially_received";
       const updates: string[] = [];
       const params: (string | number | null)[] = [tenantId, id];
 
@@ -2800,26 +2875,31 @@ export class WarehouseService {
         [tenantId, order.id],
       );
 
-      // 3. Если была создана кассовая проводка — помечаем её удалённой (soft delete) и пересчитываем баланс счёта
-      if (order.finance_transaction_id || order.paid_at) {
-        const removedTxs = await tx.query<{ cash_account_id: string }>(
-          `UPDATE transactions
-           SET deleted_at = now()
-           WHERE tenant_id = $1
-             AND deleted_at IS NULL
-             AND (id = $2 OR supplier_order_id = $3)
-           RETURNING cash_account_id`,
-          [tenantId, order.finance_transaction_id, order.id],
-        );
-        const affectedAccs = Array.from(
-          new Set([
-            ...removedTxs.map((r) => r.cash_account_id),
-            ...(order.cash_account_id ? [order.cash_account_id] : []),
-          ]),
-        );
-        for (const accId of affectedAccs) {
-          await recalculateCashAccountBalanceInTx(tx, tenantId, accId);
-        }
+      // 3. Мягко удаляем все связанные кассовые проводки (оплата заказа + доп. расходы приёмок) и пересчитываем баланс
+      const removedTxs = await tx.query<{ cash_account_id: string }>(
+        `UPDATE transactions
+         SET deleted_at = now()
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND (
+             id = $2
+             OR supplier_order_id = $3
+             OR supplier_order_receipt_id IN (
+               SELECT id FROM supplier_order_receipts
+               WHERE tenant_id = $1 AND supplier_order_id = $3
+             )
+           )
+         RETURNING cash_account_id`,
+        [tenantId, order.finance_transaction_id, order.id],
+      );
+      const affectedAccs = Array.from(
+        new Set([
+          ...removedTxs.map((r) => r.cash_account_id),
+          ...(order.cash_account_id ? [order.cash_account_id] : []),
+        ]),
+      );
+      for (const accId of affectedAccs) {
+        await recalculateCashAccountBalanceInTx(tx, tenantId, accId);
       }
     }
 
@@ -2894,6 +2974,8 @@ export class WarehouseService {
     for (const item of itemRows) {
       const list = itemsByOrder.get(item.supplier_order_id) ?? [];
       const totalQty = Number(item.quantity);
+      const receivedQty = Number(item.received_quantity || 0);
+      const remainingQty = Math.max(0, Math.round((totalQty - receivedQty) * 100) / 100);
       const reqQty = Number(item.requested_quantity || 0);
       const extraQty = Number(item.extra_quantity || Math.max(0, totalQty - reqQty));
       list.push({
@@ -2909,6 +2991,8 @@ export class WarehouseService {
         purchaseRequestIds: item.purchase_request_ids || [],
         repairOrders: item.repair_ticket_number ? `№${item.repair_ticket_number}` : undefined,
         quantity: totalQty,
+        receivedQuantity: receivedQty,
+        remainingQuantity: remainingQty,
         unit: item.unit,
         price: Number(item.price),
         totalPrice: Number(item.total_price),
@@ -2917,24 +3001,157 @@ export class WarehouseService {
       itemsByOrder.set(item.supplier_order_id, list);
     }
 
-    return orderRows.map((o) => ({
-      id: o.id,
-      orderNumber: o.order_number,
-      supplierName: o.supplier_name,
-      supplierCompanyId: o.supplier_company_id ?? null,
-      status: (o.status as SupplierOrderStatus) || "pending_payment",
-      totalAmount: Number(o.total_amount),
-      cashAccountId: o.cash_account_id,
-      financeTransactionId: o.finance_transaction_id,
-      notes: o.notes,
-      paidAt: toNullableIso(o.paid_at),
-      receivedAt: toNullableIso(o.received_at),
-      createdBy: o.created_by,
-      createdByName: o.created_by_name,
-      items: itemsByOrder.get(o.id) ?? [],
-      createdAt: toIso(o.created_at),
-      updatedAt: toIso(o.updated_at),
-    }));
+    // Загружаем историю приёмок и доп. расходов одним пакетным запросом
+    const receiptRows = await query<{
+      id: string;
+      supplier_order_id: string;
+      receipt_number: string;
+      allocation_method: string;
+      extra_costs_total: string | number;
+      notes: string;
+      created_by: string | null;
+      created_by_name?: string | null;
+      created_at: Date | string;
+    }>(
+      `SELECT r.*, COALESCE(u.name, u.email, '') AS created_by_name
+       FROM supplier_order_receipts r
+       LEFT JOIN users u ON u.id = r.created_by AND u.tenant_id = r.tenant_id
+       WHERE r.tenant_id = $1 AND r.supplier_order_id = ANY($2::uuid[])
+       ORDER BY r.created_at DESC`,
+      [tenantId, orderIds],
+    );
+
+    const receiptIds = receiptRows.map((r) => r.id);
+    const receiptItemsByReceipt = new Map<string, SupplierOrderReceiptItemDTO[]>();
+    const receiptCostsByReceipt = new Map<string, SupplierOrderReceiptCostDTO[]>();
+
+    if (receiptIds.length > 0) {
+      const rItems = await query<{
+        id: string;
+        receipt_id: string;
+        supplier_order_item_id: string;
+        batch_id: string | null;
+        item_id: string | null;
+        item_name: string;
+        quantity: string | number;
+        base_unit_price: string | number;
+        allocated_extra_cost: string | number;
+        unit_landed_cost: string | number;
+        effective_unit_price: string | number;
+        created_at: Date | string;
+      }>(
+        `SELECT * FROM supplier_order_receipt_items
+         WHERE tenant_id = $1 AND receipt_id = ANY($2::uuid[])
+         ORDER BY created_at ASC`,
+        [tenantId, receiptIds],
+      );
+      for (const ri of rItems) {
+        const arr = receiptItemsByReceipt.get(ri.receipt_id) ?? [];
+        arr.push({
+          id: ri.id,
+          receiptId: ri.receipt_id,
+          supplierOrderItemId: ri.supplier_order_item_id,
+          batchId: ri.batch_id,
+          itemId: ri.item_id,
+          itemName: ri.item_name,
+          quantity: Number(ri.quantity),
+          baseUnitPrice: Number(ri.base_unit_price),
+          allocatedExtraCost: Number(ri.allocated_extra_cost),
+          unitLandedCost: Number(ri.unit_landed_cost),
+          effectiveUnitPrice: Number(ri.effective_unit_price),
+          createdAt: toIso(ri.created_at),
+        });
+        receiptItemsByReceipt.set(ri.receipt_id, arr);
+      }
+
+      const rCosts = await query<{
+        id: string;
+        receipt_id: string;
+        description: string;
+        amount: string | number;
+        category_id: string | null;
+        category_name: string;
+        cash_account_id: string | null;
+        transaction_id: string | null;
+        created_at: Date | string;
+      }>(
+        `SELECT * FROM supplier_order_receipt_costs
+         WHERE tenant_id = $1 AND receipt_id = ANY($2::uuid[])
+         ORDER BY created_at ASC`,
+        [tenantId, receiptIds],
+      );
+      for (const rc of rCosts) {
+        const arr = receiptCostsByReceipt.get(rc.receipt_id) ?? [];
+        arr.push({
+          id: rc.id,
+          receiptId: rc.receipt_id,
+          description: rc.description,
+          amount: Number(rc.amount),
+          categoryId: rc.category_id,
+          categoryName: rc.category_name,
+          cashAccountId: rc.cash_account_id,
+          transactionId: rc.transaction_id,
+          createdAt: toIso(rc.created_at),
+        });
+        receiptCostsByReceipt.set(rc.receipt_id, arr);
+      }
+    }
+
+    const receiptsByOrder = new Map<string, SupplierOrderReceiptDTO[]>();
+    for (const r of receiptRows) {
+      const arr = receiptsByOrder.get(r.supplier_order_id) ?? [];
+      arr.push({
+        id: r.id,
+        supplierOrderId: r.supplier_order_id,
+        receiptNumber: r.receipt_number,
+        allocationMethod:
+          r.allocation_method === "by_quantity" || r.allocation_method === "manual"
+            ? r.allocation_method
+            : "by_value",
+        extraCostsTotal: Number(r.extra_costs_total),
+        notes: r.notes || "",
+        createdBy: r.created_by,
+        createdByName: r.created_by_name || null,
+        items: receiptItemsByReceipt.get(r.id) ?? [],
+        costs: receiptCostsByReceipt.get(r.id) ?? [],
+        createdAt: toIso(r.created_at),
+      });
+      receiptsByOrder.set(r.supplier_order_id, arr);
+    }
+
+    return orderRows.map((o) => {
+      const orderItems = itemsByOrder.get(o.id) ?? [];
+      const orderReceipts = receiptsByOrder.get(o.id) ?? [];
+      const orderedQuantityTotal =
+        Math.round(orderItems.reduce((s, it) => s + it.quantity, 0) * 100) / 100;
+      const receivedQuantityTotal =
+        Math.round(orderItems.reduce((s, it) => s + it.receivedQuantity, 0) * 100) / 100;
+      const extraCostsTotal =
+        Math.round(orderReceipts.reduce((s, r) => s + r.extraCostsTotal, 0) * 100) / 100;
+
+      return {
+        id: o.id,
+        orderNumber: o.order_number,
+        supplierName: o.supplier_name,
+        supplierCompanyId: o.supplier_company_id ?? null,
+        status: (o.status as SupplierOrderStatus) || "pending_payment",
+        totalAmount: Number(o.total_amount),
+        cashAccountId: o.cash_account_id,
+        financeTransactionId: o.finance_transaction_id,
+        notes: o.notes,
+        paidAt: toNullableIso(o.paid_at),
+        receivedAt: toNullableIso(o.received_at),
+        createdBy: o.created_by,
+        createdByName: o.created_by_name,
+        items: orderItems,
+        orderedQuantityTotal,
+        receivedQuantityTotal,
+        extraCostsTotal,
+        receipts: orderReceipts,
+        createdAt: toIso(o.created_at),
+        updatedAt: toIso(o.updated_at),
+      };
+    });
   }
 
   async getSupplierOrder(tenantId: string, id: string): Promise<SupplierOrderDTO | null> {
@@ -2951,7 +3168,7 @@ export class WarehouseService {
     userId: string | null,
     payload: PaySupplierOrderPayload,
   ): Promise<{ order: SupplierOrderDTO; transactionId: string; status: string }> {
-    return withTenant(tenantId, async (tx) => {
+    const payResult = await withTenant(tenantId, async (tx) => {
       const order = await tx.queryOneOrThrow<SupplierOrderRow>(
         `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
         [tenantId, id],
@@ -3023,8 +3240,11 @@ export class WarehouseService {
       // Пересчитываем баланс кассы по активным операциям
       await recalculateCashAccountBalanceInTx(tx, tenantId, cashAccountId);
 
-      // Переводим заказ в статус 'paid' (если уже 'received' — сохраняем 'received')
-      const nextStatus = order.status === "received" ? "received" : "paid";
+      // Переводим заказ в статус 'paid' (если уже 'received' или 'partially_received' — сохраняем статус приёмки)
+      const nextStatus =
+        order.status === "received" || order.status === "partially_received"
+          ? order.status
+          : "paid";
       await tx.query(
         `UPDATE supplier_orders
          SET status = $1, cash_account_id = $2, finance_transaction_id = $3, paid_at = now(), updated_at = now()
@@ -3032,43 +3252,266 @@ export class WarehouseService {
         [nextStatus, cashAccountId, txRow.id, tenantId, id],
       );
 
-      const refreshed = await this.getSupplierOrder(tenantId, id);
-
-      return {
-        order: refreshed!,
-        transactionId: txRow.id,
-        status: "PAID",
-      };
+      return { transactionId: txRow.id };
     });
+
+    const refreshed = await this.getSupplierOrder(tenantId, id);
+    return {
+      order: refreshed!,
+      transactionId: payResult.transactionId,
+      status: "PAID",
+    };
   }
 
   /**
-   * Оприходование по заказу поставщику (создание партий, движений и резервирование под наряд)
+   * Полное или частичное оприходование по заказу поставщику с распределением доп. расходов (Landed Cost),
+   * историей приёмок, созданием FIFO-партий, резервированием под наряды и отражением доп. расходов в Финансах.
    */
   async createReceiptFromSupplierOrder(
     tenantId: string,
     id: string,
     userId: string | null,
     payload?: ReceiptSupplierOrderPayload,
-  ): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }> {
-    return withTenant(tenantId, async (tx) => {
+  ): Promise<{
+    success: boolean;
+    order: SupplierOrderDTO;
+    batchesCreated: number;
+    receiptId: string;
+    status: SupplierOrderStatus;
+    extraCostsTotal: number;
+    transactionId?: string;
+  }> {
+    const receiptResult = await withTenant(tenantId, async (tx) => {
       const order = await tx.queryOneOrThrow<SupplierOrderRow>(
         `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
         [tenantId, id],
       );
 
+      if (order.status === "cancelled") {
+        throw new ValidationError("Нельзя оприходовать отменённый заказ поставщику");
+      }
       if (order.status === "received") {
-        throw new Error("Заказ поставщику уже оприходован");
+        throw new ValidationError("Заказ поставщику уже полностью оприходован");
       }
 
       const items = await tx.query<SupplierOrderItemRow>(
-        `SELECT * FROM supplier_order_items WHERE tenant_id = $1 AND supplier_order_id = $2`,
+        `SELECT *
+         FROM supplier_order_items
+         WHERE tenant_id = $1 AND supplier_order_id = $2
+         ORDER BY created_at ASC
+         FOR UPDATE`,
         [tenantId, id],
       );
 
+      if (items.length === 0) {
+        throw new ValidationError("В заказе поставщику нет позиций для оприходования");
+      }
+
+      const itemsById = new Map(items.map((it) => [it.id, it]));
+
+      // Формируем список строк к приёмке с жёсткой проверкой остатка под FOR UPDATE
+      const linesToReceive: Array<{
+        row: SupplierOrderItemRow;
+        deltaQty: number;
+        manualExtraCost?: number;
+      }> = [];
+
+      if (payload?.items && payload.items.length > 0) {
+        const seenItemIds = new Set<string>();
+        for (const reqLine of payload.items) {
+          if (seenItemIds.has(reqLine.supplier_order_item_id)) {
+            throw new ValidationError("Дублирующаяся позиция в запросе приёмки");
+          }
+          seenItemIds.add(reqLine.supplier_order_item_id);
+
+          const row = itemsById.get(reqLine.supplier_order_item_id);
+          if (!row) {
+            throw new ValidationError("Позиция заказа поставщику не найдена");
+          }
+
+          const deltaQty = Math.round(Number(reqLine.quantity) * 100) / 100;
+          if (deltaQty <= 0) continue;
+
+          const orderedQty = Number(row.quantity);
+          const alreadyReceived = Number(row.received_quantity || 0);
+          const remainingQty = Math.max(0, Math.round((orderedQty - alreadyReceived) * 100) / 100);
+
+          if (deltaQty > remainingQty + 0.0001) {
+            throw new ValidationError(
+              `Количество к приёмке по позиции «${row.item_name}» превышает остаток (осталось ${remainingQty}, запрошено ${deltaQty})`,
+            );
+          }
+
+          linesToReceive.push({
+            row,
+            deltaQty,
+            manualExtraCost: reqLine.manual_extra_cost,
+          });
+        }
+      } else {
+        // Обратная совместимость: приёмка всего оставшегося остатка по заказу
+        for (const row of items) {
+          const orderedQty = Number(row.quantity);
+          const alreadyReceived = Number(row.received_quantity || 0);
+          const remainingQty = Math.max(0, Math.round((orderedQty - alreadyReceived) * 100) / 100);
+          if (remainingQty > 0) {
+            linesToReceive.push({ row, deltaQty: remainingQty });
+          }
+        }
+      }
+
+      if (linesToReceive.length === 0) {
+        throw new ValidationError("Укажите количество больше 0 хотя бы для одной позиции");
+      }
+
+      // Расчёт и валидация дополнительных расходов (Landed Cost)
+      const extraCostsInput = (payload?.extra_costs ?? []).filter((c) => Number(c.amount) > 0);
+      const extraCostsTotal =
+        Math.round(extraCostsInput.reduce((s, c) => s + Number(c.amount), 0) * 100) / 100;
+      const allocationMethod: LandedCostAllocationMethod = payload?.allocation_method ?? "by_value";
+
+      let allocations;
+      try {
+        allocations = allocateLandedCost(
+          linesToReceive.map((l) => ({
+            id: l.row.id,
+            quantity: l.deltaQty,
+            baseUnitPrice: Number(l.row.price),
+            manualExtraCost: l.manualExtraCost,
+          })),
+          extraCostsTotal,
+          allocationMethod,
+        );
+      } catch (err) {
+        throw new ValidationError(
+          err instanceof Error ? err.message : "Ошибка распределения доп. расходов",
+        );
+      }
+      const allocationByItemId = new Map(allocations.map((a) => [a.id, a]));
+
+      // Нумерация приёмки в рамках заказа: ЗП-2026-0001/1, /2, ...
+      const prevReceiptsCountRow = await tx.queryOne<{ cnt: string }>(
+        `SELECT COUNT(*)::text AS cnt
+         FROM supplier_order_receipts
+         WHERE tenant_id = $1 AND supplier_order_id = $2`,
+        [tenantId, order.id],
+      );
+      const nextReceiptIndex = Number(prevReceiptsCountRow?.cnt ?? 0) + 1;
+      const receiptNumber = `${order.order_number}/${nextReceiptIndex}`;
+      const authorId = safeUuid(userId) ?? safeUuid(order.created_by);
+
+      // Записываем заголовок приёмки
+      const receiptRow = await tx.queryOneOrThrow<{ id: string }>(
+        `INSERT INTO supplier_order_receipts
+           (tenant_id, supplier_order_id, receipt_number, allocation_method, extra_costs_total, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [
+          tenantId,
+          order.id,
+          receiptNumber,
+          allocationMethod,
+          extraCostsTotal,
+          payload?.comment?.trim() || "",
+          authorId,
+        ],
+      );
+
+      // Проводим доп. расходы в Финансы (отдельной операцией расхода под выбранной категорией, is_capitalized_cost = true)
+      if (extraCostsInput.length > 0) {
+        const defaultCash = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM cash_accounts WHERE tenant_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+
+        const touchedCashAccounts = new Set<string>();
+        const linkedRepairOrderId = await resolveSupplierOrderRepairIdInTx(tx, tenantId, order.id);
+
+        for (const cost of extraCostsInput) {
+          let costAccountId =
+            safeUuid(cost.cash_account_id) ||
+            safeUuid(payload?.cash_account_id) ||
+            order.cash_account_id ||
+            defaultCash?.id ||
+            null;
+
+          if (!costAccountId) {
+            const createdCash = await tx.queryOneOrThrow<{ id: string }>(
+              `INSERT INTO cash_accounts (tenant_id, name, is_default, balance)
+               VALUES ($1, 'Основная касса', true, 0)
+               RETURNING id`,
+              [tenantId],
+            );
+            costAccountId = createdCash.id;
+          }
+
+          const resolvedCat = await resolveExtraCostCategoryInTx(
+            tx,
+            tenantId,
+            cost.category_id,
+            cost.category_name,
+          );
+          const costAmount = Math.round(Number(cost.amount) * 100) / 100;
+          const costDesc =
+            cost.description?.trim() ||
+            `Доп. расход (${resolvedCat.name}) к приёмке ${receiptNumber}`;
+          const costCounterparty = cost.counterparty_name?.trim() || order.supplier_name;
+
+          const costTxRow = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO transactions
+               (tenant_id, cash_account_id, category_id, category_name, amount, direction, description,
+                counterparty_name, supplier_order_id, supplier_order_receipt_id, repair_order_id,
+                is_capitalized_cost, occurred_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'expense', $6, $7, $8, $9, $10, true, now(), $11)
+             RETURNING id`,
+            [
+              tenantId,
+              costAccountId,
+              resolvedCat.id,
+              resolvedCat.name,
+              costAmount,
+              costDesc,
+              costCounterparty,
+              order.id,
+              receiptRow.id,
+              linkedRepairOrderId,
+              authorId,
+            ],
+          );
+
+          touchedCashAccounts.add(costAccountId);
+
+          await tx.query(
+            `INSERT INTO supplier_order_receipt_costs
+               (tenant_id, receipt_id, description, amount, category_id, category_name, cash_account_id, transaction_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              tenantId,
+              receiptRow.id,
+              costDesc,
+              costAmount,
+              resolvedCat.id,
+              resolvedCat.name,
+              costAccountId,
+              costTxRow.id,
+            ],
+          );
+        }
+
+        for (const accId of touchedCashAccounts) {
+          await recalculateCashAccountBalanceInTx(tx, tenantId, accId);
+        }
+      }
+
       let batchesCount = 0;
 
-      for (const it of items) {
+      for (const { row: it, deltaQty } of linesToReceive) {
+        const alloc = allocationByItemId.get(it.id)!;
+        const basePrice = alloc.baseUnitPrice;
+        const effectiveUnitPrice = alloc.effectiveUnitPrice;
+        const unitLandedCost = alloc.unitLandedCost;
+        const allocatedExtraCost = alloc.allocatedExtraCost;
+
         let itemId = it.item_id;
 
         if (!itemId) {
@@ -3090,64 +3533,93 @@ export class WarehouseService {
                 it.sku ?? "",
                 it.item_name,
                 it.unit ?? "шт",
-                it.price,
-                Number(it.price) * 1.4,
+                effectiveUnitPrice,
+                Math.round(effectiveUnitPrice * 1.4 * 100) / 100,
               ],
             );
             itemId = newItem.id;
           }
         }
 
-        const totalQty = Number(it.quantity);
-        const reqQty = Number(it.requested_quantity || 0);
-        const price = Number(it.price);
-
-        // Обновляем себестоимость в номенклатуре
+        // Обновляем себестоимость в номенклатуре с учётом Landed Cost
         await tx.query(
           `UPDATE warehouse_items
            SET cost_price = $1, updated_at = now()
            WHERE tenant_id = $2 AND id = $3`,
-          [price, tenantId, itemId],
+          [effectiveUnitPrice, tenantId, itemId],
         );
 
-        // Создаем партию на ВСЕ поступившее количество с прямой связью на заказ поставщику
+        // Создаём партию FIFO на фактически поступившее количество с точной удельной себестоимостью
         const batch = await tx.queryOneOrThrow<WarehouseBatchRow>(
           `INSERT INTO warehouse_batches
-             (tenant_id, item_id, supplier_order_id, batch_number, supplier_name, purchase_price, initial_quantity, remaining_quantity)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             (tenant_id, item_id, supplier_order_id, receipt_id, batch_number, supplier_name,
+              purchase_price, base_purchase_price, landed_cost_per_unit, landed_cost_total,
+              initial_quantity, remaining_quantity)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            RETURNING *`,
           [
             tenantId,
             itemId,
             order.id,
-            order.order_number,
+            receiptRow.id,
+            receiptNumber,
             order.supplier_name,
-            price,
-            totalQty,
-            totalQty,
+            effectiveUnitPrice,
+            basePrice,
+            unitLandedCost,
+            allocatedExtraCost,
+            deltaQty,
+            deltaQty,
           ],
         );
 
-        // Фиксируем поступление на склад (intake)
+        // Фиксируем поступление на склад (intake) с эффективной себестоимостью
+        const intakeDesc =
+          allocatedExtraCost > 0
+            ? `Поступление ${receiptNumber} (${order.supplier_name}, база ${basePrice} ₽ + доп. расх. ${allocatedExtraCost} ₽)`
+            : `Поступление по заказу поставщику ${receiptNumber} (${order.supplier_name})`;
+
         await tx.query(
           `INSERT INTO warehouse_movements
              (tenant_id, item_id, batch_id, type, quantity, cost_price, description, created_by)
            VALUES ($1, $2, $3, 'intake', $4, $5, $6, $7)`,
+          [tenantId, itemId, batch.id, deltaQty, effectiveUnitPrice, intakeDesc, authorId],
+        );
+
+        // Сохраняем строку истории приёмки
+        await tx.query(
+          `INSERT INTO supplier_order_receipt_items
+             (tenant_id, receipt_id, supplier_order_item_id, batch_id, item_id, item_name,
+              quantity, base_unit_price, allocated_extra_cost, unit_landed_cost, effective_unit_price)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             tenantId,
-            itemId,
+            receiptRow.id,
+            it.id,
             batch.id,
-            totalQty,
-            price,
-            `Поступление по заказу поставщику ${order.order_number} (${order.supplier_name})`,
-            userId,
+            itemId,
+            it.item_name,
+            deltaQty,
+            basePrice,
+            allocatedExtraCost,
+            unitLandedCost,
+            effectiveUnitPrice,
           ],
+        );
+
+        // Обновляем накопленное принятое количество по строке заказа
+        await tx.query(
+          `UPDATE supplier_order_items
+           SET received_quantity = received_quantity + $1,
+               item_id = COALESCE(item_id, $2)
+           WHERE tenant_id = $3 AND id = $4`,
+          [deltaQty, itemId, tenantId, it.id],
         );
 
         batchesCount++;
 
-        // БИЗНЕС-ЛОГИКА РАЗДЕЛЕНИЯ:
-        // Подтягиваем связанные заявки на закупку под наряды
+        // Резервируем под связанные заявки на закупку в пределах фактически поступившего deltaQty
+        const reqQty = Number(it.requested_quantity || 0);
         const linkedReqIds: string[] = [];
         if (it.purchase_request_ids && it.purchase_request_ids.length > 0) {
           linkedReqIds.push(...it.purchase_request_ids);
@@ -3158,65 +3630,93 @@ export class WarehouseService {
         let linkedRequests: PurchaseRequestRow[] = [];
         if (linkedReqIds.length > 0) {
           linkedRequests = await tx.query<PurchaseRequestRow>(
-            `SELECT * FROM purchase_requests WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+            `SELECT * FROM purchase_requests
+             WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND status <> 'received'
+             ORDER BY created_at ASC`,
             [tenantId, linkedReqIds],
           );
         } else if (reqQty > 0) {
           linkedRequests = await tx.query<PurchaseRequestRow>(
             `SELECT * FROM purchase_requests
-             WHERE tenant_id = $1 AND supplier_order_id = $2
-               AND (item_id = $3 OR lower(btrim(item_name)) = lower(btrim($4)))`,
+             WHERE tenant_id = $1 AND supplier_order_id = $2 AND status <> 'received'
+               AND (item_id = $3 OR lower(btrim(item_name)) = lower(btrim($4)))
+             ORDER BY created_at ASC`,
             [tenantId, id, itemId, it.item_name],
           );
         }
 
+        let availableToReserve = deltaQty;
         for (const req of linkedRequests) {
+          if (availableToReserve <= 0) break;
           const partQty = Number(req.quantity);
+
           if (req.repair_order_id && partQty > 0) {
-            // 1. Резервируем количество под заказ-наряд с привязкой к партии
-            await tx.query(
-              `INSERT INTO warehouse_reservations
-                 (tenant_id, repair_order_id, item_id, batch_id, quantity, status)
-               VALUES ($1, $2, $3, $4, $5, 'reserved')`,
-              [tenantId, req.repair_order_id, itemId, batch.id, partQty],
+            const alreadyReservedRow = await tx.queryOne<{ qty: string }>(
+              `SELECT COALESCE(SUM(quantity), 0)::text AS qty
+               FROM warehouse_reservations
+               WHERE tenant_id = $1 AND repair_order_id = $2 AND item_id = $3 AND status = 'reserved'`,
+              [tenantId, req.repair_order_id, itemId],
             );
+            const alreadyReserved = Number(alreadyReservedRow?.qty ?? 0);
+            const stillNeeded = Math.max(0, Math.round((partQty - alreadyReserved) * 100) / 100);
+            const reserveNow = Math.min(availableToReserve, stillNeeded);
 
-            // 2. Движение резервирования
-            await tx.query(
-              `INSERT INTO warehouse_movements
-                 (tenant_id, item_id, batch_id, repair_order_id, type, quantity, cost_price, description, created_by)
-               VALUES ($1, $2, $3, $4, 'reserve', $5, $6, $7, $8)`,
-              [
-                tenantId,
-                itemId,
-                batch.id,
-                req.repair_order_id,
-                partQty,
-                price,
-                `Резерв под наряд по заказу ${order.order_number} (${it.item_name})`,
-                userId,
-              ],
-            );
+            if (reserveNow > 0) {
+              await tx.query(
+                `INSERT INTO warehouse_reservations
+                   (tenant_id, repair_order_id, item_id, batch_id, quantity, status)
+                 VALUES ($1, $2, $3, $4, $5, 'reserved')`,
+                [tenantId, req.repair_order_id, itemId, batch.id, reserveNow],
+              );
 
-            // 3. Обновляем статус детали в наряде repair_parts
-            await tx.query(
-              `UPDATE repair_parts
-               SET warehouse_item_id = $1, cost_price = $2, status = 'reserved'
-               WHERE tenant_id = $3 AND repair_order_id = $4
-                 AND (warehouse_item_id = $1 OR lower(btrim(name)) = lower(btrim($5)))`,
-              [itemId, price, tenantId, req.repair_order_id, it.item_name],
-            );
+              await tx.query(
+                `INSERT INTO warehouse_movements
+                   (tenant_id, item_id, batch_id, repair_order_id, type, quantity, cost_price, description, created_by)
+                 VALUES ($1, $2, $3, $4, 'reserve', $5, $6, $7, $8)`,
+                [
+                  tenantId,
+                  itemId,
+                  batch.id,
+                  req.repair_order_id,
+                  reserveNow,
+                  effectiveUnitPrice,
+                  `Резерв под наряд по приёмке ${receiptNumber} (${it.item_name})`,
+                  authorId,
+                ],
+              );
+
+              await tx.query(
+                `UPDATE repair_parts
+                 SET warehouse_item_id = $1, cost_price = $2, status = 'reserved'
+                 WHERE tenant_id = $3 AND repair_order_id = $4
+                   AND (warehouse_item_id = $1 OR lower(btrim(name)) = lower(btrim($5)))`,
+                [itemId, effectiveUnitPrice, tenantId, req.repair_order_id, it.item_name],
+              );
+
+              availableToReserve = Math.max(0, Math.round((availableToReserve - reserveNow) * 100) / 100);
+            }
+
+            if (alreadyReserved + reserveNow >= partQty - 0.0001) {
+              await tx.query(
+                `UPDATE purchase_requests
+                 SET status = 'received', item_id = COALESCE(item_id, $3), updated_at = now()
+                 WHERE tenant_id = $1 AND id = $2`,
+                [tenantId, req.id, itemId],
+              );
+            }
+          } else {
+            const consumedForReq = Math.min(availableToReserve, partQty);
+            availableToReserve = Math.max(0, Math.round((availableToReserve - consumedForReq) * 100) / 100);
+            if (consumedForReq >= partQty - 0.0001) {
+              await tx.query(
+                `UPDATE purchase_requests
+                 SET status = 'received', item_id = COALESCE(item_id, $3), updated_at = now()
+                 WHERE tenant_id = $1 AND id = $2`,
+                [tenantId, req.id, itemId],
+              );
+            }
           }
 
-          // Переводим заявку на закупку в статус 'received'
-          await tx.query(
-            `UPDATE purchase_requests
-             SET status = 'received', item_id = COALESCE(item_id, $3), updated_at = now()
-             WHERE tenant_id = $1 AND id = $2`,
-            [tenantId, req.id, itemId],
-          );
-
-          // Если заявка была создана под закрытую (won) сделку CRM — дописываем дефицит FIFO
           if (req.deal_id) {
             await this.fulfillWonDealIfReadyInTx(
               tx,
@@ -3224,16 +3724,15 @@ export class WarehouseService {
               req.deal_id,
               req.deal_item_id ?? null,
               itemId,
-              userId,
+              authorId,
             );
           }
         }
-        // Излишки сверх наряда (extra_quantity) остаются на свободном остатке склада!
       }
 
       let paidTransactionId: string | undefined;
 
-      // Если в модалке подтвердили оплату при оприходовании (и заказ ещё не оплачен активной проводкой):
+      // Если в модалке подтвердили оплату заказа при оприходовании (и заказ ещё не оплачен активной проводкой):
       const hasActivePaymentTx = order.finance_transaction_id
         ? Boolean(
             await tx.queryOne<{ id: string }>(
@@ -3243,8 +3742,8 @@ export class WarehouseService {
           )
         : false;
 
-      if ((payload?.mark_paid || payload?.cash_account_id) && !hasActivePaymentTx) {
-        let cashAccountId = payload?.cash_account_id || order.cash_account_id;
+      if ((payload?.mark_paid || safeUuid(payload?.cash_account_id)) && !hasActivePaymentTx) {
+        let cashAccountId = safeUuid(payload?.cash_account_id) || order.cash_account_id;
         if (!cashAccountId) {
           const defaultCash = await tx.queryOne<{ id: string }>(
             `SELECT id FROM cash_accounts WHERE tenant_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1`,
@@ -3256,7 +3755,6 @@ export class WarehouseService {
         if (cashAccountId) {
           const cat = await resolvePartsPurchaseCategoryInTx(tx, tenantId);
           const linkedRepairOrderId = await resolveSupplierOrderRepairIdInTx(tx, tenantId, order.id);
-          const authorId = safeUuid(userId) ?? safeUuid(order.created_by);
 
           const desc =
             payload?.comment ||
@@ -3293,23 +3791,45 @@ export class WarehouseService {
         }
       }
 
-      // Переводим заказ в статус 'received'
-      await tx.query(
-        `UPDATE supplier_orders
-         SET status = 'received', received_at = now(), updated_at = now()
-         WHERE tenant_id = $1 AND id = $2`,
+      // Определяем итоговый статус заказа: полностью принят или частично оприходован
+      const remainingRows = await tx.query<{ remaining: string }>(
+        `SELECT GREATEST(quantity - received_quantity, 0)::text AS remaining
+         FROM supplier_order_items
+         WHERE tenant_id = $1 AND supplier_order_id = $2`,
         [tenantId, id],
       );
+      const isFullyReceived = remainingRows.every((r) => Number(r.remaining) <= 0.0001);
+      const nextStatus: SupplierOrderStatus = isFullyReceived ? "received" : "partially_received";
 
-      const refreshed = await this.getSupplierOrder(tenantId, id);
+      await tx.query(
+        `UPDATE supplier_orders
+         SET status = $1,
+             received_at = CASE WHEN $1 = 'received' THEN now() ELSE received_at END,
+             updated_at = now()
+         WHERE tenant_id = $2 AND id = $3`,
+        [nextStatus, tenantId, id],
+      );
 
       return {
-        success: true,
-        order: refreshed!,
         batchesCreated: batchesCount,
+        receiptId: receiptRow.id,
+        status: nextStatus,
+        extraCostsTotal,
         transactionId: paidTransactionId,
       };
     });
+
+    const refreshed = await this.getSupplierOrder(tenantId, id);
+
+    return {
+      success: true,
+      order: refreshed!,
+      batchesCreated: receiptResult.batchesCreated,
+      receiptId: receiptResult.receiptId,
+      status: receiptResult.status,
+      extraCostsTotal: receiptResult.extraCostsTotal,
+      transactionId: receiptResult.transactionId,
+    };
   }
 
   // ---------------------------------------------------------------------------
