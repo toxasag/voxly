@@ -1214,3 +1214,27 @@
 - **Верификация:**
   - На БД выполнена миграция 0131: 1082 записи удалены, `SELECT count(*) FROM deal_messages WHERE tenant_id = 'c0000000-0000-0000-0000-000000000001'` вернул 0.
   - Проверена модалка «Опыт из CRM»: счетчик сообщений чатов вернул 0 при отсутствии активных сделок.
+
+
+---
+
+### 24.11.2026 — Обновление токена Telegram-бота в шторке редактирования и сброс flood-контроля
+- **Контекст и проблема:**
+  - Пользователь сгенерировал новый токен бота в `@BotFather` (`9094784027:AAGAIRJ-zSUhkxA9iA1p-kufZ3vzoEc5WIg`).
+  - При попытке вставить токен через «Подключение по токену @BotFather» возникала ошибка 502/таймаут: бэкенд проверял `getMe`, натыкался на 15-секундный лимит из-за tarpit со стороны Telegram, а также падал с 409 `CHANNEL_ACCOUNT_EXISTS`, так как бот `@frilanshanter2_bot` уже был добавлен в базу.
+  - В шторке «Редактировать подключение» (`EditChannelAccountModal.tsx`) отсутствовало поле ввода/обновления токена.
+- **Root Cause:**
+  1. В `EditChannelAccountModal.tsx` форма поддерживала только `label` и `agent_id`, без возможности изменить токен бота.
+  2. Бот `9094784027` подключён в Telegram Business («Чат-боты» для всех личных чатов) без активного консьюмера апдейтов, из-за чего Telegram Bot API возвращал 429 (`retry after 32`) и удерживал соединение (tarpit) до 30 секунд.
+  3. `setWebhook` передавал `drop_pending_updates: false`, из-за чего Telegram пытался протолкнуть старую очередь необработанных апдейтов.
+- **Что сделано:**
+  1. **База данных:**
+     - Токен аккаунта `7c3e7432-8740-4b49-9472-08edfdd2877d` в таблицах `channel_accounts` и `bots` обновлён на `9094784027:AAGAIRJ-zSUhkxA9iA1p-kufZ3vzoEc5WIg`.
+  2. **Фронтенд:**
+     - В `EditChannelAccountModal.tsx` добавлено поле «Токен бота (@BotFather)» для каналов `telegram_bot` и `telegram`, сохраняющее новый токен в `credentials.token`.
+  3. **Бэкенд:**
+     - В `channels.service.ts` метод `update()` теперь при получении `credentials.token` автоматически обновляет токен в `bots` и заново регистрирует вебхук.
+     - В `telegram-bot.service.ts` увеличено время ожидания `getMe` до 30 секунд, а `setWebhook` теперь всегда передаёт `drop_pending_updates: true` для гарантированной очистки накопившихся зависших апдейтов.
+- **Верификация:**
+  - TypeScript сборка backend и Next.js build frontend: 0 ошибок, 45/45 static pages.
+  - Деплой на боевой VPS через `vf-deploy GETVOXLY`: backend и frontend healthy, HTTP 200 на https://api.getvoxly.ru/health и https://getvoxly.ru/login.
