@@ -938,6 +938,57 @@ export class TelegramBotService {
   }
 
   /**
+   * Получение информации о бизнес-подключении через Telegram Bot API (getBusinessConnection).
+   * Возвращает аккаунт владельца (user.id, user.username, first_name) и флаги can_reply, is_enabled.
+   */
+  async getBusinessConnection(
+    token: string,
+    connectionId: string,
+  ): Promise<{
+    ok: boolean;
+    result?: {
+      id: string;
+      user: {
+        id: number;
+        is_bot: boolean;
+        first_name: string;
+        last_name?: string;
+        username?: string;
+      };
+      user_chat_id: number;
+      date: number;
+      can_reply: boolean;
+      is_enabled: boolean;
+    };
+    reason?: string;
+  }> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/getBusinessConnection?business_connection_id=${encodeURIComponent(connectionId.trim())}`;
+    try {
+      const res = await fetch(url, { method: "GET" });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{
+        id: string;
+        user: {
+          id: number;
+          is_bot: boolean;
+          first_name: string;
+          last_name?: string;
+          username?: string;
+        };
+        user_chat_id: number;
+        date: number;
+        can_reply: boolean;
+        is_enabled: boolean;
+      }> | null;
+      if (data?.ok && data.result) {
+        return { ok: true, result: data.result };
+      }
+      return { ok: false, reason: data?.description || `HTTP ${res.status}` };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : "Network error" };
+    }
+  }
+
+  /**
    * Отправка текстового сообщения в Telegram через Bot API.
    * Поддерживает business_connection_id для ответа от имени подключенного аккаунта (Telegram Business).
    */
@@ -974,7 +1025,11 @@ export class TelegramBotService {
    */
   async sendOutbound(message: OutboundMessage): Promise<OutboundSendResult> {
     const account = await queryOne<{
-      credentials: { token?: string; business_connection_id?: string } | null;
+      credentials: {
+        token?: string;
+        business_connection_id?: string;
+        business_connections?: Record<string, { id: string; user_id: string; can_reply?: boolean }>;
+      } | null;
     }>(
       `SELECT credentials FROM channel_accounts
        WHERE tenant_id = $1 AND id = $2 AND channel = 'telegram_bot' AND deleted_at IS NULL`,
@@ -986,7 +1041,26 @@ export class TelegramBotService {
       return { ok: false, reason: "Бот не найден или не настроен токен" };
     }
 
-    const businessConnectionId = account.credentials?.business_connection_id;
+    let businessConnectionId: string | undefined = undefined;
+    if (message.metadata?.business_connection_id && typeof message.metadata.business_connection_id === "string") {
+      businessConnectionId = message.metadata.business_connection_id.trim();
+    }
+
+    if (!businessConnectionId && message.dealId) {
+      const dealRow = await queryOne<{ conn_id: string | null }>(
+        `SELECT custom_fields->>'business_connection_id' as conn_id
+         FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [message.tenantId, message.dealId],
+      ).catch(() => null);
+      if (dealRow?.conn_id) {
+        businessConnectionId = dealRow.conn_id;
+      }
+    }
+
+    if (!businessConnectionId) {
+      businessConnectionId = account.credentials?.business_connection_id;
+    }
 
     if (message.attachment) {
       const isImage = message.attachmentType?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(message.attachment);

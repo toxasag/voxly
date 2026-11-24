@@ -1432,3 +1432,21 @@
 - **Верификация:**
   - `tsc --noEmit` в backend и frontend: 0 ошибок.
   - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Поддержка нескольких Telegram Business подключений в одном боте и изоляция операторов
+- **Контекст и root cause:**
+  - Официальный Telegram-бот может быть подключен в качестве секретаря (Telegram Business) сразу к нескольким аккаунтам менеджеров.
+  - Ранее в `channel_accounts.credentials` хранился только один `business_connection_id` и `business_user_id`. При подключении второго аккаунта старое подключение перезаписывалось.
+  - При обмене сообщениями между подключенными бизнес-аккаунтами или сообщениях от операторов условие `isFromOperator` использовало глобальный `business_user_id` и проверку `senderId !== chatId`, из-за чего входящие сообщения от других аккаунтов ошибочно маркировались как исходящие оператора и буферизовались в Redis вместо создания сделки/контакта в CRM.
+- **Что сделано:**
+  1. В `TelegramBotService` добавлен метод `getBusinessConnection(token, connectionId)` для динамической загрузки актуальных метаданных подключения из Telegram Bot API.
+  2. В `TelegramBotService.sendOutbound` добавлено определение `business_connection_id` из сделки (`custom_fields->>'business_connection_id'`) или метаданных сообщения.
+  3. В `telegram-bot-integration.routes.ts` реализована карта `credentials.business_connections`: теперь бот поддерживает неограниченное число одновременных бизнес-подключений.
+  4. Определение оператора изолировано в контекст конкретного `business_connection_id`: отправитель считается оператором только если `senderId === operatorUserId` данного подключения.
+  5. При создании сделки `business_connection_id` сохраняется в `deals.custom_fields`, а при ответе оператора — в `deal_messages.metadata`.
+  6. Буферизация и сброс сообщений оператора в Redis изолированы по `business_connection_id`.
+- **Верификация:**
+  - `npm --prefix backend run build` (tsc): 0 ошибок.
+  - Деплой на боевой сервер через `/usr/local/bin/vf-deploy GETVOXLY`.

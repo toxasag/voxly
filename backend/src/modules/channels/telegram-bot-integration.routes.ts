@@ -78,6 +78,19 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
           business_connection_id?: string;
           business_user_id?: string;
           business_username?: string;
+          business_can_reply?: boolean;
+          business_is_enabled?: boolean;
+          business_connections?: Record<string, {
+            id: string;
+            user_id: string;
+            username?: string;
+            first_name?: string;
+            last_name?: string;
+            can_reply: boolean;
+            is_enabled: boolean;
+            date?: number;
+            updated_at?: string;
+          }>;
           [key: string]: unknown;
         } | null;
         label: string;
@@ -104,6 +117,8 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       const user = businessConnection.user as Record<string, unknown> | undefined;
       const userId = user?.id ? String(user.id) : undefined;
       const username = typeof user?.username === "string" ? user.username.replace(/^@/, "").trim() : undefined;
+      const firstName = typeof user?.first_name === "string" ? user.first_name.trim() : undefined;
+      const lastName = typeof user?.last_name === "string" ? user.last_name.trim() : undefined;
       const canReply = Boolean(businessConnection.can_reply);
       const isEnabled = Boolean(businessConnection.is_enabled);
 
@@ -115,15 +130,58 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
       await runWithTenantContext(tenantId, async () => {
         const { query: dbQuery } = await import("../../db/client.js");
         const creds = { ...(account.credentials || {}) };
+        const connections = { ...(creds.business_connections || {}) } as Record<string, {
+          id: string;
+          user_id: string;
+          username?: string;
+          first_name?: string;
+          last_name?: string;
+          can_reply: boolean;
+          is_enabled: boolean;
+          date?: number;
+          updated_at?: string;
+        }>;
+
         if (isEnabled) {
+          connections[connId] = {
+            id: connId,
+            user_id: userId || "",
+            username,
+            first_name: firstName,
+            last_name: lastName,
+            can_reply: canReply,
+            is_enabled: true,
+            date: Number(businessConnection.date || Math.floor(Date.now() / 1000)),
+            updated_at: new Date().toISOString(),
+          };
           creds.business_connection_id = connId;
+          if (userId) creds.business_user_id = userId;
+          if (username) creds.business_username = username;
+          creds.business_can_reply = canReply;
+          creds.business_is_enabled = isEnabled;
         } else {
-          delete creds.business_connection_id;
+          if (connections[connId]) {
+            connections[connId].is_enabled = false;
+            connections[connId].updated_at = new Date().toISOString();
+          }
+          if (creds.business_connection_id === connId) {
+            const anotherActive = Object.values(connections).find((c) => c && c.is_enabled === true);
+            if (anotherActive) {
+              creds.business_connection_id = anotherActive.id;
+              creds.business_user_id = anotherActive.user_id;
+              creds.business_username = anotherActive.username;
+              creds.business_can_reply = anotherActive.can_reply;
+              creds.business_is_enabled = true;
+            } else {
+              delete creds.business_connection_id;
+              delete creds.business_user_id;
+              delete creds.business_username;
+              creds.business_is_enabled = false;
+            }
+          }
         }
-        if (userId) creds.business_user_id = userId;
-        if (username) creds.business_username = username;
-        creds.business_can_reply = canReply;
-        creds.business_is_enabled = isEnabled;
+
+        creds.business_connections = connections;
         account.credentials = creds;
         await dbQuery(
           `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
@@ -164,20 +222,78 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
 
     // business_connection_id извлекается из business_message или из credentials
     const rawConnId = typeof message.business_connection_id === "string" ? message.business_connection_id.trim() : "";
-    const businessConnectionId = isBusiness
+    let businessConnectionId = isBusiness
       ? (rawConnId || (account.credentials?.business_connection_id as string | undefined))
       : undefined;
 
-    // Если получили свежий business_connection_id из входящего business_message, сохраняем в аккаунте
-    if (businessConnectionId && account.credentials?.business_connection_id !== businessConnectionId) {
-      account.credentials = { ...(account.credentials || {}), business_connection_id: businessConnectionId };
-      void runWithTenantContext(tenantId, async () => {
-        const { query: dbQuery } = await import("../../db/client.js");
-        await dbQuery(
-          `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
-          [JSON.stringify(account.credentials), id, tenantId],
-        ).catch(() => null);
-      });
+    let operatorUserId: string | undefined = undefined;
+    let operatorUsername: string | undefined = undefined;
+    let operatorName: string = account.credentials?.business_username || "Оператор";
+
+    if (isBusiness) {
+      const connections = { ...(account.credentials?.business_connections || {}) } as Record<string, {
+        id: string;
+        user_id: string;
+        username?: string;
+        first_name?: string;
+        last_name?: string;
+        can_reply: boolean;
+        is_enabled: boolean;
+        date?: number;
+        updated_at?: string;
+      }>;
+
+      let connInfo = businessConnectionId ? connections[businessConnectionId] : undefined;
+
+      // Если в аккаунте нет актуальной информации о данном business_connection_id — подтягиваем через getBusinessConnection
+      if ((!connInfo || !connInfo.user_id) && businessConnectionId && account.credentials?.token) {
+        try {
+          const fetched = await service.getBusinessConnection(account.credentials.token, businessConnectionId);
+          if (fetched.ok && fetched.result) {
+            connInfo = {
+              id: fetched.result.id,
+              user_id: String(fetched.result.user.id),
+              username: fetched.result.user.username ? fetched.result.user.username.replace(/^@/, "").trim() : undefined,
+              first_name: fetched.result.user.first_name,
+              last_name: fetched.result.user.last_name,
+              can_reply: Boolean(fetched.result.can_reply),
+              is_enabled: Boolean(fetched.result.is_enabled),
+              date: fetched.result.date,
+              updated_at: new Date().toISOString(),
+            };
+            connections[businessConnectionId] = connInfo;
+            const updatedCreds = {
+              ...(account.credentials || {}),
+              business_connections: connections,
+              business_connection_id: businessConnectionId,
+              business_user_id: connInfo.user_id,
+              business_username: connInfo.username,
+              business_can_reply: connInfo.can_reply,
+              business_is_enabled: connInfo.is_enabled,
+            };
+            account.credentials = updatedCreds;
+            void runWithTenantContext(tenantId, async () => {
+              const { query: dbQuery } = await import("../../db/client.js");
+              await dbQuery(
+                `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
+                [JSON.stringify(updatedCreds), id, tenantId],
+              ).catch(() => null);
+            });
+          }
+        } catch {
+          // fallback к скалярным полям
+        }
+      }
+
+      if (connInfo && connInfo.user_id) {
+        operatorUserId = String(connInfo.user_id);
+        operatorUsername = connInfo.username;
+        operatorName = [connInfo.first_name, connInfo.last_name].filter(Boolean).join(" ") || connInfo.username || "Оператор";
+      } else {
+        operatorUserId = account.credentials?.business_user_id ? String(account.credentials.business_user_id) : undefined;
+        operatorUsername = account.credentials?.business_username ? String(account.credentials.business_username) : undefined;
+        operatorName = operatorUsername || "Оператор";
+      }
     }
 
     const chatFirstName = typeof chat.first_name === "string" ? chat.first_name.trim() : "";
@@ -223,41 +339,18 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     // 3. Проверка: отправлено ли сообщение оператором/владельцем аккаунта (исходящее оператора)
     let isFromOperator = false;
     if (isBusiness) {
-      const bizUserId = account.credentials?.business_user_id;
-      // В Telegram Business в приватном чате:
-      // Если senderId !== chatId, значит сообщение отправлено владельцем бизнес-аккаунта (оператором).
-      // Если senderId === String(bizUserId), значит отправитель — владелец бизнес-аккаунта.
-      if (senderId !== chatId || (bizUserId && senderId === String(bizUserId))) {
-        isFromOperator = true;
-        if (!bizUserId) {
-          account.credentials = { ...(account.credentials || {}), business_user_id: senderId };
-          void runWithTenantContext(tenantId, async () => {
-            const { query: dbQuery } = await import("../../db/client.js");
-            await dbQuery(
-              `UPDATE channel_accounts SET credentials = $1 WHERE id = $2 AND tenant_id = $3`,
-              [JSON.stringify(account.credentials), id, tenantId],
-            ).catch(() => null);
-          });
-        }
+      if (operatorUserId) {
+        // В рамках данного бизнес-подключения оператором является ВЛАДЕЛЕЦ подключения (operatorUserId).
+        // Если отправитель — владелец этого подключения (senderId === operatorUserId),
+        // это исходящее сообщение оператора клиенту.
+        // Если отправитель — собеседник (senderId !== operatorUserId), это входящее от клиента!
+        isFromOperator = senderId === operatorUserId;
       } else {
-        const ownCheck = await runWithPlatformScope(() =>
-          queryOne<{ id: string }>(
-            `SELECT id FROM (
-               SELECT id::text FROM channel_accounts
-               WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
-                 AND (
-                   (credentials->>'tgUserId' IS NOT NULL AND credentials->>'tgUserId' = $2)
-                   OR (credentials->>'business_user_id' IS NOT NULL AND credentials->>'business_user_id' = $2)
-                 )
-               UNION ALL
-               SELECT id::text FROM users
-               WHERE tenant_id = $1 AND deleted_at IS NULL
-                 AND telegram_chat_id IS NOT NULL AND telegram_chat_id::text = $2
-             ) own LIMIT 1`,
-            [tenantId, senderId],
-          ),
-        ).catch(() => null);
-        if (ownCheck) isFromOperator = true;
+        // Fallback, если user_id владельца подключения неизвестен:
+        // В Telegram Business в приватном чате: если senderId !== chatId, значит отправлено владельцем.
+        if (senderId !== chatId) {
+          isFromOperator = true;
+        }
       }
     }
 
@@ -266,7 +359,7 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     // AI агент НЕ должен отвечать на реплики оператора.
     if (isFromOperator) {
       request.log.info(
-        { accountId: id, chatId, senderId, text: rawText, isBusiness, businessConnectionId },
+        { accountId: id, chatId, senderId, text: rawText, isBusiness, businessConnectionId, operatorUserId },
         "Telegram Bot business message: operator outbound message received",
       );
 
@@ -291,10 +384,13 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
             [
               tenantId,
               existingDeal.id,
-              account.credentials?.business_username || "Оператор",
+              operatorName,
               rawText || "(вложение)",
               account.id,
-              JSON.stringify({ external_message_id: externalMessageId }),
+              JSON.stringify({
+                external_message_id: externalMessageId,
+                ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}),
+              }),
               messageTimestamp,
             ],
           );
@@ -302,14 +398,19 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
             `UPDATE deals
              SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
                  custom_fields = jsonb_set(
-                   COALESCE(custom_fields, '{}'::jsonb),
-                   '{ai_paused_reason}',
-                   to_jsonb('messenger_takeover'::text),
+                   jsonb_set(
+                     COALESCE(custom_fields, '{}'::jsonb),
+                     '{ai_paused_reason}',
+                     to_jsonb('messenger_takeover'::text),
+                     true
+                   ),
+                   '{business_connection_id}',
+                   to_jsonb($4::text),
                    true
                  ),
                  updated_at = now()
              WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
-            [tenantId, existingDeal.id, existingDeal.contact_id],
+            [tenantId, existingDeal.id, existingDeal.contact_id, businessConnectionId || ""],
           );
         }).catch((err) => {
           request.log.warn({ err, dealId: existingDeal.id }, "Failed to append operator business message to deal");
@@ -321,16 +422,20 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
           const { getRedisClient, isRedisAvailable } = await import("../../infrastructure/redis.js");
           const redis = isRedisAvailable() ? getRedisClient() : null;
           if (redis) {
-            const bufferKey = `tg_biz_pending:${id}:${chatId}`;
+            const bufferKey = businessConnectionId
+              ? `tg_biz_pending:${id}:${businessConnectionId}:${chatId}`
+              : `tg_biz_pending:${id}:${chatId}`;
             const existingRaw = await redis.get(bufferKey);
             const list = existingRaw ? (JSON.parse(existingRaw) as unknown[]) : [];
             list.push({
               text: rawText,
               externalMessageId,
+              operatorName,
+              businessConnectionId,
               timestamp: messageTimestamp.toISOString(),
             });
             await redis.set(bufferKey, JSON.stringify(list), "EX", 86400 * 7);
-            request.log.info({ accountId: id, chatId, count: list.length }, "Buffered operator message in Redis");
+            request.log.info({ accountId: id, chatId, businessConnectionId, count: list.length }, "Buffered operator message in Redis");
           }
         } catch (err) {
           request.log.warn({ err, chatId }, "Failed to buffer pending operator message in Redis");
@@ -408,39 +513,71 @@ export default async function telegramBotIntegrationRoutes(app: FastifyInstance)
     }
 
     if (crmResult.dealId) {
+      if (businessConnectionId) {
+        await runWithTenantContext(tenantId, async () => {
+          const { query: dbQuery } = await import("../../db/client.js");
+          await dbQuery(
+            `UPDATE deals
+             SET custom_fields = jsonb_set(
+               COALESCE(custom_fields, '{}'::jsonb),
+               '{business_connection_id}',
+               to_jsonb($1::text),
+               true
+             ),
+             updated_at = now()
+             WHERE tenant_id = $2 AND id = $3 AND (custom_fields->>'business_connection_id' IS NULL OR custom_fields->>'business_connection_id' = '')`,
+            [businessConnectionId, tenantId, crmResult.dealId!],
+          ).catch(() => null);
+        });
+      }
+
       // Подтягиваем ранее буферизованные сообщения оператора из Redis
       try {
         const { getRedisClient, isRedisAvailable } = await import("../../infrastructure/redis.js");
         const redis = isRedisAvailable() ? getRedisClient() : null;
         if (redis) {
-          const bufferKey = `tg_biz_pending:${id}:${chatId}`;
-          const bufferedRaw = await redis.get(bufferKey);
-          if (bufferedRaw) {
-            const buffered = JSON.parse(bufferedRaw) as Array<{ text: string; externalMessageId?: string; timestamp: string }>;
-            if (buffered.length > 0) {
-              const { query: dbQuery } = await import("../../db/client.js");
-              await runWithTenantContext(tenantId, async () => {
-                for (const p of buffered) {
-                  await dbQuery(
-                    `INSERT INTO deal_messages (tenant_id, deal_id, channel, source, direction, sender_name, content, channel_account_id, delivery_status, metadata, created_at)
-                     VALUES ($1, $2, 'telegram_bot', 'manager', 'outbound', $3, $4, $5, 'sent', $6, $7)`,
-                    [
-                      tenantId,
-                      crmResult.dealId!,
-                      account.credentials?.business_username || "Оператор",
-                      p.text || "(сообщение)",
-                      account.id,
-                      JSON.stringify({ external_message_id: p.externalMessageId }),
-                      new Date(p.timestamp),
-                    ],
-                  );
-                }
-              });
-              await redis.del(bufferKey);
-              request.log.info(
-                { dealId: crmResult.dealId, count: buffered.length },
-                "Flushed pending operator messages from Redis to deal",
-              );
+          const keysToTry = [
+            ...(businessConnectionId ? [`tg_biz_pending:${id}:${businessConnectionId}:${chatId}`] : []),
+            `tg_biz_pending:${id}:${chatId}`,
+          ];
+          for (const bufferKey of keysToTry) {
+            const bufferedRaw = await redis.get(bufferKey);
+            if (bufferedRaw) {
+              const buffered = JSON.parse(bufferedRaw) as Array<{
+                text: string;
+                externalMessageId?: string;
+                operatorName?: string;
+                businessConnectionId?: string;
+                timestamp: string;
+              }>;
+              if (buffered.length > 0) {
+                const { query: dbQuery } = await import("../../db/client.js");
+                await runWithTenantContext(tenantId, async () => {
+                  for (const p of buffered) {
+                    await dbQuery(
+                      `INSERT INTO deal_messages (tenant_id, deal_id, channel, source, direction, sender_name, content, channel_account_id, delivery_status, metadata, created_at)
+                       VALUES ($1, $2, 'telegram_bot', 'manager', 'outbound', $3, $4, $5, 'sent', $6, $7)`,
+                      [
+                        tenantId,
+                        crmResult.dealId!,
+                        p.operatorName || operatorName || "Оператор",
+                        p.text || "(сообщение)",
+                        account.id,
+                        JSON.stringify({
+                          external_message_id: p.externalMessageId,
+                          ...(p.businessConnectionId || businessConnectionId ? { business_connection_id: p.businessConnectionId || businessConnectionId } : {}),
+                        }),
+                        new Date(p.timestamp),
+                      ],
+                    );
+                  }
+                });
+                await redis.del(bufferKey);
+                request.log.info(
+                  { dealId: crmResult.dealId, bufferKey, count: buffered.length },
+                  "Flushed pending operator messages from Redis to deal",
+                );
+              }
             }
           }
         }
