@@ -449,7 +449,7 @@ export class ContactsService {
         phones.callingCode,
         JSON.stringify(phones.additional),
         cleanEmail(payload.email),
-        socialValue(socials, "telegram"),
+        payload.telegram_username ? payload.telegram_username.replace(/^@/, "").trim() : socialValue(socials, "telegram"),
         nullIfBlank(payload.telegram_chat_id),
         socialValue(socials, "whatsapp"),
         JSON.stringify(socials),

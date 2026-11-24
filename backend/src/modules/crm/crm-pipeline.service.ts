@@ -440,13 +440,14 @@ export class CrmPipelineService {
 
         // Привязывать telegram_chat_id к СУЩЕСТВУЮЩЕМУ контакту разрешено ТОЛЬКО если:
         // - Отправитель НЕ является ботом
-        // - Сообщение получено напрямую из канала Telegram
-        // - Отправитель верифицирован (совпадает проверенный телефон контакта или telegram_username)
+        // - Сообщение получено напрямую из канала Telegram или Telegram Bot
+        // - Отправитель верифицирован (совпадает проверенный телефон контакта или telegram_username, либо у контакта ещё не привязан chat_id)
         const isVerifiedTelegramSender =
-          input.channel === "telegram" &&
+          (input.channel === "telegram" || input.channel === "telegram_bot") &&
           (Boolean(validatedSenderPhone && contact.phone && validatedSenderPhone === extractPhoneNumber(contact.phone)) ||
            Boolean(input.senderTelegramUsername && contact.telegram_username && input.senderTelegramUsername.replace(/^@/, "").toLowerCase() === contact.telegram_username.replace(/^@/, "").toLowerCase()) ||
-           (!contact.phone && !contact.telegram_chat_id));
+           (!contact.phone && !contact.telegram_chat_id) ||
+           (input.senderTelegramChatId && contact.telegram_chat_id && String(contact.telegram_chat_id) === String(input.senderTelegramChatId)));
 
         if (input.senderTelegramChatId && !contact.telegram_chat_id && !isSenderBot && isVerifiedTelegramSender) {
           await tx.query(
@@ -454,6 +455,16 @@ export class CrmPipelineService {
             [Number(input.senderTelegramChatId), contact.id],
           );
           contact.telegram_chat_id = input.senderTelegramChatId;
+        }
+
+        // 1.0. Привязываем telegram_username, если он появился
+        const freshTgUsername = (input.profile?.username || input.senderTelegramUsername)?.replace(/^@/, "").trim();
+        if (freshTgUsername && (!contact.telegram_username || contact.telegram_username.trim().length === 0)) {
+          await tx.query(
+            `UPDATE contacts SET telegram_username = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3 AND (telegram_username IS NULL OR telegram_username = '')`,
+            [freshTgUsername, contact.id, input.tenantId],
+          );
+          contact.telegram_username = freshTgUsername;
         }
 
         // 1.1. Привязываем телефон, если он появился
@@ -819,6 +830,7 @@ export class CrmPipelineService {
           email: input.senderEmail ? input.senderEmail.trim() : undefined,
           socials: socialsList,
           telegram_chat_id: input.senderTelegramChatId ?? undefined,
+          telegram_username: (input.profile?.username || input.senderTelegramUsername)?.replace(/^@/, "").trim() || undefined,
           channel: contactChannelFor(input.channel),
           messenger_id: input.channel === "max" ? (input.chatId || input.chatThreadId) : undefined,
           messenger_name: input.channel === "max" ? "Макс" : undefined,
@@ -1054,17 +1066,18 @@ export class CrmPipelineService {
             pipelineId = await this.seedDefaultPipeline(tx, input.tenantId);
           }
 
-          // Анонимный веб-чат без контактов идёт в «Первый контакт»,
-          // заявки с подтвержденными контактами (мессенджеры, телефон, email) — в «Новый лид»
-          const isAnonymousWebchat =
-            input.channel === "webchat" &&
-            !effectiveSenderPhone &&
-            !effectiveSenderEmail &&
-            !input.senderPhone &&
-            !input.senderEmail &&
-            (!contact || ((!contact.phone || contact.phone.trim().length === 0) && (!contact.email || contact.email.trim().length === 0)));
+          // Если у лида нет подтвержденных контактов для связи (телефон / email) —
+          // обращение идёт в системный нулевой этап «Первый контакт» для квалификации AI-ботом.
+          // Лиды с переданными контактами — сразу в «Новый лид».
+          const hasContactDetails = Boolean(
+            effectiveSenderPhone ||
+            effectiveSenderEmail ||
+            input.senderPhone ||
+            input.senderEmail ||
+            (contact && ((contact.phone && contact.phone.trim().length > 0) || (contact.email && contact.email.trim().length > 0)))
+          );
 
-          const targetStageName = isAnonymousWebchat ? "Первый контакт" : "Новый лид";
+          const targetStageName = hasContactDetails ? "Новый лид" : "Первый контакт";
 
           let stage = await tx.queryOne<{ id: string }>(
             `SELECT id FROM stages
@@ -1819,11 +1832,31 @@ export class CrmPipelineService {
         [tenantId, Number(input.senderTelegramChatId)],
       );
       if (byChatId !== null) return byChatId;
+
+      // Если контакт с таким telegram_chat_id был ранее soft-deleted,
+      // но клиент снова написал нам — восстанавливаем контакт, чтобы не терять историю, телефон и не плодить дубликаты
+      const deletedContact = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM contacts
+         WHERE tenant_id = $1 AND telegram_chat_id = $2 AND deleted_at IS NOT NULL
+         ORDER BY updated_at DESC LIMIT 1`,
+        [tenantId, Number(input.senderTelegramChatId)],
+      );
+      if (deletedContact) {
+        await tx.query(
+          `UPDATE contacts SET deleted_at = NULL, updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+          [deletedContact.id, tenantId],
+        );
+        const restored = await tx.queryOne<ExistingContact>(
+          `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts WHERE id = $1 AND tenant_id = $2`,
+          [deletedContact.id, tenantId],
+        );
+        if (restored) return restored;
+      }
     }
 
     // Дедупликация по telegram_username и соцсетям
-    if (input.profile?.username !== undefined && input.profile.username.length > 0) {
-      const clean = input.profile.username.replace(/^@/, "").trim();
+    const candidateUsername = (input.profile?.username || input.senderTelegramUsername || input.senderUsername)?.replace(/^@/, "").trim();
+    if (candidateUsername !== undefined && candidateUsername.length > 0) {
       const byUsername = await tx.queryOne<ExistingContact>(
         `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
          WHERE tenant_id = $1
@@ -1834,7 +1867,7 @@ export class CrmPipelineService {
              OR socials @> $4::jsonb
            )
          LIMIT 1`,
-        [tenantId, clean, JSON.stringify([{ value: `@${clean}` }]), JSON.stringify([{ value: clean }])],
+        [tenantId, candidateUsername, JSON.stringify([{ value: `@${candidateUsername}` }]), JSON.stringify([{ value: candidateUsername }])],
       );
       if (byUsername !== null) return byUsername;
     }
