@@ -214,7 +214,8 @@ export const authenticatePlugin: FastifyPluginAsync = fp(
         PUBLIC_PATHS.has(path) ||
         path.includes("/widgets/bootstrap/") ||
         path.endsWith("/events") ||
-        path.includes("/events/")
+        path.includes("/events/") ||
+        path.includes("/integrations/telegram-bot/webhook")
       ) {
         return;
       }

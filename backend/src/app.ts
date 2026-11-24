@@ -175,7 +175,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       return (
         WEBHOOK_PATHS.has(u) ||
         u.startsWith("/api/v1/webhooks/sites/") ||
-        u.startsWith("/api/webhooks/sites/")
+        u.startsWith("/api/webhooks/sites/") ||
+        u.startsWith("/api/v1/integrations/telegram-bot/webhook")
       );
     },
   });

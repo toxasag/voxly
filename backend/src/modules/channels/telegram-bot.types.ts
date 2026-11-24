@@ -79,6 +79,19 @@ export interface TelegramBotManagerInfoDTO {
   };
 }
 
+/** Данные о бизнес-подключении бота (Telegram Business Chatbot / Автоматизация чатов). */
+export interface TelegramBusinessConnectionDTO {
+  id: string;
+  user_id: string;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  can_reply: boolean;
+  is_enabled: boolean;
+  date?: number;
+  updated_at?: string;
+}
+
 /** Результат создания / инициализации управляемого бота. */
 export interface TelegramBotCreateManagedResultDTO {
   account: ChannelAccountDTO;
@@ -107,6 +120,8 @@ export type BotCreateInput = z.infer<typeof botCreateSchema>;
 
 export const autoActivateBotSchema = z.object({
   name: z.string().trim().max(120).optional(),
+  token: z.string().trim().optional(),
+  bot_id: z.union([z.number(), z.string()]).optional(),
 });
 
 export type AutoActivateBotInput = z.infer<typeof autoActivateBotSchema>;

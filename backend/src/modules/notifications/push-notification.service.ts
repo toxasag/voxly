@@ -11,6 +11,7 @@
 import { EventEmitter } from "node:events";
 import webpush from "web-push";
 import { query, queryOne, runWithTenantContext } from "../../db/client.js";
+import { notificationPreferencesService } from "./notification-preferences.service.js";
 
 // VAPID ключи с fallback по умолчанию
 const DEFAULT_VAPID_PUBLIC_KEY =
@@ -216,6 +217,16 @@ export class PushNotificationService {
     payload: WebPushPayload,
   ): Promise<number> {
     return runWithTenantContext(tenantId, async () => {
+      // Проверяем мастер-выключатель уведомлений пользователя
+      const allowed = await notificationPreferencesService.isUserNotificationsEnabled(
+        tenantId,
+        userId,
+        "push",
+      );
+      if (!allowed) {
+        return 0;
+      }
+
       const subscriptions = await query<{
         id: string;
         endpoint: string;
@@ -283,16 +294,22 @@ export class PushNotificationService {
     excludeUserId?: string,
   ): Promise<number> {
     return runWithTenantContext(tenantId, async () => {
+      // Исключаем подписки пользователей, у которых выключены уведомления
       const subscriptions = await query<{
         id: string;
         endpoint: string;
         p256dh: string;
         auth: string;
       }>(
-        `SELECT id, endpoint, p256dh, auth
-         FROM push_subscriptions
-         WHERE tenant_id = $1
-           AND ($2::uuid IS NULL OR user_id <> $2::uuid)`,
+        `SELECT ps.id, ps.endpoint, ps.p256dh, ps.auth
+         FROM push_subscriptions ps
+         JOIN users u ON u.id = ps.user_id AND u.tenant_id = ps.tenant_id
+         LEFT JOIN user_notification_settings uns ON uns.user_id = ps.user_id AND uns.tenant_id = ps.tenant_id
+         WHERE ps.tenant_id = $1
+           AND ($2::uuid IS NULL OR ps.user_id <> $2::uuid)
+           AND (u.notifications_enabled IS NOT FALSE)
+           AND (uns.notifications_enabled IS NULL OR uns.notifications_enabled = true)
+           AND (uns.push_enabled IS NULL OR uns.push_enabled = true)`,
         [tenantId, excludeUserId ?? null],
       );
 
@@ -348,6 +365,28 @@ export class PushNotificationService {
     params: CreateInAppNotificationParams,
   ): Promise<InAppNotificationDTO> {
     return runWithTenantContext(params.tenantId, async () => {
+      // Если адресовано конкретному пользователю — проверяем его мастер-выключатель
+      if (params.userId) {
+        const allowed = await notificationPreferencesService.isUserNotificationsEnabled(
+          params.tenantId,
+          params.userId,
+          "inapp",
+        );
+        if (!allowed) {
+          return {
+            id: "skipped",
+            category: params.category,
+            entity_type: params.entityType,
+            entity_id: params.entityId,
+            title: params.title,
+            description: params.description,
+            data: params.data,
+            created_at: new Date().toISOString(),
+            read: true,
+          };
+        }
+      }
+
       const row = await queryOne<InAppNotificationRow>(
         `INSERT INTO inapp_notifications (
            tenant_id, user_id, category, entity_type, entity_id,

@@ -77,15 +77,27 @@ function toTransaction(dto: TransactionDTO): Transaction {
     date: dto.occurredAt,
     type: dto.type,
     category: dto.categoryName as Transaction["category"],
+    category_id: dto.categoryId ?? null,
     amount: dto.amount,
     account_id: dto.accountId,
     account_name: dto.accountName,
     description: dto.description,
-    linked_entity_id: dto.dealId ?? dto.repairOrderId ?? dto.invoiceId,
-    linked_entity_type: dto.dealId ? "deal" : dto.repairOrderId ? "repair" : dto.invoiceId ? "invoice" : null,
+    linked_entity_id: dto.dealId ?? dto.repairOrderId ?? dto.invoiceId ?? dto.supplierOrderId ?? null,
+    linked_entity_type: dto.dealId
+      ? "deal"
+      : dto.repairOrderId
+        ? "repair"
+        : dto.invoiceId
+          ? "invoice"
+          : dto.supplierOrderId
+            ? "supplier_order"
+            : null,
     linked_entity_label: null,
+    supplier_order_id: dto.supplierOrderId ?? null,
     counterparty: dto.counterpartyName ?? "",
     counterparty_inn: dto.counterpartyInn ?? "",
+    created_by_id: dto.createdById ?? null,
+    created_by_name: dto.createdByName ?? "",
   };
 }
 
@@ -242,11 +254,25 @@ function FinancePageContent() {
   }, [searchParams]);
 
   const handleCreateTransaction = useCallback(async (p: CreateTransactionPayload) => {
-    await createTxMutation.mutateAsync(p);
+    try {
+      await createTxMutation.mutateAsync(p);
+      toast.success(p.type === "income" ? "Доходная операция создана" : "Расходная операция создана");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Не удалось создать операцию";
+      toast.error(msg);
+      throw err;
+    }
   }, [createTxMutation]);
 
   const handleTransfer = useCallback(async (p: { from_account_id: string; to_account_id: string; amount: number }) => {
-    await transferMutation.mutateAsync(p);
+    try {
+      await transferMutation.mutateAsync(p);
+      toast.success("Перевод успешно выполнен");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Не удалось выполнить перевод";
+      toast.error(msg);
+      throw err;
+    }
   }, [transferMutation]);
 
   const handleCreateInvoice = useCallback(async (p: PrefilledInvoicePayload) => {

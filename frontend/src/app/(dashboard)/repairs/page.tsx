@@ -13,7 +13,54 @@ import type { RepairTicket, RepairFilterStatus, RepairPaymentStatus } from "@/li
 import type { RepairOrderDTO, EquipmentIntakeItem, CreateBatchRepairPayload } from "@/lib/api/use-repairs";
 import { useRepairs, useCreateRepair, useCreateBatchRepair } from "@/lib/api/use-repairs";
 import type { CreateRepairPayload } from "@/schemas/repair.schema";
+import {
+  enumField,
+  stringField,
+  usePersistedFilters,
+  type FilterSchema,
+} from "@/lib/hooks/use-persisted-filters";
 import { cn } from "@/lib/utils";
+
+type RepairsPageFilters = {
+  status: RepairFilterStatus;
+  paymentStatus: RepairPaymentStatus | "all";
+  search: string;
+};
+
+const REPAIR_STATUS_VALUES: readonly RepairFilterStatus[] = [
+  "all",
+  "active",
+  "intake",
+  "waiting_parts",
+  "parts_order",
+  "ready",
+  "issued",
+  "diagnostics",
+  "approval",
+  "in_progress",
+  "rejected",
+];
+
+const REPAIR_PAYMENT_VALUES: readonly (RepairPaymentStatus | "all")[] = [
+  "all",
+  "unpaid",
+  "invoiced",
+  "paid",
+];
+
+const REPAIRS_FILTER_SCHEMA: FilterSchema<RepairsPageFilters> = {
+  status: enumField({
+    queryParam: "status",
+    defaultValue: "all",
+    allowed: REPAIR_STATUS_VALUES,
+  }),
+  paymentStatus: enumField({
+    queryParam: "payment",
+    defaultValue: "all",
+    allowed: REPAIR_PAYMENT_VALUES,
+  }),
+  search: stringField({ queryParam: "q" }),
+};
 
 export default function RepairsPage() {
   return (
@@ -24,22 +71,53 @@ export default function RepairsPage() {
 }
 
 function RepairsPageContent() {
-  const [filterStatus, setFilterStatus] = useState<RepairFilterStatus>("all");
-  const [filterPaymentStatus, setFilterPaymentStatus] = useState<RepairPaymentStatus | "all">("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const {
+    filters,
+    isHydrated: isFiltersHydrated,
+    hasActiveFilters,
+    setFilter,
+    resetFilters,
+  } = usePersistedFilters({
+    pageKey: "repairs",
+    schema: REPAIRS_FILTER_SCHEMA,
+  });
+
+  const {
+    status: filterStatus,
+    paymentStatus: filterPaymentStatus,
+    search: searchQuery,
+  } = filters;
+
+  const setFilterStatus = useCallback(
+    (status: RepairFilterStatus) => setFilter("status", status),
+    [setFilter],
+  );
+  const setFilterPaymentStatus = useCallback(
+    (paymentStatus: RepairPaymentStatus | "all") =>
+      setFilter("paymentStatus", paymentStatus),
+    [setFilter],
+  );
+  const setSearchQuery = useCallback(
+    (search: string) => setFilter("search", search),
+    [setFilter],
+  );
+
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [copyTargetTicket, setCopyTargetTicket] = useState<RepairTicket | null>(null);
   const [receiptTarget, setReceiptTarget] = useState<RepairTicket | null>(null);
   const [workOrderTarget, setWorkOrderTarget] = useState<RepairTicket | null>(null);
   const searchParams = useSearchParams();
 
-  const { data, isLoading, isError, error } = useRepairs({
-    status: filterStatus === "all" ? undefined : filterStatus,
-    paymentStatus: filterPaymentStatus === "all" ? undefined : filterPaymentStatus,
-    search: searchQuery || undefined,
-    limit: 25,
-    offset: 0,
-  });
+  const { data, isLoading, isError, error } = useRepairs(
+    {
+      status: filterStatus === "all" ? undefined : filterStatus,
+      paymentStatus: filterPaymentStatus === "all" ? undefined : filterPaymentStatus,
+      search: searchQuery || undefined,
+      limit: 25,
+      offset: 0,
+    },
+    { enabled: isFiltersHydrated },
+  );
 
   const createMutation = useCreateRepair();
   const createBatchMutation = useCreateBatchRepair();
@@ -236,10 +314,12 @@ function RepairsPageContent() {
           onFilterPaymentStatusChange={setFilterPaymentStatus}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          hasActiveFilters={hasActiveFilters}
+          onResetFilters={resetFilters}
           onPrintReceipt={(ticket) => setReceiptTarget(ticket)}
           onPrintWorkOrder={(ticket) => setWorkOrderTarget(ticket)}
           onCopyTicket={handleCopyTicket}
-          isLoading={isLoading}
+          isLoading={!isFiltersHydrated || isLoading}
           isError={isError}
           error={error}
         />

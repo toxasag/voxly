@@ -532,11 +532,16 @@ export function useCreateKnowledgeDraft(
 // Синтез базы знаний из CRM и WhatsApp
 // ---------------------------------------------------------------------------
 
-export function useCrmKnowledgeStats(): UseQueryResult<CrmKnowledgeStats, ApiClientError> {
+export function useCrmKnowledgeStats(
+  agentId?: string,
+): UseQueryResult<CrmKnowledgeStats, ApiClientError> {
   return useQuery({
-    queryKey: ["ai", "knowledge", "crm-stats"],
+    queryKey: ["ai", "knowledge", "crm-stats", agentId],
     queryFn: async () => {
-      const res = await apiClient.get<CrmKnowledgeStats>(`${BASE_PATH}/knowledge/crm-stats`);
+      const url = agentId
+        ? `${BASE_PATH}/knowledge/crm-stats?agent_id=${encodeURIComponent(agentId)}`
+        : `${BASE_PATH}/knowledge/crm-stats`;
+      const res = await apiClient.get<CrmKnowledgeStats>(url);
       return res.data;
     },
   });
@@ -914,6 +919,73 @@ export function useDeleteFeedback(agentId: string): UseMutationResult<
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Паспорт компании (Company Profile Summary & Approval)
+// ---------------------------------------------------------------------------
+
+export interface CompanyProfileData {
+  summary: string | null;
+  isApproved: boolean;
+  approvedAt: string | null;
+}
+
+export function useCompanyProfile(agentId: string) {
+  return useQuery<CompanyProfileData, ApiClientError>({
+    queryKey: ["ai", "agents", agentId, "company-profile"],
+    queryFn: async () => {
+      const res = await apiClient.get<CompanyProfileData>(
+        `${BASE_PATH}/agents/${agentId}/company-profile`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId),
+  });
+}
+
+export function useSynthesizeCompanyProfile(agentId: string): UseMutationResult<
+  { summary: string; isApproved: boolean; documentsCount: number },
+  ApiClientError,
+  { customText?: string } | void
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<{ summary: string; isApproved: boolean; documentsCount: number }>(
+        `${BASE_PATH}/agents/${agentId}/company-profile/synthesize`,
+        payload || {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "company-profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+    },
+  });
+}
+
+export function useApproveCompanyProfile(agentId: string): UseMutationResult<
+  { success: boolean; summary: string; approvedAt: string },
+  ApiClientError,
+  { summary: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ summary }) => {
+      const res = await apiClient.post<{ success: boolean; summary: string; approvedAt: string }>(
+        `${BASE_PATH}/agents/${agentId}/company-profile/approve`,
+        { summary },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId, "company-profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "agents"] });
+    },
+  });
+}
+
 
 
 

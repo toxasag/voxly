@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS users (
   -- проекте нет (ни multipart, ни S3, ни раздачи статики), поэтому клиент жмёт
   -- изображение в canvas до 256×256 — это ~15–25 КБ.
   avatar_url TEXT,
+  notifications_enabled BOOLEAN NOT NULL DEFAULT true,
   -- Приглашение сотрудника. Токен — только SHA-256, как у refresh_tokens.
   -- Статус («Активен» / «Приглашён») выводится из invited_at/activated_at, а не
   -- хранится отдельной колонкой: два источника истины разошлись бы при входе.
@@ -775,7 +776,9 @@ CREATE TABLE IF NOT EXISTS transactions (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   cash_account_id UUID NOT NULL REFERENCES cash_accounts(id),
   category_id UUID REFERENCES finance_categories(id),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   repair_order_id UUID REFERENCES repair_orders(id) ON DELETE SET NULL,
+  supplier_order_id UUID REFERENCES supplier_orders(id) ON DELETE SET NULL,
   amount NUMERIC NOT NULL,
   currency TEXT NOT NULL DEFAULT 'RUB',
   direction TEXT NOT NULL,
@@ -883,6 +886,18 @@ CREATE TABLE IF NOT EXISTS ai_agents (
   -- Промпт в БД, а не в коде (.cursorrules §13).
   system_prompt TEXT NOT NULL,
   context_entities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  company_name_override TEXT DEFAULT NULL,
+  consultant_source TEXT NOT NULL DEFAULT 'manual',
+  consultant_name TEXT DEFAULT NULL,
+  consultant_role TEXT DEFAULT NULL,
+  fallback_models TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  target_page_url TEXT DEFAULT NULL,
+  generated_system_prompt TEXT DEFAULT NULL,
+  knowledge_base_md TEXT NOT NULL DEFAULT '',
+  company_profile_summary TEXT DEFAULT NULL,
+  company_profile_approved BOOLEAN NOT NULL DEFAULT FALSE,
+  company_profile_approved_at TIMESTAMPTZ DEFAULT NULL,
+  feedback_learning_enabled BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
@@ -2027,6 +2042,53 @@ CREATE POLICY bots_tenant_isolation ON bots
   FOR ALL
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- -----------------------------------------------------------------------------
+-- Автоматическое каскадное удаление сообщений чата при soft-delete сделки
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trg_deals_soft_delete_messages()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN
+    DELETE FROM deal_messages WHERE deal_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_deals_soft_delete_messages ON deals;
+
+CREATE TRIGGER trg_deals_soft_delete_messages
+AFTER UPDATE OF deleted_at ON deals
+FOR EACH ROW
+WHEN (NEW.deleted_at IS NOT NULL)
+EXECUTE FUNCTION trg_deals_soft_delete_messages();
+
+-- -----------------------------------------------------------------------------
+-- Настройки уведомлений пользователя (мастер-выключатель и каналы)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_notification_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notifications_enabled BOOLEAN NOT NULL DEFAULT true,
+  sound_enabled BOOLEAN NOT NULL DEFAULT true,
+  inapp_enabled BOOLEAN NOT NULL DEFAULT true,
+  push_enabled BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_user_notification_settings_tenant_user UNIQUE (tenant_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_notification_settings_user
+  ON user_notification_settings (tenant_id, user_id);
+ALTER TABLE user_notification_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_notification_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS user_notification_settings_tenant_isolation ON user_notification_settings;
+CREATE POLICY user_notification_settings_tenant_isolation ON user_notification_settings
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 
 
 

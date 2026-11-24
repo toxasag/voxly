@@ -449,7 +449,7 @@ export class ContactsService {
         phones.callingCode,
         JSON.stringify(phones.additional),
         cleanEmail(payload.email),
-        socialValue(socials, "telegram"),
+        payload.telegram_username ? payload.telegram_username.replace(/^@/, "").trim() : socialValue(socials, "telegram"),
         nullIfBlank(payload.telegram_chat_id),
         socialValue(socials, "whatsapp"),
         JSON.stringify(socials),
@@ -654,7 +654,25 @@ export class ContactsService {
       [tenantId, id],
     );
 
-    return row !== null;
+    if (row !== null) {
+      // Каскадно помечаем удаленными сделки контакта и удаляем их сообщения
+      const deals = await query<{ id: string }>(
+        `UPDATE deals SET deleted_at = now()
+         WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, id],
+      );
+      if (deals.length > 0) {
+        const dealIds = deals.map((d) => d.id);
+        await query(
+          `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+          [tenantId, dealIds],
+        );
+      }
+      return true;
+    }
+
+    return false;
   }
 
   async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
@@ -668,6 +686,22 @@ export class ContactsService {
          RETURNING id`,
         [tenantId, ids],
       );
+      if (rows.length > 0) {
+        const contactIds = rows.map((r) => r.id);
+        const deals = await query<{ id: string }>(
+          `UPDATE deals SET deleted_at = now()
+           WHERE tenant_id = $1 AND contact_id = ANY($2::uuid[]) AND deleted_at IS NULL
+           RETURNING id`,
+          [tenantId, contactIds],
+        );
+        if (deals.length > 0) {
+          const dealIds = deals.map((d) => d.id);
+          await query(
+            `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+            [tenantId, dealIds],
+          );
+        }
+      }
       return { count: rows.length };
     }
 
@@ -715,6 +749,23 @@ export class ContactsService {
        RETURNING c.id`,
       params,
     );
+
+    if (rows.length > 0) {
+      const contactIds = rows.map((r) => r.id);
+      const deals = await query<{ id: string }>(
+        `UPDATE deals SET deleted_at = now()
+         WHERE tenant_id = $1 AND contact_id = ANY($2::uuid[]) AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, contactIds],
+      );
+      if (deals.length > 0) {
+        const dealIds = deals.map((d) => d.id);
+        await query(
+          `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+          [tenantId, dealIds],
+        );
+      }
+    }
 
     return { count: rows.length };
   }

@@ -87,7 +87,7 @@ import {
   type WarehouseLimit,
 } from "@/components/warehouse/WarehousePagination";
 import { CreateItemModal } from "@/components/warehouse/CreateItemModal";
-import { IntakeModal } from "@/components/warehouse/IntakeModal";
+import { WarehouseIntakeDialog } from "@/components/warehouse/WarehouseIntakeDialog";
 import { CreateSupplierOrderModal } from "@/components/warehouse/CreateSupplierOrderModal";
 import { EditSupplierOrderModal } from "@/components/warehouse/EditSupplierOrderModal";
 import { SupplierOrderDetailModal } from "@/components/warehouse/SupplierOrderDetailModal";
@@ -358,6 +358,7 @@ function WarehouseContent() {
     | "totalStock"
     | "reservedStock"
     | "availableStock"
+    | "minStock"
     | "costPrice"
     | "retailPrice";
   type SortDirection = "asc" | "desc";
@@ -1436,6 +1437,22 @@ function WarehouseContent() {
             ))}
           </div>
         )}
+
+        {activeTab === "supplier_orders" && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedAggregatedIds(new Set());
+                setCreateSupplierOrderModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Заказ поставщику</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Активные фильтры (чипы) */}
@@ -1646,6 +1663,23 @@ function WarehouseContent() {
                     </div>
                   </th>
                   <th
+                    onClick={() => handleSort("minStock")}
+                    className={cn(
+                      "px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[95px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+                      sortField === "minStock" && "text-[#4a38f5] bg-[#4a38f5]/5",
+                    )}
+                    title="Сортировать по минимальному остатку"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Мин. ост.</span>
+                      {sortField === "minStock" ? (
+                        sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+                      ) : (
+                        <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      )}
+                    </div>
+                  </th>
+                  <th
                     onClick={() => handleSort("costPrice")}
                     className={cn(
                       "px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px] select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
@@ -1756,6 +1790,15 @@ function WarehouseContent() {
                           {item.availableStock} {item.unit}
                         </span>
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        {item.minStock > 0 ? (
+                          <span className="font-mono text-[13px] text-[#666666]">
+                            {item.minStock} {item.unit}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-[#888888] font-mono">0</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex flex-col items-end">
                           <span className="font-mono text-[13px] text-[#666666]" title="Себестоимость следующей списываемой партии (FIFO)">
@@ -1803,7 +1846,7 @@ function WarehouseContent() {
                 })}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="px-4 py-12 text-center text-sm text-[#888888]">
+                    <td colSpan={12} className="px-4 py-12 text-center text-sm text-[#888888]">
                       {isItemsLoading ? (
                         <div className="flex items-center justify-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
@@ -2507,9 +2550,31 @@ function WarehouseContent() {
                 {filteredSupplierOrders.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#888888]">
-                      {isSupplierOrdersLoading
-                        ? "Загрузка заказов поставщикам..."
-                        : "Заказов поставщикам пока нет. Выберите заявки на закупку и нажмите «Сформировать заказ поставщику»."}
+                      {isSupplierOrdersLoading ? (
+                        "Загрузка заказов поставщикам..."
+                      ) : (
+                        <div className="flex flex-col items-center justify-center gap-3">
+                          <Truck className="h-8 w-8 text-[#cccccc]" />
+                          <div>
+                            {searchQuery.trim()
+                              ? "Заказов по вашему запросу не найдено."
+                              : "Заказов поставщикам пока нет."}
+                          </div>
+                          {!searchQuery.trim() && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAggregatedIds(new Set());
+                                setCreateSupplierOrderModalOpen(true);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+                            >
+                              <Plus className="h-4 w-4" />
+                              <span>Создать заказ поставщику</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -2741,20 +2806,22 @@ function WarehouseContent() {
         onClose={() => setCreateItemModalOpen(false)}
       />
 
-      <IntakeModal
-        open={intakeModalOpen}
-        onClose={() => {
-          setIntakeModalOpen(false);
-          setIntakeInitialItem(null);
-          setIntakePurchaseRequest(null);
-        }}
-        initialItem={intakeInitialItem}
-        purchaseRequestId={intakePurchaseRequest?.id}
-        initialName={intakePurchaseRequest?.itemName}
-        initialSku={intakePurchaseRequest?.sku}
-        initialQty={intakePurchaseRequest?.quantity}
-        initialPrice={intakePurchaseRequest?.estimatedPrice}
-      />
+      {intakeModalOpen && (
+        <WarehouseIntakeDialog
+          open={intakeModalOpen}
+          onClose={() => {
+            setIntakeModalOpen(false);
+            setIntakeInitialItem(null);
+            setIntakePurchaseRequest(null);
+          }}
+          initialItem={intakeInitialItem}
+          purchaseRequestId={intakePurchaseRequest?.id}
+          initialName={intakePurchaseRequest?.itemName}
+          initialSku={intakePurchaseRequest?.sku}
+          initialQty={intakePurchaseRequest?.quantity}
+          initialPrice={intakePurchaseRequest?.estimatedPrice}
+        />
+      )}
 
       <CreateSupplierOrderModal
         open={createSupplierOrderModalOpen}

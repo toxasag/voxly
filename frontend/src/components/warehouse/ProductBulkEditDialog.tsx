@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { X, SlidersHorizontal, Loader2, Check } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { X, SlidersHorizontal, Loader2, Check, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import {
   useBulkUpdateWarehouseItems,
@@ -10,9 +10,12 @@ import {
   useCreateWarehouseCategory,
   useWarehouseBrands,
   useCreateWarehouseBrand,
+  useWarehouseModels,
   type BulkUpdateWarehouseItemsPayload,
   type PriceAdjustmentAction,
 } from "@/lib/api/use-warehouse";
+import { useRepairDictionaries } from "@/lib/api/use-repairs";
+import { DictionarySelectField } from "@/components/repairs/DictionarySelectField";
 import { CreatableCombobox } from "@/components/ui/creatable-combobox";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +39,10 @@ export function ProductBulkEditDialog({
   const [enableBrand, setEnableBrand] = useState(false);
   const [brand, setBrand] = useState("");
 
+  const [enableModels, setEnableModels] = useState(false);
+  const [modelsMode, setModelsMode] = useState<"replace" | "add">("replace");
+  const [modelNames, setModelNames] = useState<string[]>([]);
+
   const [enableUnit, setEnableUnit] = useState(false);
   const [unit, setUnit] = useState("шт.");
 
@@ -58,6 +65,22 @@ export function ProductBulkEditDialog({
   const createCategoryMutation = useCreateWarehouseCategory();
   const brandsQuery = useWarehouseBrands();
   const createBrandMutation = useCreateWarehouseBrand();
+  const dictionariesQuery = useRepairDictionaries();
+  const warehouseModelsQuery = useWarehouseModels();
+
+  const combinedModels = useMemo(() => {
+    const list = dictionariesQuery.data?.models ? [...dictionariesQuery.data.models] : [];
+    const seenIds = new Set(list.map((m) => m.id));
+    if (warehouseModelsQuery.data) {
+      for (const m of warehouseModelsQuery.data) {
+        if (!seenIds.has(m.id)) {
+          list.push({ id: m.id, name: m.name, brandName: m.brandName, brandId: m.brandId });
+          seenIds.add(m.id);
+        }
+      }
+    }
+    return list;
+  }, [dictionariesQuery.data?.models, warehouseModelsQuery.data]);
 
   useEffect(() => {
     if (open && selectedIds.length === 1 && singleItemQuery.data) {
@@ -69,6 +92,12 @@ export function ProductBulkEditDialog({
       if (it.brand) {
         setEnableBrand(true);
         setBrand(it.brand);
+      }
+      const mNames = it.modelNames ?? (it.models ? it.models.map((m) => m.name) : []);
+      if (mNames.length > 0) {
+        setEnableModels(true);
+        setModelNames(mNames);
+        setModelsMode("replace");
       }
       if (it.unit) {
         setEnableUnit(true);
@@ -94,6 +123,9 @@ export function ProductBulkEditDialog({
       setCategory("");
       setEnableBrand(false);
       setBrand("");
+      setEnableModels(false);
+      setModelsMode("replace");
+      setModelNames([]);
       setEnableUnit(false);
       setUnit("шт.");
       setEnableMinStock(false);
@@ -115,6 +147,7 @@ export function ProductBulkEditDialog({
     if (
       !enableCategory &&
       !enableBrand &&
+      !enableModels &&
       !enableUnit &&
       !enableMinStock &&
       !enableRetailPrice &&
@@ -133,6 +166,10 @@ export function ProductBulkEditDialog({
     }
     if (enableBrand) {
       payload.brand = brand.trim();
+    }
+    if (enableModels) {
+      payload.models = modelNames;
+      payload.models_mode = modelsMode;
     }
     if (enableUnit) {
       payload.unit = unit.trim();
@@ -258,6 +295,71 @@ export function ProductBulkEditDialog({
                   }
                 }}
               />
+            )}
+          </div>
+
+          {/* Compatible Models */}
+          <div className="rounded-[8px] border border-[#e5e5e5] p-3 space-y-2.5 bg-white">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-[#111111]">
+                <input
+                  type="checkbox"
+                  checked={enableModels}
+                  onChange={(e) => setEnableModels(e.target.checked)}
+                  className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
+                />
+                <span>Подходит к моделям</span>
+              </label>
+              {enableModels && (
+                <div className="flex items-center gap-1 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setModelsMode("replace")}
+                    className={cn(
+                      "rounded-[5px] px-2 py-0.5 font-medium transition-colors border",
+                      modelsMode === "replace"
+                        ? "bg-[#4a38f5] text-white border-[#4a38f5]"
+                        : "bg-[#fafafa] text-[#666666] border-[#e5e5e5] hover:bg-[#f0f0f0]",
+                    )}
+                  >
+                    Заменить
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModelsMode("add")}
+                    className={cn(
+                      "rounded-[5px] px-2 py-0.5 font-medium transition-colors border",
+                      modelsMode === "add"
+                        ? "bg-[#4a38f5] text-white border-[#4a38f5]"
+                        : "bg-[#fafafa] text-[#666666] border-[#e5e5e5] hover:bg-[#f0f0f0]",
+                    )}
+                  >
+                    Добавить
+                  </button>
+                </div>
+              )}
+            </div>
+            {enableModels && (
+              <div className="space-y-1.5 pt-1">
+                <DictionarySelectField
+                  icon={Cpu}
+                  category="model"
+                  mode="multi"
+                  brandName={enableBrand && brand ? brand : undefined}
+                  allowAllBrands={!enableBrand || !brand}
+                  placeholder="Выберите одну или несколько моделей..."
+                  items={combinedModels}
+                  value={modelNames}
+                  onChange={(val) => setModelNames(Array.isArray(val) ? val : val ? [val] : [])}
+                />
+                <p className="text-[11px] text-[#888888]">
+                  {modelsMode === "replace"
+                    ? modelNames.length === 0
+                      ? "Список совместимых моделей будет очищен у выбранных товаров"
+                      : "Указанные модели заменят текущий список у выбранных товаров"
+                    : "Указанные модели добавятся к существующему списку у выбранных товаров"}
+                </p>
+              </div>
             )}
           </div>
 

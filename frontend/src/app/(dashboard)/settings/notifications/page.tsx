@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { UserMasterNotificationToggle } from "@/components/settings/UserMasterNotificationToggle";
 import { LeadNotificationChannels } from "@/components/settings/LeadNotificationChannels";
 import { WebPushDeviceSettings } from "@/components/settings/WebPushDeviceSettings";
 import { Guard } from "@/components/shared/Guard";
@@ -20,10 +21,13 @@ export default function NotificationSettingsPage() {
           </Link>
         </div>
 
+        {/* Мастер-выключатель всех уведомлений пользователя */}
+        <UserMasterNotificationToggle />
+
         {/* Уведомления на текущем устройстве (Web Push & PWA) */}
         <WebPushDeviceSettings />
 
-        {/* Каналы уведомлений команды (Email, Telegram Bot, WhatsApp) */}
+        {/* Каналы уведомлений команды (Email, Telegram Bot, WhatsApp, Битрикс24) */}
         <LeadNotificationChannels />
       </div>
     </Guard>

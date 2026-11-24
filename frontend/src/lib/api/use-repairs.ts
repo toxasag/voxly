@@ -490,7 +490,10 @@ export const repairKeys = {
 // Queries
 // ---------------------------------------------------------------------------
 
-export function useRepairs(params: RepairsQueryParams = {}): UseQueryResult<RepairsListResult, ApiClientError> {
+export function useRepairs(
+  params: RepairsQueryParams = {},
+  options?: { enabled?: boolean },
+): UseQueryResult<RepairsListResult, ApiClientError> {
   const limit = params.limit ?? DEFAULT_PAGE_SIZE;
   const offset = params.offset ?? 0;
 
@@ -520,6 +523,7 @@ export function useRepairs(params: RepairsQueryParams = {}): UseQueryResult<Repa
         offset: typeof meta.offset === "number" ? meta.offset : offset,
       };
     },
+    enabled: options?.enabled ?? true,
     placeholderData: (previous) => previous,
   });
 }
@@ -1170,6 +1174,7 @@ export function useBatchUpdateRepairStatus(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -1191,6 +1196,7 @@ export function useBatchUpdateRepairPaymentStatus(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -1209,6 +1215,7 @@ export function useBatchDeleteRepairs(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

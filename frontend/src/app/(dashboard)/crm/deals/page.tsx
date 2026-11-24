@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Handshake } from "lucide-react";
+import { Handshake, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
@@ -40,8 +40,54 @@ import {
 } from "@/lib/api/use-deals";
 import { useTenantUsers, indexTenantUsers } from "@/lib/api/use-tenant-users";
 import { useRecordParam } from "@/lib/utils/use-record-param";
+import {
+  enumField,
+  nullableStringField,
+  stringField,
+  usePersistedFilters,
+  type FilterSchema,
+} from "@/lib/hooks/use-persisted-filters";
 import { cn } from "@/lib/utils";
 import type { CreateDealPayload } from "@/schemas/deal.schema";
+
+type DealPresetView = "all" | "active" | "high_value" | "won";
+
+type DealsPageFilters = {
+  presetView: DealPresetView;
+  pipelineId: string | null;
+  search: string;
+  sortBy: DealSortKey;
+};
+
+const DEAL_PRESET_VALUES: readonly DealPresetView[] = [
+  "all",
+  "active",
+  "high_value",
+  "won",
+];
+
+const DEAL_SORT_VALUES: readonly DealSortKey[] = [
+  "last_message",
+  "last_event",
+  "created",
+  "title",
+  "budget",
+];
+
+const DEALS_FILTER_SCHEMA: FilterSchema<DealsPageFilters> = {
+  presetView: enumField({
+    queryParam: "preset",
+    defaultValue: "all",
+    allowed: DEAL_PRESET_VALUES,
+  }),
+  pipelineId: nullableStringField({ queryParam: "pipeline" }),
+  search: stringField({ queryParam: "q" }),
+  sortBy: enumField({
+    queryParam: "sort",
+    defaultValue: "created",
+    allowed: DEAL_SORT_VALUES,
+  }),
+};
 
 const APPEARANCE_KEY = "getvoxly.dealcard";
 
@@ -61,7 +107,32 @@ function DealsContent() {
   const tenantUsers = useTenantUsers();
   const createDeal = useCreateDeal();
 
-  const [pipelineId, setPipelineId] = useState<string | null>(null);
+  const {
+    filters,
+    isHydrated: isFiltersHydrated,
+    hasActiveFilters,
+    setFilter,
+    resetFilters,
+  } = usePersistedFilters({
+    pageKey: "crm-deals",
+    schema: DEALS_FILTER_SCHEMA,
+  });
+
+  const defaultPipelineId = pipelines.data?.[0]?.id ?? null;
+
+  const pipelineId = useMemo(() => {
+    if (!isFiltersHydrated) return null;
+    const list = pipelines.data ?? [];
+    if (list.length === 0) return null;
+    if (
+      filters.pipelineId !== null &&
+      list.some((pipeline) => pipeline.id === filters.pipelineId)
+    ) {
+      return filters.pipelineId;
+    }
+    return list[0]?.id ?? null;
+  }, [isFiltersHydrated, pipelines.data, filters.pipelineId]);
+
   const [createOpen, setCreateOpen] = useState(false);
 
   /**
@@ -82,10 +153,20 @@ function DealsContent() {
    * списком, каждый раз возвращался в канбан.
    */
   const { viewMode: view, setViewMode: setView } = useDealsViewMode();
-  type DealPresetView = "all" | "active" | "high_value" | "won";
-  const [presetView, setPresetView] = useState<DealPresetView>("all");
-  const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<DealSortKey>("created");
+  const { presetView, search, sortBy } = filters;
+
+  const setPresetView = useCallback(
+    (next: DealPresetView) => setFilter("presetView", next),
+    [setFilter],
+  );
+  const setSearch = useCallback(
+    (next: string) => setFilter("search", next),
+    [setFilter],
+  );
+  const setSortBy = useCallback(
+    (next: DealSortKey) => setFilter("sortBy", next),
+    [setFilter],
+  );
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [configureMode, setConfigureMode] = useState(false);
   const [bulkEnabled, setBulkEnabled] = useState(false);
@@ -95,9 +176,17 @@ function DealsContent() {
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Защита от удалённой воронки: если сохранённый pipelineId больше не существует,
+  // очищаем его из URL и localStorage и возвращаемся на первую воронку.
   useEffect(() => {
-    if (pipelineId === null && pipelines.data?.[0]) setPipelineId(pipelines.data[0].id);
-  }, [pipelineId, pipelines.data]);
+    if (!isFiltersHydrated || !pipelines.isSuccess || !pipelines.data.length) return;
+    if (
+      filters.pipelineId !== null &&
+      !pipelines.data.some((pipeline) => pipeline.id === filters.pipelineId)
+    ) {
+      setFilter("pipelineId", null);
+    }
+  }, [isFiltersHydrated, pipelines.isSuccess, pipelines.data, filters.pipelineId, setFilter]);
 
   useEffect(() => {
     if (searchParams.get("create") === "1") setCreateOpen(true);
@@ -415,7 +504,10 @@ function DealsContent() {
       <DealsToolbar
         pipelines={pipelines.data ?? []}
         pipelineId={pipelineId ?? ""}
-        onPipelineChange={(id) => { setPipelineId(id); setConfigureMode(false); }}
+        onPipelineChange={(id) => {
+          setFilter("pipelineId", id === defaultPipelineId ? null : id);
+          setConfigureMode(false);
+        }}
         view={view}
         onViewChange={setView}
         search={search}
@@ -487,6 +579,16 @@ function DealsContent() {
               </button>
             );
           })}
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="shrink-0 whitespace-nowrap inline-flex items-center gap-1 h-8 min-h-[32px] rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#666666] hover:border-[#cccccc] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Сбросить
+            </button>
+          )}
         </div>
         {/* Градиентное затухание справа на мобильных экранах как визуальный хинт о наличии скролла */}
         <div
@@ -501,7 +603,7 @@ function DealsContent() {
         </p>
       )}
 
-      {kanban.isLoading ? <SkeletonTable rows={5} columns={6} /> : kanban.isError ? <DealKanbanError message={kanban.error.message} onRetry={() => void kanban.refetch()} /> :
+      {!isFiltersHydrated || kanban.isLoading ? <SkeletonTable rows={5} columns={6} /> : kanban.isError ? <DealKanbanError message={kanban.error.message} onRetry={() => void kanban.refetch()} /> :
         view === "kanban" ? (
           <DealKanban
             pipelineId={pipelineId ?? ""}

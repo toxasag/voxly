@@ -2,9 +2,13 @@
 
 import { Bell, BellOff, CheckCircle2, Send, Smartphone, AlertTriangle } from "lucide-react";
 import { useWebPush } from "@/lib/notifications/use-web-push";
+import { useNotificationPreferences } from "@/lib/api/use-notification-preferences";
 import { TagPill } from "@/components/ui/tag";
 
 export function WebPushDeviceSettings() {
+  const { preferences } = useNotificationPreferences();
+  const isMasterDisabled = !preferences.notifications_enabled || !preferences.push_enabled;
+
   const {
     isSupported,
     permission,
@@ -74,6 +78,15 @@ export function WebPushDeviceSettings() {
       </div>
 
       {/* Предупреждения и подсказки */}
+      {isMasterDisabled && (
+        <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+          <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+          <span>
+            <strong>Внимание:</strong> персональные уведомления (или push) отключены мастер-выключателем выше. Доставка Web Push на это устройство приостановлена.
+          </span>
+        </div>
+      )}
+
       {!isSupported && (
         <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />

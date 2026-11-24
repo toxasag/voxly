@@ -7,6 +7,7 @@ import type { ChannelSlug } from "../../types/index.js";
 import { quotaService } from "../quotas/quota.service.js";
 import { channelLinksService } from "./channel-links.service.js";
 import { TelegramService } from "../auth/telegram.service.js";
+import type { OutboundMessage, OutboundSendResult } from "./outbound-registry.js";
 import type {
   ChannelAccountDTO,
   ChannelStatus,
@@ -127,7 +128,7 @@ export class TelegramBotService {
    */
   async getMe(token: string): Promise<TelegramBotInfoDTO> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => controller.abort(), 30_000);
 
     try {
       const res = await fetch(`${TELEGRAM_API_BASE}/bot${token.trim()}/getMe`, {
@@ -145,6 +146,13 @@ export class TelegramBotService {
             400,
             "INVALID_BOT_TOKEN",
             "Неверный токен бота Telegram. Проверьте правильность токена, полученного от @BotFather или Bot Manager.",
+          );
+        }
+        if (res.status === 429 || body?.error_code === 429) {
+          throw new AppError(
+            429,
+            "TELEGRAM_RATE_LIMITED",
+            `Telegram Bot API временно ограничил запросы к боту (${desc}). Подождите полминуты и повторите попытку.`,
           );
         }
         throw new AppError(
@@ -182,7 +190,10 @@ export class TelegramBotService {
       };
     } catch (err) {
       if (err instanceof AppError) throw err;
-      const message = err instanceof Error ? err.message : "Неизвестная сетевая ошибка";
+      let message = err instanceof Error ? err.message : "Неизвестная сетевая ошибка";
+      if (err instanceof Error && (err.name === "AbortError" || message.includes("aborted"))) {
+        message = "Таймаут соединения с Telegram Bot API (сервер Telegram не ответил вовремя). Повторите попытку.";
+      }
       throw new AppError(
         502,
         "TELEGRAM_CONNECTION_ERROR",
@@ -217,7 +228,7 @@ export class TelegramBotService {
     const cleanUsername = botInfo.username.replace(/^@/, "").trim();
     const externalId = `@${cleanUsername}`;
 
-    return withTenant(tenantId, async (tx) => {
+    const result = await withTenant(tenantId, async (tx) => {
       // 1. Проверяем наличие установленного модуля
       const installedModule = await tx.queryOne<{ quantity: number }>(
         `SELECT quantity FROM installed_modules WHERE tenant_id = $1 AND slug = 'telegram_bot'`,
@@ -318,6 +329,12 @@ export class TelegramBotService {
         bound_agent_name: boundAgentName,
       });
     });
+
+    const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+    const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${result.id}`;
+    void this.setWebhook(payload.token, webhookUrl);
+
+    return result;
   }
 
   /**
@@ -477,11 +494,7 @@ export class TelegramBotService {
     accountId: string,
     payload: TelegramBotCompleteManagedInput,
   ): Promise<ChannelAccountDTO> {
-    const botInfo = await this.getMe(payload.token);
-    const cleanUsername = botInfo.username.replace(/^@/, "").trim();
-    const externalId = `@${cleanUsername}`;
-
-    return withTenant(tenantId, async (tx) => {
+    const result = await withTenant(tenantId, async (tx) => {
       const existing = await tx.queryOne<ChannelAccountRow>(
         `SELECT id, channel, label, external_id, status, status_message,
                 (credentials <> '{}'::jsonb) AS has_credentials,
@@ -494,6 +507,37 @@ export class TelegramBotService {
       if (!existing) {
         throw new NotFoundError("Аккаунт Telegram-бота не найден");
       }
+
+      const trimmedToken = payload.token.trim();
+      let botInfo: TelegramBotInfoDTO;
+
+      try {
+        botInfo = await this.getMe(trimmedToken);
+      } catch (err) {
+        if (err instanceof AppError && err.code === "INVALID_BOT_TOKEN") {
+          throw err;
+        }
+
+        const tokenParts = trimmedToken.split(":");
+        const tokenBotId = tokenParts[0];
+        if (tokenParts.length === 2 && tokenBotId !== undefined && /^\d{8,12}$/.test(tokenBotId)) {
+          const cleanUsername = existing.external_id ? existing.external_id.replace(/^@/, "") : "";
+          botInfo = {
+            id: Number(tokenBotId),
+            isBot: true,
+            firstName: existing.label || cleanUsername,
+            username: cleanUsername,
+            canJoinGroups: false,
+            canReadAllGroupMessages: false,
+            supportsInlineQueries: false,
+          };
+        } else {
+          throw err;
+        }
+      }
+
+      const cleanUsername = botInfo.username.replace(/^@/, "").trim();
+      const externalId = `@${cleanUsername}`;
 
       // Проверка на конфликт с другим аккаунтом
       const conflict = await tx.queryOne<{ id: string }>(
@@ -510,7 +554,7 @@ export class TelegramBotService {
 
       const updatedCreds = {
         ...(existing.credentials ?? {}),
-        token: payload.token.trim(),
+        token: trimmedToken,
         bot_id: botInfo.id,
         username: cleanUsername,
         first_name: botInfo.firstName,
@@ -540,6 +584,21 @@ export class TelegramBotService {
         [externalId, botInfo.id.toString(), JSON.stringify(updatedCreds), accountId, tenantId],
       );
 
+      await tx.query(
+        `INSERT INTO bots (tenant_id, name, username, token, status, channel_account_id, config)
+         VALUES ($1, $2, $3, $4, 'connected', $5, $6::jsonb)
+         ON CONFLICT (LOWER(username)) DO UPDATE
+         SET status = 'connected', token = EXCLUDED.token, channel_account_id = EXCLUDED.channel_account_id, updated_at = now()`,
+        [
+          tenantId,
+          existing.label,
+          cleanUsername,
+          trimmedToken,
+          accountId,
+          JSON.stringify({ is_managed: true }),
+        ],
+      ).catch(() => {});
+
       // Получаем привязанного агента
       const binding = await tx.queryOne<{ agent_id: string; agent_name: string }>(
         `SELECT b.agent_id, a.name AS agent_name
@@ -556,6 +615,12 @@ export class TelegramBotService {
         bound_agent_name: binding?.agent_name ?? null,
       });
     });
+
+    const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+    const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${accountId}`;
+    void this.setWebhook(payload.token.trim(), webhookUrl);
+
+    return result;
   }
 
   /**
@@ -670,8 +735,14 @@ export class TelegramBotService {
   /**
    * Активация бота в статусе pending (проверка подтверждения в Telegram).
    */
-  async autoActivatePending(tenantId: string, accountId: string, customName?: string): Promise<ChannelAccountDTO> {
-    return withTenant(tenantId, async (tx) => {
+  async autoActivatePending(
+    tenantId: string,
+    accountId: string,
+    customName?: string,
+    inputToken?: string,
+    inputBotId?: number | string,
+  ): Promise<ChannelAccountDTO> {
+    const result = await withTenant(tenantId, async (tx) => {
       const existing = await tx.queryOne<ChannelAccountRow>(
         `SELECT id, channel, label, external_id, status, status_message,
                 (credentials <> '{}'::jsonb) AS has_credentials,
@@ -686,14 +757,28 @@ export class TelegramBotService {
       }
 
       const creds = existing.credentials ?? {};
-      const botId = creds.bot_id || existing.remote_user_id;
+      const storedBotId = typeof creds.bot_id === "number" || typeof creds.bot_id === "string" ? creds.bot_id : null;
+      let botId: number | string | null = inputBotId || storedBotId || existing.remote_user_id || null;
+
+      if (!botId && inputToken) {
+        const parts = inputToken.trim().split(":");
+        const prefix = parts[0];
+        if (parts.length === 2 && prefix !== undefined && /^\d+$/.test(prefix)) {
+          botId = prefix;
+        }
+      }
 
       if (botId) {
-        const realToken = await this.telegramService.getManagedBotToken(Number(botId));
+        let realToken = inputToken?.trim() || null;
+        if (!realToken) {
+          realToken = await this.telegramService.getManagedBotToken(Number(botId));
+        }
+
         if (realToken !== null) {
           const updatedCreds = {
             ...creds,
             token: realToken,
+            bot_id: Number(botId),
             status: "connected",
             is_managed: true,
           };
@@ -704,10 +789,11 @@ export class TelegramBotService {
              SET status = 'connected',
                  status_message = 'Бот успешно активирован через Telegram Bot Manager',
                  label = $1,
-                 credentials = $2::jsonb,
+                 remote_user_id = $2,
+                 credentials = $3::jsonb,
                  connected_at = COALESCE(connected_at, now()),
                  updated_at = now()
-             WHERE id = $3 AND tenant_id = $4
+             WHERE id = $4 AND tenant_id = $5
              RETURNING id, channel, label, external_id, status, status_message,
                        (credentials <> '{}'::jsonb) AS has_credentials,
                        credentials,
@@ -716,21 +802,21 @@ export class TelegramBotService {
                        credentials->>'telegramBot' AS cred_bot,
                        false AS has_session,
                        remote_user_id, last_sync_at, connected_at, created_at`,
-            [label, JSON.stringify(updatedCreds), accountId, tenantId],
+            [label, botId.toString(), JSON.stringify(updatedCreds), accountId, tenantId],
           );
 
           await tx.query(
             `INSERT INTO bots (tenant_id, name, username, token, status, channel_account_id, config)
              VALUES ($1, $2, $3, $4, 'connected', $5, $6::jsonb)
              ON CONFLICT (LOWER(username)) DO UPDATE
-             SET status = 'connected', token = EXCLUDED.token, updated_at = now()`,
+             SET status = 'connected', token = EXCLUDED.token, channel_account_id = EXCLUDED.channel_account_id, updated_at = now()`,
             [
               tenantId,
               label,
               existing.external_id.replace(/^@/, ""),
               realToken,
               accountId,
-              JSON.stringify({ autoActivated: true }),
+              JSON.stringify({ autoActivated: true, is_managed: true }),
             ],
           ).catch(() => {});
 
@@ -744,6 +830,318 @@ export class TelegramBotService {
         "Бот еще не подтвержден в Telegram. Откройте приложение Telegram по ссылке создания бота или укажите токен от @BotFather.",
       );
     });
+
+    if (result.hasCredentials && result.credentials?.token) {
+      const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+      const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${accountId}`;
+      void this.setWebhook(result.credentials.token as string, webhookUrl);
+    }
+
+    return result;
   }
 
+  /**
+   * Допустимые типы обновлений, включая Business updates для режима секретаря (Telegram Business).
+   */
+  static readonly ALLOWED_UPDATES = [
+    "message",
+    "edited_message",
+    "business_connection",
+    "business_message",
+    "edited_business_message",
+    "deleted_business_messages",
+  ];
+
+  /**
+   * Получение текущей информации о webhook бота.
+   */
+  async getWebhookInfo(token: string): Promise<TelegramApiResponse<{
+    url: string;
+    has_custom_certificate: boolean;
+    pending_update_count: number;
+    allowed_updates?: string[];
+  }> | null> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/getWebhookInfo`;
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      return (await res.json().catch(() => null)) as TelegramApiResponse<{
+        url: string;
+        has_custom_certificate: boolean;
+        pending_update_count: number;
+        allowed_updates?: string[];
+      }> | null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Регистрация Webhook в Telegram Bot API.
+   */
+  async setWebhook(token: string, webhookUrl: string, secretToken?: string): Promise<boolean> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/setWebhook`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: webhookUrl,
+          drop_pending_updates: false,
+          allowed_updates: TelegramBotService.ALLOWED_UPDATES,
+          ...(secretToken ? { secret_token: secretToken } : {}),
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{ url: string }> | null;
+      return Boolean(data?.ok);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Получение информации о чате/пользователе через Telegram Bot API (getChat).
+   * Позволяет обогатить профиль username, bio и актуальным именем.
+   */
+  async getChat(
+    token: string,
+    chatId: string | number,
+  ): Promise<{
+    ok: boolean;
+    result?: {
+      id: number;
+      username?: string;
+      first_name?: string;
+      last_name?: string;
+      bio?: string;
+    };
+  }> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/getChat?chat_id=${chatId}`;
+    try {
+      const res = await fetch(url, { method: "GET" });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{
+        id: number;
+        username?: string;
+        first_name?: string;
+        last_name?: string;
+        bio?: string;
+      }> | null;
+      if (data?.ok && data.result) {
+        return { ok: true, result: data.result };
+      }
+      return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  /**
+   * Получение информации о бизнес-подключении через Telegram Bot API (getBusinessConnection).
+   * Возвращает аккаунт владельца (user.id, user.username, first_name) и флаги can_reply, is_enabled.
+   */
+  async getBusinessConnection(
+    token: string,
+    connectionId: string,
+  ): Promise<{
+    ok: boolean;
+    result?: {
+      id: string;
+      user: {
+        id: number;
+        is_bot: boolean;
+        first_name: string;
+        last_name?: string;
+        username?: string;
+      };
+      user_chat_id: number;
+      date: number;
+      can_reply: boolean;
+      is_enabled: boolean;
+    };
+    reason?: string;
+  }> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/getBusinessConnection?business_connection_id=${encodeURIComponent(connectionId.trim())}`;
+    try {
+      const res = await fetch(url, { method: "GET" });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{
+        id: string;
+        user: {
+          id: number;
+          is_bot: boolean;
+          first_name: string;
+          last_name?: string;
+          username?: string;
+        };
+        user_chat_id: number;
+        date: number;
+        can_reply: boolean;
+        is_enabled: boolean;
+      }> | null;
+      if (data?.ok && data.result) {
+        return { ok: true, result: data.result };
+      }
+      return { ok: false, reason: data?.description || `HTTP ${res.status}` };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : "Network error" };
+    }
+  }
+
+  /**
+   * Отправка текстового сообщения в Telegram через Bot API.
+   * Поддерживает business_connection_id для ответа от имени подключенного аккаунта (Telegram Business).
+   */
+  async sendMessage(
+    token: string,
+    chatId: string | number,
+    text: string,
+    options?: { parse_mode?: string; business_connection_id?: string },
+  ): Promise<{ ok: boolean; messageId?: number; reason?: string }> {
+    const url = `${TELEGRAM_API_BASE}/bot${token.trim()}/sendMessage`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          ...(options?.business_connection_id ? { business_connection_id: options.business_connection_id } : {}),
+          ...(options?.parse_mode ? { parse_mode: options.parse_mode } : {}),
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as TelegramApiResponse<{ message_id: number }> | null;
+      if (data?.ok && data.result) {
+        return { ok: true, messageId: data.result.message_id };
+      }
+      return { ok: false, reason: data?.description || `HTTP ${res.status}` };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : "Network error" };
+    }
+  }
+
+  /**
+   * Исходящее сообщение через Telegram Bot API (адаптер для OutboundRegistry).
+   */
+  async sendOutbound(message: OutboundMessage): Promise<OutboundSendResult> {
+    const account = await queryOne<{
+      credentials: {
+        token?: string;
+        business_connection_id?: string;
+        business_connections?: Record<string, { id: string; user_id: string; can_reply?: boolean }>;
+      } | null;
+    }>(
+      `SELECT credentials FROM channel_accounts
+       WHERE tenant_id = $1 AND id = $2 AND channel = 'telegram_bot' AND deleted_at IS NULL`,
+      [message.tenantId, message.channelAccountId],
+    );
+
+    const token = account?.credentials?.token;
+    if (!token) {
+      return { ok: false, reason: "Бот не найден или не настроен токен" };
+    }
+
+    let businessConnectionId: string | undefined = undefined;
+    if (message.metadata?.business_connection_id && typeof message.metadata.business_connection_id === "string") {
+      businessConnectionId = message.metadata.business_connection_id.trim();
+    }
+
+    if (!businessConnectionId && message.dealId) {
+      const dealRow = await queryOne<{ conn_id: string | null }>(
+        `SELECT custom_fields->>'business_connection_id' as conn_id
+         FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [message.tenantId, message.dealId],
+      ).catch(() => null);
+      if (dealRow?.conn_id) {
+        businessConnectionId = dealRow.conn_id;
+      }
+    }
+
+    if (!businessConnectionId) {
+      businessConnectionId = account.credentials?.business_connection_id;
+    }
+
+    if (message.attachment) {
+      const isImage = message.attachmentType?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(message.attachment);
+      const endpoint = isImage ? "sendPhoto" : "sendDocument";
+      const bodyField = isImage ? "photo" : "document";
+      try {
+        const res = await fetch(`${TELEGRAM_API_BASE}/bot${token.trim()}/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: message.recipient,
+            ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}),
+            [bodyField]: message.attachment,
+            caption: message.text || undefined,
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as TelegramApiResponse<{ message_id: number }> | null;
+        if (data?.ok) return { ok: true };
+      } catch {
+        // fallback to text
+      }
+    }
+
+    const result = await this.sendMessage(token, message.recipient, message.text, {
+      business_connection_id: businessConnectionId,
+    });
+    if (result.ok) {
+      return { ok: true };
+    }
+    return { ok: false, reason: result.reason || "Ошибка отправки в Telegram" };
+  }
+
+  /**
+   * Синхронизация webhook для всех активных подключенных ботов платформы на старте.
+   * Сначала проверяет текущее состояние через getWebhookInfo, чтобы не тратить лимит Telegram API.
+   */
+  static async syncActiveWebhooks(log?: { info: (...args: any[]) => void; warn: (...args: any[]) => void }): Promise<void> {
+    try {
+      const { runWithPlatformScope, query: dbQuery } = await import("../../db/client.js");
+      const accounts = await runWithPlatformScope(() =>
+        dbQuery<{ id: string; credentials: { token?: string } | null; external_id: string }>(
+          `SELECT id, credentials, external_id FROM channel_accounts
+           WHERE channel = 'telegram_bot' AND status = 'connected' AND deleted_at IS NULL`,
+        ),
+      );
+
+      const publicApiUrl = process.env.PUBLIC_API_URL || "https://api.getvoxly.ru";
+      const service = new TelegramBotService();
+
+      for (const acc of accounts) {
+        const token = acc.credentials?.token;
+        if (!token) continue;
+        const webhookUrl = `${publicApiUrl.replace(/\/+$/, "")}/api/v1/integrations/telegram-bot/webhook/${acc.id}`;
+
+        const info = await service.getWebhookInfo(token);
+        if (info?.ok && info.result) {
+          const isUrlMatching = info.result.url === webhookUrl;
+          const allowed = info.result.allowed_updates || [];
+          const hasBusinessUpdates =
+            allowed.includes("business_message") && allowed.includes("business_connection");
+
+          if (isUrlMatching && hasBusinessUpdates) {
+            if (log) {
+              log.info(
+                { accountId: acc.id, bot: acc.external_id, webhookUrl },
+                "Telegram Bot webhook already configured with business updates",
+              );
+            }
+            continue;
+          }
+        }
+
+        const ok = await service.setWebhook(token, webhookUrl);
+        if (log) {
+          log.info({ accountId: acc.id, bot: acc.external_id, ok, webhookUrl }, "Telegram Bot webhook synchronized");
+        }
+      }
+    } catch (err) {
+      if (log) {
+        log.warn({ err }, "Failed to sync Telegram Bot webhooks on startup");
+      }
+    }
+  }
 }

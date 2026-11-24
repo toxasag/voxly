@@ -72,6 +72,7 @@ export const UNKNOWN_CONTACT_NAME = "Клиент";
  */
 const CONTACT_CHANNEL_BY_SLUG: Readonly<Record<string, ContactChannel>> = {
   telegram: "telegram",
+  telegram_bot: "telegram",
   whatsapp: "whatsapp",
   max: "max",
   rumax: "rumax",
@@ -83,6 +84,7 @@ const CONTACT_CHANNEL_BY_SLUG: Readonly<Record<string, ContactChannel>> = {
 /** Слаг канала → вид соцсети в карточке. */
 const SOCIAL_KIND_BY_SLUG: Readonly<Record<string, SocialKind>> = {
   telegram: "telegram",
+  telegram_bot: "telegram",
   whatsapp: "whatsapp",
   max: "max",
   instagram: "instagram",
@@ -209,7 +211,11 @@ export function contactSocialsFrom(
   }
 
   if (kind === "max") {
-    const username = identity.profile?.username?.trim() ?? "";
+    const username = (
+    identity.profile?.username ||
+    identity.senderTelegramUsername ||
+    identity.senderUsername
+  )?.trim() ?? "";
     if (username !== "") {
       return [{ kind, value: username.startsWith("@") ? username : `@${username}` }];
     }
@@ -224,7 +230,11 @@ export function contactSocialsFrom(
     return [];
   }
 
-  const username = identity.profile?.username?.trim() ?? "";
+  const username = (
+    identity.profile?.username ||
+    identity.senderTelegramUsername ||
+    identity.senderUsername
+  )?.trim() ?? "";
   if (username !== "") {
     return [{ kind, value: username.startsWith("@") ? username : `@${username}` }];
   }

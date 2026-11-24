@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowRightLeft, Wallet, Building2, CreditCard, Loader2 } from "lucide-react";
+import { ArrowRightLeft, Wallet, Building2, CreditCard, Loader2, AlertCircle } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +24,7 @@ type TransferPayload = z.infer<typeof transferSchema>;
 interface TransferModalProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (payload: TransferPayload) => void;
+  onSubmit: (payload: TransferPayload) => Promise<void> | void;
   accounts: { id: string; name: string; balance: number }[];
 }
 
@@ -35,6 +35,9 @@ const ICONS: Record<string, typeof Wallet> = {
 };
 
 export function TransferModal({ open, onClose, onSubmit, accounts }: TransferModalProps) {
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const form = useForm<TransferPayload>({
     resolver: zodResolver(transferSchema),
     defaultValues: { from_account_id: "", to_account_id: "", amount: 0 },
@@ -42,16 +45,29 @@ export function TransferModal({ open, onClose, onSubmit, accounts }: TransferMod
   });
 
   const handleSubmit = useCallback(
-    (v: TransferPayload) => {
-      onSubmit(v);
-      form.reset();
-      onClose();
+    async (v: TransferPayload) => {
+      setSubmitError(null);
+      setSubmitting(true);
+      try {
+        await onSubmit(v);
+        form.reset();
+        setSubmitError(null);
+        onClose();
+      } catch (err: unknown) {
+        setSubmitError(err instanceof Error ? err.message : "Не удалось выполнить перевод");
+      } finally {
+        setSubmitting(false);
+      }
     },
     [onSubmit, form, onClose],
   );
 
   useEffect(() => {
-    if (open) form.reset();
+    if (open) {
+      setSubmitError(null);
+      setSubmitting(false);
+      form.reset();
+    }
   }, [open, form]);
 
   if (!open) return null;
@@ -74,6 +90,15 @@ export function TransferModal({ open, onClose, onSubmit, accounts }: TransferMod
       <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
         <form onSubmit={form.handleSubmit(handleSubmit)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {submitError && (
+              <div className="rounded-[8px] bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700 flex items-start gap-2.5">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Ошибка перевода</p>
+                  <p className="mt-0.5 text-rose-600">{submitError}</p>
+                </div>
+              </div>
+            )}
             {(["from_account_id", "to_account_id"] as const).map((field) => (
               <div key={field} className="space-y-1.5">
                 <label className="block text-xs font-medium text-slate-700">
@@ -144,10 +169,10 @@ export function TransferModal({ open, onClose, onSubmit, accounts }: TransferMod
             </button>
             <button
               type="submit"
-              disabled={!isValid}
+              disabled={!isValid || submitting || form.formState.isSubmitting}
               className="flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold transition-colors bg-[#4a38f5] text-white hover:bg-[#3b2be0] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {form.formState.isSubmitting ? (
+              {form.formState.isSubmitting || submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Выполняем...

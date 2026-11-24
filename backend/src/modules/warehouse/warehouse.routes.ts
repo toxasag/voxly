@@ -13,6 +13,7 @@ import {
   importCommitSchema,
   importValidateSchema,
   intakeBatchSchema,
+  intakeDocumentSchema,
   paySupplierOrderSchema,
   receiptSupplierOrderSchema,
   updatePurchaseRequestSchema,
@@ -324,6 +325,15 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const body = intakeBatchSchema.parse(request.body);
     const batch = await warehouseService.intakeBatch(tenant_id, userId, body);
     return reply.status(201).send({ data: batch });
+  });
+
+  // Оприходование приходной накладной / акта (многострочное, с основаниями и связью с финансами)
+  app.post("/intake-document", { onRequest: canWrite }, async (request, reply) => {
+    const { tenant_id } = request;
+    const userId = request.authUser?.id ?? null;
+    const body = intakeDocumentSchema.parse(request.body);
+    const result = await warehouseService.intakeDocument(tenant_id, userId, body);
+    return reply.status(201).send({ data: result });
   });
 
   // Список партий

@@ -276,20 +276,18 @@ export class DealMessagingService {
 
     if (!deliverable) return message;
 
-    // AI Handoff: ответ менеджера ставит AI-автопилот на паузу на 1 час (ручной перехват), если он не выключен
+    // AI Handoff: ответ менеджера ставит AI-автопилот на бессрочную паузу (ручной перехват), если он не выключен
     await query(
       `UPDATE deals
-       SET ai_paused_until = CASE
-         WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '9000-01-01'::timestamptz THEN ai_paused_until
-         ELSE now() + interval '1 hour'
-       END,
+       SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
        custom_fields = jsonb_set(
          COALESCE(custom_fields, '{}'::jsonb),
          '{ai_paused_reason}',
          to_jsonb('manual_takeover'::text),
          true
-       )
-       WHERE tenant_id = $1 AND id = $2`,
+       ),
+       updated_at = now()
+       WHERE tenant_id = $1 AND (id = $2 OR (contact_id = (SELECT contact_id FROM deals WHERE id = $2 AND tenant_id = $1) AND deleted_at IS NULL))`,
       [tenantId, dealId],
     ).catch(() => {});
 
@@ -474,7 +472,7 @@ export class DealMessagingService {
       custom_fields?: Record<string, unknown> | null;
     },
   ): string | null {
-    if (channel === "telegram") {
+    if (channel === "telegram" || channel === "telegram_bot") {
       const systemBotId = process.env.TELEGRAM_AUTH_BOT_TOKEN?.split(":")[0]?.trim();
       const validChatId =
         contact.telegram_chat_id && contact.telegram_chat_id !== systemBotId
@@ -533,6 +531,19 @@ export class DealMessagingService {
     }
     const pausedUntilDate = new Date(row.ai_paused_until);
     const now = new Date();
+    const customReason = typeof row.custom_fields?.ai_paused_reason === "string" ? row.custom_fields.ai_paused_reason : null;
+
+    // Ручной перехват (из мессенджера или по кнопке паузы в CRM) — статус "paused"
+    if (customReason === "messenger_takeover" || customReason === "manual_takeover") {
+      return {
+        aiControl: "paused",
+        isPaused: true,
+        pausedUntil: pausedUntilDate.getFullYear() >= 2090 ? null : row.ai_paused_until,
+        pausedReason: customReason,
+        status: "paused",
+      };
+    }
+
     if (pausedUntilDate.getFullYear() >= 2090) {
       return {
         aiControl: "disabled",
@@ -543,7 +554,6 @@ export class DealMessagingService {
       };
     }
     if (pausedUntilDate > now) {
-      const customReason = typeof row.custom_fields?.ai_paused_reason === "string" ? row.custom_fields.ai_paused_reason : null;
       return {
         aiControl: "paused",
         isPaused: true,
@@ -562,7 +572,7 @@ export class DealMessagingService {
   }
 
   /**
-   * Переключает режим AI для сделки: включить, пауза на 1 час, выключить.
+   * Переключает режим AI для сделки: включить, пауза (бессрочная до снятия), выключить.
    */
   async setAiControl(
     tenantId: string,
@@ -583,30 +593,31 @@ export class DealMessagingService {
     let targetDate: string | null = null;
     let reason: string | null = null;
     if (action === "pause") {
-      targetDate = "now() + interval '1 hour'";
+      targetDate = "'9999-12-31 23:59:59+00'::timestamptz";
       reason = "manual_takeover";
     } else if (action === "disable") {
       targetDate = "'9999-12-31 23:59:59+00'::timestamptz";
+      reason = null;
     }
 
     if (targetDate) {
       await query(
         `UPDATE deals SET 
            ai_paused_until = ${targetDate},
-           custom_fields = jsonb_set(
-             COALESCE(custom_fields, '{}'::jsonb),
-             '{ai_paused_reason}',
-             to_jsonb($4::text),
-             true
-           )
+           custom_fields = CASE
+             WHEN $4::text IS NOT NULL THEN jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{ai_paused_reason}', to_jsonb($4::text), true)
+             ELSE custom_fields - 'ai_paused_reason'
+           END,
+           updated_at = now()
          WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
-        [tenantId, dealId, deal?.contact_id ?? null, reason ?? "manual_takeover"],
+        [tenantId, dealId, deal?.contact_id ?? null, reason],
       );
     } else {
       await query(
         `UPDATE deals SET 
            ai_paused_until = NULL,
-           custom_fields = custom_fields - 'ai_paused_reason'
+           custom_fields = custom_fields - 'ai_paused_reason',
+           updated_at = now()
          WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
         [tenantId, dealId, deal?.contact_id ?? null],
       );
@@ -1019,11 +1030,11 @@ export class DealMessagingService {
     pausedReason: string | null;
     status: "enabled" | "paused" | "disabled";
   }> {
-    let updateSql = `UPDATE deals SET ai_paused_until = NULL, custom_fields = custom_fields - 'ai_paused_reason' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+    let updateSql = `UPDATE deals SET ai_paused_until = NULL, custom_fields = custom_fields - 'ai_paused_reason', updated_at = now() WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
     if (action === "pause") {
-      updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour', custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{ai_paused_reason}', to_jsonb('manual_takeover'::text), true) WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+      updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz, custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{ai_paused_reason}', to_jsonb('manual_takeover'::text), true), updated_at = now() WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
     } else if (action === "disable") {
-      updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+      updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz, custom_fields = custom_fields - 'ai_paused_reason', updated_at = now() WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
     }
     await query(updateSql, [tenantId, contactId]);
     return this.getContactAiStatus(tenantId, contactId);

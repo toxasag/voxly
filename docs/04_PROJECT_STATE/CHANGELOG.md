@@ -1,3 +1,36 @@
+### Fixed · Связка Склад ↔ Финансы: автокатегория «Закупка запчастей» и автор операции (2026-11-24)
+
+- **Auto-Category for Supplier Orders**: При оплате заказа поставщику (`paySupplierOrder`, `createReceiptFromSupplierOrder`) и при оприходовании с расходом (`intakeBatch`, `intakeDocument`) расходная операция автоматически получает `category_id` и `category_name` категории «Закупка запчастей» (существующей категории тенанта либо создаваемой автоматически), а также `supplier_order_id` и `repair_order_id`.
+- **Transaction Author Preservation**: Исправлена запись `created_by` при оплате заказа поставщику, переводах между счетами, дублировании и редактировании операций (`updateTransaction` возвращает `createdById`/`createdByName` и восстанавливает пустого автора).
+- **Bidirectional Warehouse ↔ Finance Consistency**: Удаление расходной операции в `/finance` откатывает статус связанного заказа поставщику из `paid` в `pending_payment`; отмена/удаление оплаченного заказа мягко удаляет проводку и пересчитывает баланс кассы; добавлена двусторонняя инвалидация кэшей TanStack Query и миграция-бэкфилл `0135`.
+
+### Added · Персистентность фильтров на страницах ремонтов и сделок (2026-11-24)
+
+- **Shared Persisted Filters Hook**: Добавлен хук `usePersistedFilters` (`frontend/src/lib/hooks/use-persisted-filters.ts`) с изоляцией `localStorage` по `tenant:userId:page`, приоритетом явных URL-параметров, безопасной SSR-гидрацией, защитой от битых/устаревших значений и сохранением сторонних параметров URL (`?record=`, `?dealId=`).
+- **Repairs (`/repairs`)**: Статус, фильтр оплаты и поиск сохраняются между переходами и перезагрузкой; запрос `useRepairs` ожидает гидрации фильтров без лишнего дефолтного рефетча; добавлена кнопка «Сбросить» и очистка поиска.
+- **CRM Deals (`/crm/deals`)**: Срез («Все сделки», «В работе», «Крупные», «Успешные»), воронка, поиск и сортировка сохраняются между переходами и F5 с защитой от удалённого `pipelineId` и кнопкой «Сбросить».
+
+### Fixed · Бессрочная пауза AI при ответе с телефона и пауза по кнопке в CRM (2026-11-24)
+
+- **Indefinite Native Takeover Pause**: При ответе оператора с телефона (WhatsApp, Telegram, MAX) в `processNativeOutbound` и `telegram-bot-integration` выставляется бессрочная пауза (`ai_paused_until = '9999-12-31'`) с причиной `messenger_takeover` на все активные сделки контакта. AI-агент не возобновляет ответы, пока оператор явно не нажмет «Снять с паузы» в интерфейсе.
+- **Explicit Button Pause in System**: В `CrmChatView.tsx` удален автоматический вызов паузы `handleInputActivity` при фокусе или наборе текста в `TelegramComposer`. Открытие чата в веб-CRM не ставит автопаузу; пауза включается исключительно по клику на кнопку «Пауза».
+- **Accurate AI Status & Manual Takeover**: В `deal-messaging.service.ts` метод `getAiStatus` возвращает `status: 'paused'` и `isPaused: true` для причин `messenger_takeover` и `manual_takeover` вне зависимости от даты. Ручная пауза в CRM и отправка исходящих сообщений через CRM переводят диалог в режим ручного перехвата.
+- **Migration of Active Deals**: Все 30 активных сделок MPRO, находившиеся в режиме ручного перехвата, переведены на бессрочную паузу до явного снятия оператором.
+
+### Fixed · Каскадное удаление сообщений чата при soft-delete сделок и точный подсчёт CRM (2026-11-24)
+
+- **Cascade Deal Messages Cleanup**: Создана миграция 0131 и триггер `trg_deals_soft_delete_messages`: при soft-delete сделки (`deleted_at = now()`) все сообщения переписок (`deal_messages`) автоматически каскадно удаляются. Удалены 1082 осиротевших сообщения удалённых сделок.
+- **Accurate CRM Knowledge Stats**: `getCrmStats` считает только неудалённые сделки (`d.deleted_at IS NULL`) и реальные сообщения мессенджеров (`dm.channel != 'system'`), поддерживая изоляцию по привязанным каналам агента (`agent_id`).
+- **Cascade Deletion in Services**: В `deals.service.ts`, `contacts.service.ts` и `companies.service.ts` реализовано каскадное удаление связанных сделок и их сообщений чата при удалении контакта или компании.
+- **Multi-Messenger Labeling**: В `synthesizeFromCrm` добавлена поддержка и явная маркировка всех каналов мессенджеров (Telegram, WhatsApp, MAX, онлайн-чат).
+
+### Added · Каскадный роутер NoirLight, Паспорт компании и изоляция каналов MPRO (2026-11-24)
+
+- **NoirLight Cascading Router**: Добавлены модели `glm-4.5`, `qwen3.8-27b`, `glm-5.3`, `qwen-omni-plus`, `nemotron-super` с провайдером NoirLight и мгновенным каскадным переходом между ними и Google Gemini (`gemini-3.5-flash`, `gemini-3.5-flash-lite`).
+- **Company Profile Summary (Human-in-the-Loop)**: Создана миграция 0130 (`company_profile_summary`, `company_profile_approved`). LLM синтезирует эталонный паспорт компании из базы знаний/сайта; утвержденный пользователем паспорт внедряется в системный промпт через `<approved_company_profile>` с наивысшим приоритетом над сырыми чанками RAG.
+- **Simplified Bot Onboarding**: Упрощено создание нового AI-бота до 3-4 ключевых полей (Название, Сайт, Имя консультанта с синхронизацией из виджета, Модель) с возможностью раскрыть расширенную конфигурацию.
+- **MPRO Multi-Messenger Regional Isolation**: Созданы изолированные агенты для WhatsApp Пхукет (`+66827612885`) и Бали (`+62881037492717`) с фильтрацией CRM-сообщений при синтезе базы знаний.
+
 ### Added · Кнопка редактирования услуг в справочнике (2026-11-23)
 
 - **Edit Service Button & Modal**: В диалоговом окне «Справочник услуг» (`ServiceCatalogDialog.tsx`), `ServiceItem.tsx` и странице `/services` добавлена кнопка «Редактировать» с модальным окном изменения наименования, цены, единиц измерения и описания услуги.

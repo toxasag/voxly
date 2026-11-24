@@ -28,6 +28,7 @@ const editChannelAccountSchema = z.object({
     .min(1, "Укажите название подключения")
     .max(120, "Название не может быть длиннее 120 символов"),
   agent_id: z.string().nullable().optional(),
+  token: z.string().trim().optional(),
 });
 
 type EditChannelAccountValues = z.infer<typeof editChannelAccountSchema>;
@@ -69,6 +70,7 @@ export function EditChannelAccountModal({
     defaultValues: {
       label: account?.label ?? "",
       agent_id: account?.boundAgentId ?? null,
+      token: "",
     },
   });
 
@@ -77,6 +79,7 @@ export function EditChannelAccountModal({
       form.reset({
         label: account.label,
         agent_id: account.boundAgentId ?? null,
+        token: "",
       });
     }
   }, [open, account, form]);
@@ -103,8 +106,10 @@ export function EditChannelAccountModal({
       const trimmed = values.label.trim();
       const agentChanged = showAgentField && values.agent_id !== (account.boundAgentId ?? null);
       const labelChanged = trimmed !== account.label;
+      const trimmedToken = values.token?.trim();
+      const tokenChanged = Boolean(trimmedToken && trimmedToken.length > 5);
 
-      if (!labelChanged && !agentChanged) {
+      if (!labelChanged && !agentChanged && !tokenChanged) {
         onClose();
         return;
       }
@@ -114,6 +119,7 @@ export function EditChannelAccountModal({
           id: account.id,
           label: trimmed,
           ...(showAgentField && { agent_id: values.agent_id ?? null }),
+          ...(tokenChanged && { credentials: { token: trimmedToken } }),
         });
         toast.success(`Настройки подключения «${trimmed}» сохранены`);
         onClose();
@@ -247,6 +253,35 @@ export function EditChannelAccountModal({
               </p>
             )}
           </div>
+
+          {/* Поле обновления токена (для Telegram-каналов) */}
+          {(channel === "telegram_bot" || channel === "telegram") && (
+            <div className="space-y-1.5">
+              <label htmlFor="edit_account_token" className="block text-xs font-medium text-[#666666]">
+                Токен бота (@BotFather)
+              </label>
+              <input
+                id="edit_account_token"
+                type="password"
+                autoComplete="off"
+                placeholder="Вставьте новый токен бота, если меняли его"
+                {...form.register("token")}
+                disabled={isSubmitting}
+                className={cn(
+                  "h-8 w-full rounded-[4px] border bg-white px-2.5 text-xs font-mono text-[#111111] placeholder:text-[#888888]",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                  errors.token !== undefined ? "border-rose-500" : "border-[#e5e5e5]",
+                )}
+              />
+              {errors.token ? (
+                <p className="text-xs text-rose-500">{errors.token.message}</p>
+              ) : (
+                <p className="text-[11px] text-[#888888]">
+                  Оставьте пустым, если токен не менялся
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Поле привязки AI-агента (только для telegram-каналов) */}
           {showAgentField && (

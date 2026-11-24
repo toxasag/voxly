@@ -404,6 +404,7 @@ export interface BuildSystemPromptInput {
   agentPrompt: string;
   contextChunks?: readonly { content: string; filename: string }[];
   knowledgeBaseMd?: string;
+  approvedCompanySummary?: string;
   variables?: Record<string, string | undefined | null>;
   crmPatterns?: readonly { customerQuery: string; agentReply: string }[];
   contactProfile?: string;
@@ -445,6 +446,22 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
     .replace(/(?:отвечай\s+(?:строго\s+)?по-русски|только\s+на\s+русском\s+языке)/gi, "отвечай строго на языке собеседника (Language Mirroring)");
 
   const parts = [interpolated.trim()];
+
+  // Утвержденный паспорт компании (Human-in-the-loop Ground Truth) — наивысший приоритет
+  if (input.approvedCompanySummary && input.approvedCompanySummary.trim().length > 0) {
+    parts.push(
+      [
+        "<approved_company_profile>",
+        "УТВЕРЖДЕННЫЙ ПАСПОРТ И ПРАВИЛА КОМПАНИИ (ВЫСШИЙ ПРИОРИТЕТ НАД БАЗОЙ ЗНАНИЙ):",
+        input.approvedCompanySummary.trim(),
+        "",
+        "ПРАВИЛО ПРИОРИТЕТА ИМЕНИ И РЕКВИЗИТОВ:",
+        "Название компании, контакты, реквизиты, услуги и условия работы берутся ИСКЛЮЧИТЕЛЬНО из этого утвержденного паспорта.",
+        "Если в любых внешних файлах или чанках базы знаний упоминаются сторонние юридические лица, ИП или бренды — это архивные материалы! Ты представляешь ТОЛЬКО компанию из утвержденного паспорта выше.",
+        "</approved_company_profile>",
+      ].join("\n"),
+    );
+  }
 
   // Если у агента есть живая Markdown шпаргалка / база знаний — внедряем её
   if (input.knowledgeBaseMd && input.knowledgeBaseMd.trim().length > 0) {

@@ -986,7 +986,6 @@ export function CrmChatView({
   const [activeChannel, setActiveChannel] = useState<string>("all");
   const hasUserSelectedTabRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const hasTriggeredTakeoverRef = useRef(false);
 
   // Защита от случайного сброса файла мимо области чата (предотвращает переход браузера по URL файла)
   useEffect(() => {
@@ -1059,11 +1058,6 @@ export function CrmChatView({
     },
     [handleFilesSelected],
   );
-
-  // Сброс флага ручного перехвата при переключении сущности/диалога
-  useEffect(() => {
-    hasTriggeredTakeoverRef.current = false;
-  }, [entityId]);
 
   const queryClient = useQueryClient();
 
@@ -1465,7 +1459,7 @@ export function CrmChatView({
         if (action === "enable") {
           toast.success("AI-автопилот активирован");
         } else if (action === "pause") {
-          toast.info("AI-автопилот приостановлен на 1 час");
+          toast.info("AI-автопилот приостановлен (ручной перехват)");
         } else {
           toast.info("AI-автопилот выключен");
         }
@@ -1475,32 +1469,6 @@ export function CrmChatView({
     },
     [aiControlMutation],
   );
-
-  // Ручной перехват диалога оператором при активности поля ввода (onFocus или набор текста)
-  const handleInputActivity = useCallback(() => {
-    // Не инициируем паузу, если AI не включен, уже на паузе, в процессе мутации или уже сработал триггер
-    if (
-      !isAiActive ||
-      isAiPaused ||
-      hasTriggeredTakeoverRef.current ||
-      aiControlMutation.isPending
-    ) {
-      return;
-    }
-
-    hasTriggeredTakeoverRef.current = true;
-    aiControlMutation.mutate(
-      { action: "pause" },
-      {
-        onSuccess: () => {
-          toast.info("AI-автопилот приостановлен на 1 час (ручной перехват)");
-        },
-        onError: () => {
-          hasTriggeredTakeoverRef.current = false;
-        },
-      },
-    );
-  }, [isAiActive, isAiPaused, aiControlMutation]);
 
   // Ручная синхронизация истории сообщений из подключенных каналов (MAX, Telegram)
   const handleSyncHistory = useCallback(async () => {
@@ -1673,11 +1641,11 @@ export function CrmChatView({
                   type="button"
                   onClick={() => handleAiAction("pause")}
                   disabled={aiControlMutation.isPending}
-                  title="Приостановить автоответчик на 1 час (оператор перехватывает диалог)"
+                  title="Приостановить автоответчик (ручной перехват диалога)"
                   className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50 cursor-pointer"
                 >
                   <Pause className="h-3 w-3 text-amber-600" />
-                  <span>Пауза на 1 ч</span>
+                  <span>Пауза</span>
                 </button>
                 <button
                   type="button"
@@ -1893,7 +1861,24 @@ export function CrmChatView({
 <span className="rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.2 text-[10px] uppercase tracking-wide text-[#666666]">
                           {message.channel}
                         </span>
+
+                        {Boolean(message.metadata?.is_draft) && (
+                          <span className="rounded-[4px] border border-amber-300 bg-amber-50 px-1.5 py-0.2 text-[10px] font-medium text-amber-700">
+                            Черновик
+                          </span>
+                        )}
                       </div>
+
+                      {/* Индикатор неотправленного черновика */}
+                      {Boolean(message.metadata?.is_draft) && (
+                        <div
+                          className="mb-1.5 flex items-center gap-1.5 rounded-[6px] border border-amber-200 bg-amber-50/90 px-2.5 py-1 text-[11px] font-medium text-amber-800 shadow-2xs"
+                          title="Посетитель сайта набрал этот текст в чате, но покинул страницу до нажатия кнопки 'Отправить'"
+                        >
+                          <Clock className="h-3 w-3 shrink-0 text-amber-600" />
+                          <span>Неотправленный черновик (посетитель покинул сайт)</span>
+                        </div>
+                      )}
 
                       {/* Индикатор пересланного сообщения */}
                       {Boolean(message.metadata?.is_forwarded) && (
@@ -2266,13 +2251,7 @@ export function CrmChatView({
         <div className="rounded-[12px] border border-[#e5e5e5] bg-white shadow-2xs transition-colors focus-within:border-[#cccccc]">
           <TelegramComposer
             value={input}
-            onChange={(val) => {
-              setInput(val);
-              if (val.trim().length > 0) {
-                handleInputActivity();
-              }
-            }}
-            onFocus={handleInputActivity}
+            onChange={setInput}
             onSend={(attached) => void handleSend(attached)}
             isSending={sendMessageMutation.isPending || uploadMediaMutation.isPending}
             onAiDraft={handleGenerateAiDraft}

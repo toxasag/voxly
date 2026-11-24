@@ -799,6 +799,81 @@ export class DealsService {
   }
 
   /**
+   * Проверяет наряд-заказы, привязанные к сделке.
+   * Если у сделки есть активные наряды и ВСЕ они имеют статус 'issued' (Выдан)
+   * и статус оплаты 'paid' (Оплачен), автоматически переводит сделку в стадию
+   * «Успешно реализовано» (is_won = true) с вызовом всех обработчиков и истории.
+   */
+  async syncDealCompletionFromRepairs(
+    tenantId: string,
+    dealId: string | null | undefined,
+    authorId?: string | null,
+  ): Promise<void> {
+    if (!dealId) return;
+
+    try {
+      // 1. Проверяем, есть ли наряды у этой сделки и все ли они выданы и оплачены
+      const stats = await queryOne<{
+        total_orders: string;
+        completed_paid_orders: string;
+      }>(
+        `SELECT
+           COUNT(*)::text AS total_orders,
+           COUNT(*) FILTER (WHERE status = 'issued' AND payment_status = 'paid')::text AS completed_paid_orders
+         FROM repair_orders
+         WHERE tenant_id = $1 AND deal_id = $2 AND deleted_at IS NULL`,
+        [tenantId, dealId],
+      );
+
+      const total = parseInt(stats?.total_orders ?? "0", 10);
+      const completedPaid = parseInt(stats?.completed_paid_orders ?? "0", 10);
+
+      // Если нарядов нет или не все выданы и оплачены — завершать сделку нельзя
+      if (total === 0 || total !== completedPaid) {
+        return;
+      }
+
+      // 2. Получаем сделку и проверяем, не завершена ли она уже успешно
+      const deal = await queryOne<{
+        id: string;
+        pipeline_id: string;
+        stage_id: string;
+        created_by: string;
+        owner_id: string | null;
+        is_won: boolean;
+      }>(
+        `SELECT d.id, d.pipeline_id, d.stage_id, d.created_by, d.owner_id, s.is_won
+         FROM deals d
+         JOIN stages s ON s.id = d.stage_id
+         WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+        [tenantId, dealId],
+      );
+
+      if (!deal || deal.is_won) {
+        return;
+      }
+
+      // 3. Находим стадию «Успешно реализовано» (is_won = true) воронки сделки
+      const wonStage = await queryOne<{ id: string }>(
+        `SELECT id FROM stages
+         WHERE pipeline_id = $1 AND is_won = true
+         ORDER BY sort_order ASC
+         LIMIT 1`,
+        [deal.pipeline_id],
+      );
+
+      if (!wonStage || wonStage.id === deal.stage_id) {
+        return;
+      }
+
+      const changedBy = authorId || deal.owner_id || deal.created_by;
+      await this.moveStage(tenantId, dealId, wonStage.id, changedBy);
+    } catch (err) {
+      console.error("[deals.service] Failed to sync deal completion from repairs:", { err, dealId });
+    }
+  }
+
+  /**
    * Позиция для вставки карточки на место `targetIndex` в колонке.
    *
    * Считается как среднее между соседями (дробный DOUBLE PRECISION), а не
@@ -842,7 +917,15 @@ export class DealsService {
       [tenantId, id],
     );
 
-    return row !== null;
+    if (row !== null) {
+      await query(
+        `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = $2`,
+        [tenantId, id],
+      );
+      return true;
+    }
+
+    return false;
   }
 
   async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
@@ -856,6 +939,13 @@ export class DealsService {
          RETURNING id`,
         [tenantId, ids],
       );
+      if (rows.length > 0) {
+        const deletedIds = rows.map((r) => r.id);
+        await query(
+          `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+          [tenantId, deletedIds],
+        );
+      }
       return { count: rows.length };
     }
 
@@ -895,6 +985,14 @@ export class DealsService {
        RETURNING d.id`,
       params,
     );
+
+    if (rows.length > 0) {
+      const deletedIds = rows.map((r) => r.id);
+      await query(
+        `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = ANY($2::uuid[])`,
+        [tenantId, deletedIds],
+      );
+    }
 
     return { count: rows.length };
   }
@@ -2200,3 +2298,6 @@ function calculateItemTotal(
   }
   return Math.max(0, base);
 }
+
+export const dealsService = new DealsService();
+

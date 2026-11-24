@@ -33,6 +33,7 @@ const DEFAULT_CATEGORIES: ReadonlyArray<{ name: string; type: "income" | "expens
   { name: "Продажи", type: "income" },
   { name: "Услуги", type: "income" },
   { name: "Прочие доходы", type: "income" },
+  { name: "Закупка запчастей", type: "expense" },
   { name: "Закупка товаров", type: "expense" },
   { name: "Зарплата", type: "expense" },
   { name: "Аренда", type: "expense" },
