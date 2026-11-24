@@ -57,14 +57,20 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   other_expense: Banknote,
 };
 
-function formatDate(iso: string): string {
+function formatDateTime(iso: string): string {
   if (!iso) return "—";
   try {
-    return new Intl.DateTimeFormat("ru-RU", {
+    const d = new Date(iso);
+    const datePart = new Intl.DateTimeFormat("ru-RU", {
       day: "2-digit",
       month: "2-digit",
       year: "2-digit",
-    }).format(new Date(iso));
+    }).format(d);
+    const timePart = new Intl.DateTimeFormat("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+    return `${datePart} ${timePart}`;
   } catch {
     return iso;
   }
@@ -82,7 +88,7 @@ function formatAmount(amount: number, type: string): string {
 function exportToCsv(items: Transaction[]) {
   const headers = [
     "ID",
-    "Дата",
+    "Дата и время",
     "Тип",
     "Категория",
     "Описание",
@@ -91,6 +97,7 @@ function exportToCsv(items: Transaction[]) {
     "Счёт",
     "Контрагент",
     "ИНН",
+    "Автор",
   ];
 
   const rows = items.map((t) => [
@@ -104,6 +111,7 @@ function exportToCsv(items: Transaction[]) {
     `"${(t.account_name || "").replace(/"/g, '""')}"`,
     `"${(t.counterparty || "").replace(/"/g, '""')}"`,
     t.counterparty_inn || "",
+    `"${(t.created_by_name || "").replace(/"/g, '""')}"`,
   ]);
 
   const csvContent =
@@ -149,7 +157,8 @@ export const TransactionsTable = memo(function TransactionsTable({
           t.counterparty.toLowerCase().includes(q) ||
           (t.counterparty_inn ?? "").toLowerCase().includes(q) ||
           t.account_name.toLowerCase().includes(q) ||
-          (t.linked_entity_label ?? "").toLowerCase().includes(q);
+          (t.linked_entity_label ?? "").toLowerCase().includes(q) ||
+          (t.created_by_name ?? "").toLowerCase().includes(q);
         if (!matches) return false;
       }
       return true;
@@ -220,11 +229,11 @@ export const TransactionsTable = memo(function TransactionsTable({
       {
         id: "date",
         header: "Дата",
-        width: 104,
+        width: 125,
         sortValue: (tx) => tx.date,
         render: (tx) => (
           <RecordCellShell isLabelIdentifier>
-            <span className="font-mono text-xs text-[#111111]">{formatDate(tx.date)}</span>
+            <span className="font-mono text-xs text-[#111111]">{formatDateTime(tx.date)}</span>
           </RecordCellShell>
         ),
       },
@@ -338,6 +347,24 @@ export const TransactionsTable = memo(function TransactionsTable({
             </RecordCellShell>
           );
         },
+      },
+      {
+        id: "author",
+        header: "Автор",
+        width: 130,
+        sortValue: (tx) => tx.created_by_name || "",
+        render: (tx) => (
+          <RecordCellShell>
+            {tx.created_by_name ? (
+              <div className="flex items-center gap-1.5 truncate text-xs text-[#666666]">
+                <User className="h-3 w-3 shrink-0 text-[#888888]" />
+                <span className="truncate">{tx.created_by_name}</span>
+              </div>
+            ) : (
+              <span className="text-xs text-[#888888]">—</span>
+            )}
+          </RecordCellShell>
+        ),
       },
       {
         id: "actions",
@@ -590,7 +617,7 @@ export const TransactionsTable = memo(function TransactionsTable({
         title="Удалить операцию?"
         description={
           deletingTx
-            ? `Операция от ${formatDate(deletingTx.date)} на сумму ${formatAmount(
+            ? `Операция от ${formatDateTime(deletingTx.date)} на сумму ${formatAmount(
                 deletingTx.amount,
                 deletingTx.type,
               )} будет удалена, а баланс счёта автоматически пересчитан. Это действие необратимо.`

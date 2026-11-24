@@ -69,7 +69,13 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: r.items, meta: { limit: p.limit, offset: p.offset, total: r.total } });
   });
   app.post("/transactions", { onRequest: write }, async (req, reply) =>
-    reply.status(201).send({ data: await service.createTransaction(req.tenant_id, createTransactionSchema.parse(req.body)) }),
+    reply.status(201).send({
+      data: await service.createTransaction(
+        req.tenant_id,
+        createTransactionSchema.parse(req.body),
+        req.authUser?.id,
+      ),
+    }),
   );
   app.post("/transactions/bulk-delete", { onRequest: write }, async (req, reply) => {
     const { ids } = bulkTransactionsSchema.parse(req.body);

@@ -39,6 +39,8 @@ export interface Transaction {
   linked_entity_label: string | null;
   counterparty: string;
   counterparty_inn?: string;
+  created_by_id?: string | null;
+  created_by_name?: string | null;
 }
 
 const CATEGORY_LABELS: Record<TransactionCategory, string> = {

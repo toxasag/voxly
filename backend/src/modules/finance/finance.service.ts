@@ -40,6 +40,8 @@ interface TxRow {
   counterparty_name: string;
   counterparty_inn: string;
   occurred_at: Date | string;
+  created_by_id?: string | null;
+  created_by_name?: string | null;
 }
 const iso = (value: Date | string) => value instanceof Date ? value.toISOString() : value;
 const blank = (v: string | undefined) => v === undefined || v === "" ? null : v;
@@ -154,13 +156,13 @@ export class FinanceService {
     if (options?.search && options.search.trim()) {
       params.push(`%${options.search.trim()}%`);
       conditions.push(
-        `(t.description ILIKE $${params.length} OR t.counterparty_name ILIKE $${params.length} OR t.category_name ILIKE $${params.length} OR a.name ILIKE $${params.length})`,
+        `(t.description ILIKE $${params.length} OR t.counterparty_name ILIKE $${params.length} OR t.category_name ILIKE $${params.length} OR a.name ILIKE $${params.length} OR u.name ILIKE $${params.length})`,
       );
     }
 
     const whereSql = conditions.join(" AND ");
 
-    const countSql = `SELECT COUNT(*)::text AS total FROM transactions t JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id WHERE ${whereSql}`;
+    const countSql = `SELECT COUNT(*)::text AS total FROM transactions t JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id WHERE ${whereSql}`;
     const total = await queryOne<{ total: string }>(countSql, params);
 
     const selectParams: SqlParam[] = [...params, limit, offset];
@@ -168,9 +170,12 @@ export class FinanceService {
                             COALESCE(t.counterparty_name, '') AS counterparty_name,
                             COALESCE(t.counterparty_inn, '') AS counterparty_inn,
                             t.cash_account_id, a.name AS account_name,
-                            t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at
+                            t.deal_id, t.repair_order_id, t.invoice_id, t.occurred_at,
+                            t.created_by AS created_by_id,
+                            COALESCE(u.name, u.email, '') AS created_by_name
                      FROM transactions t
                      JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+                     LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
                      WHERE ${whereSql}
                      ORDER BY t.occurred_at DESC
                      LIMIT $${selectParams.length - 1} OFFSET $${selectParams.length}`;
@@ -196,23 +201,166 @@ export class FinanceService {
       counterpartyName: row.counterparty_name || "",
       counterpartyInn: row.counterparty_inn || "",
       occurredAt: iso(row.occurred_at),
+      createdById: row.created_by_id || null,
+      createdByName: row.created_by_name || null,
     };
+  }
+
+  private async syncRepairOrderPaymentStatusInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    // 1. Проверяем, есть ли активные оплаченные счета (status = 'paid')
+    const paidInvoice = await tx.queryOne<{ id: string }>(
+      `SELECT i.id
+       FROM invoices i
+       LEFT JOIN invoice_repair_orders iro ON iro.invoice_id = i.id AND iro.tenant_id = i.tenant_id
+       WHERE i.tenant_id = $1
+         AND i.deleted_at IS NULL
+         AND i.status = 'paid'
+         AND (i.repair_order_id = $2 OR iro.repair_order_id = $2)
+       LIMIT 1`,
+      [tenantId, orderId],
+    );
+
+    if (paidInvoice) {
+      await tx.query(
+        `UPDATE repair_orders SET payment_status = 'paid', updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, orderId],
+      );
+      return;
+    }
+
+    // 2. Проверяем прямые активные транзакции оплаты наряда
+    const directPaid = await tx.queryOne<{ total_paid: string }>(
+      `SELECT COALESCE(SUM(amount), 0)::text AS total_paid
+       FROM transactions
+       WHERE tenant_id = $1 AND repair_order_id = $2 AND direction = 'income' AND deleted_at IS NULL`,
+      [tenantId, orderId],
+    );
+    const orderCost = await tx.queryOne<{ cost: string }>(
+      `SELECT COALESCE(final_cost, estimated_cost, 0)::text AS cost
+       FROM repair_orders
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, orderId],
+    );
+    if (
+      orderCost &&
+      Number(directPaid?.total_paid ?? 0) >= Number(orderCost.cost) &&
+      Number(orderCost.cost) > 0
+    ) {
+      await tx.query(
+        `UPDATE repair_orders SET payment_status = 'paid', updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, orderId],
+      );
+      return;
+    }
+
+    // 3. Проверяем, есть ли активные выставленные счета (sent / overdue / draft)
+    const activeInvoice = await tx.queryOne<{ id: string }>(
+      `SELECT i.id
+       FROM invoices i
+       LEFT JOIN invoice_repair_orders iro ON iro.invoice_id = i.id AND iro.tenant_id = i.tenant_id
+       WHERE i.tenant_id = $1
+         AND i.deleted_at IS NULL
+         AND i.status IN ('sent', 'overdue', 'draft')
+         AND (i.repair_order_id = $2 OR iro.repair_order_id = $2)
+       LIMIT 1`,
+      [tenantId, orderId],
+    );
+
+    const targetStatus = activeInvoice ? 'invoiced' : 'unpaid';
+    await tx.query(
+      `UPDATE repair_orders SET payment_status = $3, updated_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, orderId, targetStatus],
+    );
   }
 
   async bulkDeleteTransactions(tenantId: string, ids: string[]): Promise<{ count: number }> {
     if (ids.length === 0) return { count: 0 };
     return withTenant(tenantId, async (tx) => {
-      const deleted = await tx.query<{ id: string; cash_account_id: string; direction: "income" | "expense"; amount: string }>(
+      const deleted = await tx.query<{
+        id: string;
+        cash_account_id: string;
+        direction: "income" | "expense";
+        amount: string;
+        invoice_id: string | null;
+        repair_order_id: string | null;
+      }>(
         `UPDATE transactions
          SET deleted_at = now()
          WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
-         RETURNING id, cash_account_id, direction, amount`,
+         RETURNING id, cash_account_id, direction, amount, invoice_id, repair_order_id`,
         [tenantId, ids],
       );
 
       const affectedAccountIds = Array.from(new Set(deleted.map((r) => r.cash_account_id)));
       for (const accId of affectedAccountIds) {
         await this.recalculateAccountBalanceInTx(tx, tenantId, accId);
+      }
+
+      // Собираем затронутые счета и наряд-заказы
+      const affectedInvoiceIds = Array.from(
+        new Set(deleted.map((r) => r.invoice_id).filter((id): id is string => Boolean(id))),
+      );
+      const affectedOrderIds = new Set<string>(
+        deleted.map((r) => r.repair_order_id).filter((id): id is string => Boolean(id)),
+      );
+
+      for (const invId of affectedInvoiceIds) {
+        const inv = await tx.queryOne<{
+          id: string;
+          total: string;
+          status: string;
+          due_date: Date | string;
+          repair_order_id: string | null;
+        }>(
+          `SELECT id, total, status, due_date, repair_order_id
+           FROM invoices
+           WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, invId],
+        );
+        if (!inv) continue;
+
+        if (inv.repair_order_id) {
+          affectedOrderIds.add(inv.repair_order_id);
+        }
+        const linkedOrders = await tx.query<{ repair_order_id: string }>(
+          `SELECT repair_order_id FROM invoice_repair_orders WHERE tenant_id = $1 AND invoice_id = $2`,
+          [tenantId, invId],
+        );
+        for (const lo of linkedOrders) {
+          affectedOrderIds.add(lo.repair_order_id);
+        }
+
+        // Проверяем оставшиеся активные оплаченные операции по этому счёту
+        const paidActive = await tx.queryOne<{ total_paid: string }>(
+          `SELECT COALESCE(SUM(amount), 0)::text AS total_paid
+           FROM transactions
+           WHERE tenant_id = $1 AND invoice_id = $2 AND direction = 'income' AND deleted_at IS NULL`,
+          [tenantId, invId],
+        );
+
+        const totalPaid = Number(paidActive?.total_paid ?? 0);
+        if (totalPaid < Number(inv.total)) {
+          const isOverdue = inv.due_date ? new Date(inv.due_date).getTime() < Date.now() : false;
+          const revertedStatus = isOverdue ? 'overdue' : 'sent';
+          await tx.query(
+            `UPDATE invoices
+             SET status = $3, paid_at = NULL, paid_account_id = NULL, updated_at = now()
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, invId, revertedStatus],
+          );
+        }
+      }
+
+      // Синхронизируем статус оплаты каждого затронутого наряд-заказа
+      for (const orderId of Array.from(affectedOrderIds)) {
+        await this.syncRepairOrderPaymentStatusInTx(tx, tenantId, orderId);
       }
 
       return { count: deleted.length };
@@ -347,7 +495,7 @@ export class FinanceService {
     return row;
   }
 
-  async createTransaction(tenantId: string, p: CreateTransactionPayload): Promise<TransactionDTO> {
+  async createTransaction(tenantId: string, p: CreateTransactionPayload, userId?: string): Promise<TransactionDTO> {
     return withTenant(tenantId, async (tx) => {
       const a = await this.account(tx, tenantId, p.account_id);
       if (a.currency !== p.currency) throw new ValidationError("Account currency differs from transaction currency");
@@ -356,13 +504,15 @@ export class FinanceService {
       const row = await tx.queryOneOrThrow<TxRow>(
         `INSERT INTO transactions
            (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction,
-            description, counterparty_name, counterparty_inn, deal_id, repair_order_id, invoice_id, occurred_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamptz, now()))
+            description, counterparty_name, counterparty_inn, deal_id, repair_order_id, invoice_id, occurred_at, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamptz, now()), $15)
          RETURNING id, direction, amount, currency, category_id, category_name, description,
                    COALESCE(counterparty_name, '') AS counterparty_name,
                    COALESCE(counterparty_inn, '') AS counterparty_inn,
                    cash_account_id, (SELECT name FROM cash_accounts WHERE id = $2) AS account_name,
-                   deal_id, repair_order_id, invoice_id, occurred_at`,
+                   deal_id, repair_order_id, invoice_id, occurred_at,
+                   created_by AS created_by_id,
+                   (SELECT COALESCE(name, email, '') FROM users WHERE id = $15 AND tenant_id = $1) AS created_by_name`,
         [
           tenantId,
           p.account_id,
@@ -378,6 +528,7 @@ export class FinanceService {
           blank(p.repair_order_id),
           blank(p.invoice_id),
           p.occurred_at ?? null,
+          blank(userId),
         ],
       );
       await this.recalculateAccountBalanceInTx(tx, tenantId, p.account_id);
@@ -778,8 +929,8 @@ export class FinanceService {
         totalPaid += amount;
         transactionsCount += 1;
         await tx.query(
-          `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, counterparty_name, deal_id, repair_order_id)
-           VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10)`,
+          `INSERT INTO transactions (tenant_id, cash_account_id, category_id, category_name, amount, currency, direction, description, counterparty_name, deal_id, repair_order_id, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, 'income', $7, $8, $9, $10, $11)`,
           [
             tenantId,
             account.id,
@@ -791,6 +942,7 @@ export class FinanceService {
             order.customer_name || "",
             order.deal_id,
             order.id,
+            _user || null,
           ],
         );
       };

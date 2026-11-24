@@ -210,6 +210,8 @@ export interface TransactionDTO {
   counterpartyName: string;
   counterpartyInn: string;
   occurredAt: string;
+  createdById?: string | null;
+  createdByName?: string | null;
 }
 
 export interface InvoiceItemDTO {

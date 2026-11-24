@@ -1238,3 +1238,35 @@
 - **Верификация:**
   - TypeScript сборка backend и Next.js build frontend: 0 ошибок, 45/45 static pages.
   - Деплой на боевой VPS через `vf-deploy GETVOXLY`: backend и frontend healthy, HTTP 200 на https://api.getvoxly.ru/health и https://getvoxly.ru/login.
+
+---
+
+### 24.11.2026 — Синхронизация платежей счетов, автора и категорий операций, запрет ручной смены оплаты в нарядах
+- **Контекст и проблема:**
+  1. На странице `https://remtoua.getvoxly.ru/finance` в таблице «Операции» отображалась только дата без времени (`24.11.26`).
+  2. При оплате счёта колонка «Контрагент» оставалась пустой (`—`), отсутствовала колонка «Автор», а категория операции хардкодилась как «Оплата счёта» с `category_id = NULL`.
+  3. При удалении финансовой операции оплаты счёт оставался в статусе `paid` («Оплачен»), кнопка «Принять оплату» не возвращалась (ни в финансах, ни в карточке наряда), а статус наряда оставался «Оплачен».
+  4. В таблице наряд-заказов `https://remtoua.getvoxly.ru/repairs` и на тулбаре массовых действий была ручная смена статуса оплаты через `<select>`.
+- **Root Cause:**
+  1. `TransactionsTable.tsx` форматировал дату через `Intl.DateTimeFormat` только с `day, month, year` без времени.
+  2. В `invoices.service.ts:markPaid` аргумент `_user` игнорировался, в `INSERT INTO transactions` не передавались `counterparty_name`, `counterparty_inn`, `created_by`, а категории не подтягивались из `finance_categories`. В таблице `transactions` отсутствовала колонка `created_by`.
+  3. `finance.service.ts:bulkDeleteTransactions` только ставил `deleted_at = now()` на транзакциях и пересчитывал баланс кассы, не проверяя `invoice_id` и не откатывая статус счёта и связанных наряд-заказов.
+  4. В `RepairsTable.tsx` `PaymentStatusBadge` рендерил выпадающий список `<select>`, а в тулбаре присутствовал селект смены оплаты.
+- **Что сделано:**
+  1. **База данных:**
+     - Создана миграция `0132_transactions_created_by_and_payment_status_sync.sql`: добавлена колонка `created_by UUID REFERENCES users(id)` с индексом, бэкфилл автора, контрагента и категорий, а также сверка статусов зависших счетов и нарядов.
+     - Обновлён `backend/src/db/schema.sql`.
+  2. **Бэкенд:**
+     - `finance.types.ts`: в `TransactionDTO` добавлены `createdById` и `createdByName`.
+     - `finance.routes.ts`: в роут создания транзакций передаётся `req.authUser?.id`.
+     - `finance.service.ts`: при выборке операций добавлен `LEFT JOIN users u ON u.id = t.created_by`, маппинг в `toTx`, поддержка поиска по автору.
+     - В `bulkDeleteTransactions` реализован автоматический откат статуса счёта в `sent` / `overdue` (со сбросом `paid_at` и `paid_account_id`), если сумма активных оплат стала меньше суммы счёта, и синхронизация `payment_status` связанных нарядов через `syncRepairOrderPaymentStatusInTx`.
+     - `invoices.service.ts`: в `markPaid` теперь анализируются позиции счёта (`repair_work` vs `repair_part`), выбираются доходные статьи из `finance_categories` тенанта, операция разделяется при наличии и работ, и запчастей, записываются контрагент (компания/контакт, ИНН) и автор (`created_by`).
+  3. **Фронтенд:**
+     - `TransactionsTable.tsx`: дата форматируется с временем (`formatDateTime`: `dd.mm.yy HH:mm`), ширина колонки расширена до 125px; добавлена колонка «Автор» с иконкой `User`; автор включён в поиск и экспорт в CSV.
+     - `RepairsTable.tsx`: `PaymentStatusBadge` заменён на статический read-only бейдж (`<span>`); селект «Оплата» удалён из тулбара групповых действий; удалены неиспользуемые мутации ручной смены оплаты наряда.
+     - `use-invoices.ts`: хуки удаления транзакций инвалидируют `["invoices"]` и `["repairs"]`.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+  - Проверка отката счёта `СЧ-2026-0006` в `sent` и нарядов №0020, №0021 в `invoiced` на базе `remtoua`.
