@@ -320,62 +320,67 @@ export class CrmPipelineService {
       };
     }
 
-    // Защита CRM-воронки: запрет автогенерации контактов и сделок для собственных подключенных аккаунтов и сотрудников тенанта
-    const senderPeerId = enrichedInput.senderTelegramChatId || enrichedInput.chatId;
-    const senderCleanUsername = (
-      enrichedInput.senderTelegramUsername ||
-      enrichedInput.senderUsername ||
-      ""
-    )
-      .replace(/^@/, "")
-      .toLowerCase()
-      .trim();
-    const senderPhoneNormalized = enrichedInput.senderPhone || undefined;
+    // Защита CRM-воронки: запрет автогенерации контактов и сделок для собственных подключенных аккаунтов и сотрудников тенанта.
+    // Применяется ТОЛЬКО к персональным MTProto-сессиям (channel === 'telegram'), где события считываются из личного Telegram-аккаунта.
+    // Для каналов ботов и виджетов (telegram_bot, webchat, max, whatsapp) фильтрация "own account" ЗАПРЕЩЕНА:
+    // операторы, владельцы тенантов и клиенты имеют полное право писать боту для тестирования или заказов.
+    if (input.channel !== "telegram_bot" && input.channel !== "webchat") {
+      const senderPeerId = enrichedInput.senderTelegramChatId || enrichedInput.chatId;
+      const senderCleanUsername = (
+        enrichedInput.senderTelegramUsername ||
+        enrichedInput.senderUsername ||
+        ""
+      )
+        .replace(/^@/, "")
+        .toLowerCase()
+        .trim();
+      const senderPhoneNormalized = enrichedInput.senderPhone || undefined;
 
-    const ownAccount = await queryOne<{ id: string }>(
-      `SELECT id FROM (
-         SELECT id FROM channel_accounts
-         WHERE tenant_id = $1 AND deleted_at IS NULL
-           AND (
-             (remote_user_id IS NOT NULL AND remote_user_id <> '' AND remote_user_id = $2)
-             OR ($3::text <> '' AND LOWER(REPLACE(external_id, '@', '')) = $3)
-             OR ($4::text IS NOT NULL AND external_id = $4)
-           )
-         UNION ALL
-         SELECT id FROM users
-         WHERE tenant_id = $1 AND deleted_at IS NULL
-           AND (
-             (telegram_chat_id IS NOT NULL AND telegram_chat_id::text = $2)
-             OR ($3::text <> '' AND LOWER(telegram_username) = $3)
-             OR ($4::text IS NOT NULL AND phone = $4)
-           )
-       ) t LIMIT 1`,
-      [
-        input.tenantId,
-        senderPeerId,
-        senderCleanUsername,
-        senderPhoneNormalized ?? null,
-      ],
-    ).catch(() => null);
-
-    if (ownAccount) {
-      this.log.info(
-        {
-          tenantId: input.tenantId,
-          channel: input.channel,
-          chatId: input.chatId,
+      const ownAccount = await queryOne<{ id: string }>(
+        `SELECT id FROM (
+           SELECT id FROM channel_accounts
+           WHERE tenant_id = $1 AND deleted_at IS NULL
+             AND (
+               (remote_user_id IS NOT NULL AND remote_user_id <> '' AND remote_user_id = $2)
+               OR ($3::text <> '' AND LOWER(REPLACE(external_id, '@', '')) = $3)
+               OR ($4::text IS NOT NULL AND external_id = $4)
+             )
+           UNION ALL
+           SELECT id FROM users
+           WHERE tenant_id = $1 AND deleted_at IS NULL
+             AND (
+               (telegram_chat_id IS NOT NULL AND telegram_chat_id::text = $2)
+               OR ($3::text <> '' AND LOWER(telegram_username) = $3)
+               OR ($4::text IS NOT NULL AND phone = $4)
+             )
+         ) t LIMIT 1`,
+        [
+          input.tenantId,
           senderPeerId,
           senderCleanUsername,
-        },
-        "Skipping lead/contact creation: sender is tenant's own channel account or user",
-      );
-      return {
-        contactId: "",
-        dealId: "",
-        isNewContact: false,
-        isNewDeal: false,
-        isPersonal: true,
-      };
+          senderPhoneNormalized ?? null,
+        ],
+      ).catch(() => null);
+
+      if (ownAccount) {
+        this.log.info(
+          {
+            tenantId: input.tenantId,
+            channel: input.channel,
+            chatId: input.chatId,
+            senderPeerId,
+            senderCleanUsername,
+          },
+          "Skipping lead/contact creation: sender is tenant's own channel account or user",
+        );
+        return {
+          contactId: "",
+          dealId: "",
+          isNewContact: false,
+          isNewDeal: false,
+          isPersonal: true,
+        };
+      }
     }
 
     const result = await transaction(async (tx) => {
@@ -383,8 +388,8 @@ export class CrmPipelineService {
 
       // Если контакт помечен как личный — полностью игнорируем входящее сообщение:
       // не создаём сделку, не пишем в deal_messages, не отвечаем AI-ботом.
-      // Сообщения не помечаются прочитанными, телефон клиента звонит и уведомляет штатно.
-      if (contact !== null && contact.is_personal) {
+      // Исключение: обращения в официальный telegram_bot или webchat (где клиент явно пишет боту).
+      if (contact !== null && contact.is_personal && input.channel !== "telegram_bot" && input.channel !== "webchat") {
         return {
           contactId: contact.id,
           dealId: "",
