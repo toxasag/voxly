@@ -272,6 +272,7 @@ export interface PnlDTO {
   income: number;
   expenses: number;
   netProfit: number;
+  capitalizedCosts?: number;
   incomeByCategory: PnlCategoryDTO[];
   expensesByCategory: PnlCategoryDTO[];
   cogs?: PnlCogsSummaryDTO;

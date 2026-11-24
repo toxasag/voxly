@@ -1598,3 +1598,24 @@
   3. **Frontend (`EditTransactionModal.tsx`, `TransactionsTable.tsx`, `finance/page.tsx`, `finance.types.ts`, `use-invoices.ts`, `use-warehouse.ts`):**
      - Корректная предзагрузка `category_id` в `EditTransactionModal` без затирания при сохранении, отображение фоллбэка «Без категории», двусторонняя инвалидация кэшей `["finance"]` ↔ `["warehouse"]`.
   4. **Тесты:** добавлен `backend/src/tests/warehouse-finance-sync.test.ts` (4 теста).
+
+### 2026-11-24 — Частичное оприходование заказов поставщикам + Landed Cost (распределение доп. расходов)
+- **Root cause / задача:** Окно оприходования заказа поставщику принимало заказ только целиком и не позволяло учитывать дополнительные расходы поставки (доставка, курьер и др.) с распределением на себестоимость складских партий и отражением в `/finance`.
+- **Что сделано:**
+  1. **БД (`0136_supplier_order_partial_receipts_and_landed_cost.sql`, `schema.sql`):**
+     - Добавлена колонка `supplier_order_items.received_quantity` (с бэкфиллом для уже принятых заказов).
+     - Созданы таблицы `supplier_order_receipts`, `supplier_order_receipt_items`, `supplier_order_receipt_costs` с `tenant_id`, индексами и RLS.
+     - В `warehouse_batches` добавлены `receipt_id`, `base_purchase_price`, `landed_cost_per_unit`, `landed_cost_total` (с бэкфиллом `base_purchase_price = purchase_price`).
+     - В `transactions` добавлены `supplier_order_receipt_id`, `is_capitalized_cost`.
+  2. **Backend (`landed-cost.utils.ts`, `warehouse.service.ts`, `warehouse.types.ts`, `finance.service.ts`, `finance.types.ts`):**
+     - `allocateLandedCost` считает распределение доп. расходов в целых копейках (`by_value`, `by_quantity`, `manual`, остаток округления на последнюю активную строку).
+     - `createReceiptFromSupplierOrder` блокирует заказ и строки `FOR UPDATE`, защищает от переприёмки, создаёт запись приёмки, партии FIFO с `purchase_price = effectiveUnitPrice`, отдельные расходные транзакции по доп. расходам с `is_capitalized_cost = true` и переводит статус заказа в `partially_received` или `received`.
+     - `deleteSupplierOrdersInTx` откатывает в том числе транзакции доп. расходов по всем приёмкам и пересчитывает балансы затронутых счетов.
+     - `FinanceService.pnl` исключает `is_capitalized_cost = true` из операционных расходов и отдаёт их в `capitalizedCosts` (исключён двойной учёт с FIFO `partsCogs`).
+  3. **Frontend (`ReceiptSupplierOrderModal.tsx`, `warehouse/page.tsx`, `SupplierOrderDetailModal.tsx`, `EditSupplierOrderModal.tsx`, `ProfitLossView.tsx`, `use-warehouse.ts`, `use-invoices.ts`, `landed-cost.ts`):**
+     - Переработана модалка приёмки: частичные количества по строкам, блок доп. расходов (описание, сумма, категория, счёт), выбор метода распределения и live-предпросмотр себестоимости каждой партии.
+     - На `/warehouse` добавлен статус «Частично оприходован», прогресс `Принято X из Y`, бейдж доп. расходов, кнопка «Доприходовать» и разбивка `база + доп.` в таблице партий; в деталях заказа добавлена «История приёмок».
+     - В `ProfitLossView.tsx` добавлена информационная плашка для `pnl.capitalizedCosts`.
+  4. **Где ещё используется модель партий:** `repairs.service.ts` (`consumeFifo`), `warehouse.service.ts` (`fulfillWonDealIfReadyInTx`), оценка склада и `finance.service.ts` (`pnl` → `partsCogs`) читают `warehouse_batches.purchase_price`, поэтому новая себестоимость автоматически применяется без правок потребителей.
+  5. **Тесты:** добавлены `backend/src/tests/warehouse-partial-receipt-landed-cost.test.ts` (9 тестов) и `frontend/src/lib/warehouse/landed-cost.test.ts` (4 теста).
+

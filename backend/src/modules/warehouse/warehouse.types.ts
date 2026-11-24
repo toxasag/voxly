@@ -130,7 +130,14 @@ export const updatePurchaseRequestSchema = z.object({
 });
 export type UpdatePurchaseRequestPayload = z.infer<typeof updatePurchaseRequestSchema>;
 
-export const supplierOrderStatusSchema = z.enum(["draft", "pending_payment", "paid", "received", "cancelled"]);
+export const supplierOrderStatusSchema = z.enum([
+  "draft",
+  "pending_payment",
+  "paid",
+  "partially_received",
+  "received",
+  "cancelled",
+]);
 export type SupplierOrderStatus = z.infer<typeof supplierOrderStatusSchema>;
 
 export const createSupplierOrderSchema = z.object({
@@ -187,10 +194,30 @@ export const updateSupplierOrderSchema = z.object({
 });
 export type UpdateSupplierOrderPayload = z.infer<typeof updateSupplierOrderSchema>;
 
+export const landedCostAllocationMethodSchema = z.enum(["by_value", "by_quantity", "manual"]);
+
+export const receiptSupplierOrderItemInputSchema = z.object({
+  supplier_order_item_id: z.string().uuid(),
+  quantity: z.number().nonnegative("Количество не может быть отрицательным"),
+  manual_extra_cost: z.number().nonnegative("Сумма расхода не может быть отрицательной").optional(),
+});
+
+export const receiptExtraCostInputSchema = z.object({
+  description: z.string().trim().max(300).default(""),
+  amount: z.number().positive("Сумма доп. расхода должна быть больше 0"),
+  category_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  category_name: z.string().trim().max(120).optional(),
+  cash_account_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  counterparty_name: z.string().trim().max(200).optional(),
+});
+
 export const receiptSupplierOrderSchema = z.object({
-  cash_account_id: z.string().uuid().optional(),
+  cash_account_id: z.string().uuid().optional().or(z.literal("")),
   mark_paid: z.boolean().default(false),
-  comment: z.string().optional(),
+  comment: z.string().max(1000).optional(),
+  items: z.array(receiptSupplierOrderItemInputSchema).optional(),
+  allocation_method: landedCostAllocationMethodSchema.optional().default("by_value"),
+  extra_costs: z.array(receiptExtraCostInputSchema).optional().default([]),
 });
 export type ReceiptSupplierOrderPayload = z.infer<typeof receiptSupplierOrderSchema>;
 
@@ -345,10 +372,14 @@ export interface WarehouseBatchRow {
   tenant_id: string;
   item_id: string;
   supplier_order_id?: string | null;
+  receipt_id?: string | null;
   item_name?: string;
   batch_number: string;
   supplier_name: string;
   purchase_price: string | number;
+  base_purchase_price?: string | number | null;
+  landed_cost_per_unit?: string | number | null;
+  landed_cost_total?: string | number | null;
   initial_quantity: string | number;
   remaining_quantity: string | number;
   received_at: Date | string;
@@ -359,10 +390,14 @@ export interface WarehouseBatchDTO {
   id: string;
   itemId: string;
   supplierOrderId?: string | null;
+  receiptId?: string | null;
   itemName?: string;
   batchNumber: string;
   supplierName: string;
   purchasePrice: number;
+  basePurchasePrice?: number;
+  landedCostPerUnit?: number;
+  landedCostTotal?: number;
   initialQuantity: number;
   remainingQuantity: number;
   receivedAt: string;
@@ -480,6 +515,7 @@ export interface SupplierOrderItemRow {
   repair_order_id?: string | null;
   purchase_request_ids?: string[] | null;
   quantity: string | number;
+  received_quantity?: string | number;
   unit: string;
   price: string | number;
   total_price: string | number;
@@ -499,9 +535,52 @@ export interface SupplierOrderItemDTO {
   purchaseRequestIds?: string[];
   repairOrders?: string;
   quantity: number;
+  receivedQuantity: number;
+  remainingQuantity: number;
   unit: string;
   price: number;
   totalPrice: number;
+  createdAt: string;
+}
+
+export interface SupplierOrderReceiptItemDTO {
+  id: string;
+  receiptId: string;
+  supplierOrderItemId: string;
+  batchId: string | null;
+  itemId: string | null;
+  itemName: string;
+  quantity: number;
+  baseUnitPrice: number;
+  allocatedExtraCost: number;
+  unitLandedCost: number;
+  effectiveUnitPrice: number;
+  createdAt: string;
+}
+
+export interface SupplierOrderReceiptCostDTO {
+  id: string;
+  receiptId: string;
+  description: string;
+  amount: number;
+  categoryId: string | null;
+  categoryName: string;
+  cashAccountId: string | null;
+  transactionId: string | null;
+  createdAt: string;
+}
+
+export interface SupplierOrderReceiptDTO {
+  id: string;
+  supplierOrderId: string;
+  receiptNumber: string;
+  allocationMethod: "by_value" | "by_quantity" | "manual";
+  extraCostsTotal: number;
+  notes: string;
+  createdBy: string | null;
+  createdByName?: string | null;
+  items: SupplierOrderReceiptItemDTO[];
+  costs: SupplierOrderReceiptCostDTO[];
   createdAt: string;
 }
 
@@ -539,6 +618,10 @@ export interface SupplierOrderDTO {
   createdBy: string | null;
   createdByName?: string | null;
   items: SupplierOrderItemDTO[];
+  orderedQuantityTotal?: number;
+  receivedQuantityTotal?: number;
+  extraCostsTotal?: number;
+  receipts?: SupplierOrderReceiptDTO[];
   createdAt: string;
   updatedAt: string;
 }
