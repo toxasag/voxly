@@ -306,12 +306,15 @@ describe("Частичное оприходование и Landed Cost в Wareho
       expect.arrayContaining([tenantId, accountId, categoryId, userId, orderId, receiptId, 200]),
     );
 
-    // 3. Проверяем обновление статуса заказа на partially_received
+    // 3. Проверяем обновление статуса заказа на partially_received без смешанного типа параметра $1
     const statusUpdate = recordedSql.find(
-      (q) => q.sql.includes("UPDATE supplier_orders") && q.sql.includes("SET status = $1"),
+      (q) =>
+        q.sql.includes("UPDATE supplier_orders") &&
+        q.sql.includes("SET status = 'partially_received'"),
     );
     expect(statusUpdate).toBeDefined();
-    expect(statusUpdate?.params?.[0]).toBe("partially_received");
+    expect(statusUpdate?.sql).not.toContain("CASE WHEN $1");
+    expect(statusUpdate?.params).toEqual([tenantId, orderId]);
   });
 
   it("отклоняет переприёмку (quantity > remaining) с ValidationError", async () => {
@@ -502,9 +505,13 @@ describe("Частичное оприходование и Landed Cost в Wareho
 
     expect(result.batchesCreated).toBe(1);
     const statusUpdate = recordedSql.find(
-      (q) => q.sql.includes("UPDATE supplier_orders") && q.sql.includes("SET status = $1"),
+      (q) =>
+        q.sql.includes("UPDATE supplier_orders") &&
+        q.sql.includes("SET status = 'received'"),
     );
-    expect(statusUpdate?.params?.[0]).toBe("received");
+    expect(statusUpdate).toBeDefined();
+    expect(statusUpdate?.sql).not.toContain("CASE WHEN $1");
+    expect(statusUpdate?.params).toEqual([tenantId, orderId]);
   });
 
   it("FinanceService.pnl исключает is_capitalized_cost = true из операционных расходов и отдаёт в capitalizedCosts", async () => {
