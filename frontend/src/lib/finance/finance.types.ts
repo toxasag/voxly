@@ -40,6 +40,7 @@ export interface Transaction {
   linked_entity_type: string | null;
   linked_entity_label: string | null;
   supplier_order_id?: string | null;
+  is_capitalized_cost?: boolean;
   counterparty: string;
   counterparty_inn?: string;
   created_by_id?: string | null;

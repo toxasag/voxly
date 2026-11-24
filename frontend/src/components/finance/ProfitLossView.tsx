@@ -41,6 +41,8 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }
         inc[cat] = (inc[cat] ?? 0) + t.amount;
       }
       if (t.type === "expense") {
+        // Капитализированные доп. расходы (доставка/курьер в себестоимости партий) не дублируются в операционных расходах P&L
+        if (t.is_capitalized_cost) return;
         expCats.add(cat);
         exp[cat] = (exp[cat] ?? 0) + t.amount;
       }

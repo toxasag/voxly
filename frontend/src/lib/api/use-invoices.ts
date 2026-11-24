@@ -183,6 +183,7 @@ export interface TransactionDTO {
   repairOrderId: string | null;
   invoiceId: string | null;
   supplierOrderId?: string | null;
+  isCapitalizedCost?: boolean;
   counterpartyName?: string;
   counterpartyInn?: string;
   occurredAt: string;
