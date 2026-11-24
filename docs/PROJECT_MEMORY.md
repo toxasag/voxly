@@ -1624,3 +1624,35 @@
      - Добавлено визуальное отображение бейджа «Черновик» в шапке пузыря и предупреждения «Неотправленный черновик (посетитель покинул сайт)» для входящих сообщений с `metadata.is_draft: true`.
   5. **Исправление существующей сделки:**
      - В сделке `68bc2e8a-3a7c-4821-a941-250bf2d00cd1` сообщение `314b6a24-4155-40cd-a10f-aed4292c919c` помечено как черновик и сгенерирован/сохранён ответ от подключенного агента «Банкирро Бот».
+
+---
+
+### 24.11.2026 — Мастер-выключатель уведомлений пользователя на /settings/notifications (Full Silence & Preferences)
+- **Контекст и взаимосвязи:**
+  - На странице `https://mpro.getvoxly.ru/settings/notifications` уведомления пользователю были включены по умолчанию без возможности их глобально отключить единым тумблером.
+  - В проекте действуют несколько уровней уведомлений:
+    1. **In-App (SSE + Toaster + Колокольчик):** создание записей в `inapp_notifications`, realtime-шина `notificationEventBus`, стрим `/api/v1/notifications/stream`, хук `useInAppNotifications`, двухтоновый синтезированный звук `playNotificationChime()`.
+    2. **Web Push & PWA (VAPID):** подписки `push_subscriptions`, фоновая доставка через `webpush.sendNotification`, `sendNotificationToUser` и `sendNotificationToTenant`.
+    3. **Каналы лид-уведомлений команды:** `tenant_notification_channels` (Email, Telegram Bot, WhatsApp, Битрикс24) и фолбэк на email владельца/админа (`defaultRecipient`) в `lead-notification.queue.ts`.
+- **Что реализовано:**
+  1. **БД и миграция `0136_user_notifications_master_toggle.sql`:**
+     - Колонка `notifications_enabled BOOLEAN NOT NULL DEFAULT true` в таблице `users` (нулевые накладные расходы при проверках).
+     - Таблица `user_notification_settings` с RLS (`tenant_isolation`), уникальным ограничением `(tenant_id, user_id)` и флагами `notifications_enabled`, `sound_enabled`, `inapp_enabled`, `push_enabled` (все `DEFAULT true`).
+     - Сохранена обратная совместимость: для существующих и новых пользователей без явного отказа всё включено по умолчанию.
+  2. **Backend API и диспетчеры:**
+     - Сервис `NotificationPreferencesService` (`getUserPreferences`, `updateUserPreferences` с UPSERT, `isUserNotificationsEnabled`).
+     - Эндпоинты `GET/PATCH/PUT /api/v1/settings/notifications/preferences` и `/api/v1/notifications/preferences`.
+     - `push-notification.service.ts`: `sendNotificationToUser` прерывает отправку при отключенных уведомлениях; `sendNotificationToTenant` исключает устройства пользователей с `notifications_enabled = false` или `push_enabled = false`; `createInAppNotification` пропускает создание и эмит в шину, если пользователь отключил уведомления.
+     - `push-notification.routes.ts`: в SSE-стриме `/notifications/stream` проверяется мастер-выключатель подключенного пользователя.
+     - `lead-notification.queue.ts`: дефолтный email владельца исключает пользователей с `notifications_enabled IS NOT FALSE`.
+     - Юнит-тест `backend/src/tests/notification-preferences.test.ts`.
+  3. **Frontend UI (Twenty CRM Light Canvas):**
+     - Хук `useNotificationPreferences` с оптимистичным обновлением TanStack Query (`queryKey: ["notification-preferences"]`).
+     - Компонент `UserMasterNotificationToggle.tsx`: мастер-тумблер «Все уведомления пользователя», баннер «Режим полной тишины активирован», переключатели «Звуковые сигналы», «Всплывающий Toaster», «Web Push & PWA» с автоматической блокировкой дочерних каналов при выключенном мастере.
+     - `WebPushDeviceSettings.tsx`: добавлен предупреждающий баннер при выключенном мастер-тумблере.
+     - `useInAppNotifications.ts`: при выключенном мастере блокируется вызов `playNotificationChime()`, блокируется всплывающий тост `toast()`, вызывается `clearAppBadge()`.
+     - Страница `/settings/notifications/page.tsx`: мастер-блок размещен во главе настроек.
+- **Верификация:**
+  - Деплой на `150.241.98.135` выполнен через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Миграция `0136` применена на продакшене.
+  - Живая проверка в `ego-browser`: открытие `https://mpro.getvoxly.ru/settings/notifications`, проверка дефолта (включено), переключение в «Отключено», проверка блокировки дочерних каналов и появления баннера тишины, проверка сохранения после перезагрузки F5 и возврата во включенное состояние.
