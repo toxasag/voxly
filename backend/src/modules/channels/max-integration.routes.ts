@@ -7,6 +7,7 @@ import { getEnv } from "../../config/env.js";
 import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService, invalidateMaxBridgeLiveBotsCache } from "./max-bridge.service.js";
+import { extractMaxIdentity, normalizeMaxPhone } from "./max-identity.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
 import { isBannedName } from "../crm/channel-identity.js";
@@ -70,6 +71,18 @@ const inboundAttachmentSchema = z.object({
   fileName: z.string().optional(),
   mimeType: z.string().optional(),
   fileSize: z.number().optional(),
+  phone: z.union([z.string(), z.number()]).optional().nullable(),
+  firstName: z.string().optional().nullable(),
+  lastName: z.string().optional().nullable(),
+  vcfBody: z.string().optional().nullable(),
+  contactId: z.union([z.string(), z.number()]).optional().nullable(),
+});
+
+const maxRawNameSchema = z.object({
+  firstName: z.string().optional().nullable(),
+  lastName: z.string().optional().nullable(),
+  name: z.string().optional().nullable(),
+  type: z.string().optional().nullable(),
 });
 
 const internalInboundSchema = z.object({
@@ -85,6 +98,9 @@ const internalInboundSchema = z.object({
     .transform((v) => (v == null ? undefined : String(v))),
   username: z.string().nullable().optional(),
   firstName: z.string().nullable().optional(),
+  lastName: z.string().nullable().optional(),
+  fullName: z.string().nullable().optional(),
+  names: z.array(maxRawNameSchema).max(10).optional().nullable(),
   phone: z.string().nullable().optional(),
   selfPhone: z.string().nullable().optional(),
   maxLink: z.string().nullable().optional(),
@@ -362,10 +378,10 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ ok: false, error: "peerId or chatId required" });
   }
 
-  // Дедупликация входящих сообщений (по messageId или по связке botId + peerId + text)
+  // Дедупликация входящих сообщений (по messageId или по связке tenantId + botId + peerId + text)
   const dedupKey = body.messageId
     ? `max:msg:${body.messageId}`
-    : `max:txt:${body.botId ?? ""}:${peerId}:${body.text}`;
+    : `max:txt:${body.tenantId ?? ""}:${body.botId ?? ""}:${peerId}:${body.text}`;
 
   if (isDuplicateInbound(dedupKey)) {
     request.log.info({ key: dedupKey }, "Duplicate MAX inbound message absorbed");
@@ -436,23 +452,73 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     return reply.send({ ok: true, skipped: "self" });
   }
 
-  // Защита от утечки собственного телефона (INC-113)
+  // Защита от утечки собственного телефона (INC-113) и извлечение ФИО + телефона из MAX
   const rawPhone = body.phone || body.senderPhone;
-  const selfPhone = body.selfPhone;
-  const peerPhone = stripOwnerPhone(rawPhone, selfPhone);
+  let selfPhone = body.selfPhone ?? null;
+  let extracted = extractMaxIdentity({
+    names: body.names,
+    firstName: body.firstName,
+    lastName: body.lastName,
+    fullName: body.fullName,
+    senderName: body.senderName,
+    username: body.username ?? body.senderUsername,
+    phone: rawPhone,
+    senderPhone: body.senderPhone,
+    selfPhone,
+    attachments: body.attachments,
+  });
+
+  // Если телефон или фамилия не пришли в PUSH_MESSAGE — дозапрашиваем приватные диалоги из max-bridge (best-effort)
+  if (!extracted.phone || !extracted.lastName || !extracted.firstName) {
+    try {
+      const bridge = new MaxBridgeService();
+      const dialogsResp = await bridge.getPrivateDialogs({
+        botId: channelAccountId,
+        dialogLimit: 30,
+        messageLimit: 5,
+      });
+      if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
+        selfPhone = selfPhone ?? dialogsResp.selfPhone ?? null;
+        const foundDialog = dialogsResp.dialogs.find(
+          (d) =>
+            d.chatId === peerId ||
+            (peerUser && (d.userId === peerUser || d.chatId === peerUser)),
+        );
+        if (foundDialog) {
+          const dialogIdentity = extractMaxIdentity({
+            names: foundDialog.names,
+            firstName: foundDialog.firstName,
+            lastName: foundDialog.lastName,
+            username: foundDialog.username,
+            phone: foundDialog.phone,
+            selfPhone,
+          });
+          extracted = {
+            firstName: extracted.firstName ?? dialogIdentity.firstName,
+            lastName: extracted.lastName ?? dialogIdentity.lastName,
+            phone:
+              normalizeMaxPhone(extracted.phone, selfPhone) ??
+              dialogIdentity.phone,
+            senderName:
+              extracted.firstName || extracted.lastName
+                ? [extracted.firstName, extracted.lastName].filter(Boolean).join(" ")
+                : dialogIdentity.senderName,
+          };
+        }
+      }
+    } catch {
+      // Игнорируем временный сбой max-bridge, чтобы не блокировать приём сообщения
+    }
+  }
+
+  const peerPhone = extracted.phone;
 
   const chatThreadId = (body.threadId || body.chat_thread_id || peerId).trim();
   const peerUserId = (body.maxUserId || body.senderUserId || "").trim() || undefined;
 
-  const rawSenderName =
-    body.firstName?.trim() ||
-    (body.username ? `@${body.username.replace(/^@/, "")}` : null) ||
-    body.senderName ||
-    "Клиент MAX";
-  const senderName = isBannedName(rawSenderName) ? "Клиент MAX" : rawSenderName;
-
-  const rawFirstName = body.firstName?.trim();
-  const cleanFirstName = isBannedName(rawFirstName) ? undefined : rawFirstName;
+  const senderName = extracted.senderName;
+  const cleanFirstName = extracted.firstName;
+  const cleanLastName = extracted.lastName;
 
   let attachmentUrl: string | undefined;
   let attachmentType: string | undefined;
@@ -482,6 +548,7 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
 
   const maxProfile: ChannelProfile = {
     firstName: cleanFirstName,
+    lastName: cleanLastName,
     phone: peerPhone,
     username: body.username ?? body.senderUsername ?? undefined,
     isBot: isBotFlag,

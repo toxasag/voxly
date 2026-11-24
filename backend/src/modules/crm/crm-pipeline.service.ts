@@ -88,6 +88,7 @@ export interface InboundMessageInput {
   utmTags?: Record<string, string>;
   sourceMetadata?: Record<string, unknown>;
   geo?: VisitorGeoData;
+  isDraft?: boolean;
 }
 
 /** Найденный контакт: ФИО нужно заголовку сделки, когда профиль недоступен. */
@@ -868,6 +869,10 @@ export class CrmPipelineService {
       if (input.gaId) dealCustomFields.ga_id = input.gaId;
       if (input.fbId) dealCustomFields.fb_id = input.fbId;
       if (input.tmrLvid) dealCustomFields.tmr_lvid = input.tmrLvid;
+      if (input.isDraft) {
+        dealCustomFields.is_draft = true;
+        dealCustomFields.draft_reason = "lead_salvage";
+      }
       const contactCf = (contact?.custom_fields ?? {}) as Record<string, unknown>;
       if (input.utmTags && Object.keys(input.utmTags).length > 0) {
         dealCustomFields.utm_tags = input.utmTags;
@@ -1110,10 +1115,11 @@ export class CrmPipelineService {
 
           const phoneLabel = effectiveSenderPhone || (contact && contact.phone) || "";
           let dealTitle: string;
+          const draftSuffix = input.isDraft ? " (Черновик)" : "";
           if (phoneLabel && (displayName.startsWith("Посетитель") || displayName.startsWith("Клиент") || displayName.includes("сайта ("))) {
-            dealTitle = `Заявка от ${phoneLabel} (${this.channelLabel(input.channel)})`;
+            dealTitle = `Заявка от ${phoneLabel} (${this.channelLabel(input.channel)}${draftSuffix})`;
           } else {
-            dealTitle = `Заявка от ${displayName} (${this.channelLabel(input.channel)})`;
+            dealTitle = `Заявка от ${displayName} (${this.channelLabel(input.channel)}${draftSuffix})`;
           }
 
           const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
@@ -1158,6 +1164,7 @@ export class CrmPipelineService {
 
       const mergedMetadata: Record<string, unknown> = {
         ...(input.sourceMetadata ?? {}),
+        ...(input.isDraft ? { is_draft: true, draft_reason: "lead_salvage" } : {}),
         ...(externalMsgId ? { external_message_id: externalMsgId } : {}),
       };
 

@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS users (
   -- проекте нет (ни multipart, ни S3, ни раздачи статики), поэтому клиент жмёт
   -- изображение в canvas до 256×256 — это ~15–25 КБ.
   avatar_url TEXT,
+  notifications_enabled BOOLEAN NOT NULL DEFAULT true,
   -- Приглашение сотрудника. Токен — только SHA-256, как у refresh_tokens.
   -- Статус («Активен» / «Приглашён») выводится из invited_at/activated_at, а не
   -- хранится отдельной колонкой: два источника истины разошлись бы при входе.
@@ -2110,6 +2111,32 @@ AFTER UPDATE OF deleted_at ON deals
 FOR EACH ROW
 WHEN (NEW.deleted_at IS NOT NULL)
 EXECUTE FUNCTION trg_deals_soft_delete_messages();
+
+-- -----------------------------------------------------------------------------
+-- Настройки уведомлений пользователя (мастер-выключатель и каналы)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_notification_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notifications_enabled BOOLEAN NOT NULL DEFAULT true,
+  sound_enabled BOOLEAN NOT NULL DEFAULT true,
+  inapp_enabled BOOLEAN NOT NULL DEFAULT true,
+  push_enabled BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_user_notification_settings_tenant_user UNIQUE (tenant_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_notification_settings_user
+  ON user_notification_settings (tenant_id, user_id);
+ALTER TABLE user_notification_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_notification_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS user_notification_settings_tenant_isolation ON user_notification_settings;
+CREATE POLICY user_notification_settings_tenant_isolation ON user_notification_settings
+  FOR ALL
+  USING (tenant_id = current_tenant_id() OR platform_scope())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 
 
 

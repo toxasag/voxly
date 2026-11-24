@@ -1602,7 +1602,7 @@
 ### 2026-11-24 — Частичное оприходование заказов поставщикам + Landed Cost (распределение доп. расходов)
 - **Root cause / задача:** Окно оприходования заказа поставщику принимало заказ только целиком и не позволяло учитывать дополнительные расходы поставки (доставка, курьер и др.) с распределением на себестоимость складских партий и отражением в `/finance`.
 - **Что сделано:**
-  1. **БД (`0136_supplier_order_partial_receipts_and_landed_cost.sql`, `schema.sql`):**
+  1. **БД (`0137_supplier_order_partial_receipts_and_landed_cost.sql`, `schema.sql`):**
      - Добавлена колонка `supplier_order_items.received_quantity` (с бэкфиллом для уже принятых заказов).
      - Созданы таблицы `supplier_order_receipts`, `supplier_order_receipt_items`, `supplier_order_receipt_costs` с `tenant_id`, индексами и RLS.
      - В `warehouse_batches` добавлены `receipt_id`, `base_purchase_price`, `landed_cost_per_unit`, `landed_cost_total` (с бэкфиллом `base_purchase_price = purchase_price`).
@@ -1619,3 +1619,42 @@
   4. **Где ещё используется модель партий:** `repairs.service.ts` (`consumeFifo`), `warehouse.service.ts` (`fulfillWonDealIfReadyInTx`), оценка склада и `finance.service.ts` (`pnl` → `partsCogs`) читают `warehouse_batches.purchase_price`, поэтому новая себестоимость автоматически применяется без правок потребителей.
   5. **Тесты:** добавлены `backend/src/tests/warehouse-partial-receipt-landed-cost.test.ts` (9 тестов) и `frontend/src/lib/warehouse/landed-cost.test.ts` (4 теста).
 
+---
+
+## 2026-11-24 — Реверс-аудит 7 репозиториев MAX и надёжное извлечение ФИО и телефона контакта
+- **Контекст и root cause:**
+  1. При входящем сообщении MAX (`PUSH_MESSAGE` opcode 128) сам протокол передаёт только `sender` (`userId`) без `phone` и `names`. В `max-integration.routes.ts` (`internalInboundSchema`) отсутствовали поля `lastName`, `fullName`, `names` и парсинг вложений `CONTACT` (`vcfBody`), а `maxProfile` не передавал `lastName` в `CrmPipelineService`.
+  2. В `MaxTsAdapter.ts` heartbeat использовал `INIT (op 6)` вместо `PING (op 1)`, `resolveContact` был заглушкой без `CONTACT_INFO (op 32)` и `CONTACT_INFO_BY_PHONE (op 46)`, а `handleIncomingMessage` не запрашивал профиль по `senderId`.
+  3. В `MaxBridgeAdapter.ts` поле `timestamp` жёстко умножалось на `1000` без проверки миллисекунд (`> 1e11`).
+- **Что сделано:**
+  1. Создан [max-identity.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-identity.ts): `extractMaxIdentity`, `normalizeMaxPhone`, `parseMaxVCard` (разбор `names[]` с приоритетом `ONEME` → `CUSTOM`, `firstName`/`lastName`/`fullName`, вложений `CONTACT`/`vcfBody`, защита от `selfPhone` INC-113, `isFakeOrDummyPhone`, `isBannedName`).
+  2. Обновлены [max-integration.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-integration.routes.ts) и [max-bridge.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-bridge.service.ts): расширена схема, добавлен best-effort дозапрос `getPrivateDialogs` при неполных ФИО/телефоне, передача `lastName` в `ChannelProfile`, учёт `tenantId` в ключе `isDuplicateInbound`.
+  3. Обновлены [MaxTsAdapter.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/messaging/adapters/max/MaxTsAdapter.ts) (опкоды `PING=1`, `CONTACT_INFO=32`, `CONTACT_INFO_BY_PHONE=46`, `MARK_READ=50`, кэш контактов 10 мин, формат `GET_HISTORY`/`MSG_SEND`) и [MaxBridgeAdapter.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/messaging/adapters/max/MaxBridgeAdapter.ts) (нормализация `timestamp`).
+  4. Добавлены unit-тесты [max-identity.test.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/tests/max-identity.test.ts).
+- **Проверка:** `npm --prefix backend run typecheck` (0 ошибок), `vitest` (`max-identity.test.ts` + `max-internal-auth.test.ts` — 13/13 passed), `tsx --test` (`messaging-adapters.test.ts` — 8/8 passed).
+
+---
+
+### 24.11.2026 — Расследование и исправление молчания AI-бота в онлайн-виджете (WebChat Lead Salvage & Drafts)
+- **Контекст и root cause:**
+  - В тенанте `bankrotstvo` в сделке `68bc2e8a-3a7c-4821-a941-250bf2d00cd1` посетитель сайта ввёл текст «За жкх могу списать долг» на странице `/mfc`.
+  - Посетитель закрыл вкладку браузера / перешёл назад до нажатия кнопки «Отправить». Браузер сработал по `beforeunload` в `widget.js` (строка 4585) и отправил `POST /api/v1/public/chat/message/:channelAccountId` через `sendBeacon` с флагом `isDraft: true` (спасение лида).
+  - В `backend/src/modules/channels/webchat.service.ts` метод `executeProcessIncomingMessage` вызывал `crm.processIncoming`, который создал контакт `260d144b-243c-4380-a278-e009593f7186`, сделку `68bc2e8a-3a7c-4821-a941-250bf2d00cd1` и входящее сообщение в `deal_messages` без пометки о черновике.
+  - Сразу после этого строка 872 (`if (input.isDraft) return { replies: [], status: "queued" }`) немедленно прерывала обработку ДО вызова `agentPipeline.prepareReply`.
+  - В результате: бот промолчал, ответ не был сформирован, в журнале `ai_usage_log` записей не появилось, а в CRM сделка выглядела так, будто клиент задал вопрос, а бот сломался или проигнорировал его. При повторном открытии чата посетителем ответ также отсутствовал.
+- **Что сделано:**
+  1. **Backend (`webchat.service.ts`):**
+     - Убран ранний выход `if (input.isDraft) return` до вызова AI-агента.
+     - Теперь при `account.isAiEnabled` AI-агент формирует квалифицированный ответ и для спасённых черновиков через `prepareReply`, а `saveAgentReply` сохраняет его в `deal_messages`.
+     - При этом для `isDraft` клиенту не возвращаются лишние всплывающие сообщения/заглушки (`replies: []`), но диалог в CRM и история виджета обогащены ответом агента.
+     - При сбое LLM для черновиков шаблонный автоответ-заглушка оператора не создаётся (диалог тихо ожидает оператора).
+  2. **Backend (`crm-pipeline.service.ts`):**
+     - В `InboundMessageInput` добавлен параметр `isDraft?: boolean`.
+     - В `deal_messages.metadata` теперь явно сохраняется `{ is_draft: true, draft_reason: "lead_salvage" }`.
+     - В заголовок создаваемой из черновика сделки добавляется суффикс `(Черновик)`.
+  3. **Frontend (`widget.js`):**
+     - Устранена ложная отправка черновика на каждое стирание поля ввода (`current === ''` при `input`). Черновик теперь сохраняется надёжно при выходе со страницы (`beforeunload`).
+  4. **Frontend (`CrmChatView.tsx`):**
+     - Добавлено визуальное отображение бейджа «Черновик» в шапке пузыря и предупреждения «Неотправленный черновик (посетитель покинул сайт)» для входящих сообщений с `metadata.is_draft: true`.
+  5. **Исправление существующей сделки:**
+     - В сделке `68bc2e8a-3a7c-4821-a941-250bf2d00cd1` сообщение `314b6a24-4155-40cd-a10f-aed4292c919c` помечено как черновик и сгенерирован/сохранён ответ от подключенного агента «Банкирро Бот».

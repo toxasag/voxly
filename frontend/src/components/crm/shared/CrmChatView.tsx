@@ -1861,7 +1861,24 @@ export function CrmChatView({
 <span className="rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.2 text-[10px] uppercase tracking-wide text-[#666666]">
                           {message.channel}
                         </span>
+
+                        {Boolean(message.metadata?.is_draft) && (
+                          <span className="rounded-[4px] border border-amber-300 bg-amber-50 px-1.5 py-0.2 text-[10px] font-medium text-amber-700">
+                            Черновик
+                          </span>
+                        )}
                       </div>
+
+                      {/* Индикатор неотправленного черновика */}
+                      {Boolean(message.metadata?.is_draft) && (
+                        <div
+                          className="mb-1.5 flex items-center gap-1.5 rounded-[6px] border border-amber-200 bg-amber-50/90 px-2.5 py-1 text-[11px] font-medium text-amber-800 shadow-2xs"
+                          title="Посетитель сайта набрал этот текст в чате, но покинул страницу до нажатия кнопки 'Отправить'"
+                        >
+                          <Clock className="h-3 w-3 shrink-0 text-amber-600" />
+                          <span>Неотправленный черновик (посетитель покинул сайт)</span>
+                        </div>
+                      )}
 
                       {/* Индикатор пересланного сообщения */}
                       {Boolean(message.metadata?.is_forwarded) && (
