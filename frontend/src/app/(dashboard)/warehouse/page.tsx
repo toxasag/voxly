@@ -2741,20 +2741,22 @@ function WarehouseContent() {
         onClose={() => setCreateItemModalOpen(false)}
       />
 
-      <WarehouseIntakeDialog
-        open={intakeModalOpen}
-        onClose={() => {
-          setIntakeModalOpen(false);
-          setIntakeInitialItem(null);
-          setIntakePurchaseRequest(null);
-        }}
-        initialItem={intakeInitialItem}
-        purchaseRequestId={intakePurchaseRequest?.id}
-        initialName={intakePurchaseRequest?.itemName}
-        initialSku={intakePurchaseRequest?.sku}
-        initialQty={intakePurchaseRequest?.quantity}
-        initialPrice={intakePurchaseRequest?.estimatedPrice}
-      />
+      {intakeModalOpen && (
+        <WarehouseIntakeDialog
+          open={intakeModalOpen}
+          onClose={() => {
+            setIntakeModalOpen(false);
+            setIntakeInitialItem(null);
+            setIntakePurchaseRequest(null);
+          }}
+          initialItem={intakeInitialItem}
+          purchaseRequestId={intakePurchaseRequest?.id}
+          initialName={intakePurchaseRequest?.itemName}
+          initialSku={intakePurchaseRequest?.sku}
+          initialQty={intakePurchaseRequest?.quantity}
+          initialPrice={intakePurchaseRequest?.estimatedPrice}
+        />
+      )}
 
       <CreateSupplierOrderModal
         open={createSupplierOrderModalOpen}

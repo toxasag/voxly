@@ -1432,3 +1432,18 @@
 - **Верификация:**
   - `tsc --noEmit` в backend и frontend: 0 ошибок.
   - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
+
+---
+
+### 24.11.2026 — Исправление ошибки React Rules of Hooks в диалоге оприходования склада
+- **Контекст и проблема:**
+  - При нажатии на кнопку «Оприходовать партию» на странице `/warehouse` приложение падало с ошибкой «Не удалось отобразить раздел» (ErrorBoundary).
+  - Root Cause: В `WarehouseIntakeDialog.tsx` хук `useMemo` для фильтрации товаров каталога (`filteredCatalogItems`) находился ПОСЛЕ раннего выхода `if (!open) return null;`. При смене `open` с `false` на `true` React фиксировал изменение порядка и количества хуков («Rendered more hooks than during the previous render»).
+- **Что сделано:**
+  - В `WarehouseIntakeDialog.tsx` все хуки (`useState`, `useMemo`, `useEffect`, `useRef`) перенесены на верхний уровень до любых условий и условных выходов.
+  - Ранний возврат `if (!open) return null;` перенесён непосредственно перед финальным JSX `return (...)`.
+  - Добавлена строгая проверка `Array.isArray` для `safeSupplierOrders`, `safeItems`, `safeAccounts`.
+  - В `warehouse/page.tsx` добавлено условное монтирование `{intakeModalOpen && <WarehouseIntakeDialog ... />}`.
+- **Верификация:**
+  - `tsc --noEmit` в backend и frontend: 0 ошибок.
+  - Деплой на боевой сервер через `vf-deploy GETVOXLY`.
