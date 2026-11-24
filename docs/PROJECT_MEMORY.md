@@ -1599,6 +1599,19 @@
      - Корректная предзагрузка `category_id` в `EditTransactionModal` без затирания при сохранении, отображение фоллбэка «Без категории», двусторонняя инвалидация кэшей `["finance"]` ↔ `["warehouse"]`.
   4. **Тесты:** добавлен `backend/src/tests/warehouse-finance-sync.test.ts` (4 теста).
 
+
+## 2026-11-24 — Реверс-аудит 7 репозиториев MAX и надёжное извлечение ФИО и телефона контакта
+- **Контекст и root cause:**
+  1. При входящем сообщении MAX (`PUSH_MESSAGE` opcode 128) сам протокол передаёт только `sender` (`userId`) без `phone` и `names`. В `max-integration.routes.ts` (`internalInboundSchema`) отсутствовали поля `lastName`, `fullName`, `names` и парсинг вложений `CONTACT` (`vcfBody`), а `maxProfile` не передавал `lastName` в `CrmPipelineService`.
+  2. В `MaxTsAdapter.ts` heartbeat использовал `INIT (op 6)` вместо `PING (op 1)`, `resolveContact` был заглушкой без `CONTACT_INFO (op 32)` и `CONTACT_INFO_BY_PHONE (op 46)`, а `handleIncomingMessage` не запрашивал профиль по `senderId`.
+  3. В `MaxBridgeAdapter.ts` поле `timestamp` жёстко умножалось на `1000` без проверки миллисекунд (`> 1e11`).
+- **Что сделано:**
+  1. Создан [max-identity.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-identity.ts): `extractMaxIdentity`, `normalizeMaxPhone`, `parseMaxVCard` (разбор `names[]` с приоритетом `ONEME` → `CUSTOM`, `firstName`/`lastName`/`fullName`, вложений `CONTACT`/`vcfBody`, защита от `selfPhone` INC-113, `isFakeOrDummyPhone`, `isBannedName`).
+  2. Обновлены [max-integration.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-integration.routes.ts) и [max-bridge.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-bridge.service.ts): расширена схема, добавлен best-effort дозапрос `getPrivateDialogs` при неполных ФИО/телефоне, передача `lastName` в `ChannelProfile`, учёт `tenantId` в ключе `isDuplicateInbound`.
+  3. Обновлены [MaxTsAdapter.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/messaging/adapters/max/MaxTsAdapter.ts) (опкоды `PING=1`, `CONTACT_INFO=32`, `CONTACT_INFO_BY_PHONE=46`, `MARK_READ=50`, кэш контактов 10 мин, формат `GET_HISTORY`/`MSG_SEND`) и [MaxBridgeAdapter.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/messaging/adapters/max/MaxBridgeAdapter.ts) (нормализация `timestamp`).
+  4. Добавлены unit-тесты [max-identity.test.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/tests/max-identity.test.ts).
+- **Проверка:** `npm --prefix backend run typecheck` (0 ошибок), `vitest` (`max-identity.test.ts` + `max-internal-auth.test.ts` — 13/13 passed), `tsx --test` (`messaging-adapters.test.ts` — 8/8 passed).
+
 ---
 
 ### 24.11.2026 — Расследование и исправление молчания AI-бота в онлайн-виджете (WebChat Lead Salvage & Drafts)
