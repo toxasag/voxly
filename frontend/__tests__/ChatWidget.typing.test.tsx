@@ -167,4 +167,72 @@ describe("ChatWidget and WidgetSettings Typing Effect", () => {
     expect(screen.getByText("Тестовое сообщение")).toBeDefined();
     expect(screen.queryByTestId("typing-cursor")).toBeNull();
   });
+
+  it("WidgetSettings renders speed presets 48ms, 24ms, 12ms and invokes callback", () => {
+    const onSpeedChange = vi.fn();
+    render(
+      <WidgetSettings
+        language="ru"
+        typingSpeed={24}
+        onTypingSpeedChange={onSpeedChange}
+      />
+    );
+
+    expect(screen.getByText("Скорость:")).toBeDefined();
+    const smoothBtn = screen.getByText("Плавная");
+    const normalBtn = screen.getByText("Норм");
+    const fastBtn = screen.getByText("Быстрая");
+
+    expect(smoothBtn).toBeDefined();
+    expect(normalBtn).toBeDefined();
+    expect(fastBtn).toBeDefined();
+
+    fireEvent.click(smoothBtn);
+    expect(onSpeedChange).toHaveBeenCalledWith(48);
+
+    fireEvent.click(fastBtn);
+    expect(onSpeedChange).toHaveBeenCalledWith(12);
+
+    fireEvent.click(normalBtn);
+    expect(onSpeedChange).toHaveBeenCalledWith(24);
+  });
+
+  it("ChatWidget auto-scrolls down during typewriter typing ticks", async () => {
+    const longText = "Это первая строка длинного сообщения бота, которое проверяет автоскролл во время набора.";
+    const { container } = render(
+      <ChatWidget
+        language="ru"
+        typingEffectEnabled={true}
+        typingSpeed={5}
+        messages={[
+          {
+            id: "msg-scroll-test",
+            sender: "bot",
+            text: longText,
+          },
+        ]}
+      />
+    );
+
+    const scrollContainer = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    expect(scrollContainer).not.toBeNull();
+
+    // Mock scrollHeight
+    Object.defineProperty(scrollContainer, "scrollHeight", {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(scrollContainer, "clientHeight", {
+      configurable: true,
+      value: 300,
+    });
+
+    // Advance typing timer
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // scrollTop should have been adjusted toward scrollHeight
+    expect(scrollContainer.scrollTop).toBe(600);
+  });
 });
