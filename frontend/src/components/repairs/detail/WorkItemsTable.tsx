@@ -14,7 +14,7 @@ import {
   type RepairMasterDTO,
 } from "@/lib/api/use-repairs";
 import { ServiceCatalogDialog } from "./ServiceCatalogDialog";
-import { cn } from "@/lib/utils";
+import { cn, matchesSearchTokens } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface WorkItemsTableProps {
@@ -96,9 +96,9 @@ export function WorkItemsTable({ orderId, items, onChange, onDraftStateChange }:
 
   const totalWork = items.reduce((sum, item) => sum + item.cost, 0);
 
-  // Фильтрация каталога по введенному описанию
+  // Фильтрация каталога по введенному описанию (многословный поиск)
   const filteredCatalog = servicesCatalog.filter((svc) =>
-    svc.name.toLowerCase().includes(newDesc.trim().toLowerCase())
+    matchesSearchTokens(newDesc, [svc.name, svc.description]),
   );
 
   const exactMatchExists = servicesCatalog.some(

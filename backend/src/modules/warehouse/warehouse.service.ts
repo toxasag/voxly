@@ -1,4 +1,5 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
+import { escapeLikePattern, tokenizeSearchQuery } from "../../lib/string.utils.js";
 import { query, queryOne, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { ValidationError } from "../../plugins/errorHandler.js";
 import {
@@ -417,9 +418,24 @@ export class WarehouseService {
     const params: (string | number | string[])[] = [tenantId];
     let searchFilter = "";
 
-    if (search && search.trim()) {
-      params.push(`%${search.trim().toLowerCase()}%`);
-      searchFilter += ` AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length} OR lower(COALESCE(i.brand, '')) LIKE $${params.length})`;
+    const searchTokens = tokenizeSearchQuery(search);
+    for (const token of searchTokens) {
+      params.push(`%${escapeLikePattern(token)}%`);
+      const paramRef = `$${params.length}`;
+      searchFilter += ` AND (
+        i.name ILIKE ${paramRef} ESCAPE '\\'
+        OR i.sku ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(i.brand, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(i.category, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1
+          FROM warehouse_item_models wim
+          JOIN equipment_models em ON em.id = wim.model_id AND em.tenant_id = wim.tenant_id
+          WHERE wim.tenant_id = i.tenant_id
+            AND wim.item_id = i.id
+            AND (em.name ILIKE ${paramRef} ESCAPE '\\' OR COALESCE(em.brand_name, '') ILIKE ${paramRef} ESCAPE '\\')
+        )
+      )`;
     }
     if (options?.category && options.category.trim()) {
       params.push(options.category.trim());

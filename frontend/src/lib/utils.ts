@@ -142,3 +142,50 @@ export function formatTaskDue(
     : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
   return `${datePart}, ${timePart}`;
 }
+
+/**
+ * Многословный регистронезависимый поиск: разбивает запрос по пробелам на токены
+ * и проверяет `AND`-совпадение каждого слова хотя бы в одном из полей в любом порядке.
+ */
+export function matchesSearchTokens(
+  query: string,
+  fields: Array<string | null | undefined>,
+): boolean {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return true;
+
+  const tokens = trimmed.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return true;
+
+  const haystack = fields
+    .filter((f): f is string => typeof f === "string" && f.length > 0)
+    .map((f) => f.toLowerCase());
+
+  if (haystack.length === 0) return false;
+
+  return tokens.every((token) => haystack.some((field) => field.includes(token)));
+}
+
+/**
+ * Многословный поиск по позиции номенклатуры склада (название, артикул, бренд, категория, модели).
+ */
+export function matchesWarehouseItem(
+  item: {
+    name?: string | null;
+    sku?: string | null;
+    brand?: string | null;
+    category?: string | null;
+    modelNames?: string[];
+    models?: Array<{ name?: string | null; brandName?: string | null }>;
+  },
+  query: string,
+): boolean {
+  return matchesSearchTokens(query, [
+    item.name,
+    item.sku,
+    item.brand,
+    item.category,
+    ...(item.modelNames ?? []),
+    ...(item.models ?? []).flatMap((m) => [m.name, m.brandName]),
+  ]);
+}

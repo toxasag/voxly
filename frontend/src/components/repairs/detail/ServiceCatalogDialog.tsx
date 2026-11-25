@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/use-repairs";
 import { EditServiceModal } from "@/components/services/EditServiceModal";
 import type { ServiceItemDTO } from "@/lib/api/use-services";
+import { matchesSearchTokens } from "@/lib/utils";
 
 interface ServiceCatalogDialogProps {
   open: boolean;
@@ -46,9 +47,7 @@ export function ServiceCatalogDialog({
   const deleteMutation = useDeleteRepairServiceFromCatalog();
 
   const filteredServices = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return services;
-    return services.filter((s) => s.name.toLowerCase().includes(q));
+    return services.filter((s) => matchesSearchTokens(searchQuery, [s.name, s.description]));
   }, [services, searchQuery]);
 
   const handleCreate = useCallback(async () => {

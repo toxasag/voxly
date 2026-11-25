@@ -2137,6 +2137,20 @@ CREATE POLICY user_notification_settings_tenant_isolation ON user_notification_s
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- 0139: pg_trgm indexes for multi-word warehouse/repairs search
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_warehouse_items_name_trgm
+  ON warehouse_items USING gin (name gin_trgm_ops)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_warehouse_items_sku_trgm
+  ON warehouse_items USING gin (sku gin_trgm_ops)
+  WHERE deleted_at IS NULL AND sku <> '';
+CREATE INDEX IF NOT EXISTS idx_warehouse_items_brand_trgm
+  ON warehouse_items USING gin (brand gin_trgm_ops)
+  WHERE deleted_at IS NULL AND brand <> '';
+CREATE INDEX IF NOT EXISTS idx_equipment_models_name_trgm
+  ON equipment_models USING gin (name gin_trgm_ops);
+
 
 
 

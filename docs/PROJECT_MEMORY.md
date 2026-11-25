@@ -1803,3 +1803,17 @@
      - `crm/tasks/page.tsx`, `RecordTimelineTab.tsx`, `DealCard.tsx`, `use-global-search.ts`: отображение срока задачи переведено на единый `formatTaskDue` с временем.
      - `TasksCalendarView.tsx`: исправлена группировка по локальной дате (`toLocalDateKey`) вместо UTC `slice(0, 10)`, добавлен вывод времени (`formatTaskTime`) в ячейках календаря.
 
+---
+
+### 25.11.2026 — Многословный токенизированный поиск запчастей и услуг (СЦ и Склад)
+- **Контекст и проблема:**
+  - В карточке наряда СЦ (`/repairs/[id]`, блок «Используемые запчасти» в `PartsTable.tsx`) при вводе нескольких слов (например, `gsn50 кольцо`) поиск не находил позицию `GSN50 поз.60 Кольцо стопорное d 7мм`, так как искал всю введённую фразу целиком через `includes(q)` / `LIKE '%...%'`.
+- **Что изменено:**
+  1. **Backend (`string.utils.ts`, `warehouse.service.ts`, `services.service.ts`, миграция `0139_warehouse_search_trgm_indexes.sql`):**
+     - Добавлены хелперы `tokenizeSearchQuery` и `escapeLikePattern` для безопасного разбиения запроса по пробелам на токены с экранированием `%`, `_`, `\`.
+     - В `WarehouseService.listItems` и `ServicesService.list` реализован многословный `AND`-поиск каждого слова в любом порядке по названию, артикулу SKU, бренду, категории и связанным моделям (`warehouse_item_models` -> `equipment_models`).
+     - Добавлены `pg_trgm` GIN-индексы для быстрого подстрочного поиска на больших каталогах.
+  2. **Frontend (`utils.ts`, `PartsTable.tsx`, `WorkItemsTable.tsx`, `ServiceCatalogDialog.tsx`, `WarehouseIntakeDialog.tsx`, `DictionarySelectField.tsx`, `CreatableCombobox.tsx`):**
+     - Добавлены единые функции `matchesSearchTokens` и `matchesWarehouseItem`.
+     - Все комбобоксы и фильтры подбора запчастей, услуг СЦ, словарей и приёмки склада переведены на многословную фильтрацию по всем релевантным полям; в `PartsTable.tsx` добавлен вывод бренда и привязанных моделей в выпадающем списке.
+
