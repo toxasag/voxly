@@ -29,6 +29,13 @@ interface ChannelAccountRow {
   credentials?: Record<string, unknown>;
   remote_user_id: string | null;
   last_sync_at: Date | string | null;
+  history_sync_status?: "idle" | "queued" | "syncing" | "completed" | "error";
+  history_sync_total?: number;
+  history_sync_processed?: number;
+  history_sync_messages?: number;
+  history_sync_error?: string | null;
+  history_sync_started_at?: Date | string | null;
+  history_sync_finished_at?: Date | string | null;
   connected_at: Date | string | null;
   created_at: Date | string;
   bound_agent_id?: string | null;
@@ -63,6 +70,13 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     credentials: row.credentials,
     remoteUserId: row.remote_user_id,
     lastSyncAt: toIso(row.last_sync_at),
+    historySyncStatus: row.history_sync_status ?? "idle",
+    historySyncTotal: row.history_sync_total ?? 0,
+    historySyncProcessed: row.history_sync_processed ?? 0,
+    historySyncMessages: row.history_sync_messages ?? 0,
+    historySyncError: row.history_sync_error ?? null,
+    historySyncStartedAt: toIso(row.history_sync_started_at),
+    historySyncFinishedAt: toIso(row.history_sync_finished_at),
     connectedAt: toIso(row.connected_at),
     createdAt: toIso(row.created_at) ?? "",
     boundAgentId: row.bound_agent_id ?? null,
@@ -83,7 +97,9 @@ const SELECT_COLUMNS = `id, channel, label, external_id, status, status_message,
         credentials->>'phone' AS cred_phone,
         credentials->>'telegramBot' AS cred_bot,
         (credentials ? 'session') AS has_session,
-        remote_user_id, last_sync_at, connected_at, created_at`;
+        remote_user_id, last_sync_at,
+        history_sync_status, history_sync_total, history_sync_processed, history_sync_messages, history_sync_error, history_sync_started_at, history_sync_finished_at,
+        connected_at, created_at`;
 
 /**
  * Каналы, у которых подключение идёт своим маршрутом авторизации.
@@ -106,7 +122,9 @@ export class ChannelsService {
               c.credentials->>'phone' AS cred_phone,
               c.credentials->>'telegramBot' AS cred_bot,
               (c.credentials ? 'session') AS has_session,
-              c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at,
+              c.remote_user_id, c.last_sync_at,
+              c.history_sync_status, c.history_sync_total, c.history_sync_processed, c.history_sync_messages, c.history_sync_error, c.history_sync_started_at, c.history_sync_finished_at,
+              c.connected_at, c.created_at,
               b.agent_id AS bound_agent_id,
               a.name AS bound_agent_name
        FROM channel_accounts c

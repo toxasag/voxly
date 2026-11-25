@@ -180,6 +180,13 @@ export interface ChannelAccountDTO {
   /** Числовой id пользователя на стороне канала; у Telegram — tgUserId. */
   remoteUserId: string | null;
   lastSyncAt: string | null;
+  historySyncStatus?: "idle" | "queued" | "syncing" | "completed" | "error";
+  historySyncTotal?: number;
+  historySyncProcessed?: number;
+  historySyncMessages?: number;
+  historySyncError?: string | null;
+  historySyncStartedAt?: string | null;
+  historySyncFinishedAt?: string | null;
   connectedAt: string | null;
   createdAt: string;
   boundAgentId?: string | null;

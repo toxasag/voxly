@@ -6,7 +6,7 @@ import QRCode from "qrcode";
 import { getEnv } from "../../config/env.js";
 import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
-import { MaxBridgeService, invalidateMaxBridgeLiveBotsCache } from "./max-bridge.service.js";
+import { MaxBridgeService, invalidateMaxBridgeLiveBotsCache, type MaxPrivateDialogsResponse } from "./max-bridge.service.js";
 import { extractMaxIdentity, normalizeMaxPhone } from "./max-identity.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
@@ -183,14 +183,14 @@ export async function syncMaxDialogHistory(opts: {
   peerPhone?: string | null;
   peerUserId?: string | null;
   senderName?: string;
+  preloadedDialogs?: MaxPrivateDialogsResponse;
   log?: FastifyBaseLogger;
 }): Promise<number> {
-  const bridge = new MaxBridgeService();
-  const resp = await bridge.getPrivateDialogs({
+  const resp = opts.preloadedDialogs ?? (await new MaxBridgeService().getPrivateDialogs({
     botId: opts.channelAccountId,
     dialogLimit: 80,
     messageLimit: 50,
-  });
+  }));
 
   if (!resp.ok || !Array.isArray(resp.dialogs)) return 0;
 
@@ -1037,6 +1037,15 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       });
 
       invalidateMaxBridgeLiveBotsCache();
+      void import("./channel-history-sync.service.js")
+        .then(({ enqueueChannelHistorySync }) =>
+          enqueueChannelHistorySync({
+            tenantId: body.tenantId,
+            channelAccountId: botId,
+            channel: "max",
+          }),
+        )
+        .catch(() => {});
       return reply.send({ ok: true, botId });
     });
 
