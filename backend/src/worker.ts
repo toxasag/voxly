@@ -19,9 +19,23 @@ export function initBackgroundWorker(): void {
     await chargeAiUsage(job.data);
   });
 
-  // 2. Очередь timeline-sync
-  queueManager.registerHandler<{ dealId: string; action: string }>("timeline-sync", async (_job) => {
-    // Асинхронный синк таймлайна
+  // 2. Очередь timeline-sync (исторический синк переписки при подключении каналов)
+  queueManager.registerHandler<Record<string, unknown>>("timeline-sync", async (job) => {
+    if (job.name === "channel-history-sync") {
+      const { runChannelHistorySync } = await import("./modules/channels/channel-history-sync.service.js");
+      const data = job.data as {
+        tenantId?: string;
+        channelAccountId?: string;
+        channel?: "max" | "telegram" | "whatsapp";
+      };
+      if (data.tenantId && data.channelAccountId && data.channel) {
+        await runChannelHistorySync({
+          tenantId: data.tenantId,
+          channelAccountId: data.channelAccountId,
+          channel: data.channel,
+        });
+      }
+    }
   });
 
   // 3. Очередь broadcasts

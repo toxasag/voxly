@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { query } from "../../db/client.js";
 import { ChannelsService } from "./channels.service.js";
+import { enqueueChannelHistorySync, isHistorySyncSupportedChannel } from "./channel-history-sync.service.js";
 import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import {
   channelSlugSchema,
@@ -164,6 +165,30 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
     });
 
     return reply.send({ data: stats });
+  });
+
+  app.post("/:channel/accounts/:id/sync-history", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    if (!isHistorySyncSupportedChannel(channel)) {
+      return reply.status(400).send({
+        error: "Автоматическая выгрузка истории переписки поддерживается только для MAX, Telegram и WhatsApp",
+      });
+    }
+
+    const queued = await enqueueChannelHistorySync({
+      tenantId: request.tenant_id,
+      channelAccountId: id,
+      channel,
+      force: true,
+    });
+
+    if (!queued) {
+      return reply.status(400).send({
+        error: "Аккаунт должен быть подключён (status = connected) для синхронизации истории",
+      });
+    }
+
+    return reply.status(202).send({ data: { queued: true } });
   });
 
   app.delete("/:channel/accounts/:id", { onRequest: guards }, async (request, reply) => {

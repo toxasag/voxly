@@ -234,6 +234,18 @@ export class WhatsappEvolutionService {
         : "http://backend:4000/api/internal/whatsapp/webhook";
       void this.setWebhook(instanceName, webhookUrl).catch(() => undefined);
 
+      if (accountId) {
+        void import("./channel-history-sync.service.js")
+          .then(({ enqueueChannelHistorySync }) =>
+            enqueueChannelHistorySync({
+              tenantId,
+              channelAccountId: accountId,
+              channel: "whatsapp",
+            }),
+          )
+          .catch(() => {});
+      }
+
       return {
         ok: true,
         status: "connected",
