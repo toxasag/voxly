@@ -59,3 +59,86 @@ export function formatDateTime(iso: string | Date | null | undefined): string {
     return "—";
   }
 }
+
+/**
+ * Конвертирует ISO-метку (или локальную дату) в строку формата «YYYY-MM-DDTHH:mm»
+ * в локальной таймзоне пользователя для DateTimePicker и input[type="datetime-local"].
+ */
+export function toLocalDateTimeInput(value: string | null | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return `${trimmed}T12:00`;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+/**
+ * Переводит локальное значение из DateTimePicker («YYYY-MM-DDTHH:mm» или «YYYY-MM-DD»)
+ * в абсолютную ISO-8601 UTC-строку для отправки на сервер в TIMESTAMPTZ.
+ */
+export function localDateTimeToIso(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T12:00:00` : trimmed;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString();
+}
+
+/** Возвращает локальный ключ даты формата «YYYY-MM-DD» без сдвига в UTC. */
+export function toLocalDateKey(value: string | Date): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Форматирует только локальное время («HH:mm») для компактных ячеек календаря. */
+export function formatTaskTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Единый формат отображения срока задачи с датой и временем в локальной таймзоне.
+ * Примеры: «25.11, 15:30» или «25 ноября, 15:30» (с годом, если год не текущий).
+ */
+export function formatTaskDue(
+  value: string | null | undefined,
+  options?: { longMonth?: boolean; emptyLabel?: string },
+): string {
+  if (!value) return options?.emptyLabel ?? "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return options?.emptyLabel ?? "—";
+
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const timePart = formatTaskTime(value);
+
+  if (options?.longMonth) {
+    const datePart = new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "long",
+      ...(sameYear ? {} : { year: "numeric" }),
+    }).format(d);
+    return `${datePart}, ${timePart}`;
+  }
+
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  const datePart = sameYear
+    ? `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`
+    : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+  return `${datePart}, ${timePart}`;
+}

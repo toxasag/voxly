@@ -1783,3 +1783,23 @@
   - Эндпоинты `https://api.getvoxly.ru/health` и `https://remtoua.getvoxly.ru/login` возвращают HTTP 200.
   - Сообщение с фото и текстом корректно отображает как превью фото, так и подпись под ним, а файлы без текста (например, PDF-счета) сохраняют скрытие дублирующих подписей.
 
+---
+
+### 25.11.2026 — Выбор даты и времени (`HH:mm`) в задачах CRM (сквозная реализация)
+- **Контекст и задача:**
+  - В форме быстрого создания задачи внутри карточки сделки/контакта/компании (`RecordTasksTab.tsx`) использовался `<input type="date">` с жёсткой подстановкой `T12:00:00`, что не позволяло задать точное время задачи. Кроме того, время задачи не отображалось в списках, канбане, таймлайне, карточке сделки и поиске, а `TasksCalendarView` группировал задачи по UTC-срезу.
+- **Root Cause & Карта влияния:**
+  - В БД `crm_tasks.due_date` уже имеет тип `TIMESTAMPTZ`, а планировщик уведомлений (`task-reminders.service.ts`) и расчёты `isOverdue` уже работают с точностью до минуты. Проблема ограничивалась UI ввода и отображения.
+- **Что изменено:**
+  1. **Backend (`tasks.types.ts`):**
+     - `optionalDateTime` обновлён с `.datetime({ offset: true })` для поддержки любых валидных ISO-8601 таймштампов с оффсетом или `Z`.
+  2. **Frontend Утилиты (`frontend/src/lib/utils.ts`):**
+     - Добавлены единые функции `toLocalDateTimeInput`, `localDateTimeToIso`, `toLocalDateKey`, `formatTaskTime`, `formatTaskDue` (единый локальный формат `25.11, 15:30` / `25 ноября, 15:30`).
+  3. **Единый компонент (`frontend/src/components/ui/date-time-picker.tsx`):**
+     - Создан переиспользуемый `DateTimePicker` в стиле Twenty CRM Light Canvas (`default` и `compact` варианты) с пресетами даты (`Сегодня`, `Завтра`, `+3 дня`, `Неделя`), точным вводом даты и времени `HH:mm`, пресетами времени (`09:00`, `12:00`, `15:00`, `18:00`, `+1 ч`, `+3 ч`) и быстрой очисткой.
+  4. **Формы и отображения задач:**
+     - `RecordTasksTab.tsx`: заменён `<input type="date">` на `DateTimePicker variant="compact"`, сохранён перенос выбранного времени при открытии подробной `TaskModal`, обновлён формат срока с временем.
+     - `TaskModal.tsx`: подключён `DateTimePicker` через `Controller` `react-hook-form`, убран дубликат `toLocalInput`.
+     - `crm/tasks/page.tsx`, `RecordTimelineTab.tsx`, `DealCard.tsx`, `use-global-search.ts`: отображение срока задачи переведено на единый `formatTaskDue` с временем.
+     - `TasksCalendarView.tsx`: исправлена группировка по локальной дате (`toLocalDateKey`) вместо UTC `slice(0, 10)`, добавлен вывод времени (`formatTaskTime`) в ячейках календаря.
+

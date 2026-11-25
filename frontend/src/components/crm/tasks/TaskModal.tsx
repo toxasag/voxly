@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ListChecks, User, Calendar, AlertCircle, Link2, Loader2, Bell } from "lucide-react";
 import { createTaskSchema, type CreateTaskPayload } from "@/schemas/task.schema";
@@ -10,7 +10,8 @@ import { useTenantUsers } from "@/lib/api/use-tenant-users";
 import { useContacts, contactFullName } from "@/lib/api/use-contacts";
 import { useCompanies } from "@/lib/api/use-companies";
 import { useDeals } from "@/lib/api/use-deals";
-import { cn } from "@/lib/utils";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
+import { cn, localDateTimeToIso, toLocalDateTimeInput } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Форма задачи.
@@ -80,18 +81,6 @@ function message(error: unknown): string | undefined {
     : undefined;
 }
 
-/** `datetime-local` не принимает ISO с зоной — нужен вид «YYYY-MM-DDTHH:mm». */
-function toLocalInput(iso: string | undefined): string {
-  if (iso === undefined || iso === "") return "";
-
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return "";
-
-  const pad = (value: number): string => String(value).padStart(2, "0");
-
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
-}
-
 export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title }: TaskModalProps) {
   const defaults = useMemo<CreateTaskPayload>(
     () => (initial === undefined
@@ -99,7 +88,7 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
       : {
           ...EMPTY,
           ...initial,
-          due_date: toLocalInput(initial.due_date),
+          due_date: toLocalDateTimeInput(initial.due_date),
           notify_telegram: initial.notify_telegram ?? false,
           remind_before_minutes: initial.remind_before_minutes ?? 30,
         }),
@@ -140,9 +129,7 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
     try {
       await onSubmit({
         ...values,
-        due_date: values.due_date === undefined || values.due_date === ""
-          ? ""
-          : new Date(values.due_date).toISOString(),
+        due_date: localDateTimeToIso(values.due_date) ?? "",
       });
       form.reset({ ...EMPTY, assignee_id: assigneeId });
       onClose();
@@ -247,11 +234,19 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                   <Calendar className="h-3 w-3 text-[#888888]" />
                   Срок
                 </label>
-                <input
-                  id="task-due"
-                  type="datetime-local"
-                  {...form.register("due_date")}
-                  className={cn(INPUT_CLASS, errors.due_date ? "border-rose-500" : "border-[#e5e5e5]")}
+                <Controller
+                  control={form.control}
+                  name="due_date"
+                  render={({ field }) => (
+                    <DateTimePicker
+                      id="task-due"
+                      ariaLabel="Срок"
+                      placeholder="Выберите дату и время"
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      error={Boolean(errors.due_date)}
+                    />
+                  )}
                 />
                 {message(errors.due_date) && <p className="text-xs text-rose-600">{message(errors.due_date)}</p>}
               </div>
