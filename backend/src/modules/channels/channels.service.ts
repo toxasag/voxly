@@ -288,7 +288,7 @@ export class ChannelsService {
 
       const defaultCredentials = channel === "webchat" ? {
         accentColor: "#F59E0B",
-        theme: "auto",
+        theme: "light",
         locale: requestedLocale,
         language: requestedLocale,
         title: requestedLocale === "en" ? "Chat with us" : "Онлайн-консультант",

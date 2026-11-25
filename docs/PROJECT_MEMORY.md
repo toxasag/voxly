@@ -1712,3 +1712,25 @@
   - Миграция `0136` применена на продакшене.
   - Живая проверка в `ego-browser`: открытие `https://mpro.getvoxly.ru/settings/notifications`, проверка дефолта (включено), переключение в «Отключено», проверка блокировки дочерних каналов и появления баннера тишины, проверка сохранения после перезагрузки F5 и возврата во включенное состояние.
   - Аудит отправки Email-уведомлений: подтверждена блокировка отправки лидов на дефолтный email владельца при `notifications_enabled = false` в `lead-notification.queue.ts`; уточнены тексты в `UserMasterNotificationToggle.tsx` и динамическая индикация в `LeadNotificationChannels.tsx`.
+
+---
+
+### 25.11.2026 — Полное отключение тёмной темы и фиксация Twenty CRM Light Canvas
+- **Контекст и проблема:**
+  - Пользователь прислал скриншот `fe13ccea-2b80-48ea-b192-118705118559-IMG_20261125_113731_202.jpg`, где сайдбар `Sidebar.tsx` и шапка кабинета отрендерились в чёрном цвете (`#111111`) с тёмными границами (`#27272a`).
+  - Причина: наличие классов `dark:*` на ключевых контейнерах (`dark:bg-[#111111]`), дефолтная реакция Tailwind v4 на медиазапрос `prefers-color-scheme: dark` ОС, кнопка переключения темы в шапке `Header.tsx` и чтение `localStorage.getItem('getvoxly_theme') === 'dark'` в инлайн-скрипте `layout.tsx`.
+- **Что сделано:**
+  1. **Корень и CSS (`layout.tsx`, `globals.css`):**
+     - В `layout.tsx` скрипт `THEME_INIT_SCRIPT` сбрасывает `getvoxly_theme` в `light`, удаляет класс `dark` и выставляет `color-scheme: light`.
+     - На `<html>` и `<body>` принудительно зафиксированы `color-scheme: light !important;`, фон `#ffffff !important;` и текст `#111111 !important;`.
+     - В `globals.css` добавлена директива `@variant dark (&:where([data-theme="disabled-dark-mode"]));`, полностью блокирующая срабатывание медиазапроса `prefers-color-scheme: dark` на уровне CSS-движка Tailwind v4.
+  2. **Зачистка `dark:*` и переключателей темы:**
+     - `Sidebar.tsx`: удалены `dark:border-[#27272a] dark:bg-[#111111]` с `<aside>` и шапки бренда.
+     - `Header.tsx` (CRM и landing): полностью удалены кнопки переключения темы (Sun/Moon), удален неиспользуемый хук `useTheme`, удалены классы `dark:*`.
+     - `use-theme.ts`: переведен в принудительный режим `light` с no-op переключателем и сбросом старых ключей `localStorage`.
+     - `Logo.tsx`, `onboarding/page.tsx`, `accept-invite/page.tsx`, `reset-password/page.tsx`, `Footer.tsx`: удалены все `dark:*` утилиты.
+  3. **Виджет чата и настройки (`widget.js`, `widget-script.ts`, `WebchatAppearanceSettings.tsx`, `webchat.service.ts`):**
+     - Удалены переключатели темной темы виджета; виджет зафиксирован в светлой теме (`theme: "light"`, удален класс `is-dark-theme`).
+- **Верификация:**
+  - Деплой на `150.241.98.135` через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Проверка в `playwright`/браузере с эмуляцией `colorScheme: 'dark'`: сайдбар и шапка остаются светлыми (#fbfbfb / #ffffff), класс `dark` отсутствует, 0 ошибок в консоли.

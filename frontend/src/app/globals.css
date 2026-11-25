@@ -2,6 +2,14 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
+   Twenty CRM Light Design System: Принудительная нейтрализация dark: вариантов.
+   В Tailwind v4 директива @variant dark переопределяет дефолтный media-query
+   (prefers-color-scheme: dark), гарантируя, что тёмная тема ОС никогда не
+   перекрашивает интерфейс.
+   --------------------------------------------------------------------------- */
+@variant dark (&:where([data-theme="disabled-dark-mode"]));
+
+/* ---------------------------------------------------------------------------
    Twenty CRM Light Design System
    Auto-extracted & aligned with By Stage (https://prarp.twenty.com)
    - Canvas: #ffffff
@@ -32,15 +40,15 @@
   --dnd-drag-feedback-opacity: 0.6;
   --dnd-drag-source-opacity: 0.3;
   --shadow-twenty: rgba(0, 0, 0, 0.004) -4px 4px 4px 0px, rgba(0, 0, 0, 0.039) 0px 2px 4px 0px;
-  color-scheme: light;
+  color-scheme: light !important;
 }
 
 html,
 body {
-  background-color: #ffffff;
-  color: #111111;
+  background-color: #ffffff !important;
+  color: #111111 !important;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color-scheme: light;
+  color-scheme: light !important;
 }
 
 /* ---------------------------------------------------------------------------

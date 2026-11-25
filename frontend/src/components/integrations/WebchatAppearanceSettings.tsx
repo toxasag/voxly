@@ -190,9 +190,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   const [accentColor, setAccentColor] = useState<string>(
     typeof initialCreds.accentColor === "string" ? initialCreds.accentColor : "#F59E0B",
   );
-  const [theme, setTheme] = useState<"dark" | "light" | "auto">(
-    initialCreds.theme === "light" ? "light" : initialCreds.theme === "dark" ? "dark" : "auto",
-  );
+  const [theme] = useState<"light">("light");
   const [locale, setLocale] = useState<"ru" | "en">(
     initialCreds.locale === "en" || initialCreds.language === "en" ? "en" : "ru",
   );
@@ -521,7 +519,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
     );
   };
 
-  const isDark = theme === "dark" || theme === "auto";
+  const isDark = false;
 
   return (
     <div className="space-y-6">
@@ -668,49 +666,19 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
 
           {/* 2. Тема оформления */}
           <div className="rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
-              Тема оформления
-            </h2>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setTheme("dark")}
-                className={cn(
-                  "flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-medium transition-colors",
-                  theme === "dark"
-                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
-                )}
-              >
-                <Moon className="h-3.5 w-3.5" />
-                Тёмная
-              </button>
-              <button
-                type="button"
-                onClick={() => setTheme("light")}
-                className={cn(
-                  "flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-medium transition-colors",
-                  theme === "light"
-                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
-                )}
-              >
-                <Sun className="h-3.5 w-3.5" />
-                Светлая
-              </button>
-              <button
-                type="button"
-                onClick={() => setTheme("auto")}
-                className={cn(
-                  "flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-medium transition-colors",
-                  theme === "auto"
-                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
-                )}
-              >
-                <Laptop className="h-3.5 w-3.5" />
-                Авто (ОС)
-              </button>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
+                  Тема оформления
+                </h2>
+                <p className="mt-0.5 text-xs text-[#666666]">
+                  Виджет работает в светлой теме (стандарт Twenty CRM Light Canvas).
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 self-start sm:self-auto">
+                <Sun className="h-3.5 w-3.5 text-emerald-600" />
+                Светлая тема (активна)
+              </span>
             </div>
           </div>
 
@@ -2473,7 +2441,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       <>
                         {messengerBannerMode === "single" ? (
                           singleTarget === "telegram" && (telegramBot || telegramAccountId) ? (
-                            <div className="flex items-center justify-between border-b border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs text-sky-600 dark:text-sky-400">
+                            <div className="flex items-center justify-between border-b border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs text-sky-600">
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <TelegramIcon className="h-3.5 w-3.5 text-sky-500 shrink-0" />
                                 <span className="truncate font-medium">Продолжить в Telegram</span>
@@ -2483,7 +2451,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                               </span>
                             </div>
                           ) : singleTarget === "whatsapp" && (whatsappPhone || whatsappAccountId) ? (
-                            <div className="flex items-center justify-between border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400">
+                            <div className="flex items-center justify-between border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700">
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <WhatsAppIcon className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                                 <span className="truncate font-medium">Продолжить в WhatsApp</span>
@@ -2493,7 +2461,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                               </span>
                             </div>
                           ) : singleTarget === "max" && (maxLink || maxAccountId) ? (
-                            <div className="flex items-center justify-between border-b border-indigo-500/20 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-700 dark:text-indigo-400">
+                            <div className="flex items-center justify-between border-b border-indigo-500/20 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-700">
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <MaxIcon className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
                                 <span className="truncate font-medium">Продолжить в MAX</span>
@@ -2585,7 +2553,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                             {typingEffectEnabled && (
                               <span
                                 aria-hidden="true"
-                                className="inline-block w-[2px] h-[1.1em] ml-0.5 bg-[#111111] dark:bg-white animate-pulse align-middle font-mono font-bold select-none"
+                                className="inline-block w-[2px] h-[1.1em] ml-0.5 bg-[#111111] animate-pulse align-middle font-mono font-bold select-none"
                               >
                                 |
                               </span>

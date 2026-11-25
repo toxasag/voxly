@@ -3827,12 +3827,8 @@
             }
           }
 
-          // Тема (светлая / тёмная)
-          if (data.theme === 'dark') {
-            win.classList.add('is-dark-theme');
-          } else {
-            win.classList.remove('is-dark-theme');
-          }
+          // Тема: виджет GETVOXLY принудительно работает в светлой теме
+          win.classList.remove('is-dark-theme');
 
           // Шапка виджета: имя консультанта и статус
           if (headerName) {
