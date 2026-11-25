@@ -917,6 +917,7 @@ export function useUpdateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(order.id) });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -951,6 +952,7 @@ export function useChangeRepairStatus(): UseMutationResult<RepairOrderDTO, ApiCl
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(order.id) });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -976,6 +978,7 @@ export function useUpdateRepairPaymentStatus(): UseMutationResult<
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(order.id) });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });

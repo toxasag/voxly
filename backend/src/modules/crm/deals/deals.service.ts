@@ -712,6 +712,86 @@ export class DealsService {
   }
 
   /**
+   * Internal transactional stage mover.
+   */
+  async moveStageInTx(
+    tx: import("../../../db/client.js").TransactionClient,
+    tenantId: string,
+    id: string,
+    stageId: string,
+    changedBy: string,
+    targetIndex?: number,
+  ): Promise<DealDTO | null> {
+    const deal = await tx.queryOne<{ stage_id: string; pipeline_id: string }>(
+      `SELECT stage_id, pipeline_id
+       FROM deals
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+       FOR UPDATE`,
+      [tenantId, id],
+    );
+
+    if (deal === null) return null;
+
+    const stage = await tx.queryOne<{ is_won: boolean; is_lost: boolean }>(
+      `SELECT s.is_won, s.is_lost
+       FROM stages s
+       JOIN pipelines p ON p.id = s.pipeline_id
+       WHERE s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3`,
+      [stageId, deal.pipeline_id, tenantId],
+    );
+
+    if (stage === null) {
+      throw new ValidationError("Target stage does not belong to the deal's pipeline", {
+        stage_id: ["Unknown stage for this pipeline"],
+      });
+    }
+
+    const isTerminal = stage.is_won || stage.is_lost;
+    const position = await this.positionForIndex(tx, tenantId, stageId, id, targetIndex);
+
+    await tx.query(
+      `UPDATE deals
+       SET stage_id = $3,
+           position = $5,
+           closed_at = CASE WHEN $4::boolean THEN COALESCE(closed_at, now()) ELSE NULL END
+       WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, id, stageId, isTerminal, position],
+    );
+
+    if (deal.stage_id !== stageId) {
+      await tx.query(
+        `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, id, deal.stage_id, stageId, changedBy],
+      );
+
+      for (const handler of dealStageChangedHandlers) {
+        Promise.resolve(handler({ tenantId, dealId: id, stageId })).catch(() => undefined);
+      }
+
+      if (stage.is_won) {
+        // Атомарное FIFO-списание товаров сделки со склада + автозаявки при дефиците
+        await warehouseService.consumeDealItemsInTx(tx, tenantId, id, changedBy);
+        for (const handler of dealWonHandlers) {
+          Promise.resolve(handler({ tenantId, dealId: id })).catch(() => undefined);
+        }
+      }
+    }
+
+    const row = await tx.queryOneOrThrow<DealRow>(
+      `SELECT ${DEAL_COLUMNS_WITH_LABELS}
+       FROM deals d
+       ${DEAL_LABEL_JOINS}
+       WHERE d.tenant_id = $1 AND d.id = $2`,
+      [tenantId, id],
+    );
+
+    void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
+
+    return toDealDTO(row);
+  }
+
+  /**
    * Moves a deal to another stage inside its own pipeline and records the
    * transition. Reaching a won/lost stage stamps `closed_at`; moving back out
    * clears it.
@@ -728,74 +808,102 @@ export class DealsService {
     targetIndex?: number,
   ): Promise<DealDTO | null> {
     return withTenant(tenantId, async (tx) => {
-      const deal = await tx.queryOne<{ stage_id: string; pipeline_id: string }>(
-        `SELECT stage_id, pipeline_id
-         FROM deals
-         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-         FOR UPDATE`,
-        [tenantId, id],
-      );
-
-      if (deal === null) return null;
-
-      const stage = await tx.queryOne<{ is_won: boolean; is_lost: boolean }>(
-        `SELECT s.is_won, s.is_lost
-         FROM stages s
-         JOIN pipelines p ON p.id = s.pipeline_id
-         WHERE s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3`,
-        [stageId, deal.pipeline_id, tenantId],
-      );
-
-      if (stage === null) {
-        throw new ValidationError("Target stage does not belong to the deal's pipeline", {
-          stage_id: ["Unknown stage for this pipeline"],
-        });
-      }
-
-      const isTerminal = stage.is_won || stage.is_lost;
-      const position = await this.positionForIndex(tx, tenantId, stageId, id, targetIndex);
-
-      await tx.query(
-        `UPDATE deals
-         SET stage_id = $3,
-             position = $5,
-             closed_at = CASE WHEN $4::boolean THEN COALESCE(closed_at, now()) ELSE NULL END
-         WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, id, stageId, isTerminal, position],
-      );
-
-      if (deal.stage_id !== stageId) {
-        await tx.query(
-          `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [tenantId, id, deal.stage_id, stageId, changedBy],
-        );
-
-        for (const handler of dealStageChangedHandlers) {
-          Promise.resolve(handler({ tenantId, dealId: id, stageId })).catch(() => undefined);
-        }
-
-        if (stage.is_won) {
-          // Атомарное FIFO-списание товаров сделки со склада + автозаявки при дефиците
-          await warehouseService.consumeDealItemsInTx(tx, tenantId, id, changedBy);
-          for (const handler of dealWonHandlers) {
-            Promise.resolve(handler({ tenantId, dealId: id })).catch(() => undefined);
-          }
-        }
-      }
-
-      const row = await tx.queryOneOrThrow<DealRow>(
-        `SELECT ${DEAL_COLUMNS_WITH_LABELS}
-         FROM deals d
-         ${DEAL_LABEL_JOINS}
-         WHERE d.tenant_id = $1 AND d.id = $2`,
-        [tenantId, id],
-      );
-
-      void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
-
-      return toDealDTO(row);
+      return this.moveStageInTx(tx, tenantId, id, stageId, changedBy, targetIndex);
     });
+  }
+
+  /**
+   * При приёмке оборудования переводит связанную сделку в этап «В работе»,
+   * если сделка активна, не закрыта и находится на более раннем этапе воронки.
+   * Выполняется в переданной транзакции tx (в единой транзакции приёмки наряда).
+   */
+  async advanceDealToInProgressInTx(
+    tx: import("../../../db/client.js").TransactionClient,
+    tenantId: string,
+    dealId: string | null | undefined,
+    authorId?: string | null,
+  ): Promise<DealDTO | null> {
+    if (!dealId) return null;
+
+    const deal = await tx.queryOne<{
+      id: string;
+      pipeline_id: string;
+      stage_id: string;
+      status: string;
+      created_by: string;
+      owner_id: string | null;
+      sort_order: number;
+      is_won: boolean;
+      is_lost: boolean;
+    }>(
+      `SELECT d.id, d.pipeline_id, d.stage_id, d.status, d.created_by, d.owner_id,
+              s.sort_order, s.is_won, s.is_lost
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL
+       FOR UPDATE`,
+      [tenantId, dealId],
+    );
+
+    // Защита: если сделка не найдена, не активна или уже выиграна/проиграна — не трогаем
+    if (!deal || deal.status !== "active" || deal.is_won || deal.is_lost) {
+      return null;
+    }
+
+    // Ищем этап «В работе» динамически в воронке сделки
+    const inProgressStage = await tx.queryOne<{ id: string; sort_order: number }>(
+      `SELECT s.id, s.sort_order
+       FROM stages s
+       JOIN pipelines p ON p.id = s.pipeline_id
+       WHERE s.pipeline_id = $1 AND p.tenant_id = $2
+         AND s.is_won = false AND s.is_lost = false
+         AND (
+           lower(btrim(s.name)) = 'в работе'
+           OR lower(btrim(s.name)) = 'in progress'
+           OR lower(btrim(s.name)) = 'in_progress'
+           OR lower(btrim(s.name)) LIKE '%в работе%'
+           OR lower(btrim(s.name)) LIKE '%in progress%'
+         )
+       ORDER BY s.sort_order ASC
+       LIMIT 1`,
+      [deal.pipeline_id, tenantId],
+    );
+
+    if (!inProgressStage) {
+      return null;
+    }
+
+    // Защита от дублирования: если сделка уже на этом этапе — не дублируем переход
+    if (deal.stage_id === inProgressStage.id) {
+      return null;
+    }
+
+    // Защита от отката: переводим только если сделка находится на более раннем этапе воронки
+    if (deal.sort_order >= inProgressStage.sort_order) {
+      return null;
+    }
+
+    const changedBy = authorId || deal.owner_id || deal.created_by;
+    return this.moveStageInTx(tx, tenantId, dealId, inProgressStage.id, changedBy);
+  }
+
+  /**
+   * Обертка для вызова advanceDealToInProgress вне существующей транзакции.
+   */
+  async syncDealProgressFromRepairs(
+    tenantId: string,
+    dealId: string | null | undefined,
+    authorId?: string | null,
+  ): Promise<void> {
+    if (!dealId) return;
+
+    try {
+      await withTenant(tenantId, async (tx) => {
+        await this.advanceDealToInProgressInTx(tx, tenantId, dealId, authorId);
+      });
+    } catch (err) {
+      console.error("[deals.service] Failed to sync deal progress from repairs:", { err, dealId });
+    }
   }
 
   /**

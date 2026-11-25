@@ -924,6 +924,10 @@ export class RepairsService {
         accessories: packageContentsItems,
       });
 
+      if (dealId) {
+        await dealsService.advanceDealToInProgressInTx(tx, tenantId, dealId, author.id);
+      }
+
       const dto = toRepairOrderDTO(row);
       return { dto, customerId, dealId: dto.dealId };
     }).then((res) => {
@@ -1248,6 +1252,10 @@ export class RepairsService {
         createdOrders.push(toRepairOrderDTO(row));
       }
 
+      if (dealId) {
+        await dealsService.advanceDealToInProgressInTx(tx, tenantId, dealId, author.id);
+      }
+
       return { createdOrders, customerId, dealId };
     }).then((res) => {
       if (res.dealId) void this.syncDealBudgetFromRepairs(tenantId, res.dealId);
@@ -1566,6 +1574,9 @@ export class RepairsService {
     const updated = await this.get(tenantId, id);
     if (updated?.dealId) {
       void this.syncDealBudgetFromRepairs(tenantId, updated.dealId);
+      if (updated.status !== "rejected") {
+        void dealsService.syncDealProgressFromRepairs(tenantId, updated.dealId);
+      }
       void dealsService.syncDealCompletionFromRepairs(tenantId, updated.dealId);
     }
     return updated;
@@ -1662,6 +1673,9 @@ export class RepairsService {
       const dto = toRepairOrderDTO(row);
       if (dto.dealId) {
         void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
+        if (to !== "rejected") {
+          void dealsService.syncDealProgressFromRepairs(tenantId, dto.dealId, author.id);
+        }
         void dealsService.syncDealCompletionFromRepairs(tenantId, dto.dealId, author.id);
       }
       return dto;
@@ -2369,6 +2383,9 @@ export class RepairsService {
           );
           for (const { deal_id } of dealRows) {
             void this.syncDealBudgetFromRepairs(tenantId, deal_id);
+            if (status !== "rejected") {
+              void dealsService.syncDealProgressFromRepairs(tenantId, deal_id, author.id);
+            }
             void dealsService.syncDealCompletionFromRepairs(tenantId, deal_id, author.id);
           }
         } catch (e) {
