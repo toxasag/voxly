@@ -770,11 +770,11 @@ export class RepairsService {
       if (dealId && (companyId || customerId)) {
         await tx.query(
           `UPDATE deals
-           SET company_id = COALESCE(company_id, $1),
-               contact_id = COALESCE(contact_id, $2),
+           SET company_id = COALESCE(company_id, $1::uuid),
+               contact_id = COALESCE(contact_id, $2::uuid),
                updated_at = now()
            WHERE tenant_id = $3 AND id = $4
-             AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+             AND ((company_id IS NULL AND $1::uuid IS NOT NULL) OR (contact_id IS NULL AND $2::uuid IS NOT NULL))`,
           [companyId || null, customerId || null, tenantId, dealId],
         );
       }
@@ -923,6 +923,10 @@ export class RepairsService {
         malfunctions: malfunctionsItems,
         accessories: packageContentsItems,
       });
+
+      if (dealId) {
+        await dealsService.advanceDealToInProgressInTx(tx, tenantId, dealId, author.id);
+      }
 
       const dto = toRepairOrderDTO(row);
       return { dto, customerId, dealId: dto.dealId };
@@ -1098,11 +1102,11 @@ export class RepairsService {
         if (companyId || customerId) {
           await tx.query(
             `UPDATE deals
-             SET company_id = COALESCE(company_id, $1),
-                 contact_id = COALESCE(contact_id, $2),
+             SET company_id = COALESCE(company_id, $1::uuid),
+                 contact_id = COALESCE(contact_id, $2::uuid),
                  updated_at = now()
              WHERE tenant_id = $3 AND id = $4
-               AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+               AND ((company_id IS NULL AND $1::uuid IS NOT NULL) OR (contact_id IS NULL AND $2::uuid IS NOT NULL))`,
             [companyId || null, customerId || null, tenantId, dealId],
           );
         }
@@ -1246,6 +1250,10 @@ export class RepairsService {
         });
 
         createdOrders.push(toRepairOrderDTO(row));
+      }
+
+      if (dealId) {
+        await dealsService.advanceDealToInProgressInTx(tx, tenantId, dealId, author.id);
       }
 
       return { createdOrders, customerId, dealId };
@@ -1566,6 +1574,9 @@ export class RepairsService {
     const updated = await this.get(tenantId, id);
     if (updated?.dealId) {
       void this.syncDealBudgetFromRepairs(tenantId, updated.dealId);
+      if (updated.status !== "rejected") {
+        void dealsService.syncDealProgressFromRepairs(tenantId, updated.dealId);
+      }
       void dealsService.syncDealCompletionFromRepairs(tenantId, updated.dealId);
     }
     return updated;
@@ -1662,6 +1673,9 @@ export class RepairsService {
       const dto = toRepairOrderDTO(row);
       if (dto.dealId) {
         void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
+        if (to !== "rejected") {
+          void dealsService.syncDealProgressFromRepairs(tenantId, dto.dealId, author.id);
+        }
         void dealsService.syncDealCompletionFromRepairs(tenantId, dto.dealId, author.id);
       }
       return dto;
@@ -2369,6 +2383,9 @@ export class RepairsService {
           );
           for (const { deal_id } of dealRows) {
             void this.syncDealBudgetFromRepairs(tenantId, deal_id);
+            if (status !== "rejected") {
+              void dealsService.syncDealProgressFromRepairs(tenantId, deal_id, author.id);
+            }
             void dealsService.syncDealCompletionFromRepairs(tenantId, deal_id, author.id);
           }
         } catch (e) {

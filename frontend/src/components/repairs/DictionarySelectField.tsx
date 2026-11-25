@@ -18,7 +18,7 @@ import {
   useRenameRepairDictionaryItem,
   type DictionaryItemDTO,
 } from "@/lib/api/use-repairs";
-import { cn } from "@/lib/utils";
+import { cn, matchesSearchTokens } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 export type DictionaryCategory = "type" | "brand" | "model" | "accessory" | "malfunction" | "category";
@@ -155,9 +155,7 @@ export function DictionarySelectField({
       }
     }
 
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) return source;
-    return source.filter((item) => item.name.toLowerCase().includes(term));
+    return source.filter((item) => matchesSearchTokens(searchTerm, [item.name]));
   }, [normalizedItems, isModelCategory, isBrandSelected, allowAllBrands, brandId, brandName, searchTerm]);
 
   const handleSelectSingle = (item: NormalizedItem) => {

@@ -15,7 +15,7 @@ import {
 } from "@/lib/api/use-warehouse";
 import { useCreatePart, useDeletePart } from "@/lib/api/use-repairs";
 import { PartAddModal } from "./PartAddModal";
-import { cn } from "@/lib/utils";
+import { cn, matchesWarehouseItem } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface PartsTableProps {
@@ -82,12 +82,10 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
   // Закрытие выпадающего списка при клике снаружи или Escape
   useClickOutside(comboboxRef, () => setCatalogOpen(false), catalogOpen);
 
-  // Фильтрация номенклатуры склада по введенному поиску
-  const filteredWarehouseItems = warehouseItems.filter((wi) => {
-    const q = newName.trim().toLowerCase();
-    if (!q) return true;
-    return wi.name.toLowerCase().includes(q) || wi.sku.toLowerCase().includes(q);
-  });
+  // Многословная фильтрация номенклатуры склада по названию, артикулу, бренду, категории и моделям
+  const filteredWarehouseItems = warehouseItems.filter((wi) =>
+    matchesWarehouseItem(wi, newName),
+  );
 
   const queryClient = useQueryClient();
 
@@ -482,7 +480,15 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
                         >
                           <div className="min-w-0 flex-1 pr-2">
                             <span className="font-medium text-[#111111] truncate block">{wi.name}</span>
-                            <span className="text-[11px] font-mono text-[#888888]">{wi.sku}</span>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[#888888]">
+                              {wi.sku && <span className="font-mono">{wi.sku}</span>}
+                              {wi.brand && <span>{wi.sku ? "· " : ""}{wi.brand}</span>}
+                              {wi.modelNames && wi.modelNames.length > 0 && (
+                                <span className="truncate text-[#666666]">
+                                  · {wi.modelNames.join(", ")}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="text-right shrink-0">
                             <span

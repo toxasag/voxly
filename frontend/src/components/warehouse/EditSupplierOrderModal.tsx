@@ -152,7 +152,7 @@ export function EditSupplierOrderModal({
       return;
     }
 
-    const isReceived = order.status === "received";
+    const isItemsLocked = order.status === "received" || order.status === "partially_received";
 
     const payloadItems = items.map((it) => {
       const reqQty = it.requestedQuantity;
@@ -181,7 +181,7 @@ export function EditSupplierOrderModal({
           supplier_name: finalSupplierName,
           supplier_company_id: selectedCompany?.id ?? order.supplierCompanyId ?? null,
           notes: notes.trim(),
-          ...(isReceived ? {} : { items: payloadItems }),
+          ...(isItemsLocked ? {} : { items: payloadItems }),
         },
       });
 
@@ -193,6 +193,7 @@ export function EditSupplierOrderModal({
     }
   };
 
+  const isItemsLocked = order.status === "received" || order.status === "partially_received";
   const companiesList = companiesData?.items ?? [];
 
   return (
@@ -358,7 +359,9 @@ export function EditSupplierOrderModal({
           <div className="flex-1 flex flex-col overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white">
             <div className="flex items-center justify-between border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-2 text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
               <span>Позиции заказа ({items.length} поз.)</span>
-              <span>Количество и сумма</span>
+              <span>
+                {isItemsLocked ? "Состав зафиксирован после приёмки" : "Количество и сумма"}
+              </span>
             </div>
 
             <div className="flex-1 overflow-y-auto divide-y divide-[#f0f0f0] p-1">
@@ -413,11 +416,12 @@ export function EditSupplierOrderModal({
                             type="number"
                             min={1}
                             step={1}
+                            disabled={isItemsLocked}
                             value={it.quantity}
                             onChange={(e) =>
                               handleItemQuantityChange(idx, parseInt(e.target.value, 10))
                             }
-                            className="w-16 h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-center font-mono text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                            className="w-16 h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-center font-mono text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none disabled:bg-[#fafafa] disabled:text-[#888888] disabled:cursor-not-allowed"
                           />
                           <span className="text-[11px] text-[#666666]">{it.unit}</span>
                         </div>
@@ -428,11 +432,12 @@ export function EditSupplierOrderModal({
                             type="number"
                             min={0}
                             step={1}
+                            disabled={isItemsLocked}
                             value={it.price}
                             onChange={(e) =>
                               handleItemPriceChange(idx, parseFloat(e.target.value))
                             }
-                            className="w-20 h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-right font-mono text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                            className="w-20 h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-right font-mono text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none disabled:bg-[#fafafa] disabled:text-[#888888] disabled:cursor-not-allowed"
                           />
                           <span className="text-[11px] text-[#666666]">₽</span>
                         </div>

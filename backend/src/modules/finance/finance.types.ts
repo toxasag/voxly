@@ -212,6 +212,7 @@ export interface TransactionDTO {
   repairOrderId: string | null;
   invoiceId: string | null;
   supplierOrderId?: string | null;
+  isCapitalizedCost?: boolean;
   counterpartyName: string;
   counterpartyInn: string;
   occurredAt: string;
@@ -299,6 +300,7 @@ export interface PnlCogsSummaryDTO {
 
 export interface PnlDTO {
   from: string; to: string; income: number; expenses: number; netProfit: number;
+  capitalizedCosts?: number;
   incomeByCategory: PnlCategoryDTO[]; expensesByCategory: PnlCategoryDTO[];
   cogs?: PnlCogsSummaryDTO;
 }

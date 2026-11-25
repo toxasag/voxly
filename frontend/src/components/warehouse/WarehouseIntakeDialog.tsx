@@ -34,7 +34,7 @@ import {
 import { useCompanies, useCreateCompany, type CompanyDTO } from "@/lib/api/use-companies";
 import { useAccounts } from "@/lib/api/use-invoices";
 import { formatRub } from "@/lib/utils/format";
-import { cn } from "@/lib/utils";
+import { cn, matchesWarehouseItem } from "@/lib/utils";
 
 export interface WarehouseIntakeDialogProps {
   open: boolean;
@@ -270,14 +270,7 @@ export function WarehouseIntakeDialog({
 
   // Фильтрация товаров каталога для модалки множественного выбора (хук всегда вызывается на верхнем уровне)
   const filteredCatalogItems = useMemo(() => {
-    const q = catalogSearch.trim().toLowerCase();
-    if (!q) return safeItems;
-    return safeItems.filter(
-      (it) =>
-        it.name.toLowerCase().includes(q) ||
-        (it.sku && it.sku.toLowerCase().includes(q)) ||
-        (it.category && it.category.toLowerCase().includes(q)),
-    );
+    return safeItems.filter((it) => matchesWarehouseItem(it, catalogSearch));
   }, [safeItems, catalogSearch]);
 
   // Управление строками таблицы

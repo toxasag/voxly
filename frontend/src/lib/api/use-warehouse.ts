@@ -43,10 +43,14 @@ export interface WarehouseBatchDTO {
   id: string;
   itemId: string;
   supplierOrderId?: string | null;
+  receiptId?: string | null;
   itemName?: string;
   batchNumber: string;
   supplierName: string;
   purchasePrice: number;
+  basePurchasePrice?: number;
+  landedCostPerUnit?: number;
+  landedCostTotal?: number;
   initialQuantity: number;
   remainingQuantity: number;
   receivedAt: string;
@@ -195,6 +199,8 @@ export interface AggregatedPurchaseRequestDTO {
   totalStock: number;
 }
 
+export type LandedCostAllocationMethod = "by_value" | "by_quantity" | "manual";
+
 export interface SupplierOrderItemDTO {
   id: string;
   supplierOrderId: string;
@@ -208,9 +214,52 @@ export interface SupplierOrderItemDTO {
   purchaseRequestIds?: string[];
   repairOrders?: string;
   quantity: number;
+  receivedQuantity?: number;
+  remainingQuantity?: number;
   unit: string;
   price: number;
   totalPrice: number;
+  createdAt: string;
+}
+
+export interface SupplierOrderReceiptItemDTO {
+  id: string;
+  receiptId: string;
+  supplierOrderItemId: string;
+  batchId: string | null;
+  itemId: string | null;
+  itemName: string;
+  quantity: number;
+  baseUnitPrice: number;
+  allocatedExtraCost: number;
+  unitLandedCost: number;
+  effectiveUnitPrice: number;
+  createdAt: string;
+}
+
+export interface SupplierOrderReceiptCostDTO {
+  id: string;
+  receiptId: string;
+  description: string;
+  amount: number;
+  categoryId: string | null;
+  categoryName: string;
+  cashAccountId: string | null;
+  transactionId: string | null;
+  createdAt: string;
+}
+
+export interface SupplierOrderReceiptDTO {
+  id: string;
+  supplierOrderId: string;
+  receiptNumber: string;
+  allocationMethod: LandedCostAllocationMethod;
+  extraCostsTotal: number;
+  notes: string;
+  createdBy: string | null;
+  createdByName?: string | null;
+  items: SupplierOrderReceiptItemDTO[];
+  costs: SupplierOrderReceiptCostDTO[];
   createdAt: string;
 }
 
@@ -219,7 +268,7 @@ export interface SupplierOrderDTO {
   orderNumber: string;
   supplierName: string;
   supplierCompanyId: string | null;
-  status: "draft" | "pending_payment" | "paid" | "received" | "cancelled";
+  status: "draft" | "pending_payment" | "paid" | "partially_received" | "received" | "cancelled";
   totalAmount: number;
   cashAccountId: string | null;
   financeTransactionId: string | null;
@@ -229,6 +278,10 @@ export interface SupplierOrderDTO {
   createdBy: string | null;
   createdByName?: string | null;
   items: SupplierOrderItemDTO[];
+  orderedQuantityTotal?: number;
+  receivedQuantityTotal?: number;
+  extraCostsTotal?: number;
+  receipts?: SupplierOrderReceiptDTO[];
   createdAt: string;
   updatedAt: string;
 }
@@ -275,10 +328,28 @@ export interface UpdateSupplierOrderPayload {
   }[];
 }
 
+export interface ReceiptSupplierOrderItemInput {
+  supplier_order_item_id: string;
+  quantity: number;
+  manual_extra_cost?: number;
+}
+
+export interface ReceiptExtraCostInput {
+  description: string;
+  amount: number;
+  category_id?: string | null;
+  category_name?: string;
+  cash_account_id?: string | null;
+  counterparty_name?: string;
+}
+
 export interface ReceiptSupplierOrderPayload {
   cash_account_id?: string;
   mark_paid?: boolean;
   comment?: string;
+  items?: ReceiptSupplierOrderItemInput[];
+  allocation_method?: LandedCostAllocationMethod;
+  extra_costs?: ReceiptExtraCostInput[];
 }
 
 export interface PaySupplierOrderPayload {
@@ -761,8 +832,24 @@ export function useCreateReceiptFromSupplierOrder() {
     }: {
       id: string;
       payload?: ReceiptSupplierOrderPayload;
-    }): Promise<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }> => {
-      const res = await apiClient.post<{ success: boolean; order: SupplierOrderDTO; batchesCreated: number; transactionId?: string }>(
+    }): Promise<{
+      success: boolean;
+      order: SupplierOrderDTO;
+      batchesCreated: number;
+      receiptId?: string;
+      status?: SupplierOrderDTO["status"];
+      extraCostsTotal?: number;
+      transactionId?: string;
+    }> => {
+      const res = await apiClient.post<{
+        success: boolean;
+        order: SupplierOrderDTO;
+        batchesCreated: number;
+        receiptId?: string;
+        status?: SupplierOrderDTO["status"];
+        extraCostsTotal?: number;
+        transactionId?: string;
+      }>(
         `/api/v1/warehouse/supplier-orders/${id}/create-receipt`,
         payload ?? {},
       );
@@ -777,6 +864,7 @@ export function useCreateReceiptFromSupplierOrder() {
       void queryClient.invalidateQueries({ queryKey: warehouseKeys.movements() });
       void queryClient.invalidateQueries({ queryKey: ["finance"] });
       void queryClient.invalidateQueries({ queryKey: ["cash-accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["repairs"] });
     },
   });
 }

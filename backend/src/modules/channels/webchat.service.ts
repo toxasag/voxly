@@ -36,7 +36,7 @@ export interface WebchatAccountInfo {
   locale?: "ru" | "en";
   language?: "ru" | "en";
   accentColor?: string;
-  theme?: "dark" | "light";
+  theme?: "light";
   title?: string;
   greeting?: string;
   placeholder?: string;
@@ -569,7 +569,7 @@ export class WebchatService {
       isAiEnabled: agent !== null && agent.status === "active",
       status: account.status,
       accentColor: typeof creds.accentColor === "string" ? creds.accentColor : "#f59e0b",
-      theme: creds.theme === "light" ? "light" : "dark",
+      theme: "light",
       title: typeof creds.title === "string" && creds.title.trim().length > 0 ? creds.title.trim() : defaultTitle,
       greeting: typeof creds.greeting === "string" && creds.greeting.trim().length > 0 ? creds.greeting.trim() : defaultGreeting,
       placeholder: typeof creds.placeholder === "string" && creds.placeholder.trim().length > 0 ? creds.placeholder.trim() : defaultPlaceholder,

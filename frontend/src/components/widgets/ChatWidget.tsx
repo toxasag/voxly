@@ -32,7 +32,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   botName,
   botAvatar,
   language = "ru",
-  typingSpeed = 12,
+  typingSpeed = 24,
   typingEffectEnabled: controlledEnabled,
   onSendMessage,
   className,
@@ -101,6 +101,25 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   const [displayedText, setDisplayedText] = useState<string>("");
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Chat scroll container with sticky auto-scroll logic
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef<boolean>(true);
+
+  const handleScroll = useCallback(() => {
+    if (!scrollContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+    isNearBottomRef.current = distanceFromBottom <= 100;
+  }, []);
+
+  const scrollToBottom = useCallback((force = false) => {
+    if (!scrollContainerRef.current) return;
+    if (force || isNearBottomRef.current) {
+      scrollContainerRef.current.scrollTop =
+        scrollContainerRef.current.scrollHeight;
+    }
+  }, []);
+
   // Typing animation function
   const typeWriter = useCallback(
     (
@@ -124,19 +143,22 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
         if (index < totalLen) {
           index++;
           setDisplayedText(fullText.slice(0, index));
+          // Auto-scroll on each tick / line wrap so text is never hidden behind input
+          scrollToBottom(false);
           typingTimerRef.current = setTimeout(step, speed);
         } else {
           // Finished: mark completed synchronously
           completedMessageIdsRef.current.add(messageId);
           activeMessageIdRef.current = null;
           setActiveTypingMessageId(null);
+          scrollToBottom(false);
           onComplete?.();
         }
       };
 
       step();
     },
-    [],
+    [scrollToBottom],
   );
 
   // Trigger typing effect for bot messages
@@ -162,9 +184,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     );
 
     if (candidate) {
+      isNearBottomRef.current = true;
+      scrollToBottom(true);
       typeWriter(candidate.text, candidate.id, typingSpeed);
     }
-  }, [messages, isTypingEffectOn, typingSpeed, typeWriter]);
+  }, [messages, isTypingEffectOn, typingSpeed, typeWriter, scrollToBottom]);
 
   // Clean up timer on unmount
   useEffect(() => {
@@ -175,17 +199,8 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     };
   }, []);
 
-  // Chat scroll container
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const scrollToBottom = useCallback(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop =
-        scrollContainerRef.current.scrollHeight;
-    }
-  }, []);
-
   useEffect(() => {
-    scrollToBottom();
+    scrollToBottom(false);
   }, [messages, displayedText, scrollToBottom]);
 
   // Input state
@@ -206,6 +221,8 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
 
     setMessages((prev) => [...prev, userMsg]);
     setInputValue("");
+    isNearBottomRef.current = true;
+    scrollToBottom(true);
     onSendMessage?.(trimmed);
 
     // Simulate smart bot response
@@ -332,6 +349,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       {/* Messages area */}
       <div
         ref={scrollContainerRef}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-white"
       >
         {messages.map((msg) => {

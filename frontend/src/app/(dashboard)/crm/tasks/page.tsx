@@ -32,7 +32,7 @@ import {
 import { useTenantUsers, indexTenantUsers } from "@/lib/api/use-tenant-users";
 import { useAuth } from "@/lib/auth/use-auth";
 import type { CreateTaskPayload } from "@/schemas/task.schema";
-import { cn } from "@/lib/utils";
+import { cn, formatTaskDue } from "@/lib/utils";
 import { useRecordParam } from "@/lib/utils/use-record-param";
 
 type View = "table" | "kanban" | "calendar";
@@ -65,7 +65,7 @@ const PRIORITY_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const STATUS_LABELS: Record<TaskStatus, string> = { todo: "К выполнению", in_progress: "В работе", done: "Выполнено" };
 const LINK_LABELS: Record<string, string> = { deal: "Сделка", contact: "Контакт", company: "Компания" };
 
-const formatDue = (value: string | null) => value ? new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit" }).format(new Date(value)) : "—";
+const formatDue = (value: string | null) => formatTaskDue(value);
 
 /** Заполняет форму правки из DTO: связь собирается обратно в пару поле+значение. */
 function toTaskFormValues(task: TaskDTO): CreateTaskPayload {
@@ -396,7 +396,7 @@ function TasksContent() {
       id: "due",
       header: "Срок",
       icon: Calendar,
-      width: 120,
+      width: 140,
       hideable: true,
       sortValue: (task) => task.dueDate ?? "9999-12-31",
       render: (task) => (

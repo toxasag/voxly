@@ -1,4 +1,5 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
+import { escapeLikePattern, tokenizeSearchQuery } from "../../lib/string.utils.js";
 import { withTenant, type SqlParam } from "../../db/client.js";
 import { NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import type {
@@ -36,9 +37,10 @@ export class ServicesService {
       `;
       const params: SqlParam[] = [tenantId];
 
-      if (search && search.trim()) {
-        params.push(`%${search.trim()}%`);
-        query += ` AND (name ILIKE $${params.length} OR description ILIKE $${params.length})`;
+      for (const token of tokenizeSearchQuery(search)) {
+        params.push(`%${escapeLikePattern(token)}%`);
+        const paramRef = `$${params.length}`;
+        query += ` AND (name ILIKE ${paramRef} ESCAPE '\\' OR COALESCE(description, '') ILIKE ${paramRef} ESCAPE '\\')`;
       }
 
       query += ` ORDER BY name ASC`;

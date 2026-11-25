@@ -2626,8 +2626,22 @@
       if (networkStatusEl) networkStatusEl.style.display = 'none';
     }
 
-    function scrollToBottom(smooth) {
+    var userScrolledUp = false;
+    if (messagesContainer) {
+      messagesContainer.addEventListener('scroll', function () {
+        try {
+          var dist = messagesContainer.scrollHeight - (messagesContainer.scrollTop + messagesContainer.clientHeight);
+          userScrolledUp = dist > 100;
+        } catch (e) {}
+      });
+    }
+
+    function scrollToBottom(smooth, force) {
       if (!messagesContainer) return;
+      if (!force && userScrolledUp) return;
+      if (force) {
+        userScrolledUp = false;
+      }
       var doScroll = function () {
         try {
           if (smooth && typeof messagesContainer.scrollTo === 'function') {
@@ -2648,7 +2662,6 @@
         requestAnimationFrame(doScroll);
       }
       setTimeout(doScroll, 40);
-      setTimeout(doScroll, 120);
     }
 
     function showTypingIndicator(show, text) {
@@ -3089,18 +3102,22 @@
           textEl.appendChild(cursorSpan);
 
           var charIdx = 0;
-          var speed = 12;
+          var speed = 24;
           function typeNextChar() {
             if (charIdx < text.length) {
               charIdx++;
               textSpan.textContent = text.substring(0, charIdx);
-              scrollToBottom(true);
+              if (!userScrolledUp && messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+              }
               setTimeout(typeNextChar, speed);
             } else {
               if (cursorSpan.parentNode) {
                 cursorSpan.parentNode.removeChild(cursorSpan);
               }
-              scrollToBottom(true);
+              if (!userScrolledUp && messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+              }
             }
           }
           typeNextChar();
@@ -3137,7 +3154,7 @@
       } else {
         messagesContainer.appendChild(row);
       }
-      scrollToBottom(true);
+      scrollToBottom(true, true);
     }
 
     function saveAndRenderMessage(text, isUser, attachment, attachmentType, id) {
@@ -3810,12 +3827,8 @@
             }
           }
 
-          // Тема (светлая / тёмная)
-          if (data.theme === 'dark') {
-            win.classList.add('is-dark-theme');
-          } else {
-            win.classList.remove('is-dark-theme');
-          }
+          // Тема: виджет GETVOXLY принудительно работает в светлой теме
+          win.classList.remove('is-dark-theme');
 
           // Шапка виджета: имя консультанта и статус
           if (headerName) {

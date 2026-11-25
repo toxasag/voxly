@@ -11,8 +11,10 @@ import {
   Clock,
   Building2,
   User,
+  Receipt,
 } from "lucide-react";
 import { type SupplierOrderDTO } from "@/lib/api/use-warehouse";
+import { formatRub } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 interface SupplierOrderDetailModalProps {
@@ -25,7 +27,11 @@ interface SupplierOrderDetailModalProps {
   onDelete: (order: SupplierOrderDTO) => void;
 }
 
-import { formatRub } from "@/lib/utils/format";
+const ALLOCATION_LABELS: Record<string, string> = {
+  by_value: "по сумме",
+  by_quantity: "по количеству",
+  manual: "вручную",
+};
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -55,12 +61,22 @@ export function SupplierOrderDetailModal({
   if (!open || !order) return null;
 
   const isReceived = order.status === "received";
-  const isPaid = Boolean(order.paidAt) || order.status === "paid" || order.status === "received";
+  const isPartiallyReceived = order.status === "partially_received";
+  const isPaid = Boolean(order.paidAt) || order.status === "paid";
+  const orderedQtyTotal =
+    order.orderedQuantityTotal ??
+    (order.items ?? []).reduce((s, it) => s + Number(it.quantity ?? 0), 0);
+  const receivedQtyTotal =
+    order.receivedQuantityTotal ??
+    (order.items ?? []).reduce((s, it) => s + Number(it.receivedQuantity ?? 0), 0);
+  const extraCostsTotal = Number(order.extraCostsTotal ?? 0);
+  const receipts = order.receipts ?? [];
 
   const statusMap: Record<string, { label: string; color: string }> = {
     draft: { label: "Черновик", color: "bg-neutral-100 text-neutral-700 border-neutral-300" },
     pending_payment: { label: "Ожидает оплаты", color: "bg-amber-50 text-amber-700 border-amber-200" },
     paid: { label: "Оплачен", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    partially_received: { label: "Частично оприходован", color: "bg-indigo-50 text-[#4a38f5] border-indigo-200" },
     received: { label: "Поступил на склад", color: "bg-sky-50 text-sky-700 border-sky-200" },
     cancelled: { label: "Отменен", color: "bg-rose-50 text-rose-700 border-rose-200" },
   };
@@ -96,7 +112,8 @@ export function SupplierOrderDetailModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"
+            aria-label="Закрыть детали заказа"
+            className="rounded-lg p-1.5 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -140,8 +157,9 @@ export function SupplierOrderDetailModal({
                   Ожидает оплаты
                 </div>
               )}
-              <div className="text-[11px] font-mono text-[#666666]">
-                Сумма: {formatRub(order.totalAmount)}
+              <div className="text-[11px] font-mono tabular-nums text-[#666666]">
+                Товары: {formatRub(order.totalAmount)}
+                {extraCostsTotal > 0 ? ` · Доп.: ${formatRub(extraCostsTotal)}` : ""}
               </div>
             </div>
 
@@ -156,14 +174,19 @@ export function SupplierOrderDetailModal({
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   Оприходован: {formatDate(order.receivedAt)}
                 </div>
+              ) : isPartiallyReceived ? (
+                <div className="text-xs font-medium text-[#4a38f5] flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5" />
+                  Частично принят ({receipts.length} приём.)
+                </div>
               ) : (
                 <div className="text-xs font-medium text-neutral-600 flex items-center gap-1">
                   <Clock className="h-3.5 w-3.5" />
                   Ожидает оприходования
                 </div>
               )}
-              <div className="text-[11px] text-[#666666]">
-                Позиций: {order.items?.length || 0}
+              <div className="text-[11px] font-mono tabular-nums text-[#666666]">
+                Принято: {receivedQtyTotal} из {orderedQtyTotal} шт
               </div>
             </div>
           </div>
@@ -177,6 +200,8 @@ export function SupplierOrderDetailModal({
               {(order.items || []).map((it, idx) => {
                 const reqQty = it.requestedQuantity || 0;
                 const totalQty = it.quantity;
+                const receivedQty = Number(it.receivedQuantity ?? (isReceived ? totalQty : 0));
+                const remainingQty = Math.max(0, Number(it.remainingQuantity ?? totalQty - receivedQty));
                 const extraQty = it.extraQuantity ?? Math.max(0, totalQty - reqQty);
 
                 return (
@@ -187,6 +212,18 @@ export function SupplierOrderDetailModal({
                       </div>
                       <div className="flex items-center gap-2 text-xs text-[#666666] flex-wrap">
                         {it.sku && <span className="font-mono text-[11px]">{it.sku}</span>}
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded-[4px] border px-2 py-0.5 text-[11px] font-mono tabular-nums font-medium",
+                            remainingQty <= 0
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : receivedQty > 0
+                                ? "border-indigo-200 bg-indigo-50 text-[#4a38f5]"
+                                : "border-[#e5e5e5] bg-[#fbfbfb] text-[#666666]",
+                          )}
+                        >
+                          Принято {receivedQty} / {totalQty} {it.unit}
+                        </span>
                         {reqQty > 0 && (
                           <span className="inline-flex items-center rounded-[4px] border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
                             {reqQty} {it.unit} в наряд {it.repairOrders || ""}
@@ -201,10 +238,10 @@ export function SupplierOrderDetailModal({
                     </div>
 
                     <div className="text-right shrink-0">
-                      <div className="font-mono text-[13px] font-bold text-[#111111]">
+                      <div className="font-mono tabular-nums text-[13px] font-bold text-[#111111]">
                         {formatRub(it.totalPrice)}
                       </div>
-                      <div className="text-[11px] font-mono text-[#666666]">
+                      <div className="text-[11px] font-mono tabular-nums text-[#666666]">
                         {it.quantity} {it.unit} × {formatRub(it.price)}
                       </div>
                     </div>
@@ -213,6 +250,99 @@ export function SupplierOrderDetailModal({
               })}
             </div>
           </div>
+
+          {/* История приёмок и доп. расходов */}
+          {receipts.length > 0 && (
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white overflow-hidden shadow-2xs">
+              <div className="border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-2.5 text-[11px] font-semibold text-[#666666] uppercase tracking-wider flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Receipt className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  История приёмок ({receipts.length})
+                </span>
+                {extraCostsTotal > 0 && (
+                  <span className="font-mono tabular-nums text-[#4a38f5]">
+                    Доп. расходы: {formatRub(extraCostsTotal)}
+                  </span>
+                )}
+              </div>
+              <div className="divide-y divide-[#f0f0f0]">
+                {receipts.map((rc) => (
+                  <div key={rc.id} className="p-4 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-semibold text-[#111111]">
+                          {rc.receiptNumber}
+                        </span>
+                        <span className="text-[#666666]">{formatDate(rc.createdAt)}</span>
+                        {rc.createdByName && (
+                          <span className="text-[#666666]">· {rc.createdByName}</span>
+                        )}
+                      </div>
+                      {rc.extraCostsTotal > 0 && (
+                        <span className="rounded-[4px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-mono tabular-nums text-[#4a38f5]">
+                          +{formatRub(rc.extraCostsTotal)} ({ALLOCATION_LABELS[rc.allocationMethod] ?? rc.allocationMethod})
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      {rc.items.map((ri) => (
+                        <div
+                          key={ri.id}
+                          className="flex items-center justify-between gap-2 text-xs text-[#111111]"
+                        >
+                          <span className="truncate">
+                            {ri.itemName}{" "}
+                            <span className="font-mono tabular-nums text-[#666666]">
+                              × {ri.quantity}
+                            </span>
+                          </span>
+                          <span className="font-mono tabular-nums text-[11px] shrink-0">
+                            {ri.allocatedExtraCost > 0 ? (
+                              <>
+                                <span className="text-[#666666]">{formatRub(ri.baseUnitPrice)}</span>
+                                {" → "}
+                                <span className="font-semibold text-[#4a38f5]">
+                                  {formatRub(ri.effectiveUnitPrice)}
+                                </span>
+                              </>
+                            ) : (
+                              formatRub(ri.effectiveUnitPrice)
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {rc.costs.length > 0 && (
+                      <div className="rounded-[6px] border border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2 space-y-1">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[#888888]">
+                          Дополнительные расходы приёмки
+                        </div>
+                        {rc.costs.map((c) => (
+                          <div key={c.id} className="flex items-center justify-between text-xs">
+                            <span className="text-[#666666]">
+                              {c.description}{" "}
+                              <span className="text-[11px] text-[#888888]">({c.categoryName})</span>
+                            </span>
+                            <span className="font-mono tabular-nums font-medium text-[#111111]">
+                              {formatRub(c.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {rc.notes && (
+                      <div className="text-[11px] text-[#666666] italic">
+                        Комментарий: {rc.notes}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Примечания */}
           {order.notes && (
@@ -230,8 +360,8 @@ export function SupplierOrderDetailModal({
               onClick={() => onDelete(order)}
               className="inline-flex items-center gap-1.5 rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer"
               title={
-                isReceived
-                  ? "Удалить заказ, откатить оприходованные партии, движения и кассовую проводку"
+                isReceived || isPartiallyReceived
+                  ? "Удалить заказ, откатить оприходованные партии, движения и кассовые проводки"
                   : "Удалить заказ и вернуть заявки на закупку в статус «В ожидании»"
               }
             >
@@ -268,7 +398,7 @@ export function SupplierOrderDetailModal({
                 className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 py-1.5 text-xs font-medium text-white hover:bg-[#3d2ee0] shadow-xs transition-colors cursor-pointer"
               >
                 <ArrowDownToLine className="h-3.5 w-3.5" />
-                Оприходовать на склад
+                {isPartiallyReceived ? "Доприходовать на склад" : "Оприходовать на склад"}
               </button>
             )}
 

@@ -39,6 +39,7 @@ interface TxRow {
   repair_order_id: string | null;
   invoice_id: string | null;
   supplier_order_id?: string | null;
+  is_capitalized_cost?: boolean;
   counterparty_name: string;
   counterparty_inn: string;
   occurred_at: Date | string;
@@ -188,7 +189,9 @@ export class FinanceService {
                             COALESCE(t.counterparty_name, '') AS counterparty_name,
                             COALESCE(t.counterparty_inn, '') AS counterparty_inn,
                             t.cash_account_id, a.name AS account_name,
-                            t.deal_id, t.repair_order_id, t.invoice_id, t.supplier_order_id, t.occurred_at,
+                            t.deal_id, t.repair_order_id, t.invoice_id, t.supplier_order_id,
+                            COALESCE(t.is_capitalized_cost, false) AS is_capitalized_cost,
+                            t.occurred_at,
                             t.created_by AS created_by_id,
                             COALESCE(u.name, u.email, '') AS created_by_name
                      FROM transactions t
@@ -218,6 +221,7 @@ export class FinanceService {
       repairOrderId: row.repair_order_id,
       invoiceId: row.invoice_id,
       supplierOrderId: row.supplier_order_id ?? null,
+      isCapitalizedCost: Boolean(row.is_capitalized_cost),
       counterpartyName: row.counterparty_name || "",
       counterpartyInn: row.counterparty_inn || "",
       occurredAt: iso(row.occurred_at),
@@ -758,20 +762,31 @@ export class FinanceService {
   }
   async pnl(tenantId: string, from: string, to: string): Promise<PnlDTO> {
     return withTenant(tenantId, async (tx) => {
-      const rows = await tx.query<{ direction: "income" | "expense"; category_name: string; amount: string }>(
+      const rows = await tx.query<{
+        direction: "income" | "expense";
+        category_name: string;
+        amount: string;
+        is_capitalized_cost: boolean;
+      }>(
         `SELECT t.direction,
                 COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, 'Без категории') AS category_name,
+                COALESCE(t.is_capitalized_cost, false) AS is_capitalized_cost,
                 SUM(t.amount)::text AS amount
          FROM transactions t
          LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
          WHERE t.tenant_id = $1 AND t.deleted_at IS NULL AND t.occurred_at >= $2 AND t.occurred_at <= $3
-         GROUP BY t.direction, COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, 'Без категории')`,
+         GROUP BY t.direction, COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, 'Без категории'), COALESCE(t.is_capitalized_cost, false)`,
         [tenantId, from, to],
       );
       const incomeRows = rows.filter((r) => r.direction === "income");
-      const expenseRows = rows.filter((r) => r.direction === "expense");
+      // Капитализированные доп. расходы (Landed Cost) уже включены в себестоимость партий (FIFO COGS)
+      // и не дублируются в операционных расходах P&L, но возвращаются отдельно справочно.
+      const operatingExpenseRows = rows.filter((r) => r.direction === "expense" && !r.is_capitalized_cost);
+      const capitalizedCosts = rows
+        .filter((r) => r.direction === "expense" && r.is_capitalized_cost)
+        .reduce((s, r) => s + Number(r.amount), 0);
       const income = incomeRows.reduce((s, r) => s + Number(r.amount), 0);
-      const expenses = expenseRows.reduce((s, r) => s + Number(r.amount), 0);
+      const expenses = operatingExpenseRows.reduce((s, r) => s + Number(r.amount), 0);
       const map = (items: typeof rows, total: number) =>
         items.map((r) => ({
           categoryName: r.category_name,
@@ -898,8 +913,9 @@ export class FinanceService {
         income,
         expenses,
         netProfit: income - expenses,
+        capitalizedCosts: Math.round(capitalizedCosts * 100) / 100,
         incomeByCategory: map(incomeRows, income),
-        expensesByCategory: map(expenseRows, expenses),
+        expensesByCategory: map(operatingExpenseRows, expenses),
         cogs: {
           partsRevenue,
           repairPartsRevenue,

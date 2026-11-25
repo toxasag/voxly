@@ -8,6 +8,7 @@ import type { CompanyDTO } from "@/lib/api/use-companies";
 import type { DealDTO } from "@/lib/api/use-deals";
 import type { RepairOrderDTO } from "@/lib/api/use-repairs";
 import type { TaskDTO } from "@/lib/api/use-tasks";
+import { formatTaskDue } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Поиск для палитры (⌘K) — по реальным данным арендатора.
@@ -113,7 +114,7 @@ function toTaskResult(task: TaskDTO): SearchResult {
     kind: "task",
     id: task.id,
     title: task.title,
-    subtitle: task.dueDate === null ? "Задача" : `Задача · срок ${task.dueDate.slice(0, 10)}`,
+    subtitle: task.dueDate === null ? "Задача" : `Задача · срок ${formatTaskDue(task.dueDate)}`,
     // У задач своей страницы нет: модальная форма открывается по адресу списка.
     href: `/crm/tasks?record=${task.id}`,
   };

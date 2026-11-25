@@ -26,7 +26,7 @@ import {
   type DealCardFieldVisibility,
 } from "@/components/crm/deals/deal-card-fields";
 import { useIsMobile } from "@/lib/utils/use-is-mobile";
-import { cn, formatDateTime } from "@/lib/utils";
+import { cn, formatDateTime, formatTaskDue } from "@/lib/utils";
 
 export type DealCardOptions = DealCardFieldVisibility;
 
@@ -193,8 +193,8 @@ export const DealCard = memo(function DealCard({
               <div className="flex items-center gap-1 text-[11px] text-[#333333] truncate pl-5">
                 <span className="truncate">{deal.nextTaskTitle}</span>
                 {deal.nextTaskDueDate && (
-                  <span className="shrink-0 text-[10px] text-[#888888]">
-                    ({new Date(deal.nextTaskDueDate).toLocaleDateString("ru-RU", { day: "numeric", month: "short" })})
+                  <span className="shrink-0 font-mono text-[10px] text-[#888888]">
+                    ({formatTaskDue(deal.nextTaskDueDate)})
                   </span>
                 )}
               </div>

@@ -1599,6 +1599,27 @@
      - Корректная предзагрузка `category_id` в `EditTransactionModal` без затирания при сохранении, отображение фоллбэка «Без категории», двусторонняя инвалидация кэшей `["finance"]` ↔ `["warehouse"]`.
   4. **Тесты:** добавлен `backend/src/tests/warehouse-finance-sync.test.ts` (4 теста).
 
+### 2026-11-24 — Частичное оприходование заказов поставщикам + Landed Cost (распределение доп. расходов)
+- **Root cause / задача:** Окно оприходования заказа поставщику принимало заказ только целиком и не позволяло учитывать дополнительные расходы поставки (доставка, курьер и др.) с распределением на себестоимость складских партий и отражением в `/finance`.
+- **Что сделано:**
+  1. **БД (`0137_supplier_order_partial_receipts_and_landed_cost.sql`, `schema.sql`):**
+     - Добавлена колонка `supplier_order_items.received_quantity` (с бэкфиллом для уже принятых заказов).
+     - Созданы таблицы `supplier_order_receipts`, `supplier_order_receipt_items`, `supplier_order_receipt_costs` с `tenant_id`, индексами и RLS.
+     - В `warehouse_batches` добавлены `receipt_id`, `base_purchase_price`, `landed_cost_per_unit`, `landed_cost_total` (с бэкфиллом `base_purchase_price = purchase_price`).
+     - В `transactions` добавлены `supplier_order_receipt_id`, `is_capitalized_cost`.
+  2. **Backend (`landed-cost.utils.ts`, `warehouse.service.ts`, `warehouse.types.ts`, `finance.service.ts`, `finance.types.ts`):**
+     - `allocateLandedCost` считает распределение доп. расходов в целых копейках (`by_value`, `by_quantity`, `manual`, остаток округления на последнюю активную строку).
+     - `createReceiptFromSupplierOrder` блокирует заказ и строки `FOR UPDATE`, защищает от переприёмки, создаёт запись приёмки, партии FIFO с `purchase_price = effectiveUnitPrice`, отдельные расходные транзакции по доп. расходам с `is_capitalized_cost = true` и переводит статус заказа в `partially_received` или `received`.
+     - `deleteSupplierOrdersInTx` откатывает в том числе транзакции доп. расходов по всем приёмкам и пересчитывает балансы затронутых счетов.
+     - `FinanceService.pnl` исключает `is_capitalized_cost = true` из операционных расходов и отдаёт их в `capitalizedCosts` (исключён двойной учёт с FIFO `partsCogs`).
+  3. **Frontend (`ReceiptSupplierOrderModal.tsx`, `warehouse/page.tsx`, `SupplierOrderDetailModal.tsx`, `EditSupplierOrderModal.tsx`, `ProfitLossView.tsx`, `use-warehouse.ts`, `use-invoices.ts`, `landed-cost.ts`):**
+     - Переработана модалка приёмки: частичные количества по строкам, блок доп. расходов (описание, сумма, категория, счёт), выбор метода распределения и live-предпросмотр себестоимости каждой партии.
+     - На `/warehouse` добавлен статус «Частично оприходован», прогресс `Принято X из Y`, бейдж доп. расходов, кнопка «Доприходовать» и разбивка `база + доп.` в таблице партий; в деталях заказа добавлена «История приёмок».
+     - В `ProfitLossView.tsx` добавлена информационная плашка для `pnl.capitalizedCosts`.
+  4. **Где ещё используется модель партий:** `repairs.service.ts` (`consumeFifo`), `warehouse.service.ts` (`fulfillWonDealIfReadyInTx`), оценка склада и `finance.service.ts` (`pnl` → `partsCogs`) читают `warehouse_batches.purchase_price`, поэтому новая себестоимость автоматически применяется без правок потребителей.
+  5. **Тесты:** добавлены `backend/src/tests/warehouse-partial-receipt-landed-cost.test.ts` (9 тестов) и `frontend/src/lib/warehouse/landed-cost.test.ts` (4 теста).
+
+---
 
 ## 2026-11-24 — Реверс-аудит 7 репозиториев MAX и надёжное извлечение ФИО и телефона контакта
 - **Контекст и root cause:**
@@ -1637,3 +1658,162 @@
      - Добавлено визуальное отображение бейджа «Черновик» в шапке пузыря и предупреждения «Неотправленный черновик (посетитель покинул сайт)» для входящих сообщений с `metadata.is_draft: true`.
   5. **Исправление существующей сделки:**
      - В сделке `68bc2e8a-3a7c-4821-a941-250bf2d00cd1` сообщение `314b6a24-4155-40cd-a10f-aed4292c919c` помечено как черновик и сгенерирован/сохранён ответ от подключенного агента «Банкирро Бот».
+
+---
+
+### 24.11.2026 — Автоскролл при печати и 2x замедление набора в онлайн-виджете
+- **Контекст и задача:**
+  - В процессе посимвольного вывода сообщения бота (`typeWriter`) текст сообщений накапливался и уходил вниз под поле ввода, если пользователь не прокручивал чат вручную.
+  - Скорость набора текста была слишком быстрой (12 мс/символ), требовалось замедлить печать в 2 раза (до 24 мс/символ) во всех компонентах и скриптах виджета с поддержкой sticky-автоскролла (без перехвата скролла при ручном изучении истории пользователем, порог 100px).
+- **Что сделано:**
+  1. **Standalone Embed Script (`frontend/public/widget.js`, `backend/src/modules/channels/widget-script.ts`):**
+     - Внедрён трекер ручной прокрутки `userScrolledUp = dist > 100` на `messagesContainer`.
+     - Функция `scrollToBottom(smooth, force)` учитывает положение пользователя и сбрасывает флаг при принудительном скролле.
+     - В `typeNextChar` скорость изменена с 12 мс на 24 мс на символ, и на каждом символе/переносе строки вызывается автоскролл `messagesContainer.scrollTop = messagesContainer.scrollHeight` (если пользователь не отмотал наверх).
+     - При отправке и получении нового сообщения вызывается гарантированный скролл вниз.
+  2. **React UI (`ChatWidget.tsx`, `WidgetSettings.tsx`, `widget/page.tsx`):**
+     - В `ChatWidget.tsx` добавлен `scrollContainerRef` с обработчиком `onScroll={handleScroll}` и флагом `isNearBottomRef` (порог 100px).
+     - В `typeWriter` на каждом шаге `step()` вызывается `scrollToBottom(false)`, удерживая нижний край печатаемого текста над полем ввода.
+     - При отправке пользователем и приходе нового ответа бота вызывается `scrollToBottom(true)`.
+     - Дефолтное значение `typingSpeed` изменено с 12 мс на 24 мс во всех местах (`ChatWidget`, `WidgetSettings`, `widget/page.tsx`).
+     - В `WidgetSettings.tsx` обновлены пресеты скорости: 48 мс (Плавная), 24 мс (Норм), 12 мс (Быстрая).
+  3. **Тесты:**
+     - В `frontend/__tests__/ChatWidget.typing.test.tsx` добавлены тесты на пресеты скорости (48/24/12 мс) и автоскролл во время набора `ChatWidget auto-scrolls down during typewriter typing ticks`. Все 10 тестов проходят успешно.
+
+---
+
+### 24.11.2026 — Мастер-выключатель уведомлений пользователя на /settings/notifications (Full Silence & Preferences)
+- **Контекст и взаимосвязи:**
+  - На странице `https://mpro.getvoxly.ru/settings/notifications` уведомления пользователю были включены по умолчанию без возможности их глобально отключить единым тумблером.
+  - В проекте действуют несколько уровней уведомлений:
+    1. **In-App (SSE + Toaster + Колокольчик):** создание записей в `inapp_notifications`, realtime-шина `notificationEventBus`, стрим `/api/v1/notifications/stream`, хук `useInAppNotifications`, двухтоновый синтезированный звук `playNotificationChime()`.
+    2. **Web Push & PWA (VAPID):** подписки `push_subscriptions`, фоновая доставка через `webpush.sendNotification`, `sendNotificationToUser` и `sendNotificationToTenant`.
+    3. **Каналы лид-уведомлений команды:** `tenant_notification_channels` (Email, Telegram Bot, WhatsApp, Битрикс24) и фолбэк на email владельца/админа (`defaultRecipient`) в `lead-notification.queue.ts`.
+- **Что реализовано:**
+  1. **БД и миграция `0136_user_notifications_master_toggle.sql`:**
+     - Колонка `notifications_enabled BOOLEAN NOT NULL DEFAULT true` в таблице `users` (нулевые накладные расходы при проверках).
+     - Таблица `user_notification_settings` с RLS (`tenant_isolation`), уникальным ограничением `(tenant_id, user_id)` и флагами `notifications_enabled`, `sound_enabled`, `inapp_enabled`, `push_enabled` (все `DEFAULT true`).
+     - Сохранена обратная совместимость: для существующих и новых пользователей без явного отказа всё включено по умолчанию.
+  2. **Backend API и диспетчеры:**
+     - Сервис `NotificationPreferencesService` (`getUserPreferences`, `updateUserPreferences` с UPSERT, `isUserNotificationsEnabled`).
+     - Эндпоинты `GET/PATCH/PUT /api/v1/settings/notifications/preferences` и `/api/v1/notifications/preferences`.
+     - `push-notification.service.ts`: `sendNotificationToUser` прерывает отправку при отключенных уведомлениях; `sendNotificationToTenant` исключает устройства пользователей с `notifications_enabled = false` или `push_enabled = false`; `createInAppNotification` пропускает создание и эмит в шину, если пользователь отключил уведомления.
+     - `push-notification.routes.ts`: в SSE-стриме `/notifications/stream` проверяется мастер-выключатель подключенного пользователя.
+     - `lead-notification.queue.ts`: дефолтный email владельца исключает пользователей с `notifications_enabled IS NOT FALSE`.
+     - Юнит-тест `backend/src/tests/notification-preferences.test.ts`.
+  3. **Frontend UI (Twenty CRM Light Canvas):**
+     - Хук `useNotificationPreferences` с оптимистичным обновлением TanStack Query (`queryKey: ["notification-preferences"]`).
+     - Компонент `UserMasterNotificationToggle.tsx`: мастер-тумблер «Все уведомления пользователя», баннер «Режим полной тишины активирован», переключатели «Звуковые сигналы», «Всплывающий Toaster», «Web Push & PWA» с автоматической блокировкой дочерних каналов при выключенном мастере.
+     - `WebPushDeviceSettings.tsx`: добавлен предупреждающий баннер при выключенном мастер-тумблере.
+     - `useInAppNotifications.ts`: при выключенном мастере блокируется вызов `playNotificationChime()`, блокируется всплывающий тост `toast()`, вызывается `clearAppBadge()`.
+     - Страница `/settings/notifications/page.tsx`: мастер-блок размещен во главе настроек.
+- **Верификация:**
+  - Деплой на `150.241.98.135` выполнен через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Миграция `0136` применена на продакшене.
+  - Живая проверка в `ego-browser`: открытие `https://mpro.getvoxly.ru/settings/notifications`, проверка дефолта (включено), переключение в «Отключено», проверка блокировки дочерних каналов и появления баннера тишины, проверка сохранения после перезагрузки F5 и возврата во включенное состояние.
+  - Аудит отправки Email-уведомлений: подтверждена блокировка отправки лидов на дефолтный email владельца при `notifications_enabled = false` в `lead-notification.queue.ts`; уточнены тексты в `UserMasterNotificationToggle.tsx` и динамическая индикация в `LeadNotificationChannels.tsx`.
+
+---
+
+### 25.11.2026 — Полное отключение тёмной темы и фиксация Twenty CRM Light Canvas
+- **Контекст и проблема:**
+  - Пользователь прислал скриншот `fe13ccea-2b80-48ea-b192-118705118559-IMG_20261125_113731_202.jpg`, где сайдбар `Sidebar.tsx` и шапка кабинета отрендерились в чёрном цвете (`#111111`) с тёмными границами (`#27272a`).
+  - Причина: наличие классов `dark:*` на ключевых контейнерах (`dark:bg-[#111111]`), дефолтная реакция Tailwind v4 на медиазапрос `prefers-color-scheme: dark` ОС, кнопка переключения темы в шапке `Header.tsx` и чтение `localStorage.getItem('getvoxly_theme') === 'dark'` в инлайн-скрипте `layout.tsx`.
+- **Что сделано:**
+  1. **Корень и CSS (`layout.tsx`, `globals.css`):**
+     - В `layout.tsx` скрипт `THEME_INIT_SCRIPT` сбрасывает `getvoxly_theme` в `light`, удаляет класс `dark` и выставляет `color-scheme: light`.
+     - На `<html>` и `<body>` принудительно зафиксированы `color-scheme: light !important;`, фон `#ffffff !important;` и текст `#111111 !important;`.
+     - В `globals.css` добавлена директива `@variant dark (&:where([data-theme="disabled-dark-mode"]));`, полностью блокирующая срабатывание медиазапроса `prefers-color-scheme: dark` на уровне CSS-движка Tailwind v4.
+  2. **Зачистка `dark:*` и переключателей темы:**
+     - `Sidebar.tsx`: удалены `dark:border-[#27272a] dark:bg-[#111111]` с `<aside>` и шапки бренда.
+     - `Header.tsx` (CRM и landing): полностью удалены кнопки переключения темы (Sun/Moon), удален неиспользуемый хук `useTheme`, удалены классы `dark:*`.
+     - `use-theme.ts`: переведен в принудительный режим `light` с no-op переключателем и сбросом старых ключей `localStorage`.
+     - `Logo.tsx`, `onboarding/page.tsx`, `accept-invite/page.tsx`, `reset-password/page.tsx`, `Footer.tsx`: удалены все `dark:*` утилиты.
+  3. **Виджет чата и настройки (`widget.js`, `widget-script.ts`, `WebchatAppearanceSettings.tsx`, `webchat.service.ts`):**
+     - Удалены переключатели темной темы виджета; виджет зафиксирован в светлой теме (`theme: "light"`, удален класс `is-dark-theme`).
+- **Верификация:**
+  - Деплой на `150.241.98.135` через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Проверка в `playwright`/браузере с эмуляцией `colorScheme: 'dark'`: сайдбар и шапка остаются светлыми (#fbfbfb / #ffffff), класс `dark` отсутствует, 0 ошибок в консоли.
+
+---
+
+### 25.11.2026 — Автоматическая смена этапа связанной CRM-сделки на «В работе» при приёмке оборудования
+- **Контекст и задача:**
+  - При оформлении/приёмке оборудования в сервисном центре (`/repairs`, модалка приёмки, карточка наряда, создание наряда из сделки) связанная сделка CRM оставалась на начальных этапах («Новый лид»), требуя ручного перевода.
+  - Контрольный пример: сделка `d7055434-8e7e-43b8-a180-510641ec763b` и наряд `a533e042-a9f6-4dd0-8355-9a16909ef785` тенанта `remtoua`.
+- **Что сделано:**
+  1. **Бэкенд (`deals.service.ts`):**
+     - Выделен `moveStageInTx` для безопасного выполнения смены этапа внутри существующей транзакции клиента БД.
+     - Добавлен метод `advanceDealToInProgressInTx`:
+       - Динамический поиск этапа «В работе» по имени (`name = 'В работе'`, `ILIKE '%в работе%'`, `in progress`) в рамках воронки сделки и тенанта.
+       - Защита: не трогает закрытые (won/lost) или неактивные сделки.
+       - Защита от дублирования: no-op, если сделка уже на этапе «В работе».
+       - Защита от отката: переводит сделку только если её текущий этап раньше этапа «В работе» (`current_sort_order < target_sort_order`).
+       - Сохраняет историю в `deal_stage_history` с автором изменения и вызывает всех подписчиков смены этапов.
+     - Добавлен метод `syncDealProgressFromRepairs` для вызова вне внешних транзакций.
+  2. **Сервисный центр (`repairs.service.ts`):**
+     - В методе одиночной приёмки `create` вызов `advanceDealToInProgressInTx` включен прямо в единую транзакцию приёмки при наличии `dealId`.
+     - В пакетной приёмке `createBatchIntake` вызов `advanceDealToInProgressInTx` включен в единую транзакцию при наличии `dealId`.
+     - В `update`, `changeStatus` и `batchUpdateStatus` добавлен вызов `syncDealProgressFromRepairs` при изменении статусов и нарядов.
+  3. **Миграция БД (`0138_sync_intake_repairs_to_in_progress_deals.sql`):**
+     - Ретроспективно перевела все активные сделки (включая контрольный пример `d7055434-8e7e-43b8-a180-510641ec763b`), имеющие активные наряды СЦ и находящиеся на более ранних этапах, в этап «В работе» с записью в `deal_stage_history`.
+  4. **Фронтенд (`use-repairs.ts`):**
+     - В `useUpdateRepair`, `useChangeRepairStatus`, `useUpdateRepairPaymentStatus` настроена инвалидация `repairKeys.detail(order.id)` и `["deals"]` (охватывает kanban, list, active preset и карточку сделки), что гарантирует реактивное обновление UI без ручной перезагрузки страницы.
+
+---
+
+### 25.11.2026 — Исправление потери и скрытия текста при отправке фото/вложений в CRM-чате
+- **Инцидент и контекст:**
+  - На портале `remtoua.getvoxly.ru` в карточке сделки (вкладка «Чат») при прикреплении фото и вводе текста (например, «сейчас такие позиции, корпуса новые нужны? 2 корпуса у вас разбитые...») после отправки в пузыре сообщения отображалась только картинка без текста. Пользователь считал, что текст стёрся и не ушёл, и был вынужден набирать его повторно.
+  - По логам и БД (`deal_messages` `4b142ffc-cf82-42b2-9e37-0b773583ffa4` в 13:06 MSK): бэкенд корректно сохранил и текст (`content`), и вложение (`attachment`), а также передал подпись в WhatsApp Evolution API.
+- **Root Cause:**
+  1. В `CrmChatView.tsx` функция `getAttachmentInfo` ошибочно присваивала `fileName = content.trim()`, когда `content` не являлся шаблонной заглушкой. В результате имя файла приравнивалось ко всему пользовательскому тексту сообщения.
+  2. В проверке `isDummyContent` условие `trimmedContent === info.fileName` из-за п. 1 становилось `true` для любого пользовательского текста, отправленного с вложением. Фронтенд считал текст дубликатом имени файла и полностью скрывал его из рендера (`!isDummyContent && trimmedContent` давало `false`).
+  3. В `TelegramComposer.tsx` метод `handleSendAction` затирал `editorRef.current.innerHTML = ""` и `updateAttachedFiles([])` синхронно до завершения отправки родителем.
+- **Что изменено:**
+  1. **`CrmChatView.tsx`:**
+     - Введена функция `extractAttachmentFileName`, извлекающая реальное имя файла из пути/URL вложения (`attachment`), предотвращая подмену имени файла текстом сообщения.
+     - Переработана логика `isDummyContent`: текст скрывается как дубликат только если он строго равен реальному имени файла, URL вложения или системному плейсхолдеру (`[документ]`, `.` и т.п.).
+     - Для визуальных медиа (`isImage` / `isVideo`): блок медиа отображается сверху, а подпись (caption) — аккуратно под ним с отступом `mt-2` (стандарт Telegram/WhatsApp). Для документов и аудио текст отображается сверху, а плашка документа / плеер — снизу.
+  2. **`TelegramComposer.tsx`:**
+     - В контролируемом режиме (`isControlled`) устранена преждевременная зачистка редактора и прикрепленных файлов до ответа сервера. Очистка выполняется реактивно родителем (`setInput("")`, `setAttachedFiles([])`) через `useEffect` при успешной доставке. При ошибке сети текст и файлы сохраняются в форме.
+- **Верификация:**
+  - Типизация `npx tsc --noEmit` в frontend и backend без ошибок.
+  - Деплой на `150.241.98.135` через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Эндпоинты `https://api.getvoxly.ru/health` и `https://remtoua.getvoxly.ru/login` возвращают HTTP 200.
+  - Сообщение с фото и текстом корректно отображает как превью фото, так и подпись под ним, а файлы без текста (например, PDF-счета) сохраняют скрытие дублирующих подписей.
+
+---
+
+### 25.11.2026 — Выбор даты и времени (`HH:mm`) в задачах CRM (сквозная реализация)
+- **Контекст и задача:**
+  - В форме быстрого создания задачи внутри карточки сделки/контакта/компании (`RecordTasksTab.tsx`) использовался `<input type="date">` с жёсткой подстановкой `T12:00:00`, что не позволяло задать точное время задачи. Кроме того, время задачи не отображалось в списках, канбане, таймлайне, карточке сделки и поиске, а `TasksCalendarView` группировал задачи по UTC-срезу.
+- **Root Cause & Карта влияния:**
+  - В БД `crm_tasks.due_date` уже имеет тип `TIMESTAMPTZ`, а планировщик уведомлений (`task-reminders.service.ts`) и расчёты `isOverdue` уже работают с точностью до минуты. Проблема ограничивалась UI ввода и отображения.
+- **Что изменено:**
+  1. **Backend (`tasks.types.ts`):**
+     - `optionalDateTime` обновлён с `.datetime({ offset: true })` для поддержки любых валидных ISO-8601 таймштампов с оффсетом или `Z`.
+  2. **Frontend Утилиты (`frontend/src/lib/utils.ts`):**
+     - Добавлены единые функции `toLocalDateTimeInput`, `localDateTimeToIso`, `toLocalDateKey`, `formatTaskTime`, `formatTaskDue` (единый локальный формат `25.11, 15:30` / `25 ноября, 15:30`).
+  3. **Единый компонент (`frontend/src/components/ui/date-time-picker.tsx`):**
+     - Создан переиспользуемый `DateTimePicker` в стиле Twenty CRM Light Canvas (`default` и `compact` варианты) с пресетами даты (`Сегодня`, `Завтра`, `+3 дня`, `Неделя`), точным вводом даты и времени `HH:mm`, пресетами времени (`09:00`, `12:00`, `15:00`, `18:00`, `+1 ч`, `+3 ч`) и быстрой очисткой.
+  4. **Формы и отображения задач:**
+     - `RecordTasksTab.tsx`: заменён `<input type="date">` на `DateTimePicker variant="compact"`, сохранён перенос выбранного времени при открытии подробной `TaskModal`, обновлён формат срока с временем.
+     - `TaskModal.tsx`: подключён `DateTimePicker` через `Controller` `react-hook-form`, убран дубликат `toLocalInput`.
+     - `crm/tasks/page.tsx`, `RecordTimelineTab.tsx`, `DealCard.tsx`, `use-global-search.ts`: отображение срока задачи переведено на единый `formatTaskDue` с временем.
+     - `TasksCalendarView.tsx`: исправлена группировка по локальной дате (`toLocalDateKey`) вместо UTC `slice(0, 10)`, добавлен вывод времени (`formatTaskTime`) в ячейках календаря.
+
+---
+
+### 25.11.2026 — Многословный токенизированный поиск запчастей и услуг (СЦ и Склад)
+- **Контекст и проблема:**
+  - В карточке наряда СЦ (`/repairs/[id]`, блок «Используемые запчасти» в `PartsTable.tsx`) при вводе нескольких слов (например, `gsn50 кольцо`) поиск не находил позицию `GSN50 поз.60 Кольцо стопорное d 7мм`, так как искал всю введённую фразу целиком через `includes(q)` / `LIKE '%...%'`.
+- **Что изменено:**
+  1. **Backend (`string.utils.ts`, `warehouse.service.ts`, `services.service.ts`, миграция `0139_warehouse_search_trgm_indexes.sql`):**
+     - Добавлены хелперы `tokenizeSearchQuery` и `escapeLikePattern` для безопасного разбиения запроса по пробелам на токены с экранированием `%`, `_`, `\`.
+     - В `WarehouseService.listItems` и `ServicesService.list` реализован многословный `AND`-поиск каждого слова в любом порядке по названию, артикулу SKU, бренду, категории и связанным моделям (`warehouse_item_models` -> `equipment_models`).
+     - Добавлены `pg_trgm` GIN-индексы для быстрого подстрочного поиска на больших каталогах.
+  2. **Frontend (`utils.ts`, `PartsTable.tsx`, `WorkItemsTable.tsx`, `ServiceCatalogDialog.tsx`, `WarehouseIntakeDialog.tsx`, `DictionarySelectField.tsx`, `CreatableCombobox.tsx`):**
+     - Добавлены единые функции `matchesSearchTokens` и `matchesWarehouseItem`.
+     - Все комбобоксы и фильтры подбора запчастей, услуг СЦ, словарей и приёмки склада переведены на многословную фильтрацию по всем релевантным полям; в `PartsTable.tsx` добавлен вывод бренда и привязанных моделей в выпадающем списке.
+

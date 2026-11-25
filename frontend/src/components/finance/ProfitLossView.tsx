@@ -41,6 +41,8 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }
         inc[cat] = (inc[cat] ?? 0) + t.amount;
       }
       if (t.type === "expense") {
+        // Капитализированные доп. расходы (доставка/курьер в себестоимости партий) не дублируются в операционных расходах P&L
+        if (t.is_capitalized_cost) return;
         expCats.add(cat);
         exp[cat] = (exp[cat] ?? 0) + t.amount;
       }
@@ -143,6 +145,17 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions, pnl }
               <span className="text-[11px] text-[#666666]">SUM(остаток × цена партии)</span>
             </div>
           </div>
+
+          {(pnl.capitalizedCosts ?? 0) > 0 && (
+            <div className="rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-4 py-2.5 text-xs text-[#111111] flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Капитализированные доп. расходы приёмки (доставка / курьер) включены в себестоимость складских партий и не дублируются в операционных расходах P&amp;L.
+              </span>
+              <span className="font-mono tabular-nums font-semibold text-[#4a38f5]">
+                {formatCost(pnl.capitalizedCosts ?? 0)}
+              </span>
+            </div>
+          )}
 
           {pnl.cogs.breakdown.length > 0 && (
             <div className="overflow-x-auto rounded-[6px] border border-[#e5e5e5]">
