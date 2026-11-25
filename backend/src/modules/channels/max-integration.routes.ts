@@ -864,6 +864,17 @@ async function requireMaxServiceToken(
   }
 }
 
+function formatMaxAccountLabel(name: string, firstName?: string | null): string {
+  const cleanName = name.trim();
+  const cleanFirst = firstName?.trim();
+  if (!cleanFirst) return cleanName;
+  const suffix = `(${cleanFirst})`;
+  if (cleanName.endsWith(suffix) || cleanName.includes(suffix)) {
+    return cleanName;
+  }
+  return `${cleanName} ${suffix}`;
+}
+
 export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireMaxServiceToken);
 
@@ -902,7 +913,7 @@ export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
 
     const botId = await withTenant(body.tenantId, async (tx) => {
       const extId = body.maxUserId || body.username || body.name;
-      const label = body.firstName ? `${body.name} (${body.firstName})` : body.name;
+      const label = formatMaxAccountLabel(body.name, body.firstName);
 
       const existing = await tx.queryOne<{ id: string }>(
         `SELECT id FROM channel_accounts
@@ -1006,7 +1017,7 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
 
       const botId = await withTenant(body.tenantId, async (tx) => {
         const extId = body.maxUserId || body.username || body.name;
-        const label = body.firstName ? `${body.name} (${body.firstName})` : body.name;
+        const label = formatMaxAccountLabel(body.name, body.firstName);
 
         const existing = await tx.queryOne<{ id: string }>(
           `SELECT id FROM channel_accounts
