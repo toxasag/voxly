@@ -2646,7 +2646,7 @@ export class WarehouseService {
     id: string,
     payload: UpdateSupplierOrderPayload,
   ): Promise<SupplierOrderDTO> {
-    return withTenant(tenantId, async (tx) => {
+    await withTenant(tenantId, async (tx) => {
       const order = await tx.queryOne<SupplierOrderRow>(
         `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
         [tenantId, id],
@@ -2805,10 +2805,10 @@ export class WarehouseService {
           }
         }
       }
-
-      const refreshed = await this.getSupplierOrder(tenantId, id);
-      return refreshed!;
     });
+
+    const refreshed = await this.getSupplierOrder(tenantId, id);
+    return refreshed!;
   }
 
   /**
@@ -3801,14 +3801,24 @@ export class WarehouseService {
       const isFullyReceived = remainingRows.every((r) => Number(r.remaining) <= 0.0001);
       const nextStatus: SupplierOrderStatus = isFullyReceived ? "received" : "partially_received";
 
-      await tx.query(
-        `UPDATE supplier_orders
-         SET status = $1,
-             received_at = CASE WHEN $1 = 'received' THEN now() ELSE received_at END,
-             updated_at = now()
-         WHERE tenant_id = $2 AND id = $3`,
-        [nextStatus, tenantId, id],
-      );
+      if (isFullyReceived) {
+        await tx.query(
+          `UPDATE supplier_orders
+           SET status = 'received',
+               received_at = COALESCE(received_at, now()),
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, id],
+        );
+      } else {
+        await tx.query(
+          `UPDATE supplier_orders
+           SET status = 'partially_received',
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, id],
+        );
+      }
 
       return {
         batchesCreated: batchesCount,
