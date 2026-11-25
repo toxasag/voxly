@@ -165,7 +165,7 @@ export function Logo({
 
   const markElement = (
     <>
-      {theme === "white" || theme === "dark" ? renderWhiteMark("block") : renderBlackMark("block")}
+      {theme === "dark" ? renderWhiteMark("block") : renderBlackMark("block")}
     </>
   );
 
