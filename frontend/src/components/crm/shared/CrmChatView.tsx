@@ -288,6 +288,12 @@ function isAudioAttachment(attachment?: string | null, attachmentType?: string |
   return false;
 }
 
+function extractAttachmentFileName(attachment: string): string {
+  const rawBase = attachment.split("?")[0]?.split("/").pop() || "Документ";
+  const cleaned = rawBase.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "");
+  return decodeURIComponent(cleaned || rawBase);
+}
+
 function getAttachmentInfo(
   attachment?: string | null,
   attachmentType?: string | null,
@@ -302,25 +308,14 @@ function getAttachmentInfo(
   if (attachment) {
     resolvedUrl = resolveAttachmentUrl(attachment, false);
     downloadUrl = resolveAttachmentUrl(attachment, true);
-    const isGenericPlaceholder =
-      !content ||
-      content.trim() === "." ||
-      content.trim() === "[документ]" ||
-      content.trim() === "[фото]" ||
-      content.trim() === "[photo]" ||
-      content.trim() === "[видео]" ||
-      content.trim() === "[video]" ||
-      content.trim() === "[аудио]" ||
-      content.trim() === "[audio]" ||
-      content.startsWith("/uploads/") ||
-      content.startsWith("[файл:");
+    const realFileName = extractAttachmentFileName(attachment);
 
-    if (!isGenericPlaceholder && content) {
-      fileName = content.trim();
+    // Если в content передан явный плейсхолдер вида [файл: имя] — используем его,
+    // иначе берём настоящее имя файла из пути вложения (ни в коем случае не текст сообщения)
+    if (placeholder) {
+      fileName = placeholder;
     } else {
-      const rawBase = attachment.split("?")[0]?.split("/").pop() || "Документ";
-      const cleaned = rawBase.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "");
-      fileName = decodeURIComponent(cleaned || rawBase);
+      fileName = realFileName;
     }
   } else if (messageId) {
     resolvedUrl = getMessageAttachmentUrl(messageId, false);
@@ -1902,27 +1897,37 @@ export function CrmChatView({
                           ? getAttachmentInfo(message.attachment, message.attachmentType, cleanedContent, message.id)
                           : null;
 
-                        const isDummyContent =
+                        const isSystemPlaceholder =
                           trimmedContent === "." ||
                           trimmedContent === "[документ]" ||
                           trimmedContent === "Вложение" ||
                           trimmedContent === "Фотография" ||
                           trimmedContent === "Видео" ||
                           trimmedContent === "Аудио" ||
-                          /^\[(?:файл|документ|фото|видео|аудио|голосовое|стикер):?\s*[^\]]*\]$/i.test(trimmedContent) ||
-                          (hasAttachment && (
+                          trimmedContent === "Голосовое сообщение" ||
+                          /^\[(?:файл|документ|фото|видео|аудио|голосовое|стикер):?\s*[^\]]*\]$/i.test(trimmedContent);
+
+                        const isFileNameDuplicate = Boolean(
+                          hasAttachment && (
                             trimmedContent === message.attachment ||
                             (info && (trimmedContent === info.fileName || trimmedContent.toLowerCase() === info.fileName.toLowerCase())) ||
                             (placeholderName && (trimmedContent === `[файл: ${placeholderName}]` || trimmedContent === placeholderName))
-                          ));
+                          )
+                        );
+
+                        const isDummyContent = isSystemPlaceholder || isFileNameDuplicate;
+                        const isVisualMedia = Boolean(info && (info.isImage || info.isVideo));
+
+                        const textBlock = !isDummyContent && trimmedContent ? (
+                          <div className={cn("whitespace-pre-wrap break-words leading-relaxed text-[#111111]", isVisualMedia && "mt-2")}>
+                            {renderChatMessageContent(cleanedContent)}
+                          </div>
+                        ) : null;
 
                         return (
                           <>
-                            {!isDummyContent && trimmedContent && (
-                              <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
-                                {renderChatMessageContent(cleanedContent)}
-                              </div>
-                            )}
+                            {/* Для обычных сообщений и документов: текст сверху */}
+                            {!isVisualMedia && textBlock}
 
                             {/* Автоматический перевод входящего и иноязычного сообщения на русский язык */}
                             {(() => {
@@ -2129,6 +2134,9 @@ export function CrmChatView({
                                 </div>
                               );
                             })()}
+
+                            {/* Для изображений и видео: текст подписи (caption) под медиа */}
+                            {isVisualMedia && textBlock}
                           </>
                         );
                       })()}
