@@ -770,11 +770,11 @@ export class RepairsService {
       if (dealId && (companyId || customerId)) {
         await tx.query(
           `UPDATE deals
-           SET company_id = COALESCE(company_id, $1),
-               contact_id = COALESCE(contact_id, $2),
+           SET company_id = COALESCE(company_id, $1::uuid),
+               contact_id = COALESCE(contact_id, $2::uuid),
                updated_at = now()
            WHERE tenant_id = $3 AND id = $4
-             AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+             AND ((company_id IS NULL AND $1::uuid IS NOT NULL) OR (contact_id IS NULL AND $2::uuid IS NOT NULL))`,
           [companyId || null, customerId || null, tenantId, dealId],
         );
       }
@@ -1102,11 +1102,11 @@ export class RepairsService {
         if (companyId || customerId) {
           await tx.query(
             `UPDATE deals
-             SET company_id = COALESCE(company_id, $1),
-                 contact_id = COALESCE(contact_id, $2),
+             SET company_id = COALESCE(company_id, $1::uuid),
+                 contact_id = COALESCE(contact_id, $2::uuid),
                  updated_at = now()
              WHERE tenant_id = $3 AND id = $4
-               AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+               AND ((company_id IS NULL AND $1::uuid IS NOT NULL) OR (contact_id IS NULL AND $2::uuid IS NOT NULL))`,
             [companyId || null, customerId || null, tenantId, dealId],
           );
         }
