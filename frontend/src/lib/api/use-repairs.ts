@@ -281,6 +281,10 @@ export interface RepairsListResult {
   offset: number;
   inProgressCount?: number;
   readyCount?: number;
+  paidAmount?: number;
+  paidCount?: number;
+  unpaidAmount?: number;
+  unpaidCount?: number;
 }
 
 export interface RepairsQueryParams {
@@ -539,6 +543,10 @@ export function useRepairs(
         offset: typeof meta.offset === "number" ? meta.offset : offset,
         inProgressCount: typeof meta.inProgressCount === "number" ? meta.inProgressCount : undefined,
         readyCount: typeof meta.readyCount === "number" ? meta.readyCount : undefined,
+        paidAmount: typeof meta.paidAmount === "number" ? meta.paidAmount : undefined,
+        paidCount: typeof meta.paidCount === "number" ? meta.paidCount : undefined,
+        unpaidAmount: typeof meta.unpaidAmount === "number" ? meta.unpaidAmount : undefined,
+        unpaidCount: typeof meta.unpaidCount === "number" ? meta.unpaidCount : undefined,
       };
     },
     enabled: options?.enabled ?? true,

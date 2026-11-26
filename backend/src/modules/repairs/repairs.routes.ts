@@ -95,7 +95,16 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
   app.get("", { onRequest: canRead }, async (request, reply) => {
     const params = listQuerySchema.parse(request.query);
 
-    const { items, total, inProgressCount, readyCount } = await service.list(request.tenant_id, {
+    const {
+      items,
+      total,
+      inProgressCount,
+      readyCount,
+      paidAmount,
+      paidCount,
+      unpaidAmount,
+      unpaidCount,
+    } = await service.list(request.tenant_id, {
       dealId: params.deal_id,
       status: params.status,
       paymentStatus: params.payment_status,
@@ -111,7 +120,17 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
 
     return reply.send({
       data: items,
-      meta: { limit: params.limit, offset: params.offset, total, inProgressCount, readyCount },
+      meta: {
+        limit: params.limit,
+        offset: params.offset,
+        total,
+        inProgressCount,
+        readyCount,
+        paidAmount,
+        paidCount,
+        unpaidAmount,
+        unpaidCount,
+      },
     });
   });
 

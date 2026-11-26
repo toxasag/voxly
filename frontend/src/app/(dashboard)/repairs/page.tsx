@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Wrench, Clock, CheckCircle2 } from "lucide-react";
+import { Plus, Wrench, Clock, CheckCircle2, Wallet, CreditCard } from "lucide-react";
 import { RepairsTable } from "@/components/repairs/RepairsTable";
 import { RepairIntakeModal } from "@/components/repairs/RepairIntakeModal";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
@@ -27,6 +27,13 @@ type RepairsPageFilters = {
   paymentStatus: RepairPaymentStatus | "all";
   search: string;
 };
+
+const formatCurrency = (amount: number): string =>
+  new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency: "RUB",
+    maximumFractionDigits: 0,
+  }).format(amount);
 
 const REPAIR_STATUS_VALUES: readonly RepairFilterStatus[] = [
   "all",
@@ -236,6 +243,21 @@ function RepairsPageContent() {
         t.status === "in_progress",
     ).length;
   const statsReady = data?.readyCount ?? tickets.filter((t) => t.status === "ready").length;
+  const statsPaidCount =
+    data?.paidCount ?? tickets.filter((t) => t.payment_status === "paid").length;
+  const statsPaidAmount =
+    data?.paidAmount ??
+    tickets
+      .filter((t) => t.payment_status === "paid")
+      .reduce((sum, t) => sum + (t.final_cost ?? t.estimated_cost ?? 0), 0);
+  const statsUnpaidCount =
+    data?.unpaidCount ??
+    tickets.filter((t) => t.payment_status !== "paid" && t.status !== "rejected").length;
+  const statsUnpaidAmount =
+    data?.unpaidAmount ??
+    tickets
+      .filter((t) => t.payment_status !== "paid" && t.status !== "rejected")
+      .reduce((sum, t) => sum + (t.final_cost ?? t.estimated_cost ?? 0), 0);
 
   const handleCreateRepair = useCallback(
     async (payload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] }) => {
@@ -318,33 +340,77 @@ function RepairsPageContent() {
         </div>
 
         {/* Компактный Stats Bar */}
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-          <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <div className="rounded-[4px] border border-sky-200 bg-sky-50 p-1">
+        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-5">
+          <div className="flex items-center justify-between gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="shrink-0 rounded-[4px] border border-sky-200 bg-sky-50 p-1">
                 <Wrench className="h-3.5 w-3.5 text-sky-700" />
               </div>
-              <span className="text-[12px] font-medium text-[#666666]">Всего наряд-заказов</span>
+              <span className="truncate text-[12px] font-medium text-[#666666]">Всего наряд-заказов</span>
             </div>
-            <span className="font-mono text-[14px] font-semibold tabular-nums text-[#111111]">{statsTotal}</span>
+            <span className="shrink-0 font-mono text-[14px] font-semibold tabular-nums text-[#111111]">
+              {statsTotal}
+            </span>
           </div>
-          <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <div className="rounded-[4px] border border-amber-200 bg-amber-50 p-1">
+          <div className="flex items-center justify-between gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="shrink-0 rounded-[4px] border border-amber-200 bg-amber-50 p-1">
                 <Clock className="h-3.5 w-3.5 text-amber-700" />
               </div>
-              <span className="text-[12px] font-medium text-[#666666]">В работе</span>
+              <span className="truncate text-[12px] font-medium text-[#666666]">В работе</span>
             </div>
-            <span className="font-mono text-[14px] font-semibold tabular-nums text-[#111111]">{statsInProgress}</span>
+            <span className="shrink-0 font-mono text-[14px] font-semibold tabular-nums text-[#111111]">
+              {statsInProgress}
+            </span>
           </div>
-          <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <div className="rounded-[4px] border border-emerald-200 bg-emerald-50 p-1">
+          <div className="flex items-center justify-between gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="shrink-0 rounded-[4px] border border-emerald-200 bg-emerald-50 p-1">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" />
               </div>
-              <span className="text-[12px] font-medium text-[#666666]">Готовы к выдаче</span>
+              <span className="truncate text-[12px] font-medium text-[#666666]">Готовы к выдаче</span>
             </div>
-            <span className="font-mono text-[14px] font-semibold tabular-nums text-[#111111]">{statsReady}</span>
+            <span className="shrink-0 font-mono text-[14px] font-semibold tabular-nums text-[#111111]">
+              {statsReady}
+            </span>
+          </div>
+          <div
+            className="flex items-center justify-between gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs min-w-0"
+            title={`Оплачено заказов: ${statsPaidCount}`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="shrink-0 rounded-[4px] border border-emerald-200 bg-emerald-50 p-1">
+                <Wallet className="h-3.5 w-3.5 text-emerald-700" />
+              </div>
+              <span className="truncate text-[12px] font-medium text-[#666666]">Оплачено</span>
+            </div>
+            <div className="shrink-0 text-right leading-tight">
+              <span className="block whitespace-nowrap font-mono text-[13px] font-semibold tabular-nums text-emerald-700">
+                {formatCurrency(statsPaidAmount)}
+              </span>
+              <span className="block whitespace-nowrap font-mono text-[10px] tabular-nums text-[#888888]">
+                {statsPaidCount} шт.
+              </span>
+            </div>
+          </div>
+          <div
+            className="flex items-center justify-between gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 shadow-2xs min-w-0"
+            title={`Заказов к оплате: ${statsUnpaidCount}`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="shrink-0 rounded-[4px] border border-rose-200 bg-rose-50 p-1">
+                <CreditCard className="h-3.5 w-3.5 text-rose-600" />
+              </div>
+              <span className="truncate text-[12px] font-medium text-[#666666]">К оплате</span>
+            </div>
+            <div className="shrink-0 text-right leading-tight">
+              <span className="block whitespace-nowrap font-mono text-[13px] font-semibold tabular-nums text-[#111111]">
+                {formatCurrency(statsUnpaidAmount)}
+              </span>
+              <span className="block whitespace-nowrap font-mono text-[10px] tabular-nums text-[#888888]">
+                {statsUnpaidCount} шт.
+              </span>
+            </div>
           </div>
         </div>
 

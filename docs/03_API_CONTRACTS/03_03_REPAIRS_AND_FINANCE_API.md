@@ -47,6 +47,8 @@
 
 Query: `status`, `priority`, `master_id`, `customer_id`, `search`, `limit`, `offset`.
 
+`meta`: `limit`, `offset`, `total`, `inProgressCount`, `readyCount`, `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount` (агрегаты считаются по всей отфильтрованной выборке; `unpaid*` включает заказы с `payment_status <> 'paid'` и `status <> 'rejected'`).
+
 `search` покрывает номер наряда, имя и телефон клиента, бренд, модель и серийный номер. Сортировка — по приоритету (`urgent` → `high` → `normal` → `low`), затем по дате приёмки.
 
 ### `POST /repairs`

@@ -1,3 +1,7 @@
+- **Added Paid & Due Summary Cards to Repairs Stats Bar (2026-11-26)**:
+  - `backend/src/modules/repairs/` (`repairs.service.ts`, `repairs.routes.ts`): `GET /api/v1/repairs` теперь возвращает в `meta` агрегаты `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount` по всей отфильтрованной выборке с учётом итоговой стоимости наряда (работы + запчасти / `final_cost`, без отказных в «К оплате»).
+  - `frontend/src/lib/api/use-repairs.ts`, `frontend/src/app/(dashboard)/repairs/page.tsx`: в строку статистики `/repairs` добавлены карточки «Оплачено» и «К оплате» (сумма в ₽ + количество заказов) в единую 5-колоночную строку `md:grid-cols-5`.
+
 - **Synced Repair Order Part Retail Prices to Warehouse Cards (2026-11-26)**:
   - `backend/src/modules/repairs/repairs.service.ts`: в `addPart` (с фоллбэком поиска товара по точному `name`, когда артикул пустой/`Б/А`) и `updatePart` (переведён в `withTenant` + `assertEditable`) добавлена синхронизация `warehouse_items.retail_price` при установке `retail_price > 0` в наряде (нулевая цена не затирает прайс склада).
   - `frontend/src/lib/api/use-repairs.ts`: `useCreatePart`, `useUpdatePart` и `useDeletePart` теперь инвалидируют `["warehouse"]`, чтобы `/warehouse` и автодополнение запчастей сразу показывали обновлённые цены и остатки.

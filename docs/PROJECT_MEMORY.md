@@ -1978,3 +1978,11 @@
   3. `frontend/src/components/repairs/detail/PartsTable.tsx`: добавлено инлайн-редактирование ячейки «Розница» (через `useUpdatePart`) с обновлением цены в наряде и на складе.
   4. `frontend/src/components/warehouse/WarehouseIntakeDialog.tsx`: при подстановке позиций из заказа поставщику приоритетно берётся сохранённая `retailPrice` карточки товара со склада (`> 0`).
   5. Тесты: добавлены `backend/src/tests/repair-part-retail-sync.test.ts` и `frontend/src/components/repairs/detail/PartsTable.test.tsx`.
+
+## 2026-11-26 — Карточки «Оплачено» и «К оплате» в строке статистики `/repairs`
+- **Контекст:** В верхней строке статистики `/repairs` (включая `/repairs?status=active`) отображались только 3 счётчика: «Всего наряд-заказов», «В работе», «Готовы к выдаче»; не хватало сводных финансовых показателей «Оплачено» и «К оплате» в ту же строку.
+- **Что изменено:**
+  1. `backend/src/modules/repairs/repairs.service.ts`, `repairs.routes.ts`: в `RepairsService.list` и `meta` ответа `GET /api/v1/repairs` добавлены `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount` на основе того же `effectiveCostExpr` (`final_cost` → сумма работ+запчастей → `estimated_cost`) по всей отфильтрованной выборке (в «К оплате» исключены заказы со статусом `rejected`).
+  2. `frontend/src/lib/api/use-repairs.ts`: расширен `RepairsListResult` полями `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount`.
+  3. `frontend/src/app/(dashboard)/repairs/page.tsx`: строка статистики переведена на `md:grid-cols-5`, добавлены карточки «Оплачено» и «К оплате» (сумма в ₽ и количество заказов).
+  4. Обновлён `docs/03_API_CONTRACTS/03_03_REPAIRS_AND_FINANCE_API.md` и добавлен тест в `frontend/src/app/(dashboard)/repairs/repairs-filters-persistence.test.tsx`.

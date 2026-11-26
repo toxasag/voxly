@@ -334,20 +334,17 @@ export class RepairsService {
   async list(
     tenantId: string,
     options: ListRepairsOptions,
-  ): Promise<{ items: RepairOrderDTO[]; total: number; inProgressCount: number; readyCount: number }> {
+  ): Promise<{
+    items: RepairOrderDTO[];
+    total: number;
+    inProgressCount: number;
+    readyCount: number;
+    paidAmount: number;
+    paidCount: number;
+    unpaidAmount: number;
+    unpaidCount: number;
+  }> {
     const { where, params } = this.buildRepairsWhereClause(tenantId, options);
-
-    const countRow = await queryOne<{ total: string; in_progress_cnt: string; ready_cnt: string }>(
-      `SELECT
-         COUNT(*)::text AS total,
-         COUNT(*) FILTER (WHERE ro.status IN ('intake', 'waiting_parts', 'diagnostics', 'approval', 'in_progress'))::text AS in_progress_cnt,
-         COUNT(*) FILTER (WHERE ro.status = 'ready')::text AS ready_cnt
-       FROM repair_orders ro
-       WHERE ${where}`,
-      params,
-    );
-
-    params.push(options.limit, options.offset);
 
     const effectiveCostExpr = `COALESCE(
       ro.final_cost,
@@ -359,6 +356,30 @@ export class RepairsService {
       ro.estimated_cost,
       0
     )`;
+
+    const countRow = await queryOne<{
+      total: string;
+      in_progress_cnt: string;
+      ready_cnt: string;
+      paid_cnt: string;
+      paid_amount: string;
+      unpaid_cnt: string;
+      unpaid_amount: string;
+    }>(
+      `SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE ro.status IN ('intake', 'waiting_parts', 'diagnostics', 'approval', 'in_progress'))::text AS in_progress_cnt,
+         COUNT(*) FILTER (WHERE ro.status = 'ready')::text AS ready_cnt,
+         COUNT(*) FILTER (WHERE ro.payment_status = 'paid')::text AS paid_cnt,
+         COALESCE(SUM(${effectiveCostExpr}) FILTER (WHERE ro.payment_status = 'paid'), 0)::text AS paid_amount,
+         COUNT(*) FILTER (WHERE ro.payment_status <> 'paid' AND ro.status <> 'rejected')::text AS unpaid_cnt,
+         COALESCE(SUM(${effectiveCostExpr}) FILTER (WHERE ro.payment_status <> 'paid' AND ro.status <> 'rejected'), 0)::text AS unpaid_amount
+       FROM repair_orders ro
+       WHERE ${where}`,
+      params,
+    );
+
+    params.push(options.limit, options.offset);
 
     const orderBy = buildSortOrderBy({
       sortBy: options.sortBy,
@@ -449,6 +470,10 @@ export class RepairsService {
       total: Number(countRow?.total ?? 0),
       inProgressCount: Number(countRow?.in_progress_cnt ?? 0),
       readyCount: Number(countRow?.ready_cnt ?? 0),
+      paidAmount: Math.round(Number(countRow?.paid_amount ?? 0) * 100) / 100,
+      paidCount: Number(countRow?.paid_cnt ?? 0),
+      unpaidAmount: Math.round(Number(countRow?.unpaid_amount ?? 0) * 100) / 100,
+      unpaidCount: Number(countRow?.unpaid_cnt ?? 0),
     };
   }
 
