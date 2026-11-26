@@ -15,6 +15,8 @@ import {
 } from "./contacts-io.service.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { DealMessagingService } from "../deals/deal-messaging.service.js";
+import { DealsService } from "../deals/deals.service.js";
+import { pushNotificationService } from "../../notifications/push-notification.service.js";
 import { createDealMessageSchema } from "../deals/deals.types.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";
 import { ContactActivityService } from "./contact-activity.service.js";
@@ -411,6 +413,10 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
       userId: request.authUser.id,
       payload: body,
     });
+    void new DealsService().markMessagesRead(request.tenant_id, { contactId: id }).catch(() => {});
+    void pushNotificationService
+      .markContactNotificationsRead(request.tenant_id, request.authUser.id, id, ["message", "lead"])
+      .catch(() => {});
     return reply.status(201).send({ data: message });
   });
 

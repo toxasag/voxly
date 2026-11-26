@@ -88,17 +88,19 @@ export async function pushNotificationRoutes(app: FastifyInstance): Promise<void
       },
     );
 
-    // Список in-app уведомлений
+    // Список in-app уведомлений (по умолчанию только непрочитанные)
     authApp.get(
       "/notifications",
       async (request: FastifyRequest, reply: FastifyReply) => {
-        const query = request.query as { limit?: string };
+        const query = request.query as { limit?: string; include_read?: string };
         const limit = Math.min(parseInt(query.limit ?? "30", 10) || 30, 100);
+        const includeRead = query.include_read === "true" || query.include_read === "1";
 
         const result = await pushNotificationService.listInAppNotifications(
           request.tenant_id,
           request.authUser.id,
           limit,
+          { includeRead },
         );
 
         return reply.send({
@@ -119,6 +121,45 @@ export async function pushNotificationRoutes(app: FastifyInstance): Promise<void
           request.authUser.id,
         );
         return reply.send({ data: { success: true, count } });
+      },
+    );
+
+    // Пометить прочитанными все уведомления по конкретной сущности (сделка, контакт, задача, наряд)
+    authApp.post(
+      "/notifications/read-by-entity",
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const body = z
+          .object({
+            entity_type: z.enum(["deal", "lead", "chat", "task", "repair", "invoice", "contact", "system"]),
+            entity_id: z.string().min(1).max(120),
+            categories: z
+              .array(z.enum(["message", "lead", "task", "repair", "payment", "system"]))
+              .optional(),
+          })
+          .parse(request.body ?? {});
+
+        const ids =
+          body.entity_type === "contact"
+            ? await pushNotificationService.markContactNotificationsRead(
+                request.tenant_id,
+                request.authUser.id,
+                body.entity_id,
+                body.categories,
+              )
+            : await pushNotificationService.markEntityNotificationsRead(
+                request.tenant_id,
+                request.authUser.id,
+                {
+                  entityTypes:
+                    body.entity_type === "deal" || body.entity_type === "chat" || body.entity_type === "lead"
+                      ? ["deal", "chat", "lead"]
+                      : [body.entity_type],
+                  entityIds: [body.entity_id],
+                  categories: body.categories,
+                },
+              );
+
+        return reply.send({ data: { success: true, count: ids.length, ids } });
       },
     );
 
@@ -244,6 +285,14 @@ export async function pushNotificationRoutes(app: FastifyInstance): Promise<void
         const unsubTenant = notificationEventBus.subscribeTenant(tenantId, (n) => {
           void onNotification(n);
         });
+        const unsubRead = notificationEventBus.subscribeRead(tenantId, userId, (evt) => {
+          if (reply.raw.destroyed) return;
+          try {
+            reply.raw.write(`event: read\ndata: ${JSON.stringify(evt)}\n\n`);
+          } catch {
+            // Безопасный перехват
+          }
+        });
 
         const unregisterStream = registerSseStream(reply.raw);
 
@@ -258,6 +307,7 @@ export async function pushNotificationRoutes(app: FastifyInstance): Promise<void
           clearInterval(pingInterval);
           unsubUser();
           unsubTenant();
+          unsubRead();
           unregisterStream();
         });
 

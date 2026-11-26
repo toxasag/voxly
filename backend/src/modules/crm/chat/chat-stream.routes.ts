@@ -6,6 +6,7 @@ import { chatEventBus, type ChatStreamEvent } from "./chat-events.js";
 import { query } from "../../../db/client.js";
 import { DealsService } from "../deals/deals.service.js";
 import { presenceService } from "./presence.service.js";
+import { pushNotificationService } from "../../notifications/push-notification.service.js";
 
 // ---------------------------------------------------------------------------
 // Realtime SSE Chat Stream, Presence & Read Receipts (M5.1).
@@ -177,6 +178,21 @@ export async function chatStreamRoutes(app: FastifyInstance): Promise<void> {
         contactId,
         messageIds,
       });
+
+      const userId = request.authUser?.id ?? null;
+      if (dealId) {
+        void pushNotificationService
+          .markEntityNotificationsRead(tenantId, userId, {
+            entityTypes: ["deal", "chat", "lead"],
+            entityIds: [dealId],
+            categories: ["message", "lead"],
+          })
+          .catch(() => {});
+      } else if (contactId) {
+        void pushNotificationService
+          .markContactNotificationsRead(tenantId, userId, contactId, ["message", "lead"])
+          .catch(() => {});
+      }
 
       return reply.send({
         data: result,
