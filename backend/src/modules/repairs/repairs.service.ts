@@ -2039,6 +2039,24 @@ export class RepairsService {
   // Parts
   // -------------------------------------------------------------------------
 
+  private async syncWarehouseRetailPriceInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    warehouseItemId: string,
+    retailPrice: number,
+  ): Promise<void> {
+    if (!(retailPrice > 0)) return;
+    await tx.query(
+      `UPDATE warehouse_items
+       SET retail_price = $1, updated_at = now()
+       WHERE tenant_id = $2
+         AND id = $3
+         AND deleted_at IS NULL
+         AND retail_price IS DISTINCT FROM $1`,
+      [retailPrice, tenantId, warehouseItemId],
+    );
+  }
+
   async addPart(
     tenantId: string,
     orderId: string,
@@ -2046,7 +2064,7 @@ export class RepairsService {
   ): Promise<RepairPartDTO> {
     await this.assertEditable(tenantId, orderId);
 
-    return withTenant(tenantId, async (tx) => {
+    const { part, shouldRecalculate } = await withTenant(tenantId, async (tx) => {
       // 0. Idempotency / Duplicate check:
       // If a part with identical name, article, quantity, retail_price was created within last 15 seconds, return it
       const recentDuplicate = await tx.queryOne<RepairPartRow>(
@@ -2063,12 +2081,12 @@ export class RepairsService {
         [tenantId, orderId, payload.name, payload.article ?? "", payload.quantity, payload.retail_price],
       );
       if (recentDuplicate) {
-        return toRepairPartDTO(recentDuplicate);
+        return { part: toRepairPartDTO(recentDuplicate), shouldRecalculate: false };
       }
 
       let resolvedWarehouseItemId = payload.warehouse_item_id ?? null;
 
-      // 1. If not explicitly linked to warehouse, check if an item with this SKU already exists
+      // 1. If not explicitly linked to warehouse, match existing item by SKU or exact name
       const articleClean = (payload.article ?? "").trim();
       if (!resolvedWarehouseItemId && articleClean && articleClean !== "Б/А") {
         const existingItem = await tx.queryOne<{ id: string }>(
@@ -2082,7 +2100,21 @@ export class RepairsService {
         }
       }
 
+      if (!resolvedWarehouseItemId && payload.name.trim()) {
+        const existingByName = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM warehouse_items
+           WHERE tenant_id = $1 AND lower(btrim(name)) = lower(btrim($2)) AND deleted_at IS NULL
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [tenantId, payload.name.trim()],
+        );
+        if (existingByName) {
+          resolvedWarehouseItemId = existingByName.id;
+        }
+      }
+
       // 2. If save_to_catalog is requested and still not in warehouse, create catalog item
+      let createdWarehouseItem = false;
       if (payload.save_to_catalog && !resolvedWarehouseItemId) {
         const newWarehouseRow = await tx.queryOne<{ id: string }>(
           `INSERT INTO warehouse_items
@@ -2091,7 +2123,7 @@ export class RepairsService {
            RETURNING id`,
           [
             tenantId,
-            articleClean || "",
+            articleClean === "Б/А" ? "" : articleClean,
             payload.name.trim(),
             payload.retail_price,
             payload.cost_price,
@@ -2099,7 +2131,18 @@ export class RepairsService {
         );
         if (newWarehouseRow) {
           resolvedWarehouseItemId = newWarehouseRow.id;
+          createdWarehouseItem = true;
         }
+      }
+
+      // 2.5. Сохраняем установленную в наряде розничную цену в карточке товара на складе
+      if (resolvedWarehouseItemId && !createdWarehouseItem && payload.retail_price > 0) {
+        await this.syncWarehouseRetailPriceInTx(
+          tx,
+          tenantId,
+          resolvedWarehouseItemId,
+          payload.retail_price,
+        );
       }
 
       // 3. Проверка остатка на складе, если отключена продажа в минус
@@ -2205,14 +2248,18 @@ export class RepairsService {
         });
       }
 
-      const result = toRepairPartDTO(row);
+      return { part: toRepairPartDTO(row), shouldRecalculate: true };
+    });
+
+    if (shouldRecalculate) {
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
         void this.getOrderDealId(tenantId, orderId).then((dealId) => {
           if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
         });
       });
-      return result;
-    });
+    }
+
+    return part;
   }
 
   async updatePart(
@@ -2221,6 +2268,8 @@ export class RepairsService {
     partId: string,
     payload: UpdatePartPayload,
   ): Promise<RepairPartDTO | null> {
+    await this.assertEditable(tenantId, orderId);
+
     const assignments: string[] = [];
     const params: SqlParam[] = [tenantId, orderId, partId];
 
@@ -2235,23 +2284,41 @@ export class RepairsService {
     if (payload.retail_price !== undefined) push("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) push("cost_price", payload.cost_price);
 
-    if (assignments.length === 0) {
-      const existing = await queryOne<RepairPartRow>(
-        `SELECT ${PART_COLUMNS} FROM repair_parts
-         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
-        [tenantId, orderId, partId],
+    const updated = await withTenant(tenantId, async (tx) => {
+      if (assignments.length === 0) {
+        const existing = await tx.queryOne<RepairPartRow>(
+          `SELECT ${PART_COLUMNS} FROM repair_parts
+           WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+          [tenantId, orderId, partId],
+        );
+        return existing === null ? null : toRepairPartDTO(existing);
+      }
+
+      const row = await tx.queryOne<RepairPartRow>(
+        `UPDATE repair_parts SET ${assignments.join(", ")}
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
+         RETURNING ${PART_COLUMNS}`,
+        params,
       );
-      return existing === null ? null : toRepairPartDTO(existing);
-    }
 
-    const row = await queryOne<RepairPartRow>(
-      `UPDATE repair_parts SET ${assignments.join(", ")}
-       WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
-       RETURNING ${PART_COLUMNS}`,
-      params,
-    );
+      if (
+        row !== null &&
+        row.warehouse_item_id &&
+        payload.retail_price !== undefined &&
+        payload.retail_price > 0
+      ) {
+        await this.syncWarehouseRetailPriceInTx(
+          tx,
+          tenantId,
+          row.warehouse_item_id,
+          payload.retail_price,
+        );
+      }
 
-    if (row !== null) {
+      return row === null ? null : toRepairPartDTO(row);
+    });
+
+    if (updated !== null && assignments.length > 0) {
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
         void this.getOrderDealId(tenantId, orderId).then((dealId) => {
           if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
@@ -2259,7 +2326,7 @@ export class RepairsService {
       });
     }
 
-    return row === null ? null : toRepairPartDTO(row);
+    return updated;
   }
 
   async deletePart(tenantId: string, orderId: string, partId: string): Promise<boolean> {

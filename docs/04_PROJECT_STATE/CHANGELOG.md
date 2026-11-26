@@ -1,3 +1,9 @@
+- **Synced Repair Order Part Retail Prices to Warehouse Cards (2026-11-26)**:
+  - `backend/src/modules/repairs/repairs.service.ts`: в `addPart` (с фоллбэком поиска товара по точному `name`, когда артикул пустой/`Б/А`) и `updatePart` (переведён в `withTenant` + `assertEditable`) добавлена синхронизация `warehouse_items.retail_price` при установке `retail_price > 0` в наряде (нулевая цена не затирает прайс склада).
+  - `frontend/src/lib/api/use-repairs.ts`: `useCreatePart`, `useUpdatePart` и `useDeletePart` теперь инвалидируют `["warehouse"]`, чтобы `/warehouse` и автодополнение запчастей сразу показывали обновлённые цены и остатки.
+  - `frontend/src/components/repairs/detail/PartsTable.tsx`: добавлено инлайн-редактирование розничной цены прямо в таблице запчастей наряда с сохранением в наряде и на складе.
+  - `frontend/src/components/warehouse/WarehouseIntakeDialog.tsx`: при оприходовании по заказу поставщику сохраняется существующая `retailPrice` товара со склада вместо принудительной перезаписи формулой `закупка × 1.4`.
+
 - **Added Multi-Select Bulk Service Addition in Repair Order Work Items (2026-11-26)**:
   - `backend/src/modules/repairs/` (`repairs.types.ts`, `repairs.service.ts`, `repairs.routes.ts`): добавлен транзакционный эндпоинт `POST /api/v1/repairs/:id/works/batch` (`createWorksBatchSchema`, `addWorksBatch`) для пакетного добавления до 100 услуг с дедупликацией по названию/цене и однократным пересчётом стоимости наряда и бюджета сделки.
   - `frontend/src/lib/api/use-repairs.ts`: добавлен хук `useCreateWorksBatch()`.

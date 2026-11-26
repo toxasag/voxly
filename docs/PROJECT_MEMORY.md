@@ -1965,3 +1965,16 @@
      - В `ServiceCatalogDialog.tsx` добавлен мультивыбор чекбоксами, «Выбрать все» / «Снять все» и кнопка «Добавить выбранные (N)» (с обратной совместимостью по `onSelectService`).
   3. **Где используется:** `WorkItemsTable.tsx` используется только в `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`; `ServiceCatalogDialog.tsx` — только в `WorkItemsTable.tsx`.
   4. **Тесты и документация:** добавлены `backend/src/tests/repair-works-batch.test.ts` и `frontend/src/components/repairs/detail/WorkItemsTable.test.tsx`; обновлён `docs/03_API_CONTRACTS/03_03_REPAIRS_AND_FINANCE_API.md`.
+
+## 2026-11-26 — Синхронизация розничных цен запчастей из нарядов в карточки товаров на складе (`/warehouse`)
+- **Контекст и root cause (наряд `cdfec2bc-7e31-443a-96ae-75615967e3a8` / `№0036`):**
+  1. `RepairsService.addPart` записывал `retail_price` только в `repair_parts` и никогда не обновлял `warehouse_items.retail_price` у существующих карточек товара (обновлялось только при `save_to_catalog` для новой позиции); кроме того, при `article = "Б/А"` (537 из 540 позиций `remtoua` без SKU) автопоиск склада шёл только по `sku`, без фоллбэка по точному `name`.
+  2. `RepairsService.updatePart` не синхронизировал `warehouse_items.retail_price` и работал вне `withTenant`.
+  3. На фронтенде `useCreatePart` / `useUpdatePart` / `useDeletePart` не инвалидировали кэш `["warehouse"]`, поэтому `/warehouse` и выпадающий список склада показывали устаревшие цены.
+  4. В `WarehouseIntakeDialog.tsx` при загрузке строк из заказа поставщику `retailPrice` всегда пересчитывался как `purchasePrice * 1.4` вместо сохранения уже установленной розничной цены товара на складе.
+- **Что изменено:**
+  1. `backend/src/modules/repairs/repairs.service.ts`: добавлен helper `syncWarehouseRetailPriceInTx` (обновляет `warehouse_items.retail_price` и `updated_at`, когда `retail_price > 0` и значение изменилось); подключён в `addPart` (плюс сопоставление по точному `lower(btrim(name))` при пустом SKU) и в `updatePart` (переведён в `withTenant` с `assertEditable`).
+  2. `frontend/src/lib/api/use-repairs.ts`: добавлена инвалидация `["warehouse"]` в `useCreatePart`, `useUpdatePart`, `useDeletePart`.
+  3. `frontend/src/components/repairs/detail/PartsTable.tsx`: добавлено инлайн-редактирование ячейки «Розница» (через `useUpdatePart`) с обновлением цены в наряде и на складе.
+  4. `frontend/src/components/warehouse/WarehouseIntakeDialog.tsx`: при подстановке позиций из заказа поставщику приоритетно берётся сохранённая `retailPrice` карточки товара со склада (`> 0`).
+  5. Тесты: добавлены `backend/src/tests/repair-part-retail-sync.test.ts` и `frontend/src/components/repairs/detail/PartsTable.test.tsx`.

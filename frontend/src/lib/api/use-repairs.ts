@@ -1100,7 +1100,7 @@ export function useCreatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
-      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1119,6 +1119,7 @@ export function useUpdatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1137,6 +1138,7 @@ export function useDeletePart(): UseMutationResult<{ id: string; deleted: boolea
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });

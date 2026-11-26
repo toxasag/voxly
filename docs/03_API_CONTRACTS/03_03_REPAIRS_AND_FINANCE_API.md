@@ -169,7 +169,10 @@ Query: `status`, `priority`, `master_id`, `customer_id`, `search`, `limit`, `off
 
 ### Запчасти
 
-`POST /repairs/:id/parts`:
+`POST /repairs/:id/parts` и `PATCH /repairs/:id/parts/:itemId`:
+
+- При добавлении запчасти с указанным `warehouse_item_id` (или найденным по `sku` / точному совпадению `name`) и `retail_price > 0` розничная цена автоматически синхронизируется в карточке товара `warehouse_items.retail_price` (при `retail_price = 0` цена склада не затирается).
+- При обновлении `retail_price > 0` через `PATCH /repairs/:id/parts/:itemId` у привязанной к складу запчасти также обновляется `warehouse_items.retail_price`.
 
 ```json
 { "name": "Плата питания", "article": "PWR-114", "quantity": 1, "retail_price": 3400, "cost_price": 2100 }
