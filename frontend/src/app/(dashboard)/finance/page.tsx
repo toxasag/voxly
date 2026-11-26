@@ -98,7 +98,11 @@ function toTransaction(dto: TransactionDTO): Transaction {
           : dto.supplierOrderId
             ? "supplier_order"
             : null,
-    linked_entity_label: null,
+    linked_entity_label: dto.dealTitle ?? dto.repairTicketNumber ?? null,
+    deal_id: dto.dealId ?? null,
+    deal_title: dto.dealTitle ?? null,
+    repair_order_id: dto.repairOrderId ?? null,
+    repair_ticket_number: dto.repairTicketNumber ?? null,
     supplier_order_id: dto.supplierOrderId ?? null,
     is_capitalized_cost: Boolean(dto.isCapitalizedCost),
     counterparty: dto.counterpartyName ?? "",

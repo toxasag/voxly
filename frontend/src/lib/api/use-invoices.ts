@@ -180,7 +180,9 @@ export interface TransactionDTO {
   accountId: string;
   accountName: string;
   dealId: string | null;
+  dealTitle?: string | null;
   repairOrderId: string | null;
+  repairTicketNumber?: string | null;
   invoiceId: string | null;
   supplierOrderId?: string | null;
   isCapitalizedCost?: boolean;
@@ -189,6 +191,48 @@ export interface TransactionDTO {
   occurredAt: string;
   createdById?: string | null;
   createdByName?: string | null;
+}
+
+export interface DirectExpenseItemDTO {
+  id: string;
+  amount: number;
+  currency: string;
+  categoryName: string;
+  description: string;
+  counterpartyName: string;
+  accountName: string;
+  occurredAt: string;
+  dealId: string | null;
+  repairOrderId: string | null;
+  repairTicketNumber: string | null;
+  scope: "deal" | "repair";
+}
+
+export interface DealEconomicsDTO {
+  dealId: string;
+  revenue: number;
+  itemsRevenue: number;
+  repairsRevenue: number;
+  cogs: number;
+  grossProfit: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+  expenses: DirectExpenseItemDTO[];
+}
+
+export interface RepairEconomicsDTO {
+  repairOrderId: string;
+  dealId: string | null;
+  revenue: number;
+  cogs: number;
+  grossProfit: number;
+  directRepairExpenses: number;
+  dealSharedExpenses: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+  expenses: DirectExpenseItemDTO[];
 }
 
 export interface InvoiceItemDTO {
@@ -431,9 +475,13 @@ export const financeKeys = {
     offset?: number;
     type?: string;
     search?: string;
+    dealId?: string;
+    repairOrderId?: string;
     sortBy?: string;
     sortDir?: "asc" | "desc";
   }) => ["finance", "transactions", params] as const,
+  dealEconomics: (dealId: string) => ["finance", "economics", "deal", dealId] as const,
+  repairEconomics: (repairOrderId: string) => ["finance", "economics", "repair", repairOrderId] as const,
   invoices: (params: {
     limit?: number;
     offset?: number;
@@ -475,6 +523,8 @@ export function useTransactions(params: {
   offset?: number;
   type?: string;
   search?: string;
+  dealId?: string;
+  repairOrderId?: string;
   sortBy?: string;
   sortDir?: "asc" | "desc";
 } = {}): UseQueryResult<TransactionsListResult, ApiClientError> {
@@ -490,6 +540,8 @@ export function useTransactions(params: {
           offset,
           type: params.type,
           search: params.search,
+          deal_id: params.dealId,
+          repair_order_id: params.repairOrderId,
           sort_by: params.sortBy,
           sort_dir: params.sortDir,
         },
@@ -505,6 +557,36 @@ export function useTransactions(params: {
       };
     },
     placeholderData: (previous) => previous,
+  });
+}
+
+export function useDealEconomics(
+  dealId: string | null,
+  enabled = true,
+): UseQueryResult<DealEconomicsDTO, ApiClientError> {
+  return useQuery<DealEconomicsDTO, ApiClientError>({
+    queryKey: financeKeys.dealEconomics(dealId ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<DealEconomicsDTO>(`/api/v1/finance/deals/${dealId ?? ""}/economics`);
+      return res.data;
+    },
+    enabled: Boolean(enabled && dealId),
+  });
+}
+
+export function useRepairEconomics(
+  repairOrderId: string | null,
+  enabled = true,
+): UseQueryResult<RepairEconomicsDTO, ApiClientError> {
+  return useQuery<RepairEconomicsDTO, ApiClientError>({
+    queryKey: financeKeys.repairEconomics(repairOrderId ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairEconomicsDTO>(
+        `/api/v1/finance/repairs/${repairOrderId ?? ""}/economics`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(enabled && repairOrderId),
   });
 }
 

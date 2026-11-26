@@ -71,6 +71,7 @@ import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { DealContactHistoryTab } from "./DealContactHistoryTab";
 import { DealAnalyticsTab } from "./DealAnalyticsTab";
 import { DealProductsServicesTab } from "./DealProductsServicesTab";
+import { DealEconomicsCard } from "./DealEconomicsCard";
 import { SourceMetadataTab } from "@/components/crm/shared/SourceMetadataTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
@@ -1048,6 +1049,9 @@ function HomeTab({
           </div>
         )}
       </div>
+
+      {/* Экономика сделки: выручка, себестоимость, прямые расходы и чистая прибыль */}
+      <DealEconomicsCard deal={deal} />
 
       {/* Accordion Group: Данные визита и аналитика (Twenty CRM Light Canvas) */}
       {(() => {
