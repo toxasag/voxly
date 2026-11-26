@@ -67,6 +67,7 @@ export interface WhatsappHistorySyncParams {
   phone: string;
   senderName?: string;
   limit?: number;
+  preloadedRecords?: Array<Record<string, unknown>>;
   log?: FastifyBaseLogger;
 }
 
@@ -94,17 +95,20 @@ export async function syncWhatsappDialogHistory(params: WhatsappHistorySyncParam
 
   const remoteJid = params.phone.includes("@") ? params.phone : `${cleanPhone}@s.whatsapp.net`;
 
-  let records = await evolution.findMessages(instanceName, {
-    remoteJid,
-    offset: params.limit ?? 50,
-  });
+  let records = params.preloadedRecords;
+  if (!records) {
+    records = await evolution.findMessages(instanceName, {
+      remoteJid,
+      offset: params.limit ?? 50,
+    });
 
-  if (!records || records.length === 0) {
-    if (!params.phone.includes("@")) {
-      records = await evolution.findMessages(instanceName, {
-        remoteJid: `${cleanPhone}@lid`,
-        offset: params.limit ?? 50,
-      });
+    if (!records || records.length === 0) {
+      if (!params.phone.includes("@")) {
+        records = await evolution.findMessages(instanceName, {
+          remoteJid: `${cleanPhone}@lid`,
+          offset: params.limit ?? 50,
+        });
+      }
     }
   }
 

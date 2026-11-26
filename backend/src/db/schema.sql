@@ -1167,6 +1167,14 @@ CREATE TABLE IF NOT EXISTS channel_accounts (
   -- 0013, секретов не содержали, поэтому признак, а не безусловное шифрование.
   credentials_encrypted BOOLEAN NOT NULL DEFAULT false,
   last_sync_at TIMESTAMPTZ,
+  history_sync_status TEXT NOT NULL DEFAULT 'idle'
+    CHECK (history_sync_status IN ('idle', 'queued', 'syncing', 'completed', 'error')),
+  history_sync_total INT NOT NULL DEFAULT 0,
+  history_sync_processed INT NOT NULL DEFAULT 0,
+  history_sync_messages INT NOT NULL DEFAULT 0,
+  history_sync_error TEXT,
+  history_sync_started_at TIMESTAMPTZ,
+  history_sync_finished_at TIMESTAMPTZ,
   connected_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),

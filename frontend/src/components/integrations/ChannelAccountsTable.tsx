@@ -3,6 +3,7 @@
 import { memo, useCallback, useState } from "react";
 import { toast } from "sonner";
 import {
+  History,
   Link2,
   Loader2,
   Pencil,
@@ -24,6 +25,7 @@ import { EditChannelAccountModal } from "./EditChannelAccountModal";
 import {
   CHANNEL_STATUS_LABELS,
   useDeleteChannelAccount,
+  useSyncChannelHistory,
   useUpdateChannelAccount,
   type ChannelAccountDTO,
 } from "@/lib/api/use-channels";
@@ -87,6 +89,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
 }: ChannelAccountsTableProps) {
   const update = useUpdateChannelAccount(channel);
   const remove = useDeleteChannelAccount(channel);
+  const syncHistory = useSyncChannelHistory(channel);
   const checkTelegram = useTelegramCheckAccount();
 
   const [removeTarget, setRemoveTarget] = useState<ChannelAccountDTO | null>(null);
@@ -101,6 +104,22 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
    * тогда подключение продолжало бы отображаться активным.
    */
   const supportsSessionCheck = channel === "telegram";
+  const supportsHistorySync = channel === "max" || channel === "telegram" || channel === "whatsapp";
+
+  const handleSyncHistory = useCallback(
+    async (account: ChannelAccountDTO) => {
+      setBusyId(account.id);
+      try {
+        await syncHistory.mutateAsync({ id: account.id });
+        toast.success(`«${account.label}»: запущена синхронизация переписки с контактами CRM`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось запустить синхронизацию истории");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [syncHistory],
+  );
 
   const handleCheckSession = useCallback(
     async (account: ChannelAccountDTO) => {
@@ -245,9 +264,33 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-[#666666]">{account.externalId}</td>
                 <td className="px-4 py-3">
-                  <StatusBadge variant={STATUS_VARIANTS[account.status] ?? "neutral"} size="sm">
-                    {CHANNEL_STATUS_LABELS[account.status] ?? account.status}
-                  </StatusBadge>
+                  <div className="flex flex-col gap-1">
+                    <StatusBadge variant={STATUS_VARIANTS[account.status] ?? "neutral"} size="sm">
+                      {CHANNEL_STATUS_LABELS[account.status] ?? account.status}
+                    </StatusBadge>
+                    {account.historySyncStatus === "queued" && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-[#666666]">
+                        <Loader2 className="h-3 w-3 animate-spin text-[#4a38f5]" />
+                        В очереди на синк...
+                      </span>
+                    )}
+                    {account.historySyncStatus === "syncing" && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-[#4a38f5]">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Синк: {account.historySyncProcessed ?? 0}/{account.historySyncTotal ?? 0} ({account.historySyncMessages ?? 0} сообщ.)
+                      </span>
+                    )}
+                    {account.historySyncStatus === "completed" && (account.historySyncMessages ?? 0) > 0 && (
+                      <span className="text-[11px] text-emerald-700">
+                        История: {account.historySyncMessages} сообщ.
+                      </span>
+                    )}
+                    {account.historySyncStatus === "error" && account.historySyncError && (
+                      <span className="text-[11px] text-rose-600" title={account.historySyncError}>
+                        Ошибка синка истории
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-sm text-[#666666]">
                   {/* Дата привязки, а не создания: до авторизации канал не
@@ -292,6 +335,28 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                        )}
+                      </button>
+                    )}
+
+                    {/* Синхронизация истории переписки с контактами CRM */}
+                    {supportsHistorySync && account.status === "connected" && (
+                      <button
+                        type="button"
+                        onClick={() => void handleSyncHistory(account)}
+                        disabled={
+                          busyId === account.id ||
+                          account.historySyncStatus === "syncing" ||
+                          account.historySyncStatus === "queued"
+                        }
+                        title="Подтянуть историю переписки с контактами CRM"
+                        aria-label={`Синхронизировать историю ${account.label}`}
+                        className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5] disabled:opacity-40"
+                      >
+                        {account.historySyncStatus === "syncing" || account.historySyncStatus === "queued" ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
+                        ) : (
+                          <History className="h-4 w-4" />
                         )}
                       </button>
                     )}

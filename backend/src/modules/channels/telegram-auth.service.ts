@@ -643,7 +643,7 @@ export class TelegramAuthService {
       username: input.user.username,
     });
 
-    return withTenant(input.tenantId, async (tx) => {
+    const accountId = await withTenant(input.tenantId, async (tx) => {
       const row = await tx.queryOneOrThrow<{ id: string }>(
         `INSERT INTO channel_accounts
            (tenant_id, channel, label, external_id, status, status_message,
@@ -666,6 +666,18 @@ export class TelegramAuthService {
 
       return row.id;
     });
+
+    void import("./channel-history-sync.service.js")
+      .then(({ enqueueChannelHistorySync }) =>
+        enqueueChannelHistorySync({
+          tenantId: input.tenantId,
+          channelAccountId: accountId,
+          channel: "telegram",
+        }),
+      )
+      .catch(() => {});
+
+    return accountId;
   }
 
   /** Читает сохранённую сессию MTProto для проверки её состояния. */

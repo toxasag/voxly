@@ -820,7 +820,7 @@ export class CrmEnrichmentService {
     if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
 
     try {
-      let accounts = await runWithPlatformScope(() =>
+      const accountsRaw = await runWithPlatformScope(() =>
         query<{ id: string }>(
           `SELECT id FROM channel_accounts
            WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
@@ -828,15 +828,7 @@ export class CrmEnrichmentService {
           [tenantId],
         ),
       );
-      if (accounts.length === 0) {
-        accounts = await runWithPlatformScope(() =>
-          query<{ id: string }>(
-            `SELECT id FROM channel_accounts
-             WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-             ORDER BY connected_at DESC NULLS LAST`,
-          ),
-        );
-      }
+      let accounts = accountsRaw;
       if (accounts.length === 0) return { exists: false, error: "No active MAX account" };
 
       // При нескольких MAX-аккаунтах сначала пробуем те, у которых реально живая сессия в max-bridge.

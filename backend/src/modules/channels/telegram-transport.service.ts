@@ -1840,6 +1840,11 @@ export class TelegramTransportService {
       let importedCount = 0;
       const list = [...messages].reverse();
 
+      if (list.length === 0) return 0;
+
+      const targetDealId = params.dealId ?? (await params.resolveDealId?.());
+      if (!targetDealId) return 0;
+
       await runWithTenantContext(params.tenantId, async () => {
         for (const msg of list) {
           if (typeof msg.id !== "number") continue;
@@ -1885,7 +1890,7 @@ export class TelegramTransportService {
              LIMIT 1`,
             [
               params.tenantId,
-              params.dealId,
+              targetDealId,
               externalMsgId,
               mediaAttachment?.url ?? null,
               contentText,
@@ -1902,11 +1907,11 @@ export class TelegramTransportService {
                RETURNING id`,
               [
                 params.tenantId,
-                params.dealId,
+                targetDealId,
                 params.channelAccountId,
                 source,
                 direction,
-                isOutbound ? "Менеджер" : params.peerId,
+                isOutbound ? "Менеджер" : (params.senderName || params.peerId),
                 contentText,
                 mediaAttachment?.url ?? null,
                 mediaAttachment?.mimeType ?? null,
@@ -1929,15 +1934,15 @@ export class TelegramTransportService {
               chatEventBus.emitChatEvent({
                 type: "message_created",
                 tenantId: params.tenantId,
-                dealId: params.dealId,
+                dealId: targetDealId,
                 data: {
                   id: inserted.id,
                   tenantId: params.tenantId,
-                  dealId: params.dealId,
+                  dealId: targetDealId,
                   channelAccountId: params.channelAccountId,
                   source: isOutbound ? "manager" : "client",
                   direction: isOutbound ? "outbound" : "inbound",
-                  senderName: isOutbound ? "Менеджер" : params.peerId,
+                  senderName: isOutbound ? "Менеджер" : (params.senderName || params.peerId),
                   content: contentText,
                   channel: "telegram",
                   deliveryStatus: isOutbound ? "sent" : "neutral",
@@ -1953,7 +1958,7 @@ export class TelegramTransportService {
       });
 
       this.log.info(
-        { dealId: params.dealId, peerId: params.peerId, count: importedCount },
+        { dealId: targetDealId, peerId: params.peerId, count: importedCount },
         "Synced Telegram dialog history to CRM",
       );
       return importedCount;
