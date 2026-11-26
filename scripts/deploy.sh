@@ -1,7 +1,7 @@
 #!/bin/sh
 # Деплой GETVOXLY на VPS по SSH-ключу.
 #
-# Запускается С РАБОЧЕЙ МАШИНЫ: sh scripts/deploy.sh [backend|frontend|all]
+# Запускается С РАБОЧЕЙ МАШИНЫ: sh scripts/deploy.sh [backend|frontend|max-bridge|all]
 #
 # Требует алиас `getvoxly-vps` в ~/.ssh/config с ControlMaster (см.
 # docs/05_OPERATIONS/05_02_DEPLOY.md §1). Без мультиплексирования шаги рвутся
@@ -12,9 +12,9 @@ set -eu
 
 TARGET="${1:-all}"
 case "$TARGET" in
-  backend|frontend) SERVICES="$TARGET" ;;
-  all) SERVICES="backend frontend" ;;
-  *) printf 'usage: deploy.sh [backend|frontend|all]\n' >&2; exit 2 ;;
+  backend|frontend|max-bridge) SERVICES="$TARGET" ;;
+  all) SERVICES="backend frontend max-bridge" ;;
+  *) printf 'usage: deploy.sh [backend|frontend|max-bridge|all]\n' >&2; exit 2 ;;
 esac
 # Deliberate operator gates: a backup filename is not proof of a successful restore.
 : "${GETVOXLY_RELEASE_APPROVED:?Set only after staging acceptance and explicit deployment approval}"
@@ -81,7 +81,13 @@ if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "all" ]; then
     --exclude .env --exclude '.env.*' --exclude '*.tsbuildinfo' -e ssh "$LOCAL/frontend/" "$HOST:$REMOTE/frontend/"
 fi
 
-if [ "$TARGET" = "all" ]; then
+if [ "$TARGET" = "max-bridge" ] || [ "$TARGET" = "all" ]; then
+  log "Синхронизация apps/max-bridge"
+  rsync -az --delete --exclude '__pycache__' --exclude '*.pyc' --exclude '.env' \
+    --exclude '.env.*' -e ssh "$LOCAL/apps/max-bridge/" "$HOST:$REMOTE/apps/max-bridge/"
+fi
+
+if [ "$TARGET" = "max-bridge" ] || [ "$TARGET" = "all" ]; then
   log "Синхронизация docker-compose.yml"
   rsync -az -e ssh "$LOCAL/docker-compose.yml" "$HOST:$REMOTE/docker-compose.yml"
 fi
@@ -127,6 +133,10 @@ fi
 
 if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "all" ]; then
   build_and_wait frontend
+fi
+
+if [ "$TARGET" = "max-bridge" ] || [ "$TARGET" = "all" ]; then
+  build_and_wait max-bridge
 fi
 
 # --- Пересоздание ------------------------------------------------------------

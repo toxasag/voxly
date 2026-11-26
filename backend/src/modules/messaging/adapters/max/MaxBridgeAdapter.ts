@@ -90,6 +90,15 @@ export class MaxBridgeAdapter implements IMessagingAdapter {
         };
       }
 
+      await query(
+        `UPDATE channel_accounts
+         SET status = 'connected',
+             status_message = '',
+             last_sync_at = now()
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND status = 'error' AND deleted_at IS NULL`,
+        [params.tenantId, params.channelAccountId],
+      ).catch(() => {});
+
       return {
         ok: true,
         messageId: res.messageId || String(Date.now()),

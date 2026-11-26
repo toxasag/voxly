@@ -10,7 +10,7 @@
 set -eu
 
 SERVICE="${1:?usage: remote-build.sh <service>}"
-case "$SERVICE" in backend|frontend) ;; *) printf 'Invalid service\n' >&2; exit 2 ;; esac
+case "$SERVICE" in backend|frontend|max-bridge) ;; *) printf 'Invalid service\n' >&2; exit 2 ;; esac
 LOG="/tmp/getvoxly-build-${SERVICE}.log"
 
 cd /opt/getvoxly

@@ -4,6 +4,7 @@ import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import type { ChannelSlug } from "../../types/index.js";
 import { channelLinksService } from "./channel-links.service.js";
+import { invalidateMaxBridgeLiveBotsCache, MaxBridgeService } from "./max-bridge.service.js";
 import { quotaService } from "../quotas/quota.service.js";
 import {
   isValidDomain,
@@ -109,7 +110,7 @@ const SELECT_COLUMNS = `id, channel, label, external_id, status, status_message,
  * коду из приложения. Ручное создание оставило бы в списке запись без сессии,
  * которая выглядит подключённой, но не работает и занимает место по тарифу.
  */
-const AUTH_MANAGED_CHANNELS: ReadonlySet<string> = new Set<ChannelSlug>(["telegram"]);
+const AUTH_MANAGED_CHANNELS: ReadonlySet<string> = new Set<ChannelSlug>(["telegram", "max"]);
 
 export class ChannelsService {
   /** Подключения одного канала. Удалённые скрыты: их вернёт только реактивация модуля. */
@@ -238,7 +239,9 @@ export class ChannelsService {
       throw new AppError(
         400,
         "CHANNEL_REQUIRES_AUTH_FLOW",
-        "Аккаунт Telegram подключается по коду из приложения: используйте мастер подключения.",
+        channel === "max"
+          ? "Личный аккаунт MAX подключается по QR-коду: используйте мастер подключения."
+          : "Аккаунт Telegram подключается по коду из приложения: используйте мастер подключения.",
       );
     }
 
@@ -554,6 +557,16 @@ export class ChannelsService {
     row.bound_agent_id = bound?.agent_id ?? null;
     row.bound_agent_name = bound?.name ?? null;
 
+    if (channel === "max" && statusToSet !== null) {
+      invalidateMaxBridgeLiveBotsCache();
+      const bridge = new MaxBridgeService();
+      if (statusToSet === "disabled") {
+        void bridge.disconnectSession(id).catch(() => {});
+      } else if (statusToSet === "connected") {
+        void bridge.connectSession(id).catch(() => {});
+      }
+    }
+
     return toDTO(row);
   }
 
@@ -572,5 +585,10 @@ export class ChannelsService {
     );
 
     if (row === null) throw new NotFoundError("Подключение не найдено");
+
+    if (channel === "max") {
+      invalidateMaxBridgeLiveBotsCache();
+      void new MaxBridgeService().deleteAccount(tenantId, id, false).catch(() => {});
+    }
   }
 }

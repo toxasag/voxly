@@ -40,10 +40,17 @@ Host getvoxly-vps
 ## 2. Деплой одной командой
 
 ```bash
-sh scripts/deploy.sh all        # backend + frontend
+sh scripts/deploy.sh all        # backend + frontend + max-bridge
 sh scripts/deploy.sh backend    # только backend
 sh scripts/deploy.sh frontend   # только frontend
+sh scripts/deploy.sh max-bridge # только max-bridge
 ```
+
+> **Примечание по `/usr/local/bin/vf-deploy GETVOXLY`:** системный скрипт
+> `vf-deploy` синхронизирует и пересобирает только `backend` и `frontend`.
+> При изменении `apps/max-bridge/` дополнительно выполняйте
+> `sh scripts/deploy.sh max-bridge` (или вручную `rsync` `apps/max-bridge/` +
+> `docker-compose build max-bridge && docker-compose up -d --no-deps --force-recreate max-bridge`).
 
 Скрипт выполняет: типизацию и тесты → `rsync` → сборку образов → пересоздание
 контейнеров → проверку. Останавливается на первой ошибке.
