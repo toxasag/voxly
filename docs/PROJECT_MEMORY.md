@@ -1911,6 +1911,21 @@
     - `ChannelAccountsTable.tsx` / `use-max-auth.ts`: в статусе показывается конкретная причина ошибки синка, повторное включение аккаунта с `hasCredentials` переводит его в `connected`, polling QR-статуса останавливается при `error`.
   - Замечание по охвату живой проверки: реальная отправка нового исходящего сообщения клиенту через UI с `021eb35f` намеренно не выполнялась, чтобы не беспокоить реальных клиентов `remtoua`; исходящий/входящий пайплайн покрыт unit-тестами (`24/24`, `8/8`) и проверкой маршрутизации (`getSendFromOptions`).
 
+
+
+## 2026-11-26 — Выбор сделок/нарядов в кассовых операциях, прямые расходы и чистая прибыль в сделке и наряде
+- **Контекст:** В `CreateTransactionModal` поля привязки к сделке и заказ-наряду были обычными текстовыми `<input>` с ручным вводом UUID; привязанные расходы не отображались в таблице операций и не учитывались в прибыли сделки и наряда.
+- **Что изменено:**
+  1. **Backend (`finance.types.ts`, `finance.service.ts`, `finance.routes.ts`):**
+     - `GET /api/v1/finance/transactions` теперь поддерживает фильтры `deal_id` и `repair_order_id`, поиск по названию сделки/номеру наряда и возвращает `dealTitle` и `repairTicketNumber`.
+     - В `createTransaction` и `updateTransaction` добавлена валидация `deal_id` / `repair_order_id` в рамках тенанта и автоматическая подстановка `deal_id` при привязке к заказ-наряду.
+     - Добавлены `GET /api/v1/finance/deals/:dealId/economics` и `GET /api/v1/finance/repairs/:repairOrderId/economics` + чистая функция `computeNetProfitSummary`: считают выручку, себестоимость (`deal_items` + `repair_parts`), валовую прибыль, прямые некапитализированные расходы (исключая `is_capitalized_cost = true` и `supplier_order_id IS NOT NULL`, без двойного счёта) и чистую прибыль с маржой.
+  2. **Frontend:**
+     - Создан [TransactionEntityPickers.tsx](file:///home/vibeforge/.local/share/vibeforge/worktrees/2b204178-6230-472c-a7b9-0685b367162e/session/frontend/src/components/finance/TransactionEntityPickers.tsx) и подключён в `CreateTransactionModal.tsx` и `EditTransactionModal.tsx` (выбор существующих сделок и заказ-нарядов с поиском + автоподстановка сделки из наряда + поддержка предзаполненных `defaultType`/`defaultDealId`/`defaultRepairOrderId`).
+     - В `TransactionsTable.tsx` добавлены кликабельные бейджи привязанной сделки и заказ-наряда.
+     - Создан [DealEconomicsCard.tsx](file:///home/vibeforge/.local/share/vibeforge/worktrees/2b204178-6230-472c-a7b9-0685b367162e/session/frontend/src/components/crm/deals/DealEconomicsCard.tsx) и встроен в `deal-tabs.tsx` (`HomeTab`); также прямые расходы и чистая прибыль добавлены в сводку `DealProductsServicesTab.tsx` и в `FinancialSummary.tsx` карточки заказ-наряда (с кнопкой быстрого добавления прямого расхода прямо из сделки и из наряда).
+  3. **Тесты:** добавлен `backend/src/tests/finance-economics.test.ts`.
+
 ## 2026-11-26 — Защита телефона контакта MAX от подмены третьих лиц из текста и резолв через MAX `CONTACT_INFO`
 - **Контекст и root cause (кейс `b6a700c9-4158-4f70-be02-cf7733ce672c`):**
   1. `CrmPipelineService.processIncoming` и `findContact` (`crm-pipeline.service.ts`) безусловно вытаскивали первый встречный номер телефона из текста сообщения (`extractPhoneNumber(rawText)`), из-за чего указанный клиентом в MAX номер монтажника (`+7 932 128 38 77 Тимофей`) записался как основной `contacts.phone`, перетёр автообогащение WhatsApp/Telegram (`1830762247`) и ушёл в заказ-наряды `№0032`/`№0033`, тогда как реальный телефон и ФИО клиента были доступны в MAX `CONTACT_INFO (32)` (`+79257002262`, `Михаил Арабаджи`, `max_user_id = 77056581`).
@@ -1923,4 +1938,5 @@
   4. `backend/src/modules/crm/enrichment.service.ts`: добавлен `defaultMaxByContactProvider` (`checkMaxByContact`) с перебором всех активных `native-ts` аккаунтов тенанта до нахождения профиля с телефоном; при пустом `contacts.phone` телефон и пустая фамилия добираются из MAX с последующей проверкой Telegram и WhatsApp.
   5. Тесты: добавлены регрессионные сценарии в `backend/src/tests/phone-validation.test.ts`, `crm-enrichment.test.ts`, `crm-pipeline-null-safety.test.ts`, `channel-history-sync.test.ts`.
   6. Прод-данные (`remtoua`): у `b6a700c9-4158-4f70-be02-cf7733ce672c` убраны данные монтажника (`+79321283877`, чужой Telegram ID `1830762247`), через реальный `sync` и `CrmEnrichmentService` восстановлены `Михаил Арабаджи`, `+79257002262`, WhatsApp `+79257002262` и Telegram `@Arabadji_Mikhail` (`6415795931`); в нарядах `№0032` и `№0033` исправлен основной телефон на `+79257002262`, а Тимофей (`+79321283877`, «Монтажник с объекта») перенесён в `additional_contacts`. Также при живом синке `021eb35f` автоматически восстановился телефон контакта `844f065d-4369-4f9d-af86-f62950325dae` (`Николай`, `+79015013097`).
+
 

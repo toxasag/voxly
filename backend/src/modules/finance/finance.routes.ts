@@ -65,6 +65,8 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     const filterQuery = z.object({
       search: z.string().optional(),
       type: z.enum(["income", "expense"]).optional(),
+      deal_id: z.string().uuid().optional(),
+      repair_order_id: z.string().uuid().optional(),
       sort: z.string().max(64).optional(),
       order: sortDirSchema.optional(),
       sort_by: z.string().max(64).optional(),
@@ -73,10 +75,20 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     const r = await service.transactions(req.tenant_id, p.limit, p.offset, {
       search: filterQuery.search,
       type: filterQuery.type,
+      dealId: filterQuery.deal_id,
+      repairOrderId: filterQuery.repair_order_id,
       sortBy: filterQuery.sort_by ?? filterQuery.sort,
       sortDir: filterQuery.sort_dir ?? filterQuery.order,
     });
     return reply.send({ data: r.items, meta: { limit: p.limit, offset: p.offset, total: r.total } });
+  });
+  app.get("/deals/:dealId/economics", { onRequest: read }, async (req, reply) => {
+    const { dealId } = z.object({ dealId: z.string().uuid() }).parse(req.params);
+    return reply.send({ data: await service.dealEconomics(req.tenant_id, dealId) });
+  });
+  app.get("/repairs/:repairOrderId/economics", { onRequest: read }, async (req, reply) => {
+    const { repairOrderId } = z.object({ repairOrderId: z.string().uuid() }).parse(req.params);
+    return reply.send({ data: await service.repairEconomics(req.tenant_id, repairOrderId) });
   });
   app.post("/transactions", { onRequest: write }, async (req, reply) =>
     reply.status(201).send({

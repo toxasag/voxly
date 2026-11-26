@@ -37,6 +37,7 @@ import {
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { CreateAccountModal } from "./CreateAccountModal";
 import { CounterpartyCombobox } from "./CounterpartyCombobox";
+import { TransactionEntityPickers } from "./TransactionEntityPickers";
 import { cn } from "@/lib/utils";
 
 interface CreateTransactionModalProps {
@@ -45,6 +46,13 @@ interface CreateTransactionModalProps {
   onSubmit: (payload: CreateTransactionPayload) => Promise<void> | void;
   accounts?: AccountDTO[];
   onOpenCategories?: () => void;
+  defaultType?: "income" | "expense";
+  defaultDealId?: string | null;
+  defaultDealTitle?: string | null;
+  defaultRepairOrderId?: string | null;
+  defaultRepairTicketNumber?: string | null;
+  defaultCounterpartyName?: string;
+  defaultCounterpartyInn?: string;
 }
 
 const ACCOUNT_ICONS: Record<AccountType, LucideIcon> = {
@@ -67,6 +75,13 @@ export function CreateTransactionModal({
   onSubmit,
   accounts: propAccounts,
   onOpenCategories,
+  defaultType = "income",
+  defaultDealId = null,
+  defaultDealTitle = null,
+  defaultRepairOrderId = null,
+  defaultRepairTicketNumber = null,
+  defaultCounterpartyName = "",
+  defaultCounterpartyInn = "",
 }: CreateTransactionModalProps) {
   const { data: apiAccounts = [] } = useAccounts();
   const accounts = propAccounts ?? apiAccounts;
@@ -174,22 +189,24 @@ export function CreateTransactionModal({
       setSubmitError(null);
       setSubmitting(false);
       form.reset({
-        type: "income",
+        type: defaultType,
         category_name: "",
         category_id: "",
         amount: 0,
         account_id: accounts.find((a) => a.isDefault)?.id || accounts[0]?.id || "",
         description: "",
-        counterparty_name: "",
-        counterparty_inn: "",
-        deal_id: "",
-        repair_order_id: "",
+        counterparty_name: defaultCounterpartyName || "",
+        counterparty_inn: defaultCounterpartyInn || "",
+        deal_id: defaultDealId || "",
+        repair_order_id: defaultRepairOrderId || "",
         invoice_id: "",
         occurred_at: new Date().toISOString().slice(0, 16),
       });
-      setShowLinks(false);
+      setShowLinks(Boolean(defaultDealId || defaultRepairOrderId));
     }
-  }, [open, form, accounts]);
+    // accounts намеренно не сбрасывает форму при фоновом обновлении — дефолтный счёт выставляется отдельным эффектом выше
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, form, defaultType, defaultDealId, defaultRepairOrderId, defaultCounterpartyName, defaultCounterpartyInn]);
 
   if (!open) return null;
 
@@ -489,25 +506,19 @@ export function CreateTransactionModal({
                     </button>
 
                     {showLinks && (
-                      <div className="mt-2.5 space-y-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 animate-in fade-in duration-150">
-                        <div className="space-y-1">
-                          <label className="text-[11px] font-medium text-[#666666]">ID Сделки (CRM)</label>
-                          <input
-                            type="text"
-                            placeholder="Например, deal_123..."
-                            className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                            {...form.register("deal_id")}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[11px] font-medium text-[#666666]">ID Заказ-наряда (Сервис)</label>
-                          <input
-                            type="text"
-                            placeholder="Например, ro_456..."
-                            className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                            {...form.register("repair_order_id")}
-                          />
-                        </div>
+                      <div className="mt-2.5 animate-in fade-in duration-150">
+                        <TransactionEntityPickers
+                          dealId={form.watch("deal_id") || ""}
+                          repairOrderId={form.watch("repair_order_id") || ""}
+                          initialDealTitle={defaultDealTitle}
+                          initialRepairTicketNumber={defaultRepairTicketNumber}
+                          onDealChange={(nextDealId) => {
+                            form.setValue("deal_id", nextDealId, { shouldDirty: true });
+                          }}
+                          onRepairOrderChange={(nextRepairId) => {
+                            form.setValue("repair_order_id", nextRepairId, { shouldDirty: true });
+                          }}
+                        />
                       </div>
                     )}
                   </div>
