@@ -6,6 +6,7 @@ import {
   History,
   Link2,
   Loader2,
+  MonitorSmartphone,
   Pencil,
   Plug,
   Power,
@@ -20,6 +21,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/shared/StatusBadge";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { Sheet, SheetContent, SheetHeader } from "@/components/ui/sheet";
 import { ConfigureLinkModal } from "./ConfigureLinkModal";
 import { EditChannelAccountModal } from "./EditChannelAccountModal";
 import {
@@ -30,7 +32,13 @@ import {
   type ChannelAccountDTO,
 } from "@/lib/api/use-channels";
 import { useTelegramCheckAccount } from "@/lib/api/use-telegram-auth";
-import { useMaxCheckAccount } from "@/lib/api/use-max-auth";
+import {
+  useMaxCheckAccount,
+  useMaxCloseOtherSessions,
+  useMaxSessions,
+  useMaxSwitchProvider,
+  type MaxProviderType,
+} from "@/lib/api/use-max-auth";
 import { cn } from "@/lib/utils";
 import type { ChannelStatus } from "@/schemas/channel.schema";
 import type { ChannelSlug } from "@/types";
@@ -98,7 +106,15 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   const [toggleTarget, setToggleTarget] = useState<ChannelAccountDTO | null>(null);
   const [editTarget, setEditTarget] = useState<ChannelAccountDTO | null>(null);
   const [configureTarget, setConfigureTarget] = useState<ChannelAccountDTO | null>(null);
+  const [sessionsTarget, setSessionsTarget] = useState<ChannelAccountDTO | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  const maxSessionsQuery = useMaxSessions(
+    sessionsTarget?.id ?? null,
+    channel === "max" && sessionsTarget !== null,
+  );
+  const closeOtherSessions = useMaxCloseOtherSessions();
+  const switchMaxProvider = useMaxSwitchProvider();
 
   /**
    * Проверка живости сессии поддерживается для Telegram и MAX: у них есть
@@ -274,6 +290,13 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                     <StatusBadge variant={STATUS_VARIANTS[account.status] ?? "neutral"} size="sm">
                       {CHANNEL_STATUS_LABELS[account.status] ?? account.status}
                     </StatusBadge>
+                    {channel === "max" && (
+                      <span className="inline-flex w-fit items-center rounded border border-[#e5e5e5] bg-[#fafafa] px-1.5 py-0.5 font-mono text-[10px] text-[#666666]">
+                        {account.provider === "native-ts" || account.provider === "ts"
+                          ? "Native TS"
+                          : "Bridge"}
+                      </span>
+                    )}
                     {account.historySyncStatus === "queued" && (
                       <span className="inline-flex items-center gap-1 text-[11px] text-[#666666]">
                         <Loader2 className="h-3 w-3 animate-spin text-[#4a38f5]" />
@@ -370,6 +393,19 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                         ) : (
                           <History className="h-4 w-4" />
                         )}
+                      </button>
+                    )}
+
+                    {/* Активные сессии и провайдер MAX (opcode 96 / 97) */}
+                    {channel === "max" && (
+                      <button
+                        type="button"
+                        onClick={() => setSessionsTarget(account)}
+                        title="Сессии и протокол подключения MAX"
+                        aria-label={`Сессии и протокол ${account.label}`}
+                        className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5]"
+                      >
+                        <MonitorSmartphone className="h-4 w-4" />
                       </button>
                     )}
 
@@ -509,6 +545,162 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
         channel={channel}
         account={configureTarget}
       />
+
+      {/* Шторка управления протоколом и активными сессиями MAX */}
+      <Sheet
+        open={channel === "max" && sessionsTarget !== null}
+        onClose={() => setSessionsTarget(null)}
+        width="w-[520px]"
+        resizable
+      >
+        <SheetHeader onClose={() => setSessionsTarget(null)}>
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#4a38f5]/10">
+              <MonitorSmartphone className="h-3.5 w-3.5 text-[#4a38f5]" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-[#111111]">
+                Сессии MAX: {sessionsTarget?.label}
+              </h2>
+              <p className="text-[11px] text-[#666666]">
+                Протокол подключения и список привязанных устройств
+              </p>
+            </div>
+          </div>
+        </SheetHeader>
+        <SheetContent className="p-6 space-y-5 bg-white text-[#111111]">
+          {sessionsTarget && (
+            <>
+              {/* Переключение провайдера MAX */}
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-[#111111]">Транспорт подключения MAX</p>
+                    <p className="text-[11px] text-[#666666]">
+                      Переключение сохраняет зашифрованную сессию без повторного QR-кода
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {(["native-ts", "max-bridge"] as MaxProviderType[]).map((targetProv) => {
+                    const currentProv: MaxProviderType =
+                      sessionsTarget.provider === "native-ts" || sessionsTarget.provider === "ts"
+                        ? "native-ts"
+                        : "max-bridge";
+                    const isActive = currentProv === targetProv;
+                    return (
+                      <button
+                        key={targetProv}
+                        type="button"
+                        disabled={switchMaxProvider.isPending || isActive}
+                        onClick={() => {
+                          void switchMaxProvider
+                            .mutateAsync({ id: sessionsTarget.id, provider: targetProv })
+                            .then((res) => {
+                              setSessionsTarget({ ...sessionsTarget, provider: res.provider });
+                              toast.success(
+                                res.provider === "native-ts"
+                                  ? "Переключено на нативный TypeScript-клиент web.max.ru"
+                                  : "Переключено на max-bridge",
+                              );
+                            })
+                            .catch((err) => {
+                              toast.error(
+                                err instanceof Error ? err.message : "Не удалось переключить провайдер",
+                              );
+                            });
+                        }}
+                        className={cn(
+                          "h-8 rounded-[8px] border text-xs font-medium transition-colors cursor-pointer disabled:cursor-default",
+                          isActive
+                            ? "border-[#4a38f5] bg-[#4a38f5] text-white"
+                            : "border-[#e5e5e5] bg-white text-[#111111] hover:bg-[#f5f5f5]",
+                        )}
+                      >
+                        {targetProv === "native-ts" ? "Нативный TS (ver=10)" : "max-bridge (Python)"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Список активных сессий MAX */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-[#111111]">Активные сессии</h3>
+                  {maxSessionsQuery.data?.provider === "native-ts" &&
+                    (maxSessionsQuery.data.sessions?.length ?? 0) > 1 && (
+                      <button
+                        type="button"
+                        disabled={closeOtherSessions.isPending}
+                        onClick={() => {
+                          void closeOtherSessions
+                            .mutateAsync({ id: sessionsTarget.id })
+                            .then(() => toast.success("Остальные сессии завершены"))
+                            .catch((err) =>
+                              toast.error(
+                                err instanceof Error ? err.message : "Не удалось завершить сессии",
+                              ),
+                            );
+                        }}
+                        className="h-7 rounded-[6px] border border-rose-200 bg-rose-50 px-2.5 text-[11px] font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50 cursor-pointer"
+                      >
+                        {closeOtherSessions.isPending
+                          ? "Завершение..."
+                          : "Завершить остальные сессии"}
+                      </button>
+                    )}
+                </div>
+
+                {maxSessionsQuery.isLoading ? (
+                  <div className="flex items-center gap-2 py-6 text-xs text-[#666666]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
+                    Загружаем список устройств MAX...
+                  </div>
+                ) : maxSessionsQuery.isError ? (
+                  <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                    {maxSessionsQuery.error instanceof Error
+                      ? maxSessionsQuery.error.message
+                      : "Не удалось загрузить активные сессии"}
+                  </div>
+                ) : maxSessionsQuery.data?.unsupportedReason ? (
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs text-[#666666]">
+                    {maxSessionsQuery.data.unsupportedReason}
+                  </div>
+                ) : (maxSessionsQuery.data?.sessions?.length ?? 0) === 0 ? (
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs text-[#666666]">
+                    Активных сессий не найдено.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#e5e5e5] rounded-[8px] border border-[#e5e5e5] bg-white">
+                    {maxSessionsQuery.data?.sessions.map((s) => (
+                      <div key={String(s.id)} className="flex items-start justify-between gap-3 p-3">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-[#111111]">
+                              {s.deviceName || s.platform || "Устройство MAX"}
+                            </span>
+                            {s.current && (
+                              <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                                Текущая (CRM)
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-[#666666]">
+                            {[s.deviceType, s.appVersion, s.location, s.ip].filter(Boolean).join(" · ") ||
+                              s.userAgent ||
+                              `ID: ${String(s.id)}`}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </>
   );
 });

@@ -164,6 +164,9 @@ async function main(): Promise<void> {
 
   // Регистрация исходящих сообщений через единый MessagingRegistry (MaxBridgeAdapter / MaxTsAdapter / MaxGreenApiAdapter)
   const unregisterMaxOutbound = registerOutboundSender("max", messagingRegistry.createMaxOutboundSender());
+  void messagingRegistry.start().catch((err) => {
+    app.log.warn(err, "Failed to initialize native MAX sessions on startup");
+  });
 
   // Регистрация исходящих сообщений через WhatsApp Evolution API
   const unregisterWhatsappOutbound = registerOutboundSender("whatsapp", async (message) => {

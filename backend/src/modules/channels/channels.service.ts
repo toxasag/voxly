@@ -5,6 +5,7 @@ import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import type { ChannelSlug } from "../../types/index.js";
 import { channelLinksService } from "./channel-links.service.js";
 import { invalidateMaxBridgeLiveBotsCache, MaxBridgeService } from "./max-bridge.service.js";
+import { messagingRegistry } from "../messaging/messaging-registry.js";
 import { quotaService } from "../quotas/quota.service.js";
 import {
   isValidDomain,
@@ -44,6 +45,7 @@ interface ChannelAccountRow {
   cred_username?: string | null;
   cred_phone?: string | null;
   cred_bot?: string | null;
+  cred_provider?: string | null;
   has_session?: boolean;
 }
 
@@ -68,6 +70,7 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     is_enabled: row.status === "connected",
     isEnabled: row.status === "connected",
     hasCredentials: row.has_credentials,
+    provider: row.cred_provider ?? null,
     credentials: row.credentials,
     remoteUserId: row.remote_user_id,
     lastSyncAt: toIso(row.last_sync_at),
@@ -97,6 +100,7 @@ const SELECT_COLUMNS = `id, channel, label, external_id, status, status_message,
         credentials->>'username' AS cred_username,
         credentials->>'phone' AS cred_phone,
         credentials->>'telegramBot' AS cred_bot,
+        COALESCE(credentials->>'provider', credentials->>'adapter') AS cred_provider,
         (credentials ? 'session') AS has_session,
         remote_user_id, last_sync_at,
         history_sync_status, history_sync_total, history_sync_processed, history_sync_messages, history_sync_error, history_sync_started_at, history_sync_finished_at,
@@ -122,6 +126,7 @@ export class ChannelsService {
               c.credentials->>'username' AS cred_username,
               c.credentials->>'phone' AS cred_phone,
               c.credentials->>'telegramBot' AS cred_bot,
+              COALESCE(c.credentials->>'provider', c.credentials->>'adapter') AS cred_provider,
               (c.credentials ? 'session') AS has_session,
               c.remote_user_id, c.last_sync_at,
               c.history_sync_status, c.history_sync_total, c.history_sync_processed, c.history_sync_messages, c.history_sync_error, c.history_sync_started_at, c.history_sync_finished_at,
@@ -159,6 +164,7 @@ export class ChannelsService {
               c.credentials->>'username' AS cred_username,
               c.credentials->>'phone' AS cred_phone,
               c.credentials->>'telegramBot' AS cred_bot,
+              COALESCE(c.credentials->>'provider', c.credentials->>'adapter') AS cred_provider,
               (c.credentials ? 'session') AS has_session,
               c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at
        FROM channel_accounts c
@@ -559,11 +565,21 @@ export class ChannelsService {
 
     if (channel === "max" && statusToSet !== null) {
       invalidateMaxBridgeLiveBotsCache();
-      const bridge = new MaxBridgeService();
-      if (statusToSet === "disabled") {
-        void bridge.disconnectSession(id).catch(() => {});
-      } else if (statusToSet === "connected") {
-        void bridge.connectSession(id).catch(() => {});
+      const isNative = row.cred_provider === "native-ts" || row.cred_provider === "ts";
+      if (isNative) {
+        const tsAdapter = messagingRegistry.getMaxTsAdapter();
+        if (statusToSet === "disabled") {
+          tsAdapter.disconnectAccount(id);
+        } else if (statusToSet === "connected") {
+          void tsAdapter.connectAccount(tenantId, id).catch(() => {});
+        }
+      } else {
+        const bridge = new MaxBridgeService();
+        if (statusToSet === "disabled") {
+          void bridge.disconnectSession(id).catch(() => {});
+        } else if (statusToSet === "connected") {
+          void bridge.connectSession(id).catch(() => {});
+        }
       }
     }
 
@@ -577,10 +593,10 @@ export class ChannelsService {
    * ссылаться сообщения, и жёсткое удаление оставило бы переписку без источника.
    */
   async remove(tenantId: string, channel: ChannelSlug, id: string): Promise<void> {
-    const row = await queryOne<{ id: string }>(
+    const row = await queryOne<{ id: string; cred_provider?: string | null }>(
       `UPDATE channel_accounts SET deleted_at = now()
        WHERE tenant_id = $1 AND channel = $2 AND id = $3 AND deleted_at IS NULL
-       RETURNING id`,
+       RETURNING id, COALESCE(credentials->>'provider', credentials->>'adapter') AS cred_provider`,
       [tenantId, channel, id],
     );
 
@@ -588,7 +604,11 @@ export class ChannelsService {
 
     if (channel === "max") {
       invalidateMaxBridgeLiveBotsCache();
-      void new MaxBridgeService().deleteAccount(tenantId, id, false).catch(() => {});
+      if (row.cred_provider === "native-ts" || row.cred_provider === "ts") {
+        messagingRegistry.getMaxTsAdapter().disconnectAccount(id);
+      } else {
+        void new MaxBridgeService().deleteAccount(tenantId, id, false).catch(() => {});
+      }
     }
   }
 }
