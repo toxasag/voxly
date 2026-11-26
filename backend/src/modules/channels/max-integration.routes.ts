@@ -289,9 +289,10 @@ export async function syncMaxDialogHistory(opts: {
           await query(
             `UPDATE deal_messages
              SET attachment = COALESCE(attachment, $1),
-                 attachment_type = COALESCE(attachment_type, $2)
+                 attachment_type = COALESCE(attachment_type, $2),
+                 content = CASE WHEN BTRIM(content) = '' THEN $5 ELSE content END
              WHERE id = $3 AND tenant_id = $4`,
-            [attachmentUrl, attachmentType, existing.id, opts.tenantId],
+            [attachmentUrl, attachmentType, existing.id, opts.tenantId, text],
           );
           void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, existing.id).catch(() => {});
         }
@@ -443,6 +444,16 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   }
 
   const tenantId = account.tenant_id;
+
+  // Если сессия в max-bridge жива и прислала событие, восстанавливаем статус из 'error'
+  await runWithPlatformScope(() =>
+    query(
+      `UPDATE channel_accounts
+       SET status = 'connected', status_message = '', last_sync_at = now()
+       WHERE id = $1 AND status = 'error' AND deleted_at IS NULL`,
+      [account.id],
+    ),
+  ).catch(() => {});
   const channelAccountId = account.id;
 
   // Игнорируем сообщения от самого себя

@@ -195,7 +195,7 @@ export class DealMessagingService {
 
       if (available && this.isMaxBridgeAccount(acc)) {
         const isSessionDead =
-          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+          liveMaxBotIds !== null ? !liveMaxBotIds.has(acc.id) : acc.status === "error";
         if (isSessionDead) {
           available = false;
           unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";
@@ -839,7 +839,7 @@ export class DealMessagingService {
 
       if (available && this.isMaxBridgeAccount(acc)) {
         const isSessionDead =
-          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+          liveMaxBotIds !== null ? !liveMaxBotIds.has(acc.id) : acc.status === "error";
         if (isSessionDead) {
           available = false;
           unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";

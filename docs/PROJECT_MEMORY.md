@@ -1843,6 +1843,17 @@
   2. `backend/src/modules/crm/enrichment.service.ts`: удалён кросс-тенантный fallback выбора MAX-аккаунта без `WHERE tenant_id = $1`.
   3. `backend/src/modules/channels/max-integration.routes.ts`: добавлен хелпер `formatMaxAccountLabel`, предотвращающий повторное добавление `(${firstName})`.
 
+
+## 2026-11-26 — Починка пересланных фото MAX (ForwardLink) и статуса «Писать от»
+- **Контекст и root cause:**
+  1. В сделке `d0f4f677-e8ca-4a68-840f-b94446ede1bd` (тенант `remtoua`) клиент переслал в MAX 2 фотографии (`FORWARD`). У пересланных сообщений в `pymax` `msg.attaches` и `msg.text` пустые, а реальные вложения лежат в `msg.link.message.attaches`. В `/opt/voxly/apps/max-bridge/src/main.py` (`_extract_inbound_attachments`, `_message_text`, `/messages/media`, `_resolve_media_from_message`) `link.message` не проверялся, поэтому сообщения сохранялись с `content = ''` и `attachment = NULL`.
+  2. В `max-bridge` `_listener_watchdog` каждые 5 минут повторно вешал `on_message` без флага дедупликации, а `_ensure_live_client` не проверял `client.is_connected`.
+  3. В `backend/src/modules/crm/deals/deal-messaging.service.ts` (`getSendFromOptions`, `getChannelOptions`) сессия MAX считалась мёртвой при застрявшем в БД `channel_accounts.status = 'error'` даже когда `liveMaxBotIds` подтверждал её активность в `max-bridge`.
+- **Что сделано:**
+  1. `/opt/voxly/apps/max-bridge/src/main.py`: добавлены `_forward_link_message` и `_msg_attaches`, пересланные фото/текст теперь извлекаются и скачиваются через `/messages/media`; добавлена дедупликация `_voxly_listener_attached` и проверка `is_connected` в `_ensure_live_client`.
+  2. [deal-messaging.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/crm/deals/deal-messaging.service.ts): приоритет отдаётся `liveMaxBotIds.has(acc.id)` при наличии ответа от `max-bridge`.
+  3. [max-integration.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-integration.routes.ts): при входящем/исходящем событии статус `channel_accounts` автоматически восстанавливается из `'error'` в `'connected'`, а `syncMaxPrivateDialog` заполняет `content` и `attachment` у уже существующих пустых сообщений.
+
 ## 2026-11-26 — Сквозная серверная сортировка, сквозной выбор (`excluded_ids` + `filters`) и пагинация таблиц
 - **Контекст:** Во всех таблицах платформы («Склад», CRM, «Ремонты», «Финансы», «Услуги», логи админки) сортировка работала только по текущей странице, мультивыбор сбрасывался или игнорировал снятые чекбоксы после «Выбрать все N» (`excluded_ids`) и активные фильтры (включая баг `bulkDelete` в `tasks` без `filters` и `deals` без `stage_id`/`preset`), а часть разделов загружалась без пагинации или с жёстким `limit: 25/100/200`.
 - **Что изменено:**
