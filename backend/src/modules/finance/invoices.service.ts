@@ -498,9 +498,13 @@ export class InvoicesService {
     });
 
     if (autoSyncOrgId) {
-      void this.syncToElba(tenant, created.id).catch((err) => {
+      try {
+        const synced = await this.syncToElba(tenant, created.id);
+        return synced.invoice;
+      } catch (err) {
         console.error("Auto-sync invoice to Kontur.Elba failed", { invoiceId: created.id, err });
-      });
+        return this.get(tenant, created.id).catch(() => created);
+      }
     }
 
     return created;
@@ -822,9 +826,13 @@ export class InvoicesService {
     });
 
     if (autoSyncOrgId) {
-      void this.syncToElba(tenant, created.id).catch((err) => {
+      try {
+        const synced = await this.syncToElba(tenant, created.id);
+        return synced.invoice;
+      } catch (err) {
         console.error("Auto-sync invoice to Kontur.Elba failed", { invoiceId: created.id, err });
-      });
+        return this.get(tenant, created.id).catch(() => created);
+      }
     }
 
     return created;
@@ -979,12 +987,13 @@ export class InvoicesService {
         },
       );
 
-      const ndsRate = mapVatModeToElbaNds(inv.vatMode, inv.vatRate);
+      const withNDS = inv.vatMode !== "none" && inv.vatRate > 0;
+      const ndsRate = withNDS ? mapVatModeToElbaNds(inv.vatMode, inv.vatRate) : null;
       const createdBill = await elbaClient.createBill(creds.apiKey, creds.organizationId, {
         number: inv.invoiceNumber,
         date: inv.issueDate.slice(0, 10),
-        withNDS: inv.vatRate > 0,
-        sumsWithNDS: true,
+        withNDS,
+        sumsWithNDS: withNDS ? true : null,
         comment: inv.notes || undefined,
         bankAccountId: creds.bankAccountId || undefined,
         contractorId,
