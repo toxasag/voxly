@@ -39,6 +39,10 @@ export interface Transaction {
   linked_entity_id: string | null;
   linked_entity_type: string | null;
   linked_entity_label: string | null;
+  deal_id?: string | null;
+  deal_title?: string | null;
+  repair_order_id?: string | null;
+  repair_ticket_number?: string | null;
   supplier_order_id?: string | null;
   is_capitalized_cost?: boolean;
   counterparty: string;

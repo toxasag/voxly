@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo, useState, useCallback } from "react";
+import Link from "next/link";
 import {
   Search,
   Wrench,
@@ -350,12 +351,14 @@ export const TransactionsTable = memo(function TransactionsTable({
       {
         id: "counterparty",
         header: "Контрагент / Связь",
-        width: 180,
+        width: 220,
         render: (tx) => {
           const hasCounterparty = Boolean(tx.counterparty);
           const hasInn = Boolean(tx.counterparty_inn);
+          const hasDeal = Boolean(tx.deal_id);
+          const hasRepair = Boolean(tx.repair_order_id);
 
-          if (!hasCounterparty && !tx.linked_entity_label) {
+          if (!hasCounterparty && !hasDeal && !hasRepair && !tx.linked_entity_label) {
             return (
               <RecordCellShell>
                 <span className="text-xs text-[#888888]">—</span>
@@ -365,21 +368,47 @@ export const TransactionsTable = memo(function TransactionsTable({
 
           return (
             <RecordCellShell>
-              <div className="flex items-center gap-1.5 truncate text-xs">
+              <div className="flex items-center gap-1.5 min-w-0 text-xs">
                 {hasCounterparty ? (
                   hasInn ? (
                     <Building2 className="h-3 w-3 shrink-0 text-[#4a38f5]" />
                   ) : (
                     <User className="h-3 w-3 shrink-0 text-[#4a38f5]" />
                   )
+                ) : hasDeal ? (
+                  <Briefcase className="h-3 w-3 shrink-0 text-[#4a38f5]" />
+                ) : hasRepair ? (
+                  <Wrench className="h-3 w-3 shrink-0 text-[#4a38f5]" />
                 ) : null}
-                <div className="flex flex-col truncate leading-tight">
-                  <span className="truncate text-[#111111] font-medium">
-                    {tx.counterparty || tx.linked_entity_label}
-                  </span>
-                  {hasInn && (
-                    <span className="font-mono text-[10px] text-[#888888]">
-                      ИНН {tx.counterparty_inn}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {hasCounterparty && (
+                    <span className="truncate text-[#111111] font-medium" title={hasInn ? `${tx.counterparty} (ИНН ${tx.counterparty_inn})` : tx.counterparty}>
+                      {tx.counterparty}
+                    </span>
+                  )}
+                  {hasDeal && (
+                    <Link
+                      href={`/crm/deals?record=${tx.deal_id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title={tx.deal_title ? `Сделка: ${tx.deal_title}` : "Открыть сделку"}
+                      className="inline-flex items-center gap-1 rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#4a38f5] hover:bg-[#4a38f5]/15 transition-colors max-w-[130px] truncate shrink-0"
+                    >
+                      <span className="truncate">{tx.deal_title || "Сделка"}</span>
+                    </Link>
+                  )}
+                  {hasRepair && (
+                    <Link
+                      href={`/repairs/${tx.repair_order_id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title={tx.repair_ticket_number ? `Наряд ${tx.repair_ticket_number}` : "Открыть наряд"}
+                      className="inline-flex items-center gap-1 rounded-[4px] border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-100 transition-colors shrink-0 tabular-nums"
+                    >
+                      {tx.repair_ticket_number || "Наряд"}
+                    </Link>
+                  )}
+                  {!hasCounterparty && !hasDeal && !hasRepair && tx.linked_entity_label && (
+                    <span className="truncate text-[#111111] font-medium">
+                      {tx.linked_entity_label}
                     </span>
                   )}
                 </div>

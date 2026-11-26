@@ -1911,3 +1911,16 @@
     - `ChannelAccountsTable.tsx` / `use-max-auth.ts`: в статусе показывается конкретная причина ошибки синка, повторное включение аккаунта с `hasCredentials` переводит его в `connected`, polling QR-статуса останавливается при `error`.
   - Замечание по охвату живой проверки: реальная отправка нового исходящего сообщения клиенту через UI с `021eb35f` намеренно не выполнялась, чтобы не беспокоить реальных клиентов `remtoua`; исходящий/входящий пайплайн покрыт unit-тестами (`24/24`, `8/8`) и проверкой маршрутизации (`getSendFromOptions`).
 
+
+## 2026-11-26 — Выбор сделок/нарядов в кассовых операциях, прямые расходы и чистая прибыль в сделке и наряде
+- **Контекст:** В `CreateTransactionModal` поля привязки к сделке и заказ-наряду были обычными текстовыми `<input>` с ручным вводом UUID; привязанные расходы не отображались в таблице операций и не учитывались в прибыли сделки и наряда.
+- **Что изменено:**
+  1. **Backend (`finance.types.ts`, `finance.service.ts`, `finance.routes.ts`):**
+     - `GET /api/v1/finance/transactions` теперь поддерживает фильтры `deal_id` и `repair_order_id`, поиск по названию сделки/номеру наряда и возвращает `dealTitle` и `repairTicketNumber`.
+     - В `createTransaction` и `updateTransaction` добавлена валидация `deal_id` / `repair_order_id` в рамках тенанта и автоматическая подстановка `deal_id` при привязке к заказ-наряду.
+     - Добавлены `GET /api/v1/finance/deals/:dealId/economics` и `GET /api/v1/finance/repairs/:repairOrderId/economics` + чистая функция `computeNetProfitSummary`: считают выручку, себестоимость (`deal_items` + `repair_parts`), валовую прибыль, прямые некапитализированные расходы (исключая `is_capitalized_cost = true` и `supplier_order_id IS NOT NULL`, без двойного счёта) и чистую прибыль с маржой.
+  2. **Frontend:**
+     - Создан [TransactionEntityPickers.tsx](file:///home/vibeforge/.local/share/vibeforge/worktrees/2b204178-6230-472c-a7b9-0685b367162e/session/frontend/src/components/finance/TransactionEntityPickers.tsx) и подключён в `CreateTransactionModal.tsx` и `EditTransactionModal.tsx` (выбор существующих сделок и заказ-нарядов с поиском + автоподстановка сделки из наряда + поддержка предзаполненных `defaultType`/`defaultDealId`/`defaultRepairOrderId`).
+     - В `TransactionsTable.tsx` добавлены кликабельные бейджи привязанной сделки и заказ-наряда.
+     - Создан [DealEconomicsCard.tsx](file:///home/vibeforge/.local/share/vibeforge/worktrees/2b204178-6230-472c-a7b9-0685b367162e/session/frontend/src/components/crm/deals/DealEconomicsCard.tsx) и встроен в `deal-tabs.tsx` (`HomeTab`); также прямые расходы и чистая прибыль добавлены в сводку `DealProductsServicesTab.tsx` и в `FinancialSummary.tsx` карточки заказ-наряда (с кнопкой быстрого добавления прямого расхода прямо из сделки и из наряда).
+  3. **Тесты:** добавлен `backend/src/tests/finance-economics.test.ts`.

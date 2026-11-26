@@ -29,12 +29,18 @@ import {
   useCreatePurchaseRequest,
 } from "@/lib/api/use-warehouse";
 import { useServices } from "@/lib/api/use-services";
+import { useDealEconomics } from "@/lib/api/use-invoices";
+import { useAuth } from "@/lib/auth/use-auth";
+import { isModuleInstalled } from "@/lib/context/tenant";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/shared/Skeleton";
 
 import { formatRub } from "@/lib/utils/format";
 
 export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
+  const { tenant } = useAuth();
+  const hasFinance = isModuleInstalled(tenant?.installedModules ?? [], "finance");
+  const { data: dealEconomics } = useDealEconomics(deal.id, hasFinance);
   const { data: dealItemsData, isLoading: isItemsLoading } = useDealItems(deal.id);
   const items = dealItemsData?.data ?? [];
   const totalBudget = dealItemsData?.totalBudget ?? deal.budget ?? 0;
@@ -311,10 +317,50 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
               <span className="text-[#e5e5e5]">|</span>
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-[#666666]">Итого бюджет:</span>
-                <span className="text-sm font-bold font-mono text-[#4a38f5]">
+                <span className="text-sm font-bold font-sans tabular-nums text-[#4a38f5]">
                   {formatRub(stats.calculatedBudget || totalBudget)}
                 </span>
               </div>
+              {hasFinance && dealEconomics && (
+                <>
+                  <span className="text-[#e5e5e5]">|</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-[#666666]">Прямые расходы:</span>
+                    <span
+                      className={cn(
+                        "text-xs font-semibold tabular-nums",
+                        dealEconomics.directExpenses > 0 ? "text-rose-700" : "text-[#666666]",
+                      )}
+                    >
+                      {dealEconomics.directExpenses > 0
+                        ? `−${formatRub(dealEconomics.directExpenses)}`
+                        : formatRub(0)}
+                    </span>
+                  </div>
+                  <span className="text-[#e5e5e5]">|</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-[#666666]">Чистая прибыль:</span>
+                    <span
+                      className={cn(
+                        "text-sm font-bold tabular-nums",
+                        dealEconomics.netProfit < 0 ? "text-rose-700" : "text-emerald-700",
+                      )}
+                    >
+                      {formatRub(dealEconomics.netProfit)}
+                    </span>
+                    {dealEconomics.revenue > 0 && (
+                      <span
+                        className={cn(
+                          "text-[11px] tabular-nums",
+                          dealEconomics.netProfit < 0 ? "text-rose-700/80" : "text-emerald-700/80",
+                        )}
+                      >
+                        ({dealEconomics.netMarginPercent}%)
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
             <p className="text-[11px] text-[#888888] mt-1">
               При закрытии сделки в «Успешно» товары автоматически списываются по FIFO; при нехватке на складе создаётся заявка на закупку на /warehouse

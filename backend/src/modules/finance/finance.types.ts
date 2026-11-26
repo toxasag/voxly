@@ -223,7 +223,9 @@ export interface TransactionDTO {
   accountId: string;
   accountName: string;
   dealId: string | null;
+  dealTitle?: string | null;
   repairOrderId: string | null;
+  repairTicketNumber?: string | null;
   invoiceId: string | null;
   supplierOrderId?: string | null;
   isCapitalizedCost?: boolean;
@@ -232,6 +234,70 @@ export interface TransactionDTO {
   occurredAt: string;
   createdById?: string | null;
   createdByName?: string | null;
+}
+
+export interface DirectExpenseItemDTO {
+  id: string;
+  amount: number;
+  currency: string;
+  categoryName: string;
+  description: string;
+  counterpartyName: string;
+  accountName: string;
+  occurredAt: string;
+  dealId: string | null;
+  repairOrderId: string | null;
+  repairTicketNumber: string | null;
+  scope: "deal" | "repair";
+}
+
+export interface DealEconomicsDTO {
+  dealId: string;
+  revenue: number;
+  itemsRevenue: number;
+  repairsRevenue: number;
+  cogs: number;
+  grossProfit: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+  expenses: DirectExpenseItemDTO[];
+}
+
+export interface RepairEconomicsDTO {
+  repairOrderId: string;
+  dealId: string | null;
+  revenue: number;
+  cogs: number;
+  grossProfit: number;
+  directRepairExpenses: number;
+  dealSharedExpenses: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+  expenses: DirectExpenseItemDTO[];
+}
+
+export function computeNetProfitSummary(input: {
+  revenue: number;
+  cogs: number;
+  directExpenses: number;
+}): {
+  revenue: number;
+  cogs: number;
+  grossProfit: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+} {
+  const round2 = (v: number): number => Math.round(v * 100) / 100;
+  const revenue = round2(input.revenue);
+  const cogs = round2(input.cogs);
+  const directExpenses = round2(input.directExpenses);
+  const grossProfit = round2(revenue - cogs);
+  const netProfit = round2(grossProfit - directExpenses);
+  const netMarginPercent = revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0;
+  return { revenue, cogs, grossProfit, directExpenses, netProfit, netMarginPercent };
 }
 
 export interface InvoiceItemDTO {
