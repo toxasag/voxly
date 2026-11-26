@@ -678,7 +678,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-medium text-[#111111]">
-                              {s.deviceName || s.platform || "Устройство MAX"}
+                              {s.info || s.deviceName || s.platform || s.client || "Устройство MAX"}
                             </span>
                             {s.current && (
                               <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
@@ -687,7 +687,17 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                             )}
                           </div>
                           <p className="text-[11px] text-[#666666]">
-                            {[s.deviceType, s.appVersion, s.location, s.ip].filter(Boolean).join(" · ") ||
+                            {[
+                              s.client || s.deviceType,
+                              s.appVersion,
+                              s.location,
+                              s.ip,
+                              s.lastActivity || s.time
+                                ? formatDate(new Date(s.lastActivity || s.time || 0).toISOString())
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ") ||
                               s.userAgent ||
                               `ID: ${String(s.id)}`}
                           </p>

@@ -36,6 +36,9 @@ export interface MaxSessionRecord {
   id: number | string;
   deviceId?: string;
   current?: boolean;
+  client?: string;
+  info?: string;
+  time?: number;
   userAgent?: string;
   appVersion?: string;
   deviceName?: string;

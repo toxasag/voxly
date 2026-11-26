@@ -54,6 +54,9 @@ export interface MaxSessionRecord {
   id: number | string;
   deviceId?: string;
   current?: boolean;
+  client?: string;
+  info?: string;
+  time?: number;
   userAgent?: string;
   appVersion?: string;
   deviceName?: string;
@@ -1570,21 +1573,35 @@ export class MaxTsAdapter implements IMessagingAdapter {
     const session = await this.getOrCreateSession(tenantId, channelAccountId);
     const res = await this.sendRpc(session, MaxOpcode.SESSIONS_INFO, {});
     const list = Array.isArray(res.sessions) ? (res.sessions as Record<string, unknown>[]) : [];
-    return list.map((s) => ({
-      id: typeof s.id === "bigint" ? s.id.toString() : ((s.id as string | number) ?? ""),
-      deviceId: typeof s.deviceId === "string" ? s.deviceId : undefined,
-      current: Boolean(s.current),
-      userAgent: typeof s.userAgent === "string" ? s.userAgent : undefined,
-      appVersion: typeof s.appVersion === "string" ? s.appVersion : undefined,
-      deviceName: typeof s.deviceName === "string" ? s.deviceName : undefined,
-      deviceType: typeof s.deviceType === "string" ? s.deviceType : undefined,
-      platform: typeof s.platform === "string" ? s.platform : undefined,
-      ip: typeof s.ip === "string" ? s.ip : undefined,
-      location: typeof s.location === "string" ? s.location : undefined,
-      created: typeof s.created === "number" ? s.created : undefined,
-      updated: typeof s.updated === "number" ? s.updated : undefined,
-      lastActivity: typeof s.lastActivity === "number" ? s.lastActivity : undefined,
-    }));
+    return list.map((s, idx) => {
+      const client = typeof s.client === "string" ? s.client : undefined;
+      const info = typeof s.info === "string" ? s.info : undefined;
+      const time = typeof s.time === "number" ? s.time : undefined;
+      const id =
+        s.id !== undefined && s.id !== null
+          ? typeof s.id === "bigint"
+            ? s.id.toString()
+            : (s.id as string | number)
+          : `${client ?? "session"}-${time ?? idx}`;
+      return {
+        id,
+        deviceId: typeof s.deviceId === "string" ? s.deviceId : undefined,
+        current: Boolean(s.current),
+        client,
+        info,
+        time,
+        userAgent: typeof s.userAgent === "string" ? s.userAgent : undefined,
+        appVersion: typeof s.appVersion === "string" ? s.appVersion : undefined,
+        deviceName: (typeof s.deviceName === "string" ? s.deviceName : undefined) ?? info,
+        deviceType: (typeof s.deviceType === "string" ? s.deviceType : undefined) ?? client,
+        platform: typeof s.platform === "string" ? s.platform : undefined,
+        ip: typeof s.ip === "string" ? s.ip : undefined,
+        location: typeof s.location === "string" ? s.location : undefined,
+        created: typeof s.created === "number" ? s.created : undefined,
+        updated: typeof s.updated === "number" ? s.updated : undefined,
+        lastActivity: (typeof s.lastActivity === "number" ? s.lastActivity : undefined) ?? time,
+      };
+    });
   }
 
   async closeOtherSessions(tenantId: string, channelAccountId: string): Promise<boolean> {

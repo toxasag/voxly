@@ -540,15 +540,19 @@ function writeExtraLength(dst: number[], value: number): void {
 }
 
 export function lz4CompressBlock(src: Buffer): Buffer {
+  // По спецификации LZ4 (LZ4_decompress_safe) последние 5 байт блока обязаны быть литералами
+  // (LASTLITERALS = 5), а поиск совпадений останавливается за MFLIMIT = 12 байт до конца.
   const dst: number[] = [];
   let pos = 0;
   let anchor = 0;
+  const searchLimit = Math.max(0, src.length - 12);
+  const matchEndLimit = Math.max(0, src.length - 5);
 
-  while (pos < src.length) {
+  while (pos < searchLimit) {
     let matchOffset = 0;
     let matchLen = 0;
 
-    if (pos + 4 <= src.length) {
+    if (pos + 4 <= matchEndLimit) {
       const minI = Math.max(0, pos - 65535);
       for (let i = pos - 1; i >= minI; i--) {
         if (
@@ -558,7 +562,7 @@ export function lz4CompressBlock(src: Buffer): Buffer {
           src[i + 3] === src[pos + 3]
         ) {
           let len = 4;
-          const maxLen = src.length - pos;
+          const maxLen = matchEndLimit - pos;
           while (len < maxLen && src[i + len] === src[pos + len]) {
             len++;
           }
@@ -599,17 +603,15 @@ export function lz4CompressBlock(src: Buffer): Buffer {
     anchor = pos;
   }
 
-  // Last literals sequence
+  // Last literals sequence (всегда присутствует, минимум 5 байт при src.length >= 5)
   const trailingLitLen = src.length - anchor;
-  if (trailingLitLen > 0 || src.length === 0) {
-    const token = (trailingLitLen >= 15 ? 15 : trailingLitLen) << 4;
-    dst.push(token);
-    if (trailingLitLen >= 15) {
-      writeExtraLength(dst, trailingLitLen - 15);
-    }
-    for (let i = anchor; i < src.length; i++) {
-      dst.push(src[i]!);
-    }
+  const token = (trailingLitLen >= 15 ? 15 : trailingLitLen) << 4;
+  dst.push(token);
+  if (trailingLitLen >= 15) {
+    writeExtraLength(dst, trailingLitLen - 15);
+  }
+  for (let i = anchor; i < src.length; i++) {
+    dst.push(src[i]!);
   }
 
   return Buffer.from(dst);
@@ -699,7 +701,7 @@ export function packMaxFrame(opts: {
   if (opts.compress !== false && body.length > MAX_LZ4_THRESHOLD_BYTES) {
     const compressed = lz4CompressBlock(body);
     if (compressed.length > 0 && compressed.length < body.length) {
-      lz4Factor = Math.max(1, Math.min(127, Math.ceil(body.length / compressed.length)));
+      lz4Factor = Math.max(1, Math.min(127, Math.floor(body.length / compressed.length) + 1));
       body = compressed;
     }
   }

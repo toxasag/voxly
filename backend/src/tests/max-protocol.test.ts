@@ -100,6 +100,33 @@ describe("max-protocol (web.max.ru ver=10 binary framing)", () => {
     expect(decoded.payload.message.text).toBe(repeatedText);
   });
 
+  it("keeps at least 5 trailing literals in LZ4 blocks even when tail sync timestamps repeat", () => {
+    const loginLikePayload = {
+      token: "tok-" + "a".repeat(120),
+      chatsCount: 40,
+      interactive: true,
+      chatsSync: 1795684065403,
+      contactsSync: 1795684065403,
+      presenceSync: 1795684065403,
+      draftsSync: 1795684065403,
+    };
+
+    const raw = encodeMsgpack(loginLikePayload);
+    const compressed = lz4CompressBlock(raw);
+    expect(compressed.length).toBeLessThan(raw.length);
+    // Последние 5 байт оригинала гарантированно присутствуют в конце сжатого блока как литералы
+    expect(compressed.subarray(compressed.length - 5).equals(raw.subarray(raw.length - 5))).toBe(true);
+
+    const frame = packMaxFrame({
+      seq: 2,
+      opcode: MaxOpcode.LOGIN,
+      payload: loginLikePayload,
+    });
+    const decoded = unpackMaxFrame<typeof loginLikePayload>(frame);
+    expect(decoded.payload.chatsSync).toBe(1795684065403);
+    expect(decoded.payload.draftsSync).toBe(1795684065403);
+  });
+
   it("rejects truncated frames cleanly", () => {
     expect(() => unpackMaxFrame(Buffer.from([0x0a, 0x00, 0x00]))).toThrow("MAX frame too short");
 
