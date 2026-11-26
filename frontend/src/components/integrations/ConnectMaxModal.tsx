@@ -29,6 +29,7 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
   const { data: statusData, refetch } = useMaxQrStatus(
     name,
     open && Boolean(name),
+    initialAccount?.id,
   );
 
   useEffect(() => {
@@ -43,21 +44,24 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
   const isWaitingPassword =
     statusData?.status === "waiting_password" ||
     statusData?.status === "processing_password" ||
-    Boolean(statusData?.passwordHint);
+    Boolean(statusData?.passwordHint && statusData?.status !== "error");
   const isError =
     statusData?.status === "error" ||
-    (Boolean(statusData?.error) && statusData?.status !== "waiting_password");
+    (Boolean(statusData?.error) &&
+      statusData?.status !== "waiting_password" &&
+      statusData?.status !== "processing_password");
   const isPreparing = startQr.isPending || statusData?.status === "preparing";
   const activeQr = !isError && statusData?.status === "qr_ready" ? (statusData?.qr || qrBase64) : null;
 
-  const handleStart = (customName?: string) => {
+  const handleStart = (customName?: string, customBotId?: string) => {
     if (startQr.isPending) return;
     const activeName = customName ?? name;
+    const activeBotId = customBotId ?? initialAccount?.id;
     setQrBase64(null);
     setPassword("");
-    queryClient.removeQueries({ queryKey: ["max", "qr-status", activeName] });
+    queryClient.removeQueries({ queryKey: ["max", "qr-status", activeBotId ?? null, activeName] });
     startQr.mutate(
-      { name: activeName },
+      { name: activeName, ...(activeBotId ? { botId: activeBotId } : {}) },
       {
         onSuccess: (data) => {
           if (data?.qr) {
@@ -81,7 +85,7 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
       setName(initialName);
       setPassword("");
       setQrBase64(null);
-      handleStart(initialName);
+      handleStart(initialName, initialAccount?.id);
     } else if (!open) {
       startedRef.current = false;
       setQrBase64(null);
@@ -94,7 +98,12 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
     if (!password) return;
     setIsSubmittingPassword(true);
     try {
-      await submitPassword.mutateAsync({ name, password });
+      await submitPassword.mutateAsync({
+        name,
+        password,
+        ...(initialAccount?.id ? { botId: initialAccount.id } : {}),
+      });
+      setPassword("");
       toast.success("Пароль отправлен, завершаем авторизацию...");
       void refetch();
     } catch (err: unknown) {
@@ -230,8 +239,8 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Основной"
-                    disabled={startQr.isPending}
-                    className="h-8 flex-1 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    disabled={startQr.isPending || Boolean(initialAccount)}
+                    className="h-8 flex-1 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 disabled:bg-[#fafafa] disabled:text-[#666666]"
                   />
                   <button
                     type="button"

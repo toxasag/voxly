@@ -1,0 +1,6 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+httpx==0.28.1
+qrcode[pil]>=8.2
+# Unofficial MAX user API — requires Python ≥3.10 (Docker image is 3.12).
+maxapi-python>=2.3.0
