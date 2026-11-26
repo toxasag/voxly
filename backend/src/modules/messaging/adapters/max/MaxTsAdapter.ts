@@ -1063,12 +1063,31 @@ export class MaxTsAdapter implements IMessagingAdapter {
     if (clean.startsWith("+") || (/^[78]\d{10}$/.test(digits) && !session.chats.has(clean))) {
       const phoneE164 =
         clean.startsWith("+") ? `+${digits}` : digits.startsWith("8") ? `+7${digits.slice(1)}` : `+${digits}`;
-      const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO_BY_PHONE, { phone: phoneE164 });
-      const contact = res.contact as RawMaxContact | undefined;
-      if (!contact?.id) {
+      let uid = "";
+      try {
+        const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO_BY_PHONE, { phone: phoneE164 });
+        const contact = res.contact as RawMaxContact | undefined;
+        if (contact?.id) {
+          uid = asStrId(contact.id);
+        }
+      } catch {
+        // Fallback ниже поищет среди уже известных контактов/диалогов текущей сессии
+      }
+
+      if (!uid && digits.length >= 10) {
+        const tail10 = digits.slice(-10);
+        for (const cachedContact of session.contacts.values()) {
+          const cPhone = String(cachedContact.phone ?? cachedContact.phones?.[0]?.number ?? "").replace(/\D/g, "");
+          if (cPhone.length >= 10 && cPhone.slice(-10) === tail10 && cachedContact.id !== undefined) {
+            uid = asStrId(cachedContact.id);
+            break;
+          }
+        }
+      }
+
+      if (!uid) {
         throw new Error("Контакт не найден в MAX по номеру телефона");
       }
-      const uid = asStrId(contact.id);
       if (session.selfUserId && uid === session.selfUserId) {
         throw new Error("Телефон совпадает с номером подключённого MAX-аккаунта");
       }
@@ -1085,6 +1104,35 @@ export class MaxTsAdapter implements IMessagingAdapter {
     // 3. Уже известный chatId
     if (session.chats.has(clean)) {
       return toMaxIdValue(clean);
+    }
+
+    // 4. Может быть передан bare peerUserId (из contact.socials max_user_id) вместо XOR chatId:
+    //    ищем среди участников загруженных диалогов или резолвим user -> chatId XOR meId
+    if (/^\d+$/.test(clean) && session.selfUserId) {
+      for (const chat of session.chats.values()) {
+        if (chat.participants && Object.prototype.hasOwnProperty.call(chat.participants, clean)) {
+          return toMaxIdValue(chat.id);
+        }
+      }
+      if (session.contacts.has(clean)) {
+        await this.sendRpc(session, MaxOpcode.CONTACT_ADD, {
+          contactId: toMaxIdValue(clean),
+          action: "ADD",
+        }).catch(() => {});
+        return computeDialogChatId(session.selfUserId, clean);
+      }
+      const contactCheck = await this.sendRpc(session, MaxOpcode.CONTACT_INFO, {
+        contactIds: [toMaxIdValue(clean)],
+      }).catch(() => null);
+      const foundList = Array.isArray(contactCheck?.contacts) ? (contactCheck?.contacts as RawMaxContact[]) : [];
+      if (foundList[0]?.id !== undefined) {
+        session.contacts.set(clean, foundList[0]);
+        await this.sendRpc(session, MaxOpcode.CONTACT_ADD, {
+          contactId: toMaxIdValue(clean),
+          action: "ADD",
+        }).catch(() => {});
+        return computeDialogChatId(session.selfUserId, clean);
+      }
     }
 
     return toMaxIdValue(clean);
