@@ -27,6 +27,9 @@ import {
 } from "@/lib/repairs/repairs.types";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
+import { WarehousePagination } from "@/components/warehouse/WarehousePagination";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { PrintTemplateSettingsDrawer } from "./PrintTemplateSettingsDrawer";
@@ -56,6 +59,15 @@ interface RepairsTableProps {
   onPrintReceipt: (ticket: RepairTicket) => void;
   onPrintWorkOrder?: (ticket: RepairTicket) => void;
   onCopyTicket?: (ticket: RepairTicket) => void;
+  totalCount?: number;
+  page?: number;
+  limit?: number;
+  onPageChange?: (page: number) => void;
+  onLimitChange?: (limit: number) => void;
+  sortColumn?: string | null;
+  sortAsc?: boolean;
+  onSortChange?: (columnId: string | null, asc: boolean) => void;
+  serverSort?: boolean;
   isLoading?: boolean;
   isError?: boolean;
   error?: Error | null;
@@ -543,14 +555,37 @@ export const RepairsTable = memo(function RepairsTable({
   onPrintReceipt,
   onPrintWorkOrder,
   onCopyTicket,
+  totalCount,
+  page,
+  limit,
+  onPageChange,
+  onLimitChange,
+  sortColumn,
+  sortAsc,
+  onSortChange,
+  serverSort = false,
   isLoading,
   isError,
   error,
 }: RepairsTableProps) {
   const router = useRouter();
+  const effectiveTotal = totalCount ?? tickets.length;
+  const pageTicketIds = useMemo(() => tickets.map((t) => t.id), [tickets]);
+  const filtersScope = useMemo(
+    () => ({
+      status: filterStatus === "all" ? undefined : filterStatus,
+      payment_status:
+        filterPaymentStatus && filterPaymentStatus !== "all" ? filterPaymentStatus : undefined,
+      search: searchQuery.trim() || undefined,
+    }),
+    [filterStatus, filterPaymentStatus, searchQuery],
+  );
+  const selection = useTableSelection({
+    filterKey: JSON.stringify(filtersScope),
+    totalCount: effectiveTotal,
+  });
 
-  // Пакетные операции (выбор строк чекбоксами)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Пакетные операции
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [selectedTicketForSettings, setSelectedTicketForSettings] = useState<RepairTicket | null>(null);
@@ -569,14 +604,16 @@ export const RepairsTable = memo(function RepairsTable({
   );
 
   const handleBulkStatusChange = async (newStatus: RepairStatus) => {
-    if (selectedIds.size === 0) return;
+    const count = selection.effectiveSelectedCount;
+    if (count === 0) return;
     try {
+      const payload = selection.buildBulkPayload(filtersScope);
       await batchStatusMutation.mutateAsync({
-        ids: Array.from(selectedIds),
+        ...payload,
         status: newStatus,
       });
-      toast.success(`Статус обновлен для ${selectedIds.size} наряд-заказов`);
-      setSelectedIds(new Set());
+      toast.success(`Статус обновлен для ${count} наряд-заказов`);
+      selection.clear();
       setSelectedBulkStatus("");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Ошибка при смене статуса";
@@ -585,13 +622,13 @@ export const RepairsTable = memo(function RepairsTable({
   };
 
   const handleBulkDeleteConfirm = async () => {
-    if (selectedIds.size === 0) return;
+    const count = selection.effectiveSelectedCount;
+    if (count === 0) return;
     try {
-      await batchDeleteMutation.mutateAsync({
-        ids: Array.from(selectedIds),
-      });
-      toast.success(`Удалено наряд-заказов: ${selectedIds.size}`);
-      setSelectedIds(new Set());
+      const payload = selection.buildBulkPayload(filtersScope);
+      await batchDeleteMutation.mutateAsync(payload);
+      toast.success(`Удалено наряд-заказов: ${count}`);
+      selection.clear();
       setIsDeleteDialogOpen(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Ошибка при удалении";
@@ -741,6 +778,7 @@ export const RepairsTable = memo(function RepairsTable({
         id: "deal_note",
         header: "Заметка",
         width: 200,
+        sortable: false,
         render: (ticket) => (
           <RecordCellShell>
             <RepairNotePopoverCell ticket={ticket} />
@@ -793,6 +831,7 @@ export const RepairsTable = memo(function RepairsTable({
       },
       {
         id: "print",
+        sortable: false,
         header: (
           <div className="flex items-center justify-center gap-1">
             <Printer className="h-3.5 w-3.5 text-[#666666]" />
@@ -949,7 +988,7 @@ export const RepairsTable = memo(function RepairsTable({
           )}
 
           <span className="ml-auto text-xs text-[#888888]">
-            {tickets.length} наряд-заказов
+            {effectiveTotal} наряд-заказов
           </span>
         </div>
 
@@ -959,26 +998,27 @@ export const RepairsTable = memo(function RepairsTable({
           columns={columns}
           getRowId={(ticket) => ticket.id}
           tableId="repairs"
+          serverSort={serverSort}
+          sortColumn={sortColumn}
+          sortAsc={sortAsc}
+          onSortChange={onSortChange}
           rowHeight={92}
           selectable={true}
-          selectedIds={selectedIds}
-          onSelectionChange={setSelectedIds}
+          selectedIds={selection.getPageSelectedIds(pageTicketIds)}
+          onSelectionChange={(next) => selection.onPageSelectionChange(next, pageTicketIds)}
           bulkBar={
-            <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 shadow-2xs">
-              <span className="text-xs font-medium text-[#111111]">
-                Выбрано: <span className="font-mono font-semibold">{selectedIds.size}</span>
-              </span>
-
-              <button
-                type="button"
-                onClick={() => setSelectedIds(new Set())}
-                className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-              >
-                Снять выбор
-              </button>
-
-              <div className="h-4 w-px bg-[#e5e5e5]" />
-
+            <TableBulkBar
+              selectedCount={selection.effectiveSelectedCount}
+              totalCount={effectiveTotal}
+              isAllSelected={selection.isAllSelected}
+              excludedCount={selection.excludedCount}
+              entityNamePlural="наряд-заказов"
+              pageItemCount={tickets.length}
+              onSelectAll={selection.selectAllAcrossPages}
+              onClearSelection={selection.clear}
+              onDelete={() => setIsDeleteDialogOpen(true)}
+              isDeleting={batchDeleteMutation.isPending}
+            >
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[#666666]">Сменить статус:</span>
                 <select
@@ -1001,37 +1041,37 @@ export const RepairsTable = memo(function RepairsTable({
                   <option value="issued">Выдан</option>
                 </select>
               </div>
-
-
-
-              <div className="ml-auto flex items-center gap-2">
-                {selectedIds.size === 1 && onCopyTicket && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const id = Array.from(selectedIds)[0];
-                      const ticket = tickets.find((t) => t.id === id);
-                      if (ticket) {
-                        onCopyTicket(ticket);
-                      }
-                    }}
-                    className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#111111] hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-                  >
-                    <Copy className="h-3.5 w-3.5 text-[#666666]" />
-                    Копировать
-                  </button>
-                )}
+              {!selection.isAllSelected && selection.effectiveSelectedCount === 1 && onCopyTicket && (
                 <button
                   type="button"
-                  onClick={() => setIsDeleteDialogOpen(true)}
-                  disabled={batchDeleteMutation.isPending}
-                  className="flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                  onClick={() => {
+                    const id = Array.from(selection.selectedIds)[0];
+                    const ticket = tickets.find((t) => t.id === id);
+                    if (ticket) {
+                      onCopyTicket(ticket);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#111111] hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Удалить
+                  <Copy className="h-3.5 w-3.5 text-[#666666]" />
+                  Копировать
                 </button>
-              </div>
-            </div>
+              )}
+            </TableBulkBar>
+          }
+          pagination={
+            onPageChange && page !== undefined && limit !== undefined ? (
+              <WarehousePagination
+                total={effectiveTotal}
+                page={page}
+                pages={Math.max(1, Math.ceil(effectiveTotal / limit))}
+                limit={limit}
+                entityLabel="наряд-заказов"
+                onPageChange={onPageChange}
+                onLimitChange={(newLimit) => onLimitChange?.(newLimit)}
+                disabled={isLoading}
+              />
+            ) : undefined
           }
           scrollPaddingBottom="pb-4"
           onRowClick={(ticket) => handleRowClick(ticket.id)}
@@ -1049,7 +1089,7 @@ export const RepairsTable = memo(function RepairsTable({
           onClose={() => setIsDeleteDialogOpen(false)}
           onConfirm={handleBulkDeleteConfirm}
           title="Удалить выбранные наряд-заказы?"
-          description={`Вы уверены, что хотите удалить ${selectedIds.size} выбранных наряд-заказов? Данные будут перемещены в архив.`}
+          description={`Вы уверены, что хотите удалить ${selection.effectiveSelectedCount} выбранных наряд-заказов? Данные будут перемещены в архив.`}
           confirmLabel="Удалить"
           variant="destructive"
           isPending={batchDeleteMutation.isPending}

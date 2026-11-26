@@ -44,6 +44,7 @@ export interface TaskDTO {
 
 export interface TasksParams {
   filter?: "today" | "overdue" | "upcoming" | "my" | "unassigned";
+  preset?: "all" | "todo" | "in_progress" | "my" | "overdue" | "high_priority" | "done";
   /** Поиск по заголовку и описанию — палитра ⌘K запрашивает только реальные данные. */
   search?: string;
   priority?: TaskPriority;
@@ -53,6 +54,8 @@ export interface TasksParams {
   linkedEntityId?: string;
   limit?: number;
   offset?: number;
+  sort?: string;
+  order?: "asc" | "desc";
 }
 
 export interface TasksResult {
@@ -60,6 +63,7 @@ export interface TasksResult {
   total: number;
   limit: number;
   offset: number;
+  presetCounts?: Record<"all" | "todo" | "in_progress" | "my" | "overdue" | "high_priority" | "done", number>;
 }
 
 export interface CreateTaskPayload {
@@ -127,6 +131,7 @@ export function useTasks(params: TasksParams = {}): UseQueryResult<TasksResult, 
       const response = await apiClient.get<TaskDTO[]>(BASE, {
         query: {
           filter: params.filter,
+          preset: params.preset,
           search: params.search,
           priority: params.priority,
           status: params.status,
@@ -135,6 +140,8 @@ export function useTasks(params: TasksParams = {}): UseQueryResult<TasksResult, 
           linked_entity_id: params.linkedEntityType === undefined ? undefined : params.linkedEntityId,
           limit,
           offset,
+          sort_by: params.sort,
+          sort_dir: params.order,
         },
       });
       const meta: ApiMeta = response.meta ?? {};
@@ -144,6 +151,7 @@ export function useTasks(params: TasksParams = {}): UseQueryResult<TasksResult, 
         total: typeof meta.total === "number" ? meta.total : response.data.length,
         limit: typeof meta.limit === "number" ? meta.limit : limit,
         offset: typeof meta.offset === "number" ? meta.offset : offset,
+        presetCounts: meta.presetCounts as TasksResult["presetCounts"],
       };
     },
     enabled: params.linkedEntityType === undefined || (params.linkedEntityId ?? "").length > 0,

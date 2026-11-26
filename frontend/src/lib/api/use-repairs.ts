@@ -279,6 +279,8 @@ export interface RepairsListResult {
   total: number;
   limit: number;
   offset: number;
+  inProgressCount?: number;
+  readyCount?: number;
 }
 
 export interface RepairsQueryParams {
@@ -291,6 +293,8 @@ export interface RepairsQueryParams {
   search?: string;
   limit?: number;
   offset?: number;
+  sort?: string;
+  order?: "asc" | "desc";
 }
 
 export interface EquipmentIntakeItem {
@@ -511,6 +515,8 @@ export function useRepairs(
           search: params.search,
           limit,
           offset,
+          sort_by: params.sort,
+          sort_dir: params.order,
         },
       });
 
@@ -521,6 +527,8 @@ export function useRepairs(
         total: typeof meta.total === "number" ? meta.total : res.data.length,
         limit: typeof meta.limit === "number" ? meta.limit : limit,
         offset: typeof meta.offset === "number" ? meta.offset : offset,
+        inProgressCount: typeof meta.inProgressCount === "number" ? meta.inProgressCount : undefined,
+        readyCount: typeof meta.readyCount === "number" ? meta.readyCount : undefined,
       };
     },
     enabled: options?.enabled ?? true,
@@ -1163,10 +1171,17 @@ export interface BatchUpdateStatusResult {
   errors: { id: string; error: string }[];
 }
 
+export type BatchRepairScopePayload = {
+  mode?: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+};
+
 export function useBatchUpdateRepairStatus(): UseMutationResult<
   BatchUpdateStatusResult,
   ApiClientError,
-  { ids: string[]; status: RepairStatus; comment?: string }
+  BatchRepairScopePayload & { status: RepairStatus; comment?: string }
 > {
   const queryClient = useQueryClient();
 
@@ -1185,14 +1200,14 @@ export function useBatchUpdateRepairStatus(): UseMutationResult<
 export function useBatchUpdateRepairPaymentStatus(): UseMutationResult<
   { updated: number; ids: string[] },
   ApiClientError,
-  { ids: string[]; paymentStatus: RepairPaymentStatus }
+  BatchRepairScopePayload & { paymentStatus: RepairPaymentStatus }
 > {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ ids, paymentStatus }) => {
+    mutationFn: async ({ paymentStatus, ...scope }) => {
       const res = await apiClient.post<{ updated: number; ids: string[] }>(`${BASE_PATH}/batch-payment-status`, {
-        ids,
+        ...scope,
         payment_status: paymentStatus,
       });
       return res.data;
@@ -1207,7 +1222,7 @@ export function useBatchUpdateRepairPaymentStatus(): UseMutationResult<
 export function useBatchDeleteRepairs(): UseMutationResult<
   { count: number; ids: string[] },
   ApiClientError,
-  { ids: string[] }
+  BatchRepairScopePayload
 > {
   const queryClient = useQueryClient();
 

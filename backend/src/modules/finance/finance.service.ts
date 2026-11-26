@@ -14,6 +14,14 @@ import type {
 import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import { dealsService } from "../crm/deals/deals.service.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  nullableTextExpr,
+  resolveBulkTargetIds,
+  type BulkActionPayload,
+  type SortDirection,
+} from "../../lib/table-query.js";
 
 interface AccountRow {
   id: string;
@@ -151,12 +159,10 @@ export class FinanceService {
     }));
   }
 
-  async transactions(
+  private buildTransactionsWhereClause(
     tenantId: string,
-    limit: number,
-    offset: number,
-    options?: { search?: string; type?: "income" | "expense" },
-  ): Promise<{ items: TransactionDTO[]; total: number }> {
+    options?: { search?: string; type?: "income" | "expense"; excludedIds?: string[] },
+  ): { whereSql: string; params: SqlParam[] } {
     const conditions: string[] = ["t.tenant_id = $1", "t.deleted_at IS NULL"];
     const params: SqlParam[] = [tenantId];
 
@@ -172,7 +178,17 @@ export class FinanceService {
       );
     }
 
-    const whereSql = conditions.join(" AND ");
+    appendExcludedIdsCondition(conditions, params, "t.id", options?.excludedIds);
+    return { whereSql: conditions.join(" AND "), params };
+  }
+
+  async transactions(
+    tenantId: string,
+    limit: number,
+    offset: number,
+    options?: { search?: string; type?: "income" | "expense"; sortBy?: string; sortDir?: SortDirection },
+  ): Promise<{ items: TransactionDTO[]; total: number }> {
+    const { whereSql, params } = this.buildTransactionsWhereClause(tenantId, options);
 
     const countSql = `SELECT COUNT(*)::text AS total
                       FROM transactions t
@@ -181,6 +197,26 @@ export class FinanceService {
                       LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
                       WHERE ${whereSql}`;
     const total = await queryOne<{ total: string }>(countSql, params);
+
+    const orderBy = buildSortOrderBy({
+      sortBy: options?.sortBy,
+      sortDir: options?.sortDir,
+      columns: {
+        date: "t.occurred_at",
+        occurred_at: "t.occurred_at",
+        type: "t.direction",
+        direction: "t.direction",
+        category: { expr: "LOWER(COALESCE(NULLIF(BTRIM(t.category_name), ''), NULLIF(BTRIM(fc.name), '')))", nullable: true },
+        description: { expr: nullableTextExpr("t.description"), nullable: true },
+        amount: "t.amount",
+        account: { expr: nullableTextExpr("a.name"), nullable: true },
+        account_name: { expr: nullableTextExpr("a.name"), nullable: true },
+        counterparty: { expr: nullableTextExpr("t.counterparty_name"), nullable: true },
+        author: { expr: "LOWER(NULLIF(BTRIM(COALESCE(u.name, u.email, '')), ''))", nullable: true },
+      },
+      defaultOrderBy: "t.occurred_at DESC",
+      tieBreaker: "t.id DESC",
+    });
 
     const selectParams: SqlParam[] = [...params, limit, offset];
     const rowsSql = `SELECT t.id, t.direction, t.amount, t.currency, t.category_id,
@@ -199,7 +235,7 @@ export class FinanceService {
                      LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
                      LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
                      WHERE ${whereSql}
-                     ORDER BY t.occurred_at DESC
+                     ORDER BY ${orderBy}
                      LIMIT $${selectParams.length - 1} OFFSET $${selectParams.length}`;
 
     const rows = await query<TxRow>(rowsSql, selectParams);
@@ -312,9 +348,47 @@ export class FinanceService {
     );
   }
 
-  async bulkDeleteTransactions(tenantId: string, ids: string[]): Promise<{ count: number }> {
-    if (ids.length === 0) return { count: 0 };
+  private async resolveTransactionIdsInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<string[]> {
+    if (Array.isArray(idsOrPayload)) {
+      return Array.from(new Set(idsOrPayload.filter(Boolean)));
+    }
+    return resolveBulkTargetIds({
+      executor: tx,
+      payload: idsOrPayload,
+      buildFilteredQuery: (excludedIds) => {
+        const filters = idsOrPayload.filters ?? {};
+        const validType =
+          filters.type === "income" || filters.type === "expense" ? filters.type : undefined;
+        const { whereSql, params } = this.buildTransactionsWhereClause(tenantId, {
+          search: typeof filters.search === "string" ? filters.search : undefined,
+          type: validType,
+          excludedIds,
+        });
+        return {
+          sql: `SELECT t.id
+                FROM transactions t
+                JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+                LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
+                LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
+                WHERE ${whereSql}
+                ORDER BY t.id DESC`,
+          params,
+        };
+      },
+    });
+  }
+
+  async bulkDeleteTransactions(
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<{ count: number }> {
     return withTenant(tenantId, async (tx) => {
+      const ids = await this.resolveTransactionIdsInTx(tx, tenantId, idsOrPayload);
+      if (ids.length === 0) return { count: 0 };
       const deleted = await tx.query<{
         id: string;
         cash_account_id: string;
@@ -424,11 +498,12 @@ export class FinanceService {
 
   async bulkDuplicateTransactions(
     tenantId: string,
-    ids: string[],
+    idsOrPayload: string[] | BulkActionPayload,
     userId?: string,
   ): Promise<TransactionDTO[]> {
-    if (ids.length === 0) return [];
     return withTenant(tenantId, async (tx) => {
+      const ids = await this.resolveTransactionIdsInTx(tx, tenantId, idsOrPayload);
+      if (ids.length === 0) return [];
       const sources = await tx.query<TxRow>(
         `SELECT t.id, t.direction, t.amount, t.currency, t.category_id,
                 COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '') AS category_name,

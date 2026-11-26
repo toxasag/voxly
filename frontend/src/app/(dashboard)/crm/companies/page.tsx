@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Building2,
@@ -45,6 +46,11 @@ import {
 import { cn, formatDateTime, timeAgo } from "@/lib/utils";
 import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
 import {
+  WarehousePagination,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
+import {
   useCompanies,
   useCompanyStats,
   useCreateCompany,
@@ -63,10 +69,34 @@ const SEARCH_DEBOUNCE_MS = 300;
 const money = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 });
 
 function CompaniesContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const sortColumn = searchParams.get("sort") || null;
+  const sortAsc = searchParams.get("order") === "asc";
+
   const [input, setInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WarehouseLimit>(PAGE_SIZE);
   const [createOpen, setCreateOpen] = useState(false);
+
+  const handleSortChange = useCallback(
+    (columnId: string | null, asc: boolean) => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (columnId) {
+        next.set("sort", columnId);
+        next.set("order", asc ? "asc" : "desc");
+      } else {
+        next.delete("sort");
+        next.delete("order");
+      }
+      setPage(1);
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
   /**
    * Только идентификатор, а не снимок объекта: иначе правка поля на карточке
    * сохранялась на сервере, но на экране оставалось прежнее значение — тот же
@@ -82,8 +112,6 @@ function CompaniesContent() {
   /** Контакт, открытый из секции «Контакты» карточки компании. */
   const [contactDetailId, setContactDetailId] = useState<string | null>(null);
   const [edit, setEdit] = useState<CompanyDTO | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [isAllSelected, setIsAllSelected] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CompanyDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
@@ -92,15 +120,24 @@ function CompaniesContent() {
 
   useEffect(() => {
     const handle = setTimeout(() => {
-      setSearch(input.trim());
-      setPage(1);
-      setSelected(new Set());
-      setIsAllSelected(false);
+      const nextSearch = input.trim();
+      setSearch((prev) => {
+        if (prev !== nextSearch) {
+          setPage(1);
+        }
+        return nextSearch;
+      });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [input]);
 
-  const query = useCompanies({ search: search || undefined, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
+  const query = useCompanies({
+    search: search || undefined,
+    limit,
+    offset: (page - 1) * limit,
+    sort: sortColumn ?? undefined,
+    order: sortColumn ? (sortAsc ? "asc" : "desc") : undefined,
+  });
   const create = useCreateCompany();
   const update = useUpdateCompany();
   const deleteCompany = useDeleteCompany();
@@ -114,7 +151,17 @@ function CompaniesContent() {
     ? null
     : items.find((company) => company.id === detailId) ?? null;
   const total = query.data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(total / limit));
+
+  const pageCompanyIds = useMemo(() => items.map((c) => c.id), [items]);
+  const companiesFiltersPayload = useMemo(
+    () => ({ search: search || undefined }),
+    [search],
+  );
+  const selection = useTableSelection({
+    filterKey: JSON.stringify(companiesFiltersPayload),
+    totalCount: total,
+  });
 
   useEffect(() => {
     if (page > pages) setPage(pages);
@@ -155,25 +202,13 @@ function CompaniesContent() {
     setBulkDeleteConfirmOpen(false);
     setIsBulkDeleting(true);
     try {
-      if (isAllSelected) {
-        const res = await bulkDeleteCompanies.mutateAsync({
-          mode: "all",
-          filters: { search: search || undefined },
-        });
-        toast.success(`Удалено компаний: ${res.count}`);
-      } else {
-        const ids = Array.from(selected);
-        const res = await bulkDeleteCompanies.mutateAsync({
-          mode: "ids",
-          ids,
-        });
-        toast.success(`Удалено компаний: ${res.count}`);
-      }
-      setSelected(new Set());
-      setIsAllSelected(false);
-      if (detailId !== null && selected.has(detailId)) {
+      const payload = selection.buildBulkPayload(companiesFiltersPayload);
+      const res = await bulkDeleteCompanies.mutateAsync(payload);
+      toast.success(`Удалено компаний: ${res.count}`);
+      if (detailId !== null && selection.isRowSelected(detailId)) {
         closeDetail();
       }
+      selection.clear();
       void query.refetch();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось удалить компанию");
@@ -181,10 +216,9 @@ function CompaniesContent() {
       setIsBulkDeleting(false);
     }
   }, [
-    isAllSelected,
-    selected,
+    selection,
+    companiesFiltersPayload,
     bulkDeleteCompanies,
-    search,
     detailId,
     closeDetail,
     query,
@@ -475,12 +509,13 @@ function CompaniesContent() {
           getRowId={(company) => company.id}
           columns={companyColumns}
           tableId="companies"
+          serverSort={true}
+          sortColumn={sortColumn}
+          sortAsc={sortAsc}
+          onSortChange={handleSortChange}
           selectable={true}
-          selectedIds={selected}
-          onSelectionChange={(next) => {
-            setSelected(next);
-            if (next.size === 0) setIsAllSelected(false);
-          }}
+          selectedIds={selection.getPageSelectedIds(pageCompanyIds)}
+          onSelectionChange={(next) => selection.onPageSelectionChange(next, pageCompanyIds)}
           onRowClick={editing === null ? (company) => setDetailId(company.id) : undefined}
           onCellEdit={(company, columnId) => setEditing({ rowId: company.id, columnId })}
           footerCells={{
@@ -493,16 +528,14 @@ function CompaniesContent() {
           }}
           bulkBar={
             <TableBulkBar
-              selectedCount={isAllSelected ? total : selected.size}
+              selectedCount={selection.effectiveSelectedCount}
               totalCount={total}
-              isAllSelected={isAllSelected}
+              isAllSelected={selection.isAllSelected}
+              excludedCount={selection.excludedCount}
               entityNamePlural="компаний"
               pageItemCount={items.length}
-              onSelectAll={() => setIsAllSelected(true)}
-              onClearSelection={() => {
-                setSelected(new Set());
-                setIsAllSelected(false);
-              }}
+              onSelectAll={selection.selectAllAcrossPages}
+              onClearSelection={selection.clear}
               onDelete={() => setBulkDeleteConfirmOpen(true)}
               isDeleting={isBulkDeleting}
             />
@@ -522,13 +555,19 @@ function CompaniesContent() {
             />
           }
           pagination={
-            pages > 1 ? (
-              <div className="flex justify-between border-t border-[#e5e5e5] px-4 py-3">
-                <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="text-xs text-[#666666] disabled:opacity-40">Назад</button>
-                <span className="text-xs text-[#666666]">Страница {page} из {pages}</span>
-                <button type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="text-xs text-[#666666] disabled:opacity-40">Вперёд</button>
-              </div>
-            ) : undefined
+            <WarehousePagination
+              total={total}
+              page={page}
+              pages={pages}
+              limit={limit}
+              entityLabel="компаний"
+              onPageChange={setPage}
+              onLimitChange={(newLimit) => {
+                setLimit(newLimit as WarehouseLimit);
+                setPage(1);
+              }}
+              disabled={query.isLoading}
+            />
           }
         />
       )}
@@ -593,10 +632,14 @@ function CompaniesContent() {
         open={bulkDeleteConfirmOpen}
         onClose={() => setBulkDeleteConfirmOpen(false)}
         onConfirm={bulkDelete}
-        title={isAllSelected ? `Удалить все компании (${total})?` : `Удалить компании: ${selected.size}?`}
+        title={
+          selection.isAllSelected
+            ? `Удалить компании (${selection.effectiveSelectedCount})?`
+            : `Удалить компании: ${selection.effectiveSelectedCount}?`
+        }
         description={
-          isAllSelected
-            ? `Все компании (${total}), соответствующие текущим фильтрам, будут перемещены в корзину.`
+          selection.isAllSelected
+            ? `Выбранные компании (${selection.effectiveSelectedCount} шт.), соответствующие текущим фильтрам, будут перемещены в корзину.`
             : "Компании будут перемещены в корзину (мягкое удаление). Связанные контакты и сделки останутся, но потеряют ссылку на компанию."
         }
         confirmLabel="Удалить"
@@ -610,7 +653,9 @@ function CompaniesContent() {
 export default function CompaniesPage() {
   return (
     <Guard requiredPermission="companies:read" fallback={<EmptyState icon={Building2} title="Нет доступа к компаниям" description="Запросите право companies:read у администратора." />}>
-      <CompaniesContent />
+      <Suspense fallback={<SkeletonTable rows={6} columns={5} />}>
+        <CompaniesContent />
+      </Suspense>
     </Guard>
   );
 }

@@ -1,7 +1,17 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { sortDirSchema } from "../../lib/table-query.js";
 import { servicesService } from "./services.service.js";
 import { createServiceSchema, updateServiceSchema } from "./services.types.js";
+
+const listServicesQuerySchema = z.object({
+  search: z.string().max(200).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(250).optional(),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
+});
 
 export async function servicesRoutes(app: FastifyInstance) {
   await app.register(authenticatePlugin);
@@ -12,8 +22,18 @@ export async function servicesRoutes(app: FastifyInstance) {
 
   app.get("/", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { search } = request.query as { search?: string };
-    const items = await servicesService.list(tenant_id, search);
+    const q = listServicesQuerySchema.parse(request.query ?? {});
+    if (q.page !== undefined || q.sort_by !== undefined) {
+      const res = await servicesService.listPaginated(tenant_id, {
+        search: q.search,
+        page: q.page,
+        limit: q.limit,
+        sortBy: q.sort_by,
+        sortDir: q.sort_dir,
+      });
+      return reply.send(res);
+    }
+    const items = await servicesService.list(tenant_id, q.search);
     return reply.send({ data: items });
   });
 

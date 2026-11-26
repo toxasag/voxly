@@ -184,8 +184,13 @@ export const adminKeys = {
   tenants: ["admin", "tenants"] as const,
   metrics: ["admin", "metrics"] as const,
   billing: ["admin", "billing"] as const,
-  logs: (filters: { limit: number; offset: number; action?: string }) =>
-    ["admin", "logs", filters] as const,
+  logs: (filters: {
+    limit: number;
+    offset: number;
+    action?: string;
+    sortBy?: string;
+    sortDir?: "asc" | "desc";
+  }) => ["admin", "logs", filters] as const,
 };
 
 /** Все тенанты платформы. 403 для всех, кроме platform_owner. */
@@ -272,6 +277,8 @@ export function useAdminLogs(filters: {
   limit: number;
   offset: number;
   action?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 }): UseQueryResult<{ items: AdminLogDTO[]; total: number }, ApiClientError> {
   return useQuery({
     queryKey: adminKeys.logs(filters),
@@ -281,6 +288,8 @@ export function useAdminLogs(filters: {
           limit: filters.limit,
           offset: filters.offset,
           ...(filters.action !== undefined && { action: filters.action }),
+          ...(filters.sortBy !== undefined && { sort_by: filters.sortBy }),
+          ...(filters.sortDir !== undefined && { sort_dir: filters.sortDir }),
         },
       });
       return { items: res.data, total: res.meta?.total ?? res.data.length };

@@ -1,4 +1,10 @@
 import { nullIfBlank } from "../../../lib/string.utils.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  nullableTextExpr,
+  type SortDirection,
+} from "../../../lib/table-query.js";
 import type {
   CreateTaskPayload,
   LinkedEntityType,
@@ -18,10 +24,19 @@ const TASK_COLUMNS = `
   notify_telegram, remind_before_minutes, reminder_sent_at
 `;
 
+const TASK_COLUMNS_QUALIFIED = `
+  crm_tasks.id, crm_tasks.tenant_id, crm_tasks.deal_id, crm_tasks.contact_id, crm_tasks.company_id,
+  crm_tasks.title, crm_tasks.description, crm_tasks.priority, crm_tasks.status, crm_tasks.due_date,
+  crm_tasks.assignee_id, crm_tasks.completed_at, crm_tasks.created_at, crm_tasks.updated_at,
+  crm_tasks.notify_telegram, crm_tasks.remind_before_minutes, crm_tasks.reminder_sent_at
+`;
+
 export type TaskQuickFilter = "today" | "overdue" | "upcoming" | "my" | "unassigned";
+export type TaskPresetFilter = "all" | "todo" | "in_progress" | "my" | "overdue" | "high_priority" | "done";
 
 export interface ListTasksOptions {
   filter?: TaskQuickFilter;
+  preset?: TaskPresetFilter;
   search?: string;
   assigneeId?: string;
   priority?: TaskPriority;
@@ -32,6 +47,8 @@ export interface ListTasksOptions {
   currentUserId: string;
   limit: number;
   offset: number;
+  sortBy?: string;
+  sortDir?: SortDirection;
 }
 
 /** Maps a logical entity link onto the three nullable FK columns. */
@@ -53,53 +70,92 @@ function linkColumns(
 }
 
 export class TasksService {
-  async list(
+  private buildTasksWhereClause(
     tenantId: string,
-    options: ListTasksOptions,
-  ): Promise<{ items: TaskDTO[]; total: number }> {
-    const conditions: string[] = ["tenant_id = $1", "deleted_at IS NULL"];
+    options: {
+      filter?: TaskQuickFilter;
+      preset?: TaskPresetFilter;
+      search?: string;
+      assigneeId?: string;
+      priority?: TaskPriority;
+      status?: TaskStatus;
+      linkedEntityType?: LinkedEntityType;
+      linkedEntityId?: string;
+      currentUserId?: string;
+      excludedIds?: string[];
+    },
+  ): { where: string; params: SqlParam[] } {
+    const conditions: string[] = ["crm_tasks.tenant_id = $1", "crm_tasks.deleted_at IS NULL"];
     const params: SqlParam[] = [tenantId];
 
     switch (options.filter) {
       case "today":
-        conditions.push("due_date >= date_trunc('day', now())");
-        conditions.push("due_date < date_trunc('day', now()) + INTERVAL '1 day'");
+        conditions.push("crm_tasks.due_date >= date_trunc('day', now())");
+        conditions.push("crm_tasks.due_date < date_trunc('day', now()) + INTERVAL '1 day'");
         break;
       case "overdue":
-        conditions.push("due_date IS NOT NULL AND due_date < now() AND status <> 'done'");
+        conditions.push("crm_tasks.due_date IS NOT NULL AND crm_tasks.due_date < now() AND crm_tasks.status <> 'done'");
         break;
       case "upcoming":
-        conditions.push("due_date IS NOT NULL AND due_date >= now() AND status <> 'done'");
+        conditions.push("crm_tasks.due_date IS NOT NULL AND crm_tasks.due_date >= now() AND crm_tasks.status <> 'done'");
         break;
       case "my":
-        params.push(options.currentUserId);
-        conditions.push(`assignee_id = $${params.length}`);
+        if (options.currentUserId) {
+          params.push(options.currentUserId);
+          conditions.push(`crm_tasks.assignee_id = $${params.length}`);
+        }
         break;
       case "unassigned":
-        conditions.push("assignee_id IS NULL");
+        conditions.push("crm_tasks.assignee_id IS NULL");
         break;
       default:
         break;
     }
 
-    if (options.search !== undefined) {
-      params.push(`%${options.search}%`);
-      conditions.push(`(title ILIKE $${params.length} OR description ILIKE $${params.length})`);
+    switch (options.preset) {
+      case "todo":
+        conditions.push("crm_tasks.status = 'todo'");
+        break;
+      case "in_progress":
+        conditions.push("crm_tasks.status = 'in_progress'");
+        break;
+      case "done":
+        conditions.push("crm_tasks.status = 'done'");
+        break;
+      case "my":
+        if (options.currentUserId) {
+          params.push(options.currentUserId);
+          conditions.push(`crm_tasks.assignee_id = $${params.length} AND crm_tasks.status <> 'done'`);
+        }
+        break;
+      case "overdue":
+        conditions.push("crm_tasks.due_date IS NOT NULL AND crm_tasks.due_date < now() AND crm_tasks.status <> 'done'");
+        break;
+      case "high_priority":
+        conditions.push("crm_tasks.priority = 'high' AND crm_tasks.status <> 'done'");
+        break;
+      default:
+        break;
+    }
+
+    if (options.search !== undefined && options.search.trim().length > 0) {
+      params.push(`%${options.search.trim()}%`);
+      conditions.push(`(crm_tasks.title ILIKE $${params.length} OR crm_tasks.description ILIKE $${params.length})`);
     }
 
     if (options.assigneeId !== undefined) {
       params.push(options.assigneeId);
-      conditions.push(`assignee_id = $${params.length}`);
+      conditions.push(`crm_tasks.assignee_id = $${params.length}`);
     }
 
     if (options.priority !== undefined) {
       params.push(options.priority);
-      conditions.push(`priority = $${params.length}`);
+      conditions.push(`crm_tasks.priority = $${params.length}`);
     }
 
     if (options.status !== undefined) {
       params.push(options.status);
-      conditions.push(`status = $${params.length}`);
+      conditions.push(`crm_tasks.status = $${params.length}`);
     }
 
     if (options.linkedEntityType !== undefined && options.linkedEntityId !== undefined && options.linkedEntityId !== "") {
@@ -154,30 +210,103 @@ export class TasksService {
       }
     }
 
-    const where = conditions.join(" AND ");
+    appendExcludedIdsCondition(conditions, params, "crm_tasks.id", options.excludedIds);
+    return { where: conditions.join(" AND "), params };
+  }
+
+  async list(
+    tenantId: string,
+    options: ListTasksOptions,
+  ): Promise<{
+    items: TaskDTO[];
+    total: number;
+    presetCounts?: Record<TaskPresetFilter, number>;
+  }> {
+    const { where, params } = this.buildTasksWhereClause(tenantId, options);
 
     const countRow = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total FROM crm_tasks WHERE ${where}`,
       params,
     );
 
+    const presetCountRow = await queryOne<{
+      all_cnt: string;
+      todo_cnt: string;
+      in_progress_cnt: string;
+      my_cnt: string;
+      overdue_cnt: string;
+      high_priority_cnt: string;
+      done_cnt: string;
+    }>(
+      `SELECT
+         COUNT(*)::text AS all_cnt,
+         COUNT(*) FILTER (WHERE status = 'todo')::text AS todo_cnt,
+         COUNT(*) FILTER (WHERE status = 'in_progress')::text AS in_progress_cnt,
+         COUNT(*) FILTER (WHERE assignee_id = $2 AND status <> 'done')::text AS my_cnt,
+         COUNT(*) FILTER (WHERE due_date IS NOT NULL AND due_date < now() AND status <> 'done')::text AS overdue_cnt,
+         COUNT(*) FILTER (WHERE priority = 'high' AND status <> 'done')::text AS high_priority_cnt,
+         COUNT(*) FILTER (WHERE status = 'done')::text AS done_cnt
+       FROM crm_tasks
+       WHERE tenant_id = $1 AND deleted_at IS NULL`,
+      [tenantId, options.currentUserId],
+    );
+
     params.push(options.limit, options.offset);
 
-    // Urgency ordering: overdue first, then by priority, then by due date.
+    const linkTypeExpr = `COALESCE(
+      CASE
+        WHEN crm_tasks.deal_id IS NOT NULL THEN 'deal'
+        WHEN crm_tasks.contact_id IS NOT NULL THEN 'contact'
+        WHEN crm_tasks.company_id IS NOT NULL THEN 'company'
+        ELSE NULL
+      END,
+      (SELECT tt.target_type FROM task_targets tt WHERE tt.tenant_id = crm_tasks.tenant_id AND tt.task_id = crm_tasks.id LIMIT 1)
+    )`;
+
+    const orderBy = buildSortOrderBy({
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+      columns: {
+        title: nullableTextExpr("crm_tasks.title"),
+        priority: "CASE crm_tasks.priority WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END",
+        due: { expr: "crm_tasks.due_date", nullable: true },
+        due_date: { expr: "crm_tasks.due_date", nullable: true },
+        assignee: { expr: nullableTextExpr("u.name"), nullable: true },
+        link: { expr: linkTypeExpr, nullable: true },
+        status: "crm_tasks.status",
+        created: "crm_tasks.created_at",
+        created_at: "crm_tasks.created_at",
+      },
+      defaultOrderBy: `(crm_tasks.due_date IS NOT NULL AND crm_tasks.due_date < now() AND crm_tasks.status <> 'done') DESC,
+        CASE crm_tasks.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ASC,
+        crm_tasks.due_date ASC NULLS LAST,
+        crm_tasks.created_at DESC`,
+      tieBreaker: "crm_tasks.id DESC",
+    });
+
     const rows = await query<TaskRow>(
-      `SELECT ${TASK_COLUMNS}
+      `SELECT ${TASK_COLUMNS_QUALIFIED}
        FROM crm_tasks
+       LEFT JOIN users u ON u.id = crm_tasks.assignee_id AND u.tenant_id = crm_tasks.tenant_id
        WHERE ${where}
-       ORDER BY
-         (due_date IS NOT NULL AND due_date < now() AND status <> 'done') DESC,
-         CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END ASC,
-         due_date ASC NULLS LAST,
-         created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
 
-    return { items: rows.map(toTaskDTO), total: Number(countRow?.total ?? 0) };
+    return {
+      items: rows.map(toTaskDTO),
+      total: Number(countRow?.total ?? 0),
+      presetCounts: {
+        all: Number(presetCountRow?.all_cnt ?? 0),
+        todo: Number(presetCountRow?.todo_cnt ?? 0),
+        in_progress: Number(presetCountRow?.in_progress_cnt ?? 0),
+        my: Number(presetCountRow?.my_cnt ?? 0),
+        overdue: Number(presetCountRow?.overdue_cnt ?? 0),
+        high_priority: Number(presetCountRow?.high_priority_cnt ?? 0),
+        done: Number(presetCountRow?.done_cnt ?? 0),
+      },
+    };
   }
 
   async get(tenantId: string, id: string): Promise<TaskDTO | null> {
@@ -395,7 +524,11 @@ export class TasksService {
     return row !== null;
   }
 
-  async bulkDelete(tenantId: string, payload: BulkActionPayload): Promise<{ count: number }> {
+  async bulkDelete(
+    tenantId: string,
+    payload: BulkActionPayload,
+    currentUserId?: string,
+  ): Promise<{ count: number }> {
     if (payload.mode === "ids") {
       const ids = payload.ids ?? [];
       if (ids.length === 0) return { count: 0 };
@@ -409,30 +542,44 @@ export class TasksService {
       return { count: rows.length };
     }
 
-    const conditions: string[] = ["tenant_id = $1", "deleted_at IS NULL"];
-    const params: SqlParam[] = [tenantId];
-
     const filters = payload.filters ?? {};
-    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
-      params.push(`%${filters.search.trim()}%`);
-      const placeholder = `$${params.length}`;
-      conditions.push(
-        `(title ILIKE ${placeholder}
-          OR description ILIKE ${placeholder})`,
-      );
-    }
+    const validPreset =
+      typeof filters.preset === "string" &&
+      ["all", "todo", "in_progress", "my", "overdue", "high_priority", "done"].includes(filters.preset)
+        ? (filters.preset as TaskPresetFilter)
+        : undefined;
+    const validFilter =
+      typeof filters.filter === "string" &&
+      ["today", "overdue", "upcoming", "my", "unassigned"].includes(filters.filter)
+        ? (filters.filter as TaskQuickFilter)
+        : undefined;
+    const validStatus =
+      typeof filters.status === "string" && ["todo", "in_progress", "done"].includes(filters.status)
+        ? (filters.status as TaskStatus)
+        : undefined;
+    const validPriority =
+      typeof filters.priority === "string" && ["low", "medium", "high"].includes(filters.priority)
+        ? (filters.priority as TaskPriority)
+        : undefined;
+    const validLinkedType =
+      typeof filters.linked_entity_type === "string" &&
+      ["deal", "contact", "company"].includes(filters.linked_entity_type)
+        ? (filters.linked_entity_type as LinkedEntityType)
+        : undefined;
 
-    if (typeof filters.status === "string" && filters.status.trim().length > 0 && filters.status !== "all") {
-      params.push(filters.status.trim());
-      conditions.push(`status = $${params.length}`);
-    }
+    const { where, params } = this.buildTasksWhereClause(tenantId, {
+      filter: validFilter,
+      preset: validPreset,
+      search: typeof filters.search === "string" ? filters.search : undefined,
+      assigneeId: typeof filters.assignee_id === "string" && filters.assignee_id ? filters.assignee_id : undefined,
+      priority: validPriority,
+      status: validStatus,
+      linkedEntityType: validLinkedType,
+      linkedEntityId: typeof filters.linked_entity_id === "string" ? filters.linked_entity_id : undefined,
+      currentUserId,
+      excludedIds: payload.excluded_ids,
+    });
 
-    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
-      params.push(payload.excluded_ids);
-      conditions.push(`NOT (id = ANY($${params.length}::uuid[]))`);
-    }
-
-    const where = conditions.join(" AND ");
     const rows = await query<{ id: string }>(
       `UPDATE crm_tasks
        SET deleted_at = now()

@@ -31,7 +31,7 @@ export interface CompanyDTO {
   dealsBudgetTotal: number;
 }
 export interface CompanyStatsDTO { contactsCount:number; dealsCount:number; dealsBudgetTotal:number; }
-export interface CompaniesQueryParams { search?:string; managerId?:string; limit?:number; offset?:number; }
+export interface CompaniesQueryParams { search?:string; managerId?:string; limit?:number; offset?:number; sort?:string; order?:"asc"|"desc"; }
 export interface CompaniesListResult { items:CompanyDTO[]; total:number; limit:number; offset:number; }
 
 export interface CompanyInnLookupResult {
@@ -72,7 +72,7 @@ export function useCompanyInnLookup(inn: string | null | undefined): UseQueryRes
     retry: false,
   });
 }
-export function useCompanies(p:CompaniesQueryParams={}):UseQueryResult<CompaniesListResult,ApiClientError>{const limit=p.limit??25,offset=p.offset??0;return useQuery({queryKey:companyKeys.list({...p,limit,offset}),queryFn:async()=>{const r=await apiClient.get<CompanyDTO[]>(BASE,{query:{search:p.search,manager_id:p.managerId,limit,offset}});const m:ApiMeta=r.meta??{};return{items:r.data,total:typeof m.total==="number"?m.total:r.data.length,limit:typeof m.limit==="number"?m.limit:limit,offset:typeof m.offset==="number"?m.offset:offset};},placeholderData:(x)=>x});}
+export function useCompanies(p:CompaniesQueryParams={}):UseQueryResult<CompaniesListResult,ApiClientError>{const limit=p.limit??25,offset=p.offset??0;return useQuery({queryKey:companyKeys.list({...p,limit,offset}),queryFn:async()=>{const r=await apiClient.get<CompanyDTO[]>(BASE,{query:{search:p.search,manager_id:p.managerId,limit,offset,sort_by:p.sort,sort_dir:p.order}});const m:ApiMeta=r.meta??{};return{items:r.data,total:typeof m.total==="number"?m.total:r.data.length,limit:typeof m.limit==="number"?m.limit:limit,offset:typeof m.offset==="number"?m.offset:offset};},placeholderData:(x)=>x});}
 /**
  * Одна компания по идентификатору.
  *

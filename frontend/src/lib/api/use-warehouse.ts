@@ -410,6 +410,8 @@ export interface WarehousePaginationParams {
   model_ids?: string[];
   modelIds?: string[];
   all?: boolean;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 }
 
 export function useWarehouse(params?: WarehousePaginationParams) {
@@ -421,6 +423,8 @@ export function useWarehouse(params?: WarehousePaginationParams) {
   const modelIds = params?.model_ids ?? params?.modelIds;
   const modelIdsKey = (modelIds ?? []).slice().sort().join(",");
   const all = params?.all;
+  const sortBy = params?.sortBy;
+  const sortDir = params?.sortDir;
 
   return useQuery({
     queryKey: [
@@ -433,6 +437,8 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       brand ?? "",
       modelIdsKey,
       Boolean(all),
+      sortBy ?? "",
+      sortDir ?? "",
     ],
     queryFn: async (): Promise<PaginatedWarehouseResponse> => {
       const q = new URLSearchParams();
@@ -454,6 +460,10 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       if (modelIds && modelIds.length > 0) {
         q.set("model_ids", modelIds.join(","));
       }
+      if (sortBy) {
+        q.set("sort_by", sortBy);
+        if (sortDir) q.set("sort_dir", sortDir);
+      }
 
       const qs = q.toString();
       const res = await apiClient.get<WarehouseItemDTO[]>(
@@ -465,6 +475,10 @@ export function useWarehouse(params?: WarehousePaginationParams) {
       const curPage = Number(rawMeta.page ?? page);
       const curLimit = Number(rawMeta.limit ?? limit);
       const pages = Number(rawMeta.pages ?? (total === 0 ? 0 : Math.ceil(total / curLimit)));
+      const totalValuation =
+        typeof rawMeta.totalValuation === "number" ? rawMeta.totalValuation : undefined;
+      const lowStockCount =
+        typeof rawMeta.lowStockCount === "number" ? rawMeta.lowStockCount : undefined;
 
       return {
         items: res.data ?? [],
@@ -473,6 +487,8 @@ export function useWarehouse(params?: WarehousePaginationParams) {
           page: curPage,
           limit: curLimit,
           pages,
+          totalValuation,
+          lowStockCount,
         },
       };
     },
@@ -579,6 +595,40 @@ export function useIntakeWarehouseDocument() {
   });
 }
 
+export interface WarehouseTabParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  itemId?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+}
+
+export interface PaginatedWarehouseTabResponse<T> {
+  items: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    pages: number;
+  };
+}
+
+function buildWarehouseTabQuery(params: WarehouseTabParams = {}): string {
+  const q = new URLSearchParams();
+  q.set("page", String(params.page ?? 1));
+  q.set("limit", String(params.limit ?? 25));
+  if (params.search && params.search.trim()) q.set("search", params.search.trim());
+  if (params.status && params.status !== "all") q.set("status", params.status);
+  if (params.itemId) q.set("item_id", params.itemId);
+  if (params.sortBy) {
+    q.set("sort_by", params.sortBy);
+    if (params.sortDir) q.set("sort_dir", params.sortDir);
+  }
+  return q.toString();
+}
+
 export function useWarehouseBatches(itemId?: string) {
   return useQuery({
     queryKey: warehouseKeys.batches(itemId),
@@ -590,6 +640,31 @@ export function useWarehouseBatches(itemId?: string) {
   });
 }
 
+export function useWarehouseBatchesPaginated(params: WarehouseTabParams = {}, options?: { enabled?: boolean }) {
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 25;
+  return useQuery<PaginatedWarehouseTabResponse<WarehouseBatchDTO>>({
+    queryKey: [...warehouseKeys.all, "batches-paginated", { ...params, page, limit }],
+    queryFn: async () => {
+      const qs = buildWarehouseTabQuery({ ...params, page, limit });
+      const res = await apiClient.get<WarehouseBatchDTO[]>(`/api/v1/warehouse/batches?${qs}`);
+      const m = res.meta ?? {};
+      const total = Number(m.total ?? res.data.length);
+      return {
+        items: res.data ?? [],
+        meta: {
+          total,
+          page: Number(m.page ?? page),
+          limit: Number(m.limit ?? limit),
+          pages: Number(m.pages ?? (total === 0 ? 0 : Math.ceil(total / limit))),
+        },
+      };
+    },
+    enabled: options?.enabled ?? true,
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useWarehouseMovements(limit: number = 100) {
   return useQuery({
     queryKey: warehouseKeys.movements(),
@@ -597,6 +672,31 @@ export function useWarehouseMovements(limit: number = 100) {
       const res = await apiClient.get<WarehouseMovementDTO[]>(`/api/v1/warehouse/movements?limit=${limit}`);
       return res.data;
     },
+  });
+}
+
+export function useWarehouseMovementsPaginated(params: WarehouseTabParams = {}, options?: { enabled?: boolean }) {
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 25;
+  return useQuery<PaginatedWarehouseTabResponse<WarehouseMovementDTO>>({
+    queryKey: [...warehouseKeys.all, "movements-paginated", { ...params, page, limit }],
+    queryFn: async () => {
+      const qs = buildWarehouseTabQuery({ ...params, page, limit });
+      const res = await apiClient.get<WarehouseMovementDTO[]>(`/api/v1/warehouse/movements?${qs}`);
+      const m = res.meta ?? {};
+      const total = Number(m.total ?? res.data.length);
+      return {
+        items: res.data ?? [],
+        meta: {
+          total,
+          page: Number(m.page ?? page),
+          limit: Number(m.limit ?? limit),
+          pages: Number(m.pages ?? (total === 0 ? 0 : Math.ceil(total / limit))),
+        },
+      };
+    },
+    enabled: options?.enabled ?? true,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -627,10 +727,25 @@ export function useCreatePurchaseRequest() {
   });
 }
 
+export type WarehouseBulkScopePayload = {
+  mode?: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+};
+
 export function useBulkCreatePurchaseRequests() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { itemIds: string[]; comment?: string; status?: string; repair_order_id?: string; deal_id?: string }) => {
+    mutationFn: async (
+      payload: WarehouseBulkScopePayload & {
+        itemIds?: string[];
+        comment?: string;
+        status?: string;
+        repair_order_id?: string;
+        deal_id?: string;
+      },
+    ) => {
       const res = await apiClient.post<PurchaseRequestDTO[]>("/api/v1/purchase-requests", payload);
       return res.data;
     },
@@ -722,6 +837,36 @@ export function useAggregatedPurchaseRequests(status?: string) {
   });
 }
 
+export function useAggregatedPurchaseRequestsPaginated(
+  params: WarehouseTabParams = {},
+  options?: { enabled?: boolean },
+) {
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 25;
+  return useQuery<PaginatedWarehouseTabResponse<AggregatedPurchaseRequestDTO>>({
+    queryKey: [...warehouseKeys.all, "aggregated-purchases-paginated", { ...params, page, limit }],
+    queryFn: async () => {
+      const qs = buildWarehouseTabQuery({ ...params, page, limit });
+      const res = await apiClient.get<AggregatedPurchaseRequestDTO[]>(
+        `/api/v1/warehouse/purchase-requests?${qs}`,
+      );
+      const m = res.meta ?? {};
+      const total = Number(m.total ?? res.data.length);
+      return {
+        items: res.data ?? [],
+        meta: {
+          total,
+          page: Number(m.page ?? page),
+          limit: Number(m.limit ?? limit),
+          pages: Number(m.pages ?? (total === 0 ? 0 : Math.ceil(total / limit))),
+        },
+      };
+    },
+    enabled: options?.enabled ?? true,
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useSupplierOrders(status?: string) {
   return useQuery({
     queryKey: [...warehouseKeys.all, "supplier-orders", status ?? ""] as const,
@@ -730,6 +875,34 @@ export function useSupplierOrders(status?: string) {
       const res = await apiClient.get<SupplierOrderDTO[]>(`/api/v1/warehouse/supplier-orders${q}`);
       return res.data;
     },
+  });
+}
+
+export function useSupplierOrdersPaginated(
+  params: WarehouseTabParams = {},
+  options?: { enabled?: boolean },
+) {
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 25;
+  return useQuery<PaginatedWarehouseTabResponse<SupplierOrderDTO>>({
+    queryKey: [...warehouseKeys.all, "supplier-orders-paginated", { ...params, page, limit }],
+    queryFn: async () => {
+      const qs = buildWarehouseTabQuery({ ...params, page, limit });
+      const res = await apiClient.get<SupplierOrderDTO[]>(`/api/v1/warehouse/supplier-orders?${qs}`);
+      const m = res.meta ?? {};
+      const total = Number(m.total ?? res.data.length);
+      return {
+        items: res.data ?? [],
+        meta: {
+          total,
+          page: Number(m.page ?? page),
+          limit: Number(m.limit ?? limit),
+          pages: Number(m.pages ?? (total === 0 ? 0 : Math.ceil(total / limit))),
+        },
+      };
+    },
+    enabled: options?.enabled ?? true,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -875,8 +1048,16 @@ export function useCreateReceiptFromSupplierOrder() {
 
 export interface ExportWarehouseItemsPayload {
   format: "xlsx" | "csv";
+  mode?: "ids" | "all";
   ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
   search?: string;
+  category?: string;
+  brand?: string;
+  model_ids?: string[];
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
 }
 
 export interface ImportParseResultDTO {
@@ -963,7 +1144,10 @@ export interface PriceAdjustmentAction {
 }
 
 export interface BulkUpdateWarehouseItemsPayload {
-  ids: string[];
+  mode?: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
   category?: string;
   brand?: string;
   unit?: string;
@@ -976,7 +1160,10 @@ export interface BulkUpdateWarehouseItemsPayload {
 }
 
 export interface BulkDeleteWarehouseItemsPayload {
-  ids: string[];
+  mode?: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
 }
 
 export async function downloadWarehouseExport(payload: ExportWarehouseItemsPayload): Promise<void> {
@@ -1257,11 +1444,18 @@ export function useDeleteWarehouseBatch() {
   });
 }
 
+function normalizeWarehouseBulkPayload(input: string[] | WarehouseBulkScopePayload): WarehouseBulkScopePayload {
+  return Array.isArray(input) ? { mode: "ids", ids: input } : input;
+}
+
 export function useBulkDeleteWarehouseBatches() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (ids: string[]) => {
-      const res = await apiClient.post<{ deletedCount: number }>("/api/v1/warehouse/batches/bulk-delete", { ids });
+    mutationFn: async (input: string[] | WarehouseBulkScopePayload) => {
+      const res = await apiClient.post<{ deletedCount: number }>(
+        "/api/v1/warehouse/batches/bulk-delete",
+        normalizeWarehouseBulkPayload(input),
+      );
       return res.data;
     },
     onSuccess: () => {
@@ -1299,8 +1493,11 @@ export function useDeleteWarehouseMovement() {
 export function useBulkDeleteWarehouseMovements() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (ids: string[]) => {
-      const res = await apiClient.post<{ deletedCount: number }>("/api/v1/warehouse/movements/bulk-delete", { ids });
+    mutationFn: async (input: string[] | WarehouseBulkScopePayload) => {
+      const res = await apiClient.post<{ deletedCount: number }>(
+        "/api/v1/warehouse/movements/bulk-delete",
+        normalizeWarehouseBulkPayload(input),
+      );
       return res.data;
     },
     onSuccess: () => {
@@ -1312,8 +1509,11 @@ export function useBulkDeleteWarehouseMovements() {
 export function useBulkDeletePurchaseRequests() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (ids: string[]) => {
-      const res = await apiClient.post<{ deletedCount: number }>("/api/v1/warehouse/purchases/bulk-delete", { ids });
+    mutationFn: async (input: string[] | WarehouseBulkScopePayload) => {
+      const res = await apiClient.post<{ deletedCount: number }>(
+        "/api/v1/warehouse/purchases/bulk-delete",
+        normalizeWarehouseBulkPayload(input),
+      );
       return res.data;
     },
     onSuccess: () => {
@@ -1325,10 +1525,10 @@ export function useBulkDeletePurchaseRequests() {
 export function useBulkDeleteSupplierOrders() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (ids: string[]) => {
+    mutationFn: async (input: string[] | WarehouseBulkScopePayload) => {
       const res = await apiClient.post<{ deletedCount: number; rolledBackBatchesCount: number }>(
         "/api/v1/warehouse/supplier-orders/bulk-delete",
-        { ids },
+        normalizeWarehouseBulkPayload(input),
       );
       return res.data;
     },

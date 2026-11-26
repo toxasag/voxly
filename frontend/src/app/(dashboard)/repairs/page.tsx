@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Wrench, Clock, CheckCircle2 } from "lucide-react";
 import { RepairsTable } from "@/components/repairs/RepairsTable";
@@ -19,6 +19,7 @@ import {
   usePersistedFilters,
   type FilterSchema,
 } from "@/lib/hooks/use-persisted-filters";
+import type { WarehouseLimit } from "@/components/warehouse/WarehousePagination";
 import { cn } from "@/lib/utils";
 
 type RepairsPageFilters = {
@@ -88,33 +89,73 @@ function RepairsPageContent() {
     search: searchQuery,
   } = filters;
 
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const sortColumn = searchParams.get("sort") || null;
+  const sortAsc = searchParams.get("order") === "asc";
+
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WarehouseLimit>(25);
+
+  const handleSortChange = useCallback(
+    (columnId: string | null, asc: boolean) => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (columnId) {
+        next.set("sort", columnId);
+        next.set("order", asc ? "asc" : "desc");
+      } else {
+        next.delete("sort");
+        next.delete("order");
+      }
+      setPage(1);
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
   const setFilterStatus = useCallback(
-    (status: RepairFilterStatus) => setFilter("status", status),
+    (status: RepairFilterStatus) => {
+      setPage(1);
+      setFilter("status", status);
+    },
     [setFilter],
   );
   const setFilterPaymentStatus = useCallback(
-    (paymentStatus: RepairPaymentStatus | "all") =>
-      setFilter("paymentStatus", paymentStatus),
+    (paymentStatus: RepairPaymentStatus | "all") => {
+      setPage(1);
+      setFilter("paymentStatus", paymentStatus);
+    },
     [setFilter],
   );
   const setSearchQuery = useCallback(
-    (search: string) => setFilter("search", search),
+    (search: string) => {
+      setPage(1);
+      setFilter("search", search);
+    },
     [setFilter],
   );
+
+  const handleResetFilters = useCallback(() => {
+    setPage(1);
+    resetFilters();
+  }, [resetFilters]);
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [copyTargetTicket, setCopyTargetTicket] = useState<RepairTicket | null>(null);
   const [receiptTarget, setReceiptTarget] = useState<RepairTicket | null>(null);
   const [workOrderTarget, setWorkOrderTarget] = useState<RepairTicket | null>(null);
-  const searchParams = useSearchParams();
 
   const { data, isLoading, isError, error } = useRepairs(
     {
       status: filterStatus === "all" ? undefined : filterStatus,
       paymentStatus: filterPaymentStatus === "all" ? undefined : filterPaymentStatus,
       search: searchQuery || undefined,
-      limit: 25,
-      offset: 0,
+      limit,
+      offset: (page - 1) * limit,
+      sort: sortColumn ?? undefined,
+      order: sortColumn ? (sortAsc ? "asc" : "desc") : undefined,
     },
     { enabled: isFiltersHydrated },
   );
@@ -184,15 +225,17 @@ function RepairsPageContent() {
   }, [data]);
 
   const statsTotal = data?.total ?? 0;
-  const statsInProgress = tickets.filter(
-    (t) =>
-      t.status === "intake" ||
-      t.status === "waiting_parts" ||
-      t.status === "diagnostics" ||
-      t.status === "approval" ||
-      t.status === "in_progress",
-  ).length;
-  const statsReady = tickets.filter((t) => t.status === "ready").length;
+  const statsInProgress =
+    data?.inProgressCount ??
+    tickets.filter(
+      (t) =>
+        t.status === "intake" ||
+        t.status === "waiting_parts" ||
+        t.status === "diagnostics" ||
+        t.status === "approval" ||
+        t.status === "in_progress",
+    ).length;
+  const statsReady = data?.readyCount ?? tickets.filter((t) => t.status === "ready").length;
 
   const handleCreateRepair = useCallback(
     async (payload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] }) => {
@@ -315,10 +358,22 @@ function RepairsPageContent() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           hasActiveFilters={hasActiveFilters}
-          onResetFilters={resetFilters}
+          onResetFilters={handleResetFilters}
           onPrintReceipt={(ticket) => setReceiptTarget(ticket)}
           onPrintWorkOrder={(ticket) => setWorkOrderTarget(ticket)}
           onCopyTicket={handleCopyTicket}
+          totalCount={statsTotal}
+          page={page}
+          limit={limit}
+          onPageChange={setPage}
+          onLimitChange={(newLimit) => {
+            setLimit(newLimit as WarehouseLimit);
+            setPage(1);
+          }}
+          serverSort={true}
+          sortColumn={sortColumn}
+          sortAsc={sortAsc}
+          onSortChange={handleSortChange}
           isLoading={!isFiltersHydrated || isLoading}
           isError={isError}
           error={error}

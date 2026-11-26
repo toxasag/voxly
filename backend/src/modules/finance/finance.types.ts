@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bulkActionSchema } from "../../lib/table-query.js";
 import {
   vatModeSchema,
   type InvoiceIssuerSnapshot,
@@ -116,15 +117,22 @@ export const updateInvoiceSchema = z.object({
   line_items: z.array(invoiceItemSchema).min(1).max(100).optional(),
 });
 
-export const bulkUpdateInvoicesSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1).max(200),
-  status: z.enum(["draft", "sent", "overdue", "cancelled"]).optional(),
-  due_date: isoDate.optional(),
-  notes: z.string().max(2000).optional(),
-});
+export const bulkUpdateInvoicesSchema = bulkActionSchema
+  .extend({
+    status: z.enum(["draft", "sent", "overdue", "cancelled"]).optional(),
+    due_date: isoDate.optional(),
+    notes: z.string().max(2000).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select at least 1 invoice", path: ["ids"] });
+    }
+  });
 
-export const bulkDeleteInvoicesSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1).max(200),
+export const bulkDeleteInvoicesSchema = bulkActionSchema.superRefine((val, ctx) => {
+  if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select at least 1 invoice", path: ["ids"] });
+  }
 });
 
 export const markInvoicePaidSchema = z.object({
@@ -165,8 +173,14 @@ export const sendInvoiceSchema = z.object({
   channel_type: z.enum(["telegram", "whatsapp", "max", "all"]).default("all"),
 });
 
-export const bulkTransactionsSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1, "Select at least 1 transaction"),
+export const bulkTransactionsSchema = bulkActionSchema.superRefine((val, ctx) => {
+  if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Select at least 1 transaction",
+      path: ["ids"],
+    });
+  }
 });
 
 export type AccountType = z.infer<typeof accountTypeSchema>;
