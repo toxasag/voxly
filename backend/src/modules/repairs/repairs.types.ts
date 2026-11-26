@@ -308,6 +308,13 @@ export const createWorkSchema = z.object({
   cost: z.number().nonnegative("Cost cannot be negative").optional(),
 });
 
+export const createWorksBatchSchema = z.object({
+  items: z
+    .array(createWorkSchema)
+    .min(1, "At least one work item is required")
+    .max(100, "Cannot add more than 100 work items at once"),
+});
+
 export const updateWorkSchema = createWorkSchema.partial();
 
 export const createPartBaseSchema = z.object({
@@ -383,6 +390,7 @@ export type CreateRepairPayload = z.infer<typeof createRepairSchema>;
 export type UpdateRepairPayload = z.infer<typeof updateRepairSchema>;
 export type ChangeStatusPayload = z.infer<typeof changeStatusSchema>;
 export type CreateWorkPayload = z.infer<typeof createWorkSchema>;
+export type CreateWorksBatchPayload = z.infer<typeof createWorksBatchSchema>;
 export type UpdateWorkPayload = z.infer<typeof updateWorkSchema>;
 export type CreatePartPayload = z.infer<typeof createPartSchema>;
 export type UpdatePartPayload = z.infer<typeof updatePartSchema>;
