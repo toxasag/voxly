@@ -36,6 +36,7 @@
 | DELETE | `/:id` | мягкое удаление |
 | GET | `/:id/totals` | пересчёт сумм |
 | GET/POST | `/:id/works` | работы |
+| POST | `/:id/works/batch` | пакетное добавление работ (1–100 позиций в одной транзакции) |
 | PATCH/DELETE | `/:id/works/:itemId` | правка и удаление работы |
 | GET/POST | `/:id/parts` | запчасти |
 | PATCH/DELETE | `/:id/parts/:itemId` | правка и удаление запчасти |
@@ -152,6 +153,19 @@ Query: `status`, `priority`, `master_id`, `customer_id`, `search`, `limit`, `off
 ```json
 { "description": "Замена платы питания", "master_id": "…uuid…", "master_name": "Павел Смирнов", "cost": 5000 }
 ```
+
+`POST /repairs/:id/works/batch` — массовое добавление услуг в наряд в рамках одной транзакции с дедупликацией по названию и цене за единицу:
+
+```json
+{
+  "items": [
+    { "description": "Очистка и смазка деталей", "master_id": "…uuid…", "master_name": "Павел Смирнов", "quantity": 1, "unit_price": 1000, "cost": 1000 },
+    { "description": "Сборка/Разборка", "master_id": "…uuid…", "master_name": "Павел Смирнов", "quantity": 1, "unit_price": 1000, "cost": 1000 }
+  ]
+}
+```
+
+Ответ `201`: `{ "data": RepairWorkDTO[], "meta": { "totals": RepairTotalsDTO, "addedCount": number, "mergedCount": number } }`.
 
 ### Запчасти
 

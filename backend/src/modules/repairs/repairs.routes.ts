@@ -13,6 +13,7 @@ import {
   createRepairSchema,
   createRepairServiceCatalogSchema,
   createWorkSchema,
+  createWorksBatchSchema,
   renameDictionaryItemSchema,
   repairPaymentStatusSchema,
   repairPrioritySchema,
@@ -453,6 +454,21 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.status(201).send({
       data: work,
       meta: { totals: await service.totals(request.tenant_id, id) },
+    });
+  });
+
+  app.post("/:id/works/batch", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = createWorksBatchSchema.parse(request.body);
+    const result = await service.addWorksBatch(request.tenant_id, id, body.items);
+
+    return reply.status(201).send({
+      data: result.items,
+      meta: {
+        totals: await service.totals(request.tenant_id, id),
+        addedCount: result.addedCount,
+        mergedCount: result.mergedCount,
+      },
     });
   });
 

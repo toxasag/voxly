@@ -1832,6 +1832,71 @@ export class RepairsService {
   // Works
   // -------------------------------------------------------------------------
 
+  private async upsertWorkInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    orderId: string,
+    payload: CreateWorkPayload,
+  ): Promise<{ work: RepairWorkDTO; merged: boolean }> {
+    const quantity = payload.quantity ?? 1;
+    const unitPrice =
+      payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
+    const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
+    const normalizedDescription = payload.description.trim();
+
+    // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
+    // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
+    const existing = await tx.queryOne<RepairWorkRow>(
+      `SELECT ${WORK_COLUMNS}
+       FROM repair_works
+       WHERE tenant_id = $1
+         AND repair_order_id = $2
+         AND lower(btrim(description)) = lower(btrim($3))
+         AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [tenantId, orderId, normalizedDescription, unitPrice],
+    );
+
+    let row: RepairWorkRow;
+    let merged = false;
+    if (existing) {
+      merged = true;
+      const prevQty = Number(existing.quantity ?? 1);
+      const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
+      const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
+      const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+
+      row = await tx.queryOneOrThrow<RepairWorkRow>(
+        `UPDATE repair_works
+         SET quantity = $3, unit_price = $4, cost = $5
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING ${WORK_COLUMNS}`,
+        [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
+      );
+    } else {
+      row = await tx.queryOneOrThrow<RepairWorkRow>(
+        `INSERT INTO repair_works
+           (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING ${WORK_COLUMNS}`,
+        [
+          tenantId,
+          orderId,
+          normalizedDescription,
+          payload.master_id,
+          payload.master_name,
+          quantity,
+          unitPrice,
+          cost,
+        ],
+      );
+    }
+
+    return { work: toRepairWorkDTO(row), merged };
+  }
+
   async addWork(
     tenantId: string,
     orderId: string,
@@ -1839,69 +1904,54 @@ export class RepairsService {
   ): Promise<RepairWorkDTO> {
     await this.assertEditable(tenantId, orderId);
 
-    const quantity = payload.quantity ?? 1;
-    const unitPrice =
-      payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
-    const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
-    const normalizedDescription = payload.description.trim();
+    const { work } = await withTenant(tenantId, async (tx) =>
+      this.upsertWorkInTx(tx, tenantId, orderId, payload),
+    );
 
-    return withTenant(tenantId, async (tx) => {
-      // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
-      // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
-      const existing = await tx.queryOne<RepairWorkRow>(
-        `SELECT ${WORK_COLUMNS}
-         FROM repair_works
-         WHERE tenant_id = $1
-           AND repair_order_id = $2
-           AND lower(btrim(description)) = lower(btrim($3))
-           AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
-         ORDER BY created_at ASC
-         LIMIT 1
-         FOR UPDATE`,
-        [tenantId, orderId, normalizedDescription, unitPrice],
-      );
+    void this.recalculateOrderCost(tenantId, orderId).then(() => {
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+    });
 
-      let row: RepairWorkRow;
-      if (existing) {
-        const prevQty = Number(existing.quantity ?? 1);
-        const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
-        const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
-        const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+    return work;
+  }
 
-        row = await tx.queryOneOrThrow<RepairWorkRow>(
-          `UPDATE repair_works
-           SET quantity = $3, unit_price = $4, cost = $5
-           WHERE tenant_id = $1 AND id = $2
-           RETURNING ${WORK_COLUMNS}`,
-          [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
-        );
-      } else {
-        row = await tx.queryOneOrThrow<RepairWorkRow>(
-          `INSERT INTO repair_works
-             (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           RETURNING ${WORK_COLUMNS}`,
-          [
-            tenantId,
-            orderId,
-            normalizedDescription,
-            payload.master_id,
-            payload.master_name,
-            quantity,
-            unitPrice,
-            cost,
-          ],
-        );
+  async addWorksBatch(
+    tenantId: string,
+    orderId: string,
+    items: CreateWorkPayload[],
+  ): Promise<{ items: RepairWorkDTO[]; addedCount: number; mergedCount: number }> {
+    await this.assertEditable(tenantId, orderId);
+
+    const batchResult = await withTenant(tenantId, async (tx) => {
+      const resultById = new Map<string, RepairWorkDTO>();
+      let addedCount = 0;
+      let mergedCount = 0;
+
+      for (const payload of items) {
+        const { work, merged } = await this.upsertWorkInTx(tx, tenantId, orderId, payload);
+        resultById.set(work.id, work);
+        if (merged) {
+          mergedCount += 1;
+        } else {
+          addedCount += 1;
+        }
       }
 
-      const result = toRepairWorkDTO(row);
-      void this.recalculateOrderCost(tenantId, orderId).then(() => {
-        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
-        });
-      });
-      return result;
+      return {
+        items: Array.from(resultById.values()),
+        addedCount,
+        mergedCount,
+      };
     });
+
+    await this.recalculateOrderCost(tenantId, orderId);
+    void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+      if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+    });
+
+    return batchResult;
   }
 
   async updateWork(
