@@ -265,6 +265,9 @@ services:
 
   # --- MAX bridge (personal MAX account via PyMax / maxapi-python) ---
   max-bridge:
+    build:
+      context: .
+      dockerfile: apps/max-bridge/Dockerfile
     image: voxly-max-bridge:latest
     restart: unless-stopped
     mem_limit: 512m

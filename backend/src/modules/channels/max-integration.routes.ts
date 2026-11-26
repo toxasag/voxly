@@ -6,7 +6,14 @@ import QRCode from "qrcode";
 import { getEnv } from "../../config/env.js";
 import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
-import { MaxBridgeService, invalidateMaxBridgeLiveBotsCache, type MaxPrivateDialogsResponse } from "./max-bridge.service.js";
+import { NotFoundError } from "../../plugins/errorHandler.js";
+import { decryptSecret, encryptSecret, isEncryptionConfigured } from "../../services/credentials-cipher.js";
+import {
+  MaxBridgeService,
+  invalidateMaxBridgeLiveBotsCache,
+  type MaxPrivateDialogsResponse,
+  type MaxSessionBackup,
+} from "./max-bridge.service.js";
 import { extractMaxIdentity, normalizeMaxPhone } from "./max-identity.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
@@ -38,24 +45,57 @@ export function stripOwnerPhone(phone?: string | null, selfPhone?: string | null
 
 const qrStartSchema = z.object({
   name: z.string().min(1).default("Основной"),
+  botId: z.string().uuid().optional(),
 });
 
 const qrStatusSchema = z.object({
   name: z.string().min(1).default("Основной"),
+  botId: z.string().uuid().optional(),
 });
 
 const qrPasswordSchema = z.object({
   name: z.string().min(1).default("Основной"),
   password: z.string().min(1),
+  botId: z.string().uuid().optional(),
+});
+
+const sessionBackupSchema = z.object({
+  token: z.string().min(1),
+  deviceId: z.string().optional(),
+  phone: z.string().optional(),
+  mtInstanceId: z.string().optional(),
+  chatsSync: z.number().optional(),
+  contactsSync: z.number().optional(),
+  draftsSync: z.number().optional(),
+  presenceSync: z.number().optional(),
+  configHash: z.union([z.string(), z.number()]).transform((v) => String(v)).optional(),
+  userAgent: z.record(z.unknown()).nullable().optional(),
 });
 
 const internalBotUpsertSchema = z.object({
   tenantId: z.string().uuid(),
+  botId: z.string().uuid().optional(),
   name: z.string().min(1),
   maxUserId: z.string().default(""),
   username: z.string().optional().nullable(),
   firstName: z.string().optional().nullable(),
   sessionReady: z.boolean().optional(),
+  sessionBackup: sessionBackupSchema.optional().nullable(),
+});
+
+const internalBotStatusSchema = z.object({
+  botId: z.string().uuid(),
+  status: z.enum(["connected", "error"]),
+  statusMessage: z.string().max(500).default(""),
+  clearSession: z.boolean().optional(),
+  maxUserId: z.string().optional().nullable(),
+  username: z.string().optional().nullable(),
+  firstName: z.string().optional().nullable(),
+  sessionBackup: sessionBackupSchema.optional().nullable(),
+});
+
+const maxAccountParamsSchema = z.object({
+  id: z.string().uuid("id must be a UUID"),
 });
 
 const internalBotDeleteSchema = z.object({
@@ -446,14 +486,14 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   const tenantId = account.tenant_id;
 
   // Если сессия в max-bridge жива и прислала событие, восстанавливаем статус из 'error'
-  await runWithPlatformScope(() =>
-    query(
+  await withTenant(tenantId, async (tx) => {
+    await tx.query(
       `UPDATE channel_accounts
        SET status = 'connected', status_message = '', last_sync_at = now()
-       WHERE id = $1 AND status = 'error' AND deleted_at IS NULL`,
-      [account.id],
-    ),
-  ).catch(() => {});
+       WHERE tenant_id = $1 AND id = $2 AND status = 'error' AND deleted_at IS NULL`,
+      [tenantId, account.id],
+    );
+  }).catch(() => {});
   const channelAccountId = account.id;
 
   // Игнорируем сообщения от самого себя
@@ -875,116 +915,288 @@ async function requireMaxServiceToken(
   }
 }
 
-function formatMaxAccountLabel(name: string, firstName?: string | null): string {
+function formatMaxAccountLabel(
+  name: string,
+  firstName?: string | null,
+  preserveExisting = false,
+): string {
   const cleanName = name.trim();
+  if (preserveExisting) return cleanName;
   const cleanFirst = firstName?.trim();
   if (!cleanFirst) return cleanName;
   const suffix = `(${cleanFirst})`;
-  if (cleanName.endsWith(suffix) || cleanName.includes(suffix)) {
+  if (cleanName.toLowerCase().includes(suffix.toLowerCase())) {
     return cleanName;
   }
   return `${cleanName} ${suffix}`;
 }
 
-export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
-  app.addHook("preHandler", requireMaxServiceToken);
+function encryptMaxSessionBackup(backup: MaxSessionBackup | null | undefined): string | null {
+  if (!backup || !backup.token) return null;
+  try {
+    return encryptSecret(JSON.stringify(backup));
+  } catch {
+    if (isEncryptionConfigured()) {
+      throw new Error("Failed to encrypt MAX session backup");
+    }
+    return null;
+  }
+}
 
-  // Список активных подключений MAX для восстановления сессий в max-bridge
-  app.get("/bots/active", async (_request, reply) => {
-    const bots = await runWithPlatformScope(() =>
-      query<{
-        id: string;
-        tenant_id: string;
-        label: string;
-        external_id: string;
-        remote_user_id: string | null;
-      }>(
-        `SELECT id, tenant_id, label, external_id, remote_user_id
-         FROM channel_accounts
-         WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-         ORDER BY created_at ASC`,
-      ),
-    );
+function decryptMaxSessionBackup(
+  credentials: Record<string, unknown> | null | undefined,
+): MaxSessionBackup | null {
+  const raw = credentials?.encrypted_session;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(decryptSecret(raw)) as unknown;
+    if (parsed && typeof parsed === "object" && typeof (parsed as MaxSessionBackup).token === "string") {
+      return parsed as MaxSessionBackup;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
-    return reply.send({
-      ok: true,
-      bots: bots.map((b) => ({
-        id: b.id,
-        botId: b.id,
-        tenantId: b.tenant_id,
-        name: b.label,
-        maxUserId: b.remote_user_id || b.external_id,
-      })),
-    });
-  });
+async function listActiveMaxBotsPayload() {
+  const bots = await runWithPlatformScope(() =>
+    query<{
+      id: string;
+      tenant_id: string;
+      label: string;
+      external_id: string;
+      remote_user_id: string | null;
+      status: string;
+      credentials: Record<string, unknown> | null;
+    }>(
+      `SELECT id, tenant_id, label, external_id, remote_user_id, status, credentials
+       FROM channel_accounts
+       WHERE channel = 'max' AND status <> 'disabled' AND deleted_at IS NULL
+       ORDER BY created_at ASC`,
+    ),
+  );
 
-  // Внутренний эндпоинт для вызова из max-bridge при успешной авторизации сессии
-  app.post("/bots/upsert", async (request, reply) => {
-    const body = internalBotUpsertSchema.parse(request.body);
+  return {
+    ok: true,
+    bots: bots.map((b) => ({
+      id: b.id,
+      botId: b.id,
+      tenantId: b.tenant_id,
+      name: b.label,
+      status: b.status,
+      maxUserId: b.remote_user_id || b.external_id,
+      sessionBackup: decryptMaxSessionBackup(b.credentials),
+    })),
+  };
+}
 
-    const botId = await withTenant(body.tenantId, async (tx) => {
-      const extId = body.maxUserId || body.username || body.name;
-      const label = formatMaxAccountLabel(body.name, body.firstName);
+async function upsertMaxBotRecord(
+  body: z.infer<typeof internalBotUpsertSchema>,
+): Promise<string> {
+  const encryptedSession = encryptMaxSessionBackup(body.sessionBackup);
 
-      const existing = await tx.queryOne<{ id: string }>(
-        `SELECT id FROM channel_accounts
+  const botId = await withTenant(body.tenantId, async (tx) => {
+    const extId = body.maxUserId || body.username || body.name;
+
+    let existing: { id: string; label: string } | null = null;
+    if (body.botId) {
+      existing = await tx.queryOne<{ id: string; label: string }>(
+        `SELECT id, label FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL
+         LIMIT 1`,
+        [body.tenantId, body.botId],
+      );
+    }
+
+    if (!existing) {
+      existing = await tx.queryOne<{ id: string; label: string }>(
+        `SELECT id, label FROM channel_accounts
          WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
            AND (external_id = $2 OR label = $3)
          LIMIT 1`,
         [body.tenantId, extId, body.name],
       );
+    }
 
-      if (existing) {
-        await tx.query(
-          `UPDATE channel_accounts
-           SET status = 'connected', status_message = '', label = $3, external_id = $4, remote_user_id = $5,
-               connected_at = COALESCE(connected_at, now()), last_sync_at = now()
-           WHERE tenant_id = $1 AND id = $2`,
-          [body.tenantId, existing.id, label, extId, body.maxUserId || null],
-        );
-        return existing.id;
-      }
+    const label = existing && body.botId
+      ? existing.label
+      : formatMaxAccountLabel(body.name, body.firstName, Boolean(existing));
 
-      const inserted = await tx.queryOneOrThrow<{ id: string }>(
-        `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, status_message, remote_user_id, connected_at, last_sync_at)
-         VALUES ($1, 'max', $2, $3, 'connected', '', $4, now(), now())
-         RETURNING id`,
-        [body.tenantId, label, extId, body.maxUserId || null],
+    if (existing) {
+      await tx.query(
+        `UPDATE channel_accounts
+         SET status = 'connected',
+             status_message = '',
+             label = $3,
+             external_id = $4,
+             remote_user_id = $5,
+             credentials = CASE
+               WHEN $6::text IS NOT NULL THEN
+                 COALESCE(credentials, '{}'::jsonb) || jsonb_build_object(
+                   'encrypted_session', $6::text,
+                   'session_backed_up_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                 )
+               ELSE credentials
+             END,
+             credentials_encrypted = CASE WHEN $6::text IS NOT NULL THEN true ELSE credentials_encrypted END,
+             connected_at = COALESCE(connected_at, now()),
+             last_sync_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [body.tenantId, existing.id, label, extId, body.maxUserId || null, encryptedSession],
       );
-      return inserted.id;
-    });
+      return existing.id;
+    }
 
+    const initialCreds = encryptedSession
+      ? JSON.stringify({
+          encrypted_session: encryptedSession,
+          session_backed_up_at: new Date().toISOString(),
+        })
+      : "{}";
+
+    const inserted = await tx.queryOneOrThrow<{ id: string }>(
+      `INSERT INTO channel_accounts (
+         tenant_id, channel, label, external_id, status, status_message,
+         remote_user_id, credentials, credentials_encrypted, connected_at, last_sync_at
+       )
+       VALUES ($1, 'max', $2, $3, 'connected', '', $4, $5::jsonb, $6, now(), now())
+       RETURNING id`,
+      [body.tenantId, label, extId, body.maxUserId || null, initialCreds, Boolean(encryptedSession)],
+    );
+    return inserted.id;
+  });
+
+  invalidateMaxBridgeLiveBotsCache();
+  void import("./channel-history-sync.service.js")
+    .then(({ enqueueChannelHistorySync }) =>
+      enqueueChannelHistorySync({
+        tenantId: body.tenantId,
+        channelAccountId: botId,
+        channel: "max",
+      }),
+    )
+    .catch(() => {});
+
+  return botId;
+}
+
+async function updateMaxBotStatusRecord(
+  body: z.infer<typeof internalBotStatusSchema> & { tenantId?: string },
+): Promise<void> {
+  const encryptedSession = encryptMaxSessionBackup(body.sessionBackup);
+  const clearSession = Boolean(body.clearSession && body.status === "error");
+
+  let tenantId = body.tenantId;
+  if (!tenantId) {
+    const found = await runWithPlatformScope(() =>
+      queryOne<{ tenant_id: string }>(
+        `SELECT tenant_id FROM channel_accounts
+         WHERE id = $1 AND channel = 'max' AND deleted_at IS NULL`,
+        [body.botId],
+      ),
+    );
+    tenantId = found?.tenant_id;
+  }
+
+  if (tenantId) {
+    await withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `UPDATE channel_accounts
+         SET status = $3,
+             status_message = $4,
+             remote_user_id = COALESCE($5, remote_user_id),
+             connected_at = CASE WHEN $3 = 'connected' AND connected_at IS NULL THEN now() ELSE connected_at END,
+             last_sync_at = CASE WHEN $3 = 'connected' THEN now() ELSE last_sync_at END,
+             credentials = CASE
+               WHEN $6::boolean THEN COALESCE(credentials, '{}'::jsonb) - 'encrypted_session' - 'session_backed_up_at'
+               WHEN $7::text IS NOT NULL THEN
+                 COALESCE(credentials, '{}'::jsonb) || jsonb_build_object(
+                   'encrypted_session', $7::text,
+                   'session_backed_up_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                 )
+               ELSE credentials
+             END,
+             credentials_encrypted = CASE
+               WHEN $6::boolean THEN false
+               WHEN $7::text IS NOT NULL THEN true
+               ELSE credentials_encrypted
+             END
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL AND status <> 'disabled'`,
+        [
+          tenantId,
+          body.botId,
+          body.status,
+          body.status === "connected" ? "" : body.statusMessage,
+          body.maxUserId || null,
+          clearSession,
+          encryptedSession,
+        ],
+      );
+    });
+  }
+
+  invalidateMaxBridgeLiveBotsCache();
+}
+
+async function deleteMaxBotRecord(body: z.infer<typeof internalBotDeleteSchema>): Promise<void> {
+  const tenantId = body.tenantId;
+  if (tenantId && (body.botId || body.name || body.maxUserId)) {
+    await withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `UPDATE channel_accounts
+         SET status = 'disabled', deleted_at = now()
+         WHERE tenant_id = $1 AND channel = 'max'
+           AND (id = $2::uuid OR label = $3 OR external_id = $4 OR remote_user_id = $4)`,
+        [
+          tenantId,
+          body.botId && body.botId.includes("-") ? body.botId : null,
+          body.name ?? null,
+          body.maxUserId ?? null,
+        ],
+      );
+    });
+    invalidateMaxBridgeLiveBotsCache();
+  }
+}
+
+function registerMaxInternalEndpoints(app: FastifyInstance, prefix = ""): void {
+  // Список подключений MAX для восстановления сессий в max-bridge (включая error/pending)
+  app.get(`${prefix}/bots/active`, async (_request, reply) => {
+    return reply.send(await listActiveMaxBotsPayload());
+  });
+
+  // Вызов из max-bridge при успешной авторизации сессии
+  app.post(`${prefix}/bots/upsert`, async (request, reply) => {
+    const body = internalBotUpsertSchema.parse(request.body);
+    const botId = await upsertMaxBotRecord(body);
     return reply.send({ ok: true, botId });
   });
 
+  // Двусторонний синк статуса из max-bridge (connected / фатальная error)
+  app.post(`${prefix}/bots/status`, async (request, reply) => {
+    const body = internalBotStatusSchema.parse(request.body);
+    await updateMaxBotStatusRecord(body);
+    return reply.send({ ok: true });
+  });
+
   // Удаление сессии бота
-  app.post("/bots/delete", async (request, reply) => {
+  app.post(`${prefix}/bots/delete`, async (request, reply) => {
     const body = internalBotDeleteSchema.parse(request.body ?? {});
-    const tenantId = body.tenantId;
-    if (tenantId && (body.botId || body.name || body.maxUserId)) {
-      await withTenant(tenantId, async (tx) => {
-        await tx.query(
-          `UPDATE channel_accounts
-           SET status = 'disabled', deleted_at = now()
-           WHERE tenant_id = $1 AND channel = 'max'
-             AND (id = $2::uuid OR label = $3 OR external_id = $4 OR remote_user_id = $4)`,
-          [
-            tenantId,
-            body.botId && body.botId.includes("-") ? body.botId : null,
-            body.name ?? null,
-            body.maxUserId ?? null,
-          ],
-        );
-      });
-    }
+    await deleteMaxBotRecord(body);
     return reply.send({ ok: true });
   });
 
   // Приём входящих сообщений MAX из max-bridge и доставка в CRM + AI-автоответ
-  app.post("/inbound", processMaxInbound);
+  app.post(`${prefix}/inbound`, processMaxInbound);
 
   // Нативное исходящее сообщение оператора из мобильного MAX → запись в CRM + AI handoff
-  app.post("/outbound", processMaxOutbound);
+  app.post(`${prefix}/outbound`, processMaxOutbound);
+}
+
+export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("preHandler", requireMaxServiceToken);
+  registerMaxInternalEndpoints(app);
 }
 
 export default async function maxIntegrationRoutes(app: FastifyInstance): Promise<void> {
@@ -994,88 +1206,10 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
   // (обязательно закрыты requireMaxServiceToken в отдельном encapsulated sub-plugin)
   await app.register(async (internalAliasApp) => {
     internalAliasApp.addHook("preHandler", requireMaxServiceToken);
-
-    internalAliasApp.get("/internal/bots/active", async (_request, reply) => {
-      const bots = await runWithPlatformScope(() =>
-        query<{
-          id: string;
-          tenant_id: string;
-          label: string;
-          external_id: string;
-          remote_user_id: string | null;
-        }>(
-          `SELECT id, tenant_id, label, external_id, remote_user_id
-           FROM channel_accounts
-           WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-           ORDER BY created_at ASC`,
-        ),
-      );
-
-      return reply.send({
-        ok: true,
-        bots: bots.map((b) => ({
-          id: b.id,
-          botId: b.id,
-          tenantId: b.tenant_id,
-          name: b.label,
-          maxUserId: b.remote_user_id || b.external_id,
-        })),
-      });
-    });
-
-    internalAliasApp.post("/internal/bots/upsert", async (request, reply) => {
-      const body = internalBotUpsertSchema.parse(request.body);
-
-      const botId = await withTenant(body.tenantId, async (tx) => {
-        const extId = body.maxUserId || body.username || body.name;
-        const label = formatMaxAccountLabel(body.name, body.firstName);
-
-        const existing = await tx.queryOne<{ id: string }>(
-          `SELECT id FROM channel_accounts
-           WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
-             AND (external_id = $2 OR label = $3)
-           LIMIT 1`,
-          [body.tenantId, extId, body.name],
-        );
-
-        if (existing) {
-          await tx.query(
-            `UPDATE channel_accounts
-             SET status = 'connected', status_message = '', label = $3, external_id = $4, remote_user_id = $5,
-                 connected_at = COALESCE(connected_at, now()), last_sync_at = now()
-             WHERE tenant_id = $1 AND id = $2`,
-            [body.tenantId, existing.id, label, extId, body.maxUserId || null],
-          );
-          return existing.id;
-        }
-
-        const inserted = await tx.queryOneOrThrow<{ id: string }>(
-          `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, status_message, remote_user_id, connected_at, last_sync_at)
-           VALUES ($1, 'max', $2, $3, 'connected', '', $4, now(), now())
-           RETURNING id`,
-          [body.tenantId, label, extId, body.maxUserId || null],
-        );
-        return inserted.id;
-      });
-
-      invalidateMaxBridgeLiveBotsCache();
-      void import("./channel-history-sync.service.js")
-        .then(({ enqueueChannelHistorySync }) =>
-          enqueueChannelHistorySync({
-            tenantId: body.tenantId,
-            channelAccountId: botId,
-            channel: "max",
-          }),
-        )
-        .catch(() => {});
-      return reply.send({ ok: true, botId });
-    });
-
-    internalAliasApp.post("/internal/inbound", processMaxInbound);
-    internalAliasApp.post("/internal/outbound", processMaxOutbound);
+    registerMaxInternalEndpoints(internalAliasApp, "/internal");
   });
 
-  // Пользовательские эндпоинты авторизации по QR
+  // Пользовательские эндпоинты авторизации по QR и проверки сессии
   const protectedRoutes = async (subApp: FastifyInstance) => {
     await subApp.register(authenticatePlugin);
 
@@ -1084,9 +1218,24 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       subApp.requireModule("max"),
     ];
 
+    const resolveOwnedMaxAccount = async (tenantId: string, botId?: string) => {
+      if (!botId) return null;
+      const acc = await queryOne<{ id: string; label: string; credentials: Record<string, unknown> | null }>(
+        `SELECT id, label, credentials FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+        [tenantId, botId],
+      );
+      if (!acc) {
+        throw new NotFoundError("Подключение MAX не найдено");
+      }
+      return acc;
+    };
+
     subApp.post("/auth/qr/start", { onRequest: guards }, async (request, reply) => {
       const body = qrStartSchema.parse(request.body ?? {});
-      const result = await service.startQr(request.tenant_id, body.name);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, body.botId);
+      const effectiveName = owned?.label || body.name;
+      const result = await service.startQr(request.tenant_id, effectiveName, owned?.id);
       if (result && typeof result.qr === "string" && result.qr.length > 0 && !result.qr.startsWith("data:image/")) {
         try {
           result.qr = await QRCode.toDataURL(result.qr, { margin: 1, width: 300 });
@@ -1099,7 +1248,9 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
 
     subApp.get("/auth/qr/status", { onRequest: guards }, async (request, reply) => {
       const queryParam = qrStatusSchema.parse(request.query);
-      const result = await service.checkStatus(request.tenant_id, queryParam.name);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, queryParam.botId);
+      const effectiveName = owned?.label || queryParam.name;
+      const result = await service.checkStatus(request.tenant_id, effectiveName, owned?.id);
 
       if (result && result.status === "qr_ready" && typeof result.qr === "string" && result.qr.length > 0) {
         if (!result.qr.startsWith("data:image/")) {
@@ -1111,7 +1262,7 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
         }
       } else if (result && result.status === "qr_ready" && !result.qr) {
         try {
-          const buffer = await service.getQrPng(request.tenant_id, queryParam.name);
+          const buffer = await service.getQrPng(request.tenant_id, effectiveName, owned?.id);
           if (buffer) {
             result.qr = `data:image/png;base64,${buffer.toString("base64")}`;
           }
@@ -1127,7 +1278,9 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
 
     subApp.get("/auth/qr/png", { onRequest: guards }, async (request, reply) => {
       const queryParam = qrStatusSchema.parse(request.query);
-      const buffer = await service.getQrPng(request.tenant_id, queryParam.name);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, queryParam.botId);
+      const effectiveName = owned?.label || queryParam.name;
+      const buffer = await service.getQrPng(request.tenant_id, effectiveName, owned?.id);
       if (!buffer) {
         return reply.status(404).send({ error: "QR not ready" });
       }
@@ -1136,8 +1289,37 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
 
     subApp.post("/auth/qr/password", { onRequest: guards }, async (request, reply) => {
       const body = qrPasswordSchema.parse(request.body);
-      const result = await service.submitPassword(request.tenant_id, body.name, body.password);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, body.botId);
+      const effectiveName = owned?.label || body.name;
+      const result = await service.submitPassword(request.tenant_id, effectiveName, body.password, owned?.id);
       return reply.send({ data: result });
+    });
+
+    subApp.post("/accounts/:id/check", { onRequest: guards }, async (request, reply) => {
+      const { id } = maxAccountParamsSchema.parse(request.params);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, id);
+      if (!owned) {
+        throw new NotFoundError("Подключение MAX не найдено");
+      }
+
+      const backup = decryptMaxSessionBackup(owned.credentials);
+      const checkRes = await service.checkSession(id, backup);
+
+      await updateMaxBotStatusRecord({
+        tenantId: request.tenant_id,
+        botId: id,
+        status: checkRes.alive ? "connected" : "error",
+        statusMessage: checkRes.alive ? "" : (checkRes.reason ?? "Сессия MAX недействительна"),
+        maxUserId: checkRes.maxUserId ?? undefined,
+        sessionBackup: checkRes.alive ? checkRes.sessionBackup ?? undefined : undefined,
+      });
+
+      return reply.send({
+        data: {
+          alive: checkRes.alive,
+          reason: checkRes.reason,
+        },
+      });
     });
   };
 

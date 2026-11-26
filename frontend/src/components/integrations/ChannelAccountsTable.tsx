@@ -30,6 +30,7 @@ import {
   type ChannelAccountDTO,
 } from "@/lib/api/use-channels";
 import { useTelegramCheckAccount } from "@/lib/api/use-telegram-auth";
+import { useMaxCheckAccount } from "@/lib/api/use-max-auth";
 import { cn } from "@/lib/utils";
 import type { ChannelStatus } from "@/schemas/channel.schema";
 import type { ChannelSlug } from "@/types";
@@ -91,6 +92,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   const remove = useDeleteChannelAccount(channel);
   const syncHistory = useSyncChannelHistory(channel);
   const checkTelegram = useTelegramCheckAccount();
+  const checkMax = useMaxCheckAccount();
 
   const [removeTarget, setRemoveTarget] = useState<ChannelAccountDTO | null>(null);
   const [toggleTarget, setToggleTarget] = useState<ChannelAccountDTO | null>(null);
@@ -99,11 +101,10 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   const [busyId, setBusyId] = useState<string | null>(null);
 
   /**
-   * Проверка живости сессии — только для Telegram: у него есть реальное
-   * соединение, которое пользователь может отозвать в настройках приложения, и
-   * тогда подключение продолжало бы отображаться активным.
+   * Проверка живости сессии поддерживается для Telegram и MAX: у них есть
+   * долгоживущее соединение, которое может быть отозвано или временно разорвано.
    */
-  const supportsSessionCheck = channel === "telegram";
+  const supportsSessionCheck = channel === "telegram" || channel === "max";
   const supportsHistorySync = channel === "max" || channel === "telegram" || channel === "whatsapp";
 
   const handleSyncHistory = useCallback(
@@ -126,7 +127,10 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
       setBusyId(account.id);
 
       try {
-        const result = await checkTelegram.mutateAsync({ id: account.id });
+        const result =
+          channel === "max"
+            ? await checkMax.mutateAsync({ id: account.id })
+            : await checkTelegram.mutateAsync({ id: account.id });
         if (result.alive) {
           toast.success(`«${account.label}»: сессия активна`);
         } else {
@@ -138,7 +142,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
         setBusyId(null);
       }
     },
-    [checkTelegram],
+    [channel, checkMax, checkTelegram],
   );
 
   /**
@@ -210,9 +214,11 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
           description={
             limitReached
               ? "Все оплаченные подключения исчерпаны. Увеличьте количество в маркетплейсе."
-              : supportsSessionCheck
+              : channel === "telegram"
                 ? "Подключите личный аккаунт по коду из приложения Telegram, чтобы переписка с клиентами попадала в CRM."
-                : "Подключите аккаунт, чтобы принимать и отправлять сообщения в CRM."
+                : channel === "max"
+                  ? "Подключите личный аккаунт MAX по QR-коду, чтобы переписка с клиентами попадала в CRM."
+                  : "Подключите аккаунт, чтобы принимать и отправлять сообщения в CRM."
           }
           action={
             limitReached ? undefined : (
@@ -321,13 +327,19 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                       </button>
                     )}
 
-                    {/* Проверка живости сессии (только Telegram connected) */}
-                    {supportsSessionCheck && account.status === "connected" && (
+                    {/* Проверка живости сессии (Telegram connected, MAX connected/error) */}
+                    {supportsSessionCheck &&
+                      (account.status === "connected" ||
+                        (channel === "max" && account.status === "error")) && (
                       <button
                         type="button"
                         onClick={() => void handleCheckSession(account)}
                         disabled={busyId === account.id}
-                        title="Проверить сессию Telegram"
+                        title={
+                          channel === "max"
+                            ? "Проверить и восстановить сессию MAX"
+                            : "Проверить сессию Telegram"
+                        }
                         aria-label={`Проверить сессию ${account.label}`}
                         className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-40"
                       >

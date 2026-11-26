@@ -10,6 +10,7 @@ export interface MaxQrStatusResponse {
   status: "preparing" | "qr_ready" | "authorized" | "waiting_password" | "processing_password" | "error" | "unknown";
   botId?: string;
   qr?: string | null;
+  qrExpiresAt?: number | null;
   error?: string | null;
   passwordHint?: string | null;
   user?: {
@@ -23,7 +24,21 @@ export interface MaxQrStartResponse {
   ok: boolean;
   status: string;
   name: string;
+  botId?: string | null;
   qr?: string | null;
+}
+
+export interface MaxSessionBackup {
+  token: string;
+  deviceId?: string;
+  phone?: string;
+  mtInstanceId?: string;
+  chatsSync?: number;
+  contactsSync?: number;
+  draftsSync?: number;
+  presenceSync?: number;
+  configHash?: string;
+  userAgent?: Record<string, unknown> | null;
 }
 
 export interface MaxBridgeDialogMessage {
@@ -166,14 +181,18 @@ export class MaxBridgeService {
   }
 
   /** Старт генерации QR-кода авторизации MAX */
-  async startQr(tenantId: string, name: string): Promise<MaxQrStartResponse> {
-    const res = await this.bridgeFetch<{ detail?: string; ok: boolean; status: string; name: string; qr?: string | null }>(
-      "/auth/qr/start",
-      {
-        method: "POST",
-        body: JSON.stringify({ tenantId, name }),
-      },
-    );
+  async startQr(tenantId: string, name: string, botId?: string): Promise<MaxQrStartResponse> {
+    const res = await this.bridgeFetch<{
+      detail?: string;
+      ok: boolean;
+      status: string;
+      name: string;
+      botId?: string | null;
+      qr?: string | null;
+    }>("/auth/qr/start", {
+      method: "POST",
+      body: JSON.stringify({ tenantId, name, ...(botId ? { botId } : {}) }),
+    });
 
     if (!res.ok) {
       throw new AppError(res.status, "MAX_QR_START_FAILED", res.json?.detail || "Не удалось запустить авторизацию MAX");
@@ -183,9 +202,10 @@ export class MaxBridgeService {
   }
 
   /** Проверка статуса QR-авторизации MAX */
-  async checkStatus(tenantId: string, name: string): Promise<MaxQrStatusResponse> {
+  async checkStatus(tenantId: string, name: string, botId?: string): Promise<MaxQrStatusResponse> {
+    const botParam = botId ? `&botId=${encodeURIComponent(botId)}` : "";
     const res = await this.bridgeFetch<MaxQrStatusResponse & { detail?: string }>(
-      `/auth/qr/status?tenantId=${encodeURIComponent(tenantId)}&name=${encodeURIComponent(name)}`,
+      `/auth/qr/status?tenantId=${encodeURIComponent(tenantId)}&name=${encodeURIComponent(name)}${botParam}`,
       { method: "GET" },
     );
 
@@ -197,10 +217,15 @@ export class MaxBridgeService {
   }
 
   /** Ввод облачного пароля 2FA MAX */
-  async submitPassword(tenantId: string, name: string, password: string): Promise<{ ok: boolean; status: string }> {
+  async submitPassword(
+    tenantId: string,
+    name: string,
+    password: string,
+    botId?: string,
+  ): Promise<{ ok: boolean; status: string }> {
     const res = await this.bridgeFetch<{ detail?: string; ok: boolean; status: string }>("/auth/qr/password", {
       method: "POST",
-      body: JSON.stringify({ tenantId, name, password }),
+      body: JSON.stringify({ tenantId, name, password, ...(botId ? { botId } : {}) }),
     });
 
     if (!res.ok) {
@@ -208,6 +233,62 @@ export class MaxBridgeService {
     }
 
     return res.json;
+  }
+
+  /** Проверка живости сессии MAX с опциональным восстановлением из зашифрованного бэкапа */
+  async checkSession(
+    botId: string,
+    sessionBackup?: MaxSessionBackup | null,
+  ): Promise<{
+    ok: boolean;
+    alive: boolean;
+    reason?: string;
+    maxUserId?: string | null;
+    username?: string | null;
+    firstName?: string | null;
+    sessionBackup?: MaxSessionBackup | null;
+  }> {
+    const res = await this.bridgeFetch<{
+      ok: boolean;
+      alive: boolean;
+      reason?: string;
+      maxUserId?: string | null;
+      username?: string | null;
+      firstName?: string | null;
+      sessionBackup?: MaxSessionBackup | null;
+    }>("/sessions/check", {
+      method: "POST",
+      body: JSON.stringify({ botId, ...(sessionBackup ? { sessionBackup } : {}) }),
+    });
+    if (!res.ok) {
+      return { ok: false, alive: false, reason: "Сервис max-bridge не подтвердил статус сессии" };
+    }
+    return res.json;
+  }
+
+  /** Восстановление сессии MAX в max-bridge */
+  async connectSession(botId: string, sessionBackup?: MaxSessionBackup | null): Promise<boolean> {
+    const res = await this.bridgeFetch<{ ok: boolean }>("/sessions/connect", {
+      method: "POST",
+      body: JSON.stringify({ botId, ...(sessionBackup ? { sessionBackup } : {}) }),
+    });
+    return Boolean(res.ok && res.json?.ok);
+  }
+
+  /** Остановка runtime-клиента без удаления файла сессии */
+  async disconnectSession(botId: string): Promise<void> {
+    await this.bridgeFetch("/sessions/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ botId }),
+    }).catch(() => {});
+  }
+
+  /** Полная очистка сессии MAX при удалении аккаунта */
+  async deleteAccount(tenantId: string, botId: string, notifyBackend = false): Promise<void> {
+    await this.bridgeFetch("/accounts/delete", {
+      method: "POST",
+      body: JSON.stringify({ tenantId, botId, notifyBackend }),
+    }).catch(() => {});
   }
 
   /** Отправка сообщения клиенту через max-bridge */
@@ -300,8 +381,9 @@ export class MaxBridgeService {
   }
 
   /** Получение бинарного PNG буфера QR-кода напрямую из max-bridge */
-  async getQrPng(tenantId: string, name: string): Promise<Buffer | null> {
-    const url = `${this.baseUrl}/auth/qr/png?tenantId=${encodeURIComponent(tenantId)}&name=${encodeURIComponent(name)}`;
+  async getQrPng(tenantId: string, name: string, botId?: string): Promise<Buffer | null> {
+    const botParam = botId ? `&botId=${encodeURIComponent(botId)}` : "";
+    const url = `${this.baseUrl}/auth/qr/png?tenantId=${encodeURIComponent(tenantId)}&name=${encodeURIComponent(name)}${botParam}`;
     const headers = new Headers();
     if (this.serviceToken) {
       headers.set("Authorization", `Bearer ${this.serviceToken}`);
