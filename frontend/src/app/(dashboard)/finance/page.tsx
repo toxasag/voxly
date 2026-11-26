@@ -51,6 +51,12 @@ import type { CreateTransactionPayload } from "@/schemas/finance.schema";
 import type { PrefilledInvoicePayload } from "@/components/finance/InvoiceCreateModal";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
+import {
+  WarehousePagination,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
 import { TagPill, type TagColor } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 
@@ -92,8 +98,13 @@ function toTransaction(dto: TransactionDTO): Transaction {
           : dto.supplierOrderId
             ? "supplier_order"
             : null,
-    linked_entity_label: null,
+    linked_entity_label: dto.dealTitle ?? dto.repairTicketNumber ?? null,
+    deal_id: dto.dealId ?? null,
+    deal_title: dto.dealTitle ?? null,
+    repair_order_id: dto.repairOrderId ?? null,
+    repair_ticket_number: dto.repairTicketNumber ?? null,
     supplier_order_id: dto.supplierOrderId ?? null,
+    is_capitalized_cost: Boolean(dto.isCapitalizedCost),
     counterparty: dto.counterpartyName ?? "",
     counterparty_inn: dto.counterpartyInn ?? "",
     created_by_id: dto.createdById ?? null,
@@ -153,7 +164,6 @@ function FinancePageContent() {
   const [invoiceViewId, setInvoiceViewId] = useState<string | null>(null);
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
   const [deletingInvoice, setDeletingInvoice] = useState<Invoice | null>(null);
-  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [bulkEditInvoicesOpen, setBulkEditInvoicesOpen] = useState(false);
   const [confirmBulkDeleteInvoicesOpen, setConfirmBulkDeleteInvoicesOpen] = useState(false);
   const [categoriesModalOpen, setCategoriesModalOpen] = useState(false);
@@ -161,14 +171,53 @@ function FinancePageContent() {
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") ?? "");
   const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
 
+  const [txPage, setTxPage] = useState(1);
+  const [txLimit, setTxLimit] = useState<WarehouseLimit>(25);
+  const [txSortColumn, setTxSortColumn] = useState<string | null>(null);
+  const [txSortAsc, setTxSortAsc] = useState(true);
+
+  const [invPage, setInvPage] = useState(1);
+  const [invLimit, setInvLimit] = useState<WarehouseLimit>(25);
+  const [invSortColumn, setInvSortColumn] = useState<string | null>(null);
+  const [invSortAsc, setInvSortAsc] = useState(true);
+
+  const handleTxSearchChange = useCallback((q: string) => {
+    setSearchQuery(q);
+    setTxPage(1);
+  }, []);
+
+  const handleTxFilterTypeChange = useCallback((nextType: "all" | "income" | "expense") => {
+    setFilterType(nextType);
+    setTxPage(1);
+  }, []);
+
+  const handleTxSortChange = useCallback((columnId: string | null, asc: boolean) => {
+    setTxSortColumn(columnId);
+    setTxSortAsc(asc);
+    setTxPage(1);
+  }, []);
+
+  const handleInvSortChange = useCallback((columnId: string | null, asc: boolean) => {
+    setInvSortColumn(columnId);
+    setInvSortAsc(asc);
+    setInvPage(1);
+  }, []);
+
   const { data: accounts = [], isLoading: accountsLoading } = useAccounts();
   const { data: transactionsData, isLoading: txLoading, isError: txError } = useTransactions({
-    limit: 100,
-    offset: 0,
+    limit: txLimit,
+    offset: (txPage - 1) * txLimit,
     search: searchQuery || undefined,
     type: filterType !== "all" ? filterType : undefined,
+    sortBy: txSortColumn ?? undefined,
+    sortDir: txSortColumn ? (txSortAsc ? "asc" : "desc") : undefined,
   });
-  const { data: invoicesData, isLoading: invLoading, isError: invError } = useInvoices({ limit: 100, offset: 0 });
+  const { data: invoicesData, isLoading: invLoading, isError: invError } = useInvoices({
+    limit: invLimit,
+    offset: (invPage - 1) * invLimit,
+    sortBy: invSortColumn ?? undefined,
+    sortDir: invSortColumn ? (invSortAsc ? "asc" : "desc") : undefined,
+  });
   const { data: pnlData } = usePnl();
 
   const createTxMutation = useCreateTransaction();
@@ -212,27 +261,22 @@ function FinancePageContent() {
     };
   }, [editingInvoiceId, invoicesData]);
 
+  const transactionsTotal = transactionsData?.total ?? transactions.length;
+  const invoicesTotal = invoicesData?.total ?? invoices.length;
+  const pageInvoiceIds = useMemo(() => invoices.map((inv) => inv.id), [invoices]);
+  const invoiceSelection = useTableSelection({
+    filterKey: "finance-invoices",
+    totalCount: invoicesTotal,
+  });
+
   const selectedInvoices = useMemo(
-    () => invoices.filter((inv) => selectedInvoiceIds.has(inv.id)),
-    [invoices, selectedInvoiceIds],
+    () => invoices.filter((inv) => invoiceSelection.selectedIds.has(inv.id)),
+    [invoices, invoiceSelection.selectedIds],
   );
   const selectedPaidInvoicesCount = useMemo(
     () => selectedInvoices.filter((inv) => inv.status === "paid").length,
     [selectedInvoices],
   );
-
-  // Удаляем из выделения ID счетов, которых больше нет в списке
-  useEffect(() => {
-    if (selectedInvoiceIds.size === 0) return;
-    const existingIds = new Set(invoices.map((inv) => inv.id));
-    let changed = false;
-    const next = new Set<string>();
-    selectedInvoiceIds.forEach((id) => {
-      if (existingIds.has(id)) next.add(id);
-      else changed = true;
-    });
-    if (changed) setSelectedInvoiceIds(next);
-  }, [invoices, selectedInvoiceIds]);
 
   const monthlyIncome = useMemo(() => transactions.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0), [transactions]);
   const monthlyExpense = useMemo(() => transactions.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0), [transactions]);
@@ -305,75 +349,66 @@ function FinancePageContent() {
       await deleteInvoiceMutation.mutateAsync(deletingInvoice.id);
       toast.success(`Счёт ${deletingInvoice.invoice_number} удалён`);
       setDeletingInvoice(null);
-      setSelectedInvoiceIds((prev) => {
-        if (!prev.has(deletingInvoice.id)) return prev;
-        const next = new Set(prev);
-        next.delete(deletingInvoice.id);
-        return next;
-      });
+      if (invoiceSelection.isRowSelected(deletingInvoice.id)) {
+        invoiceSelection.toggleRow(deletingInvoice.id);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить счёт");
     }
-  }, [deletingInvoice, deleteInvoiceMutation]);
+  }, [deletingInvoice, deleteInvoiceMutation, invoiceSelection]);
 
   const handleBulkDeleteInvoices = useCallback(async () => {
-    if (selectedInvoiceIds.size === 0) return;
+    if (invoiceSelection.effectiveSelectedCount === 0) return;
     try {
-      const ids = Array.from(selectedInvoiceIds);
-      const res = await bulkDeleteInvoicesMutation.mutateAsync(ids);
+      const payload = invoiceSelection.buildBulkPayload({});
+      const res = await bulkDeleteInvoicesMutation.mutateAsync(payload);
       if (res.skippedPaid > 0) {
         toast.success(`Удалено счетов: ${res.deleted} (пропущено оплаченных: ${res.skippedPaid})`);
       } else {
         toast.success(res.deleted === 1 ? "Счёт удалён" : `Удалено счетов: ${res.deleted}`);
       }
-      setSelectedInvoiceIds(new Set());
+      invoiceSelection.clear();
       setConfirmBulkDeleteInvoicesOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить счета");
     }
-  }, [selectedInvoiceIds, bulkDeleteInvoicesMutation]);
+  }, [invoiceSelection, bulkDeleteInvoicesMutation]);
 
   const invoiceBulkBar = useMemo(() => {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 shadow-xs animate-in fade-in duration-150">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xs font-semibold text-[#111111]">
-            Выбрано: <span className="font-mono tabular-nums text-[#4a38f5]">{selectedInvoiceIds.size}</span>
-          </span>
-          <span className="text-[#cccccc]">|</span>
-          <button
-            type="button"
-            onClick={() => setSelectedInvoiceIds(new Set())}
-            className="text-xs text-[#666666] hover:text-[#111111] hover:underline cursor-pointer"
-          >
-            Снять выделение
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setBulkEditInvoicesOpen(true)}
-            className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-            title="Массово изменить статус, срок оплаты или примечание"
-          >
-            <Pencil className="h-3.5 w-3.5 text-[#4a38f5]" />
-            <span>Редактировать</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirmBulkDeleteInvoicesOpen(true)}
-            disabled={bulkDeleteInvoicesMutation.isPending}
-            className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-rose-200 bg-rose-50 px-2.5 text-xs font-medium text-rose-700 shadow-2xs hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
-            title="Удалить выбранные счета"
-          >
-            <Trash2 className="h-3.5 w-3.5 text-rose-600" />
-            <span>Удалить</span>
-          </button>
-        </div>
-      </div>
+      <TableBulkBar
+        selectedCount={invoiceSelection.effectiveSelectedCount}
+        totalCount={invoicesTotal}
+        isAllSelected={invoiceSelection.isAllSelected}
+        excludedCount={invoiceSelection.excludedCount}
+        entityNamePlural="счетов"
+        pageItemCount={invoices.length}
+        onSelectAll={invoiceSelection.selectAllAcrossPages}
+        onClearSelection={invoiceSelection.clear}
+        onDelete={() => setConfirmBulkDeleteInvoicesOpen(true)}
+        isDeleting={bulkDeleteInvoicesMutation.isPending}
+      >
+        <button
+          type="button"
+          onClick={() => setBulkEditInvoicesOpen(true)}
+          className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+          title="Массово изменить статус, срок оплаты или примечание"
+        >
+          <Pencil className="h-3.5 w-3.5 text-[#4a38f5]" />
+          <span>Редактировать</span>
+        </button>
+      </TableBulkBar>
     );
-  }, [selectedInvoiceIds.size, bulkDeleteInvoicesMutation.isPending]);
+  }, [
+    invoiceSelection.effectiveSelectedCount,
+    invoiceSelection.isAllSelected,
+    invoiceSelection.excludedCount,
+    invoiceSelection.selectAllAcrossPages,
+    invoiceSelection.clear,
+    invoicesTotal,
+    invoices.length,
+    bulkDeleteInvoicesMutation.isPending,
+  ]);
 
   const invoiceColumns = useMemo<RecordColumn<Invoice>[]>(
     () => [
@@ -438,6 +473,7 @@ function FinancePageContent() {
         id: "row_actions",
         header: "",
         width: 112,
+        sortable: false,
         render: (inv) => {
           const isPaid = inv.status === "paid";
           return (
@@ -514,9 +550,21 @@ function FinancePageContent() {
           <TransactionsTable
             transactions={transactions}
             searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
+            onSearchChange={handleTxSearchChange}
             filterType={filterType}
-            onFilterTypeChange={setFilterType}
+            onFilterTypeChange={handleTxFilterTypeChange}
+            totalCount={transactionsTotal}
+            page={txPage}
+            limit={txLimit}
+            onPageChange={setTxPage}
+            onLimitChange={(newLimit) => {
+              setTxLimit(newLimit as WarehouseLimit);
+              setTxPage(1);
+            }}
+            serverSort={true}
+            sortColumn={txSortColumn}
+            sortAsc={txSortAsc}
+            onSortChange={handleTxSortChange}
             isLoading={txLoading}
             isError={txError}
             error={txError ? new Error("Failed to load transactions") : null}
@@ -529,10 +577,29 @@ function FinancePageContent() {
             columns={invoiceColumns}
             getRowId={(inv) => inv.id}
             tableId="finance_invoices"
+            serverSort={true}
+            sortColumn={invSortColumn}
+            sortAsc={invSortAsc}
+            onSortChange={handleInvSortChange}
             selectable
-            selectedIds={selectedInvoiceIds}
-            onSelectionChange={setSelectedInvoiceIds}
+            selectedIds={invoiceSelection.getPageSelectedIds(pageInvoiceIds)}
+            onSelectionChange={(next) => invoiceSelection.onPageSelectionChange(next, pageInvoiceIds)}
             bulkBar={invoiceBulkBar}
+            pagination={
+              <WarehousePagination
+                total={invoicesTotal}
+                page={invPage}
+                pages={Math.max(1, Math.ceil(invoicesTotal / invLimit))}
+                limit={invLimit}
+                entityLabel="счетов"
+                onPageChange={setInvPage}
+                onLimitChange={(newLimit) => {
+                  setInvLimit(newLimit as WarehouseLimit);
+                  setInvPage(1);
+                }}
+                disabled={invLoading}
+              />
+            }
             onRowClick={(inv) => setInvoiceViewId(inv.id)}
             emptyState={
               <div className="flex flex-col items-center gap-2 py-16 text-center">
@@ -564,8 +631,11 @@ function FinancePageContent() {
         <BulkEditInvoicesModal
           open={bulkEditInvoicesOpen}
           invoices={selectedInvoices}
+          selectionMode={invoiceSelection.isAllSelected ? "all" : "ids"}
+          excludedIds={Array.from(invoiceSelection.excludedIds)}
+          effectiveCount={invoiceSelection.effectiveSelectedCount}
           onClose={() => setBulkEditInvoicesOpen(false)}
-          onSaved={() => setSelectedInvoiceIds(new Set())}
+          onSaved={() => invoiceSelection.clear()}
         />
         <InvoiceViewModal open={!!invoiceViewTarget} invoice={invoiceViewTarget} onClose={() => setInvoiceViewId(null)} />
         <CategoriesSettingsModal open={categoriesModalOpen} onClose={() => setCategoriesModalOpen(false)} />
@@ -587,13 +657,13 @@ function FinancePageContent() {
           open={confirmBulkDeleteInvoicesOpen}
           onClose={() => setConfirmBulkDeleteInvoicesOpen(false)}
           onConfirm={handleBulkDeleteInvoices}
-          title={`Удалить выбранные счета (${selectedInvoiceIds.size})?`}
+          title={`Удалить выбранные счета (${invoiceSelection.effectiveSelectedCount})?`}
           description={
-            selectedPaidInvoicesCount > 0
-              ? selectedPaidInvoicesCount === selectedInvoiceIds.size
+            !invoiceSelection.isAllSelected && selectedPaidInvoicesCount > 0
+              ? selectedPaidInvoicesCount === invoiceSelection.effectiveSelectedCount
                 ? "Все выбранные счета уже оплачены — оплаченные счета нельзя удалить."
-                : `Будут удалены неоплаченные счета (${selectedInvoiceIds.size - selectedPaidInvoicesCount} шт.). Оплаченные счета (${selectedPaidInvoicesCount} шт.) будут пропущены.`
-              : `Вы уверены, что хотите удалить выбранные счета (${selectedInvoiceIds.size} шт.)? Связанные наряды на ремонт при отсутствии других активных счетов вернутся в статус «Не оплачен».`
+                : `Будут удалены неоплаченные счета (${invoiceSelection.effectiveSelectedCount - selectedPaidInvoicesCount} шт.). Оплаченные счета (${selectedPaidInvoicesCount} шт.) будут пропущены.`
+              : `Вы уверены, что хотите удалить выбранные счета (${invoiceSelection.effectiveSelectedCount} шт.)? Оплаченные счета будут пропущены, а связанные наряды на ремонт без других активных счетов вернутся в статус «Не оплачен».`
           }
           confirmLabel="Удалить выбранные"
           variant="destructive"

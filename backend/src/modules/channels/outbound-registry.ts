@@ -78,11 +78,13 @@ export type TelegramPhoneResolver = (
 
 export interface TelegramHistorySyncParams {
   tenantId: string;
-  dealId: string;
+  dealId?: string;
+  resolveDealId?: () => Promise<string | null>;
   channelAccountId: string;
   peerId: string;
   username?: string;
   phone?: string;
+  senderName?: string;
   limit?: number;
 }
 

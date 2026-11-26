@@ -1167,6 +1167,14 @@ CREATE TABLE IF NOT EXISTS channel_accounts (
   -- 0013, секретов не содержали, поэтому признак, а не безусловное шифрование.
   credentials_encrypted BOOLEAN NOT NULL DEFAULT false,
   last_sync_at TIMESTAMPTZ,
+  history_sync_status TEXT NOT NULL DEFAULT 'idle'
+    CHECK (history_sync_status IN ('idle', 'queued', 'syncing', 'completed', 'error')),
+  history_sync_total INT NOT NULL DEFAULT 0,
+  history_sync_processed INT NOT NULL DEFAULT 0,
+  history_sync_messages INT NOT NULL DEFAULT 0,
+  history_sync_error TEXT,
+  history_sync_started_at TIMESTAMPTZ,
+  history_sync_finished_at TIMESTAMPTZ,
   connected_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2136,6 +2144,20 @@ CREATE POLICY user_notification_settings_tenant_isolation ON user_notification_s
   FOR ALL
   USING (tenant_id = current_tenant_id() OR platform_scope())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- 0139: pg_trgm indexes for multi-word warehouse/repairs search
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_warehouse_items_name_trgm
+  ON warehouse_items USING gin (name gin_trgm_ops)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_warehouse_items_sku_trgm
+  ON warehouse_items USING gin (sku gin_trgm_ops)
+  WHERE deleted_at IS NULL AND sku <> '';
+CREATE INDEX IF NOT EXISTS idx_warehouse_items_brand_trgm
+  ON warehouse_items USING gin (brand gin_trgm_ops)
+  WHERE deleted_at IS NULL AND brand <> '';
+CREATE INDEX IF NOT EXISTS idx_equipment_models_name_trgm
+  ON equipment_models USING gin (name gin_trgm_ops);
 
 
 

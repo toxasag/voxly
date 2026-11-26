@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo, useState, useCallback } from "react";
+import Link from "next/link";
 import {
   Search,
   Wrench,
@@ -22,6 +23,9 @@ import type { Transaction, TransactionCategory } from "@/lib/finance/finance.typ
 import { getCategoryLabel, getTypeLabel } from "@/lib/finance/finance.types";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
+import { WarehousePagination } from "@/components/warehouse/WarehousePagination";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
 import { TagPill } from "@/components/ui/tag";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import {
@@ -38,6 +42,15 @@ interface TransactionsTableProps {
   onSearchChange: (query: string) => void;
   filterType: "all" | "income" | "expense";
   onFilterTypeChange: (type: "all" | "income" | "expense") => void;
+  totalCount?: number;
+  page?: number;
+  limit?: number;
+  onPageChange?: (page: number) => void;
+  onLimitChange?: (limit: number) => void;
+  sortColumn?: string | null;
+  sortAsc?: boolean;
+  onSortChange?: (columnId: string | null, asc: boolean) => void;
+  serverSort?: boolean;
   isLoading?: boolean;
   isError?: boolean;
   error?: Error | null;
@@ -133,12 +146,20 @@ export const TransactionsTable = memo(function TransactionsTable({
   onSearchChange,
   filterType,
   onFilterTypeChange,
+  totalCount,
+  page,
+  limit,
+  onPageChange,
+  onLimitChange,
+  sortColumn,
+  sortAsc,
+  onSortChange,
+  serverSort = false,
   isLoading,
   isError,
   error,
   onOpenCategories,
 }: TransactionsTableProps) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
@@ -148,6 +169,7 @@ export const TransactionsTable = memo(function TransactionsTable({
   const singleDeleteMutation = useDeleteTransaction();
 
   const filtered = useMemo(() => {
+    if (onPageChange) return transactions;
     return transactions.filter((t) => {
       if (filterType !== "all" && t.type !== filterType) return false;
       if (searchQuery) {
@@ -163,7 +185,21 @@ export const TransactionsTable = memo(function TransactionsTable({
       }
       return true;
     });
-  }, [transactions, filterType, searchQuery]);
+  }, [transactions, filterType, searchQuery, onPageChange]);
+
+  const effectiveTotal = totalCount ?? filtered.length;
+  const pageTxIds = useMemo(() => filtered.map((t) => t.id), [filtered]);
+  const filtersScope = useMemo(
+    () => ({
+      type: filterType !== "all" ? filterType : undefined,
+      search: searchQuery.trim() || undefined,
+    }),
+    [filterType, searchQuery],
+  );
+  const selection = useTableSelection({
+    filterKey: JSON.stringify(filtersScope),
+    totalCount: effectiveTotal,
+  });
 
   const totalIncome = useMemo(
     () => filtered.filter((t) => t.type === "income").reduce((sum, t) => sum + t.amount, 0),
@@ -176,42 +212,44 @@ export const TransactionsTable = memo(function TransactionsTable({
 
   // Bulk actions handlers
   const handleDuplicateSelected = useCallback(async () => {
-    if (selectedIds.size === 0) return;
+    const count = selection.effectiveSelectedCount;
+    if (count === 0) return;
     try {
-      const ids = Array.from(selectedIds);
-      await bulkDuplicateMutation.mutateAsync(ids);
+      const payload = selection.buildBulkPayload(filtersScope);
+      const res = await bulkDuplicateMutation.mutateAsync(payload);
       toast.success(
-        ids.length === 1
+        res.count === 1
           ? "Операция успешно скопирована"
-          : `Скопировано операций: ${ids.length}`,
+          : `Скопировано операций: ${res.count}`,
       );
-      setSelectedIds(new Set());
+      selection.clear();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось скопировать операции");
     }
-  }, [selectedIds, bulkDuplicateMutation]);
+  }, [selection, filtersScope, bulkDuplicateMutation]);
 
   const handleExportSelected = useCallback(() => {
-    const selectedTransactions = filtered.filter((t) => selectedIds.has(t.id));
+    const selectedTransactions = filtered.filter((t) => selection.isRowSelected(t.id));
     if (selectedTransactions.length === 0) return;
     exportToCsv(selectedTransactions);
     toast.success(`Экспортировано ${selectedTransactions.length} операций`);
-  }, [filtered, selectedIds]);
+  }, [filtered, selection]);
 
   const handleDeleteConfirmed = useCallback(async () => {
-    if (selectedIds.size === 0) return;
+    const count = selection.effectiveSelectedCount;
+    if (count === 0) return;
     try {
-      const ids = Array.from(selectedIds);
-      await bulkDeleteMutation.mutateAsync(ids);
+      const payload = selection.buildBulkPayload(filtersScope);
+      const res = await bulkDeleteMutation.mutateAsync(payload);
       toast.success(
-        ids.length === 1 ? "Операция удалена" : `Удалено операций: ${ids.length}`,
+        res.count === 1 ? "Операция удалена" : `Удалено операций: ${res.count}`,
       );
-      setSelectedIds(new Set());
+      selection.clear();
       setConfirmDeleteOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить операции");
     }
-  }, [selectedIds, bulkDeleteMutation]);
+  }, [selection, filtersScope, bulkDeleteMutation]);
 
   const handleSingleDeleteConfirmed = useCallback(async () => {
     if (!deletingTx) return;
@@ -313,12 +351,14 @@ export const TransactionsTable = memo(function TransactionsTable({
       {
         id: "counterparty",
         header: "Контрагент / Связь",
-        width: 180,
+        width: 220,
         render: (tx) => {
           const hasCounterparty = Boolean(tx.counterparty);
           const hasInn = Boolean(tx.counterparty_inn);
+          const hasDeal = Boolean(tx.deal_id);
+          const hasRepair = Boolean(tx.repair_order_id);
 
-          if (!hasCounterparty && !tx.linked_entity_label) {
+          if (!hasCounterparty && !hasDeal && !hasRepair && !tx.linked_entity_label) {
             return (
               <RecordCellShell>
                 <span className="text-xs text-[#888888]">—</span>
@@ -328,21 +368,47 @@ export const TransactionsTable = memo(function TransactionsTable({
 
           return (
             <RecordCellShell>
-              <div className="flex items-center gap-1.5 truncate text-xs">
+              <div className="flex items-center gap-1.5 min-w-0 text-xs">
                 {hasCounterparty ? (
                   hasInn ? (
                     <Building2 className="h-3 w-3 shrink-0 text-[#4a38f5]" />
                   ) : (
                     <User className="h-3 w-3 shrink-0 text-[#4a38f5]" />
                   )
+                ) : hasDeal ? (
+                  <Briefcase className="h-3 w-3 shrink-0 text-[#4a38f5]" />
+                ) : hasRepair ? (
+                  <Wrench className="h-3 w-3 shrink-0 text-[#4a38f5]" />
                 ) : null}
-                <div className="flex flex-col truncate leading-tight">
-                  <span className="truncate text-[#111111] font-medium">
-                    {tx.counterparty || tx.linked_entity_label}
-                  </span>
-                  {hasInn && (
-                    <span className="font-mono text-[10px] text-[#888888]">
-                      ИНН {tx.counterparty_inn}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {hasCounterparty && (
+                    <span className="truncate text-[#111111] font-medium" title={hasInn ? `${tx.counterparty} (ИНН ${tx.counterparty_inn})` : tx.counterparty}>
+                      {tx.counterparty}
+                    </span>
+                  )}
+                  {hasDeal && (
+                    <Link
+                      href={`/crm/deals?record=${tx.deal_id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title={tx.deal_title ? `Сделка: ${tx.deal_title}` : "Открыть сделку"}
+                      className="inline-flex items-center gap-1 rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#4a38f5] hover:bg-[#4a38f5]/15 transition-colors max-w-[130px] truncate shrink-0"
+                    >
+                      <span className="truncate">{tx.deal_title || "Сделка"}</span>
+                    </Link>
+                  )}
+                  {hasRepair && (
+                    <Link
+                      href={`/repairs/${tx.repair_order_id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title={tx.repair_ticket_number ? `Наряд ${tx.repair_ticket_number}` : "Открыть наряд"}
+                      className="inline-flex items-center gap-1 rounded-[4px] border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-100 transition-colors shrink-0 tabular-nums"
+                    >
+                      {tx.repair_ticket_number || "Наряд"}
+                    </Link>
+                  )}
+                  {!hasCounterparty && !hasDeal && !hasRepair && tx.linked_entity_label && (
+                    <span className="truncate text-[#111111] font-medium">
+                      {tx.linked_entity_label}
                     </span>
                   )}
                 </div>
@@ -373,6 +439,7 @@ export const TransactionsTable = memo(function TransactionsTable({
         id: "actions",
         header: "",
         width: 76,
+        sortable: false,
         render: (tx) => (
           <RecordCellShell>
             <div
@@ -406,61 +473,48 @@ export const TransactionsTable = memo(function TransactionsTable({
   // Floating Action Bar (bulk actions)
   const bulkBar = useMemo(() => {
     return (
-      <div className="flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 shadow-xs animate-in fade-in duration-150">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xs font-semibold text-[#111111]">
-            Выбрано: <span className="font-mono tabular-nums text-[#4a38f5]">{selectedIds.size}</span>
-          </span>
-          <span className="text-[#cccccc]">|</span>
-          <button
-            type="button"
-            onClick={() => setSelectedIds(new Set())}
-            className="text-xs text-[#666666] hover:text-[#111111] hover:underline cursor-pointer"
-          >
-            Снять выделение
-          </button>
-        </div>
+      <TableBulkBar
+        selectedCount={selection.effectiveSelectedCount}
+        totalCount={effectiveTotal}
+        isAllSelected={selection.isAllSelected}
+        excludedCount={selection.excludedCount}
+        entityNamePlural="операций"
+        pageItemCount={filtered.length}
+        onSelectAll={selection.selectAllAcrossPages}
+        onClearSelection={selection.clear}
+        onDelete={() => setConfirmDeleteOpen(true)}
+        isDeleting={bulkDeleteMutation.isPending}
+      >
+        <button
+          type="button"
+          onClick={handleDuplicateSelected}
+          disabled={bulkDuplicateMutation.isPending}
+          className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer disabled:opacity-50"
+          title="Дублировать выбранные операции сегодняшним числом"
+        >
+          <Copy className="h-3.5 w-3.5 text-[#666666]" />
+          <span>{bulkDuplicateMutation.isPending ? "Копирование..." : "Копировать"}</span>
+        </button>
 
-        <div className="flex items-center gap-2">
-          {/* Copy / Duplicate button */}
-          <button
-            type="button"
-            onClick={handleDuplicateSelected}
-            disabled={bulkDuplicateMutation.isPending}
-            className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer disabled:opacity-50"
-            title="Дублировать выбранные операции сегодняшним числом"
-          >
-            <Copy className="h-3.5 w-3.5 text-[#666666]" />
-            <span>{bulkDuplicateMutation.isPending ? "Копирование..." : "Копировать"}</span>
-          </button>
-
-          {/* Export button */}
-          <button
-            type="button"
-            onClick={handleExportSelected}
-            className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
-            title="Экспортировать выбранные операции в CSV"
-          >
-            <Download className="h-3.5 w-3.5 text-[#666666]" />
-            <span>Экспорт (CSV)</span>
-          </button>
-
-          {/* Delete button */}
-          <button
-            type="button"
-            onClick={() => setConfirmDeleteOpen(true)}
-            disabled={bulkDeleteMutation.isPending}
-            className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-rose-200 bg-rose-50 px-2.5 text-xs font-medium text-rose-700 shadow-2xs hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
-            title="Удалить выбранные операции"
-          >
-            <Trash2 className="h-3.5 w-3.5 text-rose-600" />
-            <span>Удалить</span>
-          </button>
-        </div>
-      </div>
+        <button
+          type="button"
+          onClick={handleExportSelected}
+          className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] hover:border-[#cccccc] transition-colors cursor-pointer"
+          title="Экспортировать отмеченные операции текущей страницы в CSV"
+        >
+          <Download className="h-3.5 w-3.5 text-[#666666]" />
+          <span>Экспорт (CSV)</span>
+        </button>
+      </TableBulkBar>
     );
   }, [
-    selectedIds,
+    selection.effectiveSelectedCount,
+    selection.isAllSelected,
+    selection.excludedCount,
+    selection.selectAllAcrossPages,
+    selection.clear,
+    effectiveTotal,
+    filtered.length,
     handleDuplicateSelected,
     handleExportSelected,
     bulkDuplicateMutation.isPending,
@@ -548,7 +602,7 @@ export const TransactionsTable = memo(function TransactionsTable({
         </div>
 
         {/* Export All button if no selection */}
-        {filtered.length > 0 && selectedIds.size === 0 && (
+        {filtered.length > 0 && selection.effectiveSelectedCount === 0 && (
           <button
             type="button"
             onClick={() => {
@@ -587,10 +641,28 @@ export const TransactionsTable = memo(function TransactionsTable({
         columns={columns}
         getRowId={(tx) => tx.id}
         tableId="transactions"
+        serverSort={serverSort}
+        sortColumn={sortColumn}
+        sortAsc={sortAsc}
+        onSortChange={onSortChange}
         selectable={true}
-        selectedIds={selectedIds}
-        onSelectionChange={setSelectedIds}
+        selectedIds={selection.getPageSelectedIds(pageTxIds)}
+        onSelectionChange={(next) => selection.onPageSelectionChange(next, pageTxIds)}
         bulkBar={bulkBar}
+        pagination={
+          onPageChange && page !== undefined && limit !== undefined ? (
+            <WarehousePagination
+              total={effectiveTotal}
+              page={page}
+              pages={Math.max(1, Math.ceil(effectiveTotal / limit))}
+              limit={limit}
+              entityLabel="операций"
+              onPageChange={onPageChange}
+              onLimitChange={(newLimit) => onLimitChange?.(newLimit)}
+              disabled={isLoading}
+            />
+          ) : undefined
+        }
         onRowClick={(tx) => setEditingTx(tx)}
         emptyState={
           <div className="flex flex-col items-center gap-2 py-16 text-center">
@@ -638,9 +710,9 @@ export const TransactionsTable = memo(function TransactionsTable({
         onClose={() => setConfirmDeleteOpen(false)}
         onConfirm={handleDeleteConfirmed}
         title={
-          selectedIds.size === 1
+          selection.effectiveSelectedCount === 1
             ? "Удалить операцию?"
-            : `Удалить ${selectedIds.size} операций?`
+            : `Удалить ${selection.effectiveSelectedCount} операций?`
         }
         description="Выбранные финансовые операции будут удалены, а балансы связанных счетов автоматически пересчитаны. Это действие необратимо."
         confirmLabel="Удалить"

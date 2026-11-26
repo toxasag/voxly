@@ -26,6 +26,8 @@ import { toast } from "sonner";
 import type { DealDTO, KanbanColumnDTO } from "@/lib/api/use-deals";
 import { useDeleteDeal, useMoveDealStage, useUpdateDeal, useBulkDeleteDeals, useBulkMoveDeals } from "@/lib/api/use-deals";
 import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
+import { WarehousePagination } from "@/components/warehouse/WarehousePagination";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
 import { useCompanies } from "@/lib/api/use-companies";
 import { contactFullName, useContacts } from "@/lib/api/use-contacts";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -53,6 +55,21 @@ interface DealListViewProps {
   usersById: Map<string, TenantUserDTO>;
   onOpenDeal?: (id: string) => void;
   bulkEnabled: boolean;
+  totalCount?: number;
+  page?: number;
+  limit?: number;
+  onPageChange?: (page: number) => void;
+  onLimitChange?: (limit: number) => void;
+  sortColumn?: string | null;
+  sortAsc?: boolean;
+  onSortChange?: (columnId: string | null, asc: boolean) => void;
+  serverSort?: boolean;
+  activeFilters?: {
+    pipeline_id?: string;
+    preset?: string;
+    search?: string;
+  };
+  isLoading?: boolean;
 }
 
 /** Какая ячейка какой строки сейчас в режиме правки. */
@@ -73,9 +90,34 @@ const CALC_OPTIONS: { id: CalcMode; label: string }[] = [
 /**
  * Таблица сделок по образцу Opportunities в Twenty CRM.
  */
-export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal, bulkEnabled }: DealListViewProps) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [isAllSelected, setIsAllSelected] = useState(false);
+export function DealListView({
+  deals,
+  columns,
+  pipelineId,
+  usersById,
+  onOpenDeal,
+  totalCount,
+  page,
+  limit,
+  onPageChange,
+  onLimitChange,
+  sortColumn,
+  sortAsc,
+  onSortChange,
+  serverSort = false,
+  activeFilters,
+  isLoading = false,
+}: DealListViewProps) {
+  const effectiveTotal = totalCount ?? deals.length;
+  const pageDealIds = useMemo(() => deals.map((d) => d.id), [deals]);
+  const filtersScope = useMemo(
+    () => activeFilters ?? { pipeline_id: pipelineId },
+    [activeFilters, pipelineId],
+  );
+  const selection = useTableSelection({
+    filterKey: JSON.stringify(filtersScope),
+    totalCount: effectiveTotal,
+  });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [editing, setEditing] = useState<EditTarget>(null);
   const [pickerSearch, setPickerSearch] = useState("");
@@ -882,52 +924,29 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
 
   const bulkMoveTo = useCallback(async (stageId: string) => {
     try {
-      if (isAllSelected) {
-        const res = await bulkMoveMutation.mutateAsync({
-          mode: "all",
-          stage_id: stageId,
-          filters: { pipeline_id: pipelineId },
-        });
-        toast.success(`Перемещено сделок: ${res.count}`);
-      } else {
-        const ids = Array.from(selected);
-        const res = await bulkMoveMutation.mutateAsync({
-          mode: "ids",
-          stage_id: stageId,
-          ids,
-        });
-        toast.success(`Перемещено сделок: ${res.count}`);
-      }
-      setSelected(new Set());
-      setIsAllSelected(false);
+      const payload = selection.buildBulkPayload(filtersScope);
+      const res = await bulkMoveMutation.mutateAsync({
+        ...payload,
+        stage_id: stageId,
+      });
+      toast.success(`Перемещено сделок: ${res.count}`);
+      selection.clear();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось переместить сделки");
     }
-  }, [isAllSelected, selected, bulkMoveMutation, pipelineId]);
+  }, [selection, filtersScope, bulkMoveMutation]);
 
   const bulkDelete = useCallback(async () => {
     setDeleteConfirmOpen(false);
     try {
-      if (isAllSelected) {
-        const res = await bulkDeleteMutation.mutateAsync({
-          mode: "all",
-          filters: { pipeline_id: pipelineId },
-        });
-        toast.success(`Удалено сделок: ${res.count}`);
-      } else {
-        const ids = Array.from(selected);
-        const res = await bulkDeleteMutation.mutateAsync({
-          mode: "ids",
-          ids,
-        });
-        toast.success(`Удалено сделок: ${res.count}`);
-      }
-      setSelected(new Set());
-      setIsAllSelected(false);
+      const payload = selection.buildBulkPayload(filtersScope);
+      const res = await bulkDeleteMutation.mutateAsync(payload);
+      toast.success(`Удалено сделок: ${res.count}`);
+      selection.clear();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось удалить сделки");
     }
-  }, [isAllSelected, selected, bulkDeleteMutation, pipelineId]);
+  }, [selection, filtersScope, bulkDeleteMutation]);
 
   const calcResult = useMemo(() => {
     if (deals.length === 0 || calcMode === "none") return undefined;
@@ -978,27 +997,26 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
         getRowId={(deal) => deal.id}
         onRowClick={onOpenDeal === undefined || editing !== null ? undefined : (deal) => onOpenDeal(deal.id)}
         tableId="deals"
+        serverSort={serverSort}
+        sortColumn={sortColumn}
+        sortAsc={sortAsc}
+        onSortChange={onSortChange}
         onCellEdit={(deal, columnId) => setEditing({ rowId: deal.id, columnId })}
         selectable={true}
-        selectedIds={selected}
-        onSelectionChange={(next) => {
-          setSelected(next);
-          if (next.size === 0) setIsAllSelected(false);
-        }}
+        selectedIds={selection.getPageSelectedIds(pageDealIds)}
+        onSelectionChange={(next) => selection.onPageSelectionChange(next, pageDealIds)}
         footerCells={calcResult}
         emptyState={<TableEmptyState icon={Handshake} title="Сделок нет" description="Под текущий фильтр не попала ни одна сделка" />}
         bulkBar={
           <TableBulkBar
-            selectedCount={isAllSelected ? deals.length : selected.size}
-            totalCount={deals.length}
-            isAllSelected={isAllSelected}
+            selectedCount={selection.effectiveSelectedCount}
+            totalCount={effectiveTotal}
+            isAllSelected={selection.isAllSelected}
+            excludedCount={selection.excludedCount}
             entityNamePlural="сделок"
             pageItemCount={deals.length}
-            onSelectAll={() => setIsAllSelected(true)}
-            onClearSelection={() => {
-              setSelected(new Set());
-              setIsAllSelected(false);
-            }}
+            onSelectAll={selection.selectAllAcrossPages}
+            onClearSelection={selection.clear}
             onDelete={() => setDeleteConfirmOpen(true)}
             isDeleting={bulkDeleteMutation.isPending}
           >
@@ -1017,6 +1035,20 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
               ))}
             </select>
           </TableBulkBar>
+        }
+        pagination={
+          onPageChange && page !== undefined && limit !== undefined ? (
+            <WarehousePagination
+              total={effectiveTotal}
+              page={page}
+              pages={Math.max(1, Math.ceil(effectiveTotal / limit))}
+              limit={limit}
+              entityLabel="сделок"
+              onPageChange={onPageChange}
+              onLimitChange={(newLimit) => onLimitChange?.(newLimit)}
+              disabled={isLoading}
+            />
+          ) : undefined
         }
       />
 
@@ -1080,7 +1112,11 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
         open={deleteConfirmOpen}
         onClose={() => setDeleteConfirmOpen(false)}
         onConfirm={bulkDelete}
-        title={isAllSelected ? `Удалить все сделки (${deals.length})?` : `Удалить сделки: ${selected.size}?`}
+        title={
+          selection.isAllSelected
+            ? `Удалить сделки (${selection.effectiveSelectedCount})?`
+            : `Удалить сделки: ${selection.effectiveSelectedCount}?`
+        }
         description="Сделки будут скрыты из воронки (мягкое удаление). Действие необратимо через интерфейс."
         confirmLabel="Удалить"
         variant="destructive"

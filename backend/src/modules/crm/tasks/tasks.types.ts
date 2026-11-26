@@ -5,7 +5,7 @@ export const taskPrioritySchema = z.enum(["low", "medium", "high"]);
 export const taskStatusSchema = z.enum(["todo", "in_progress", "done"]);
 export const linkedEntityTypeSchema = z.enum(["deal", "contact", "company"]);
 
-const optionalDateTime = z.string().datetime("Use an ISO 8601 timestamp").optional().or(z.literal(""));
+const optionalDateTime = z.string().datetime({ offset: true, message: "Use an ISO 8601 timestamp" }).optional().or(z.literal(""));
 
 /**
  * A task may be linked to at most one CRM entity. The pair is validated

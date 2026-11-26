@@ -5,12 +5,17 @@ import { createCompanySchema, updateCompanySchema } from "./companies.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { innLookupService } from "../../integrations/inn-lookup.service.js";
 import { bulkActionSchema } from "../shared/bulk-action.types.js";
+import { sortDirSchema } from "../../../lib/table-query.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
   manager_id: z.string().uuid().optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
+  sort: z.string().max(64).optional(),
+  order: sortDirSchema.optional(),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
 });
 
 const innQuerySchema = z.object({
@@ -27,13 +32,16 @@ export async function companiesRoutes(app: FastifyInstance): Promise<void> {
   const canDelete = app.requirePermission("companies:delete");
 
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { search, manager_id, limit, offset } = listQuerySchema.parse(request.query);
+    const { search, manager_id, limit, offset, sort, order, sort_by, sort_dir } =
+      listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       search,
       managerId: manager_id,
       limit,
       offset,
+      sortBy: sort_by ?? sort,
+      sortDir: sort_dir ?? order,
     });
 
     return reply.send({ data: items, meta: { limit, offset, total } });

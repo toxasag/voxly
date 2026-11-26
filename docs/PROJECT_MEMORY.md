@@ -1711,3 +1711,278 @@
   - Деплой на `150.241.98.135` выполнен через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
   - Миграция `0136` применена на продакшене.
   - Живая проверка в `ego-browser`: открытие `https://mpro.getvoxly.ru/settings/notifications`, проверка дефолта (включено), переключение в «Отключено», проверка блокировки дочерних каналов и появления баннера тишины, проверка сохранения после перезагрузки F5 и возврата во включенное состояние.
+  - Аудит отправки Email-уведомлений: подтверждена блокировка отправки лидов на дефолтный email владельца при `notifications_enabled = false` в `lead-notification.queue.ts`; уточнены тексты в `UserMasterNotificationToggle.tsx` и динамическая индикация в `LeadNotificationChannels.tsx`.
+
+---
+
+### 25.11.2026 — Полное отключение тёмной темы и фиксация Twenty CRM Light Canvas
+- **Контекст и проблема:**
+  - Пользователь прислал скриншот `fe13ccea-2b80-48ea-b192-118705118559-IMG_20261125_113731_202.jpg`, где сайдбар `Sidebar.tsx` и шапка кабинета отрендерились в чёрном цвете (`#111111`) с тёмными границами (`#27272a`).
+  - Причина: наличие классов `dark:*` на ключевых контейнерах (`dark:bg-[#111111]`), дефолтная реакция Tailwind v4 на медиазапрос `prefers-color-scheme: dark` ОС, кнопка переключения темы в шапке `Header.tsx` и чтение `localStorage.getItem('getvoxly_theme') === 'dark'` в инлайн-скрипте `layout.tsx`.
+- **Что сделано:**
+  1. **Корень и CSS (`layout.tsx`, `globals.css`):**
+     - В `layout.tsx` скрипт `THEME_INIT_SCRIPT` сбрасывает `getvoxly_theme` в `light`, удаляет класс `dark` и выставляет `color-scheme: light`.
+     - На `<html>` и `<body>` принудительно зафиксированы `color-scheme: light !important;`, фон `#ffffff !important;` и текст `#111111 !important;`.
+     - В `globals.css` добавлена директива `@variant dark (&:where([data-theme="disabled-dark-mode"]));`, полностью блокирующая срабатывание медиазапроса `prefers-color-scheme: dark` на уровне CSS-движка Tailwind v4.
+  2. **Зачистка `dark:*` и переключателей темы:**
+     - `Sidebar.tsx`: удалены `dark:border-[#27272a] dark:bg-[#111111]` с `<aside>` и шапки бренда.
+     - `Header.tsx` (CRM и landing): полностью удалены кнопки переключения темы (Sun/Moon), удален неиспользуемый хук `useTheme`, удалены классы `dark:*`.
+     - `use-theme.ts`: переведен в принудительный режим `light` с no-op переключателем и сбросом старых ключей `localStorage`.
+     - `Logo.tsx`, `onboarding/page.tsx`, `accept-invite/page.tsx`, `reset-password/page.tsx`, `Footer.tsx`: удалены все `dark:*` утилиты.
+  3. **Виджет чата и настройки (`widget.js`, `widget-script.ts`, `WebchatAppearanceSettings.tsx`, `webchat.service.ts`):**
+     - Удалены переключатели темной темы виджета; виджет зафиксирован в светлой теме (`theme: "light"`, удален класс `is-dark-theme`).
+- **Верификация:**
+  - Деплой на `150.241.98.135` через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Проверка в `playwright`/браузере с эмуляцией `colorScheme: 'dark'`: сайдбар и шапка остаются светлыми (#fbfbfb / #ffffff), класс `dark` отсутствует, 0 ошибок в консоли.
+
+---
+
+### 25.11.2026 — Автоматическая смена этапа связанной CRM-сделки на «В работе» при приёмке оборудования
+- **Контекст и задача:**
+  - При оформлении/приёмке оборудования в сервисном центре (`/repairs`, модалка приёмки, карточка наряда, создание наряда из сделки) связанная сделка CRM оставалась на начальных этапах («Новый лид»), требуя ручного перевода.
+  - Контрольный пример: сделка `d7055434-8e7e-43b8-a180-510641ec763b` и наряд `a533e042-a9f6-4dd0-8355-9a16909ef785` тенанта `remtoua`.
+- **Что сделано:**
+  1. **Бэкенд (`deals.service.ts`):**
+     - Выделен `moveStageInTx` для безопасного выполнения смены этапа внутри существующей транзакции клиента БД.
+     - Добавлен метод `advanceDealToInProgressInTx`:
+       - Динамический поиск этапа «В работе» по имени (`name = 'В работе'`, `ILIKE '%в работе%'`, `in progress`) в рамках воронки сделки и тенанта.
+       - Защита: не трогает закрытые (won/lost) или неактивные сделки.
+       - Защита от дублирования: no-op, если сделка уже на этапе «В работе».
+       - Защита от отката: переводит сделку только если её текущий этап раньше этапа «В работе» (`current_sort_order < target_sort_order`).
+       - Сохраняет историю в `deal_stage_history` с автором изменения и вызывает всех подписчиков смены этапов.
+     - Добавлен метод `syncDealProgressFromRepairs` для вызова вне внешних транзакций.
+  2. **Сервисный центр (`repairs.service.ts`):**
+     - В методе одиночной приёмки `create` вызов `advanceDealToInProgressInTx` включен прямо в единую транзакцию приёмки при наличии `dealId`.
+     - В пакетной приёмке `createBatchIntake` вызов `advanceDealToInProgressInTx` включен в единую транзакцию при наличии `dealId`.
+     - В `update`, `changeStatus` и `batchUpdateStatus` добавлен вызов `syncDealProgressFromRepairs` при изменении статусов и нарядов.
+  3. **Миграция БД (`0138_sync_intake_repairs_to_in_progress_deals.sql`):**
+     - Ретроспективно перевела все активные сделки (включая контрольный пример `d7055434-8e7e-43b8-a180-510641ec763b`), имеющие активные наряды СЦ и находящиеся на более ранних этапах, в этап «В работе» с записью в `deal_stage_history`.
+  4. **Фронтенд (`use-repairs.ts`):**
+     - В `useUpdateRepair`, `useChangeRepairStatus`, `useUpdateRepairPaymentStatus` настроена инвалидация `repairKeys.detail(order.id)` и `["deals"]` (охватывает kanban, list, active preset и карточку сделки), что гарантирует реактивное обновление UI без ручной перезагрузки страницы.
+
+---
+
+### 25.11.2026 — Исправление потери и скрытия текста при отправке фото/вложений в CRM-чате
+- **Инцидент и контекст:**
+  - На портале `remtoua.getvoxly.ru` в карточке сделки (вкладка «Чат») при прикреплении фото и вводе текста (например, «сейчас такие позиции, корпуса новые нужны? 2 корпуса у вас разбитые...») после отправки в пузыре сообщения отображалась только картинка без текста. Пользователь считал, что текст стёрся и не ушёл, и был вынужден набирать его повторно.
+  - По логам и БД (`deal_messages` `4b142ffc-cf82-42b2-9e37-0b773583ffa4` в 13:06 MSK): бэкенд корректно сохранил и текст (`content`), и вложение (`attachment`), а также передал подпись в WhatsApp Evolution API.
+- **Root Cause:**
+  1. В `CrmChatView.tsx` функция `getAttachmentInfo` ошибочно присваивала `fileName = content.trim()`, когда `content` не являлся шаблонной заглушкой. В результате имя файла приравнивалось ко всему пользовательскому тексту сообщения.
+  2. В проверке `isDummyContent` условие `trimmedContent === info.fileName` из-за п. 1 становилось `true` для любого пользовательского текста, отправленного с вложением. Фронтенд считал текст дубликатом имени файла и полностью скрывал его из рендера (`!isDummyContent && trimmedContent` давало `false`).
+  3. В `TelegramComposer.tsx` метод `handleSendAction` затирал `editorRef.current.innerHTML = ""` и `updateAttachedFiles([])` синхронно до завершения отправки родителем.
+- **Что изменено:**
+  1. **`CrmChatView.tsx`:**
+     - Введена функция `extractAttachmentFileName`, извлекающая реальное имя файла из пути/URL вложения (`attachment`), предотвращая подмену имени файла текстом сообщения.
+     - Переработана логика `isDummyContent`: текст скрывается как дубликат только если он строго равен реальному имени файла, URL вложения или системному плейсхолдеру (`[документ]`, `.` и т.п.).
+     - Для визуальных медиа (`isImage` / `isVideo`): блок медиа отображается сверху, а подпись (caption) — аккуратно под ним с отступом `mt-2` (стандарт Telegram/WhatsApp). Для документов и аудио текст отображается сверху, а плашка документа / плеер — снизу.
+  2. **`TelegramComposer.tsx`:**
+     - В контролируемом режиме (`isControlled`) устранена преждевременная зачистка редактора и прикрепленных файлов до ответа сервера. Очистка выполняется реактивно родителем (`setInput("")`, `setAttachedFiles([])`) через `useEffect` при успешной доставке. При ошибке сети текст и файлы сохраняются в форме.
+- **Верификация:**
+  - Типизация `npx tsc --noEmit` в frontend и backend без ошибок.
+  - Деплой на `150.241.98.135` через `/usr/local/bin/vf-deploy GETVOXLY` (код 0).
+  - Эндпоинты `https://api.getvoxly.ru/health` и `https://remtoua.getvoxly.ru/login` возвращают HTTP 200.
+  - Сообщение с фото и текстом корректно отображает как превью фото, так и подпись под ним, а файлы без текста (например, PDF-счета) сохраняют скрытие дублирующих подписей.
+
+---
+
+### 25.11.2026 — Выбор даты и времени (`HH:mm`) в задачах CRM (сквозная реализация)
+- **Контекст и задача:**
+  - В форме быстрого создания задачи внутри карточки сделки/контакта/компании (`RecordTasksTab.tsx`) использовался `<input type="date">` с жёсткой подстановкой `T12:00:00`, что не позволяло задать точное время задачи. Кроме того, время задачи не отображалось в списках, канбане, таймлайне, карточке сделки и поиске, а `TasksCalendarView` группировал задачи по UTC-срезу.
+- **Root Cause & Карта влияния:**
+  - В БД `crm_tasks.due_date` уже имеет тип `TIMESTAMPTZ`, а планировщик уведомлений (`task-reminders.service.ts`) и расчёты `isOverdue` уже работают с точностью до минуты. Проблема ограничивалась UI ввода и отображения.
+- **Что изменено:**
+  1. **Backend (`tasks.types.ts`):**
+     - `optionalDateTime` обновлён с `.datetime({ offset: true })` для поддержки любых валидных ISO-8601 таймштампов с оффсетом или `Z`.
+  2. **Frontend Утилиты (`frontend/src/lib/utils.ts`):**
+     - Добавлены единые функции `toLocalDateTimeInput`, `localDateTimeToIso`, `toLocalDateKey`, `formatTaskTime`, `formatTaskDue` (единый локальный формат `25.11, 15:30` / `25 ноября, 15:30`).
+  3. **Единый компонент (`frontend/src/components/ui/date-time-picker.tsx`):**
+     - Создан переиспользуемый `DateTimePicker` в стиле Twenty CRM Light Canvas (`default` и `compact` варианты) с пресетами даты (`Сегодня`, `Завтра`, `+3 дня`, `Неделя`), точным вводом даты и времени `HH:mm`, пресетами времени (`09:00`, `12:00`, `15:00`, `18:00`, `+1 ч`, `+3 ч`) и быстрой очисткой.
+  4. **Формы и отображения задач:**
+     - `RecordTasksTab.tsx`: заменён `<input type="date">` на `DateTimePicker variant="compact"`, сохранён перенос выбранного времени при открытии подробной `TaskModal`, обновлён формат срока с временем.
+     - `TaskModal.tsx`: подключён `DateTimePicker` через `Controller` `react-hook-form`, убран дубликат `toLocalInput`.
+     - `crm/tasks/page.tsx`, `RecordTimelineTab.tsx`, `DealCard.tsx`, `use-global-search.ts`: отображение срока задачи переведено на единый `formatTaskDue` с временем.
+     - `TasksCalendarView.tsx`: исправлена группировка по локальной дате (`toLocalDateKey`) вместо UTC `slice(0, 10)`, добавлен вывод времени (`formatTaskTime`) в ячейках календаря.
+
+---
+
+### 25.11.2026 — Многословный токенизированный поиск запчастей и услуг (СЦ и Склад)
+- **Контекст и проблема:**
+  - В карточке наряда СЦ (`/repairs/[id]`, блок «Используемые запчасти» в `PartsTable.tsx`) при вводе нескольких слов (например, `gsn50 кольцо`) поиск не находил позицию `GSN50 поз.60 Кольцо стопорное d 7мм`, так как искал всю введённую фразу целиком через `includes(q)` / `LIKE '%...%'`.
+- **Что изменено:**
+  1. **Backend (`string.utils.ts`, `warehouse.service.ts`, `services.service.ts`, миграция `0139_warehouse_search_trgm_indexes.sql`):**
+     - Добавлены хелперы `tokenizeSearchQuery` и `escapeLikePattern` для безопасного разбиения запроса по пробелам на токены с экранированием `%`, `_`, `\`.
+     - В `WarehouseService.listItems` и `ServicesService.list` реализован многословный `AND`-поиск каждого слова в любом порядке по названию, артикулу SKU, бренду, категории и связанным моделям (`warehouse_item_models` -> `equipment_models`).
+     - Добавлены `pg_trgm` GIN-индексы для быстрого подстрочного поиска на больших каталогах.
+  2. **Frontend (`utils.ts`, `PartsTable.tsx`, `WorkItemsTable.tsx`, `ServiceCatalogDialog.tsx`, `WarehouseIntakeDialog.tsx`, `DictionarySelectField.tsx`, `CreatableCombobox.tsx`):**
+     - Добавлены единые функции `matchesSearchTokens` и `matchesWarehouseItem`.
+     - Все комбобоксы и фильтры подбора запчастей, услуг СЦ, словарей и приёмки склада переведены на многословную фильтрацию по всем релевантным полям; в `PartsTable.tsx` добавлен вывод бренда и привязанных моделей в выпадающем списке.
+
+
+
+## 2026-11-25 — Автоматический исторический синк переписки при подключении MAX, Telegram и WhatsApp
+- **Контекст и задача:** при подключении нового аккаунта канала (MAX, Telegram User API, WhatsApp Evolution) требовалось автоматически подтягивать историю переписки с контактами, уже имеющимися в CRM (`contacts`), без дублей сделок/сообщений и без перезаписи ФИО/телефонов.
+- **Что сделано:**
+  1. **БД и схема:** добавлена миграция [0140_channel_history_sync_status.sql](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/db/migrations/0140_channel_history_sync_status.sql) и обновлена [schema.sql](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/db/schema.sql) (`history_sync_status`, `history_sync_total`, `history_sync_processed`, `history_sync_messages`, `history_sync_error`, `history_sync_started_at`, `history_sync_finished_at` в `channel_accounts`).
+  2. **Backend и очередь (`timeline-sync`):**
+     - Создан сервис [channel-history-sync.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/channel-history-sync.service.ts) (`enqueueChannelHistorySync`, `runChannelHistorySync`) и подключён к воркеру BullMQ в [worker.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/worker.ts).
+     - Матчинг контактов CRM выполняется по `phone`, `telegram_chat_id`, `telegram_username`, `messenger_id`, `socials`, `custom_fields.max_chat_id`/`max_user_id`; все внешние HTTP/MTProto-запросы вынесены за пределы транзакций PostgreSQL.
+     - Сделки создаются только при наличии реальных сообщений в мессенджере (`findOrCreateDealForContactSync` с `chat_thread_id`), вставка сообщений идемпотентна (`external_message_id` + хронология), существующие ФИО и телефоны контактов не перезаписываются.
+     - Автозапуск синка добавлен при переходе аккаунта в `connected` в [max-integration.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-integration.routes.ts), [telegram-auth.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/telegram-auth.service.ts), [whatsapp-evolution.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/whatsapp-evolution.service.ts).
+     - Добавлен ручной эндпоинт `POST /api/v1/channels/:channel/accounts/:id/sync-history` в [channels.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/channels.routes.ts), обновлены [channels.types.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/channels.types.ts), [channels.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/channels.service.ts), [outbound-registry.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/outbound-registry.ts), [telegram-transport.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/telegram-transport.service.ts), [whatsapp-integration.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/whatsapp-integration.routes.ts).
+  3. **Frontend:** обновлены [use-channels.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/frontend/src/lib/api/use-channels.ts) (автополлинг статуса синка каждые 3 сек и мутация `useSyncChannelHistory`) и [ChannelAccountsTable.tsx](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/frontend/src/components/integrations/ChannelAccountsTable.tsx) (индикатор прогресса `processed/total` + кнопка запуска синка).
+  4. **Тесты:** добавлен [channel-history-sync.test.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/tests/channel-history-sync.test.ts) (3/3 passed), `tsc --noEmit` на backend — 0 ошибок.
+
+
+## 2026-11-25 — Исправление переименования контактов MAX в «Voxly», кросс-тенантного fallback и дубля «(Ремонт)»
+- **Контекст и root cause:**
+  1. В `/opt/voxly/apps/max-bridge/src/main.py` (`_resolve_user_by_phone`) при промахе/ошибке `search_by_phone` вызывался fallback `import_contacts([ContactInfo(phone=phone, first_name="Voxly", last_name="Check")])`. `pymax` (`ImportContactsPayload.from_contacts`) отправлял в MAX `Opcode.SYNC (21)` только с `firstName="Voxly"` без последующего удаления контакта — в результате на телефоне у контактов появлялось имя `Voxly`.
+  2. В `backend/src/modules/crm/enrichment.service.ts` (`defaultMaxProvider`) при отсутствии MAX-аккаунта у тенанта выбирался любой `connected` MAX-аккаунт на всей платформе.
+  3. В `backend/src/modules/channels/max-integration.routes.ts` (`/bots/upsert` и `/internal/bots/upsert`) при переподключении по QR к `label` безусловно дописывалось `(${body.firstName})`.
+- **Что сделано:**
+  1. `/opt/voxly/apps/max-bridge/src/main.py` (на сервере `150.241.98.135`, контейнер `getvoxly-max-bridge-1` + образ `voxly-max-bridge:latest`): удалён fallback `import_contacts` с `"Voxly"`/`"Check"` из `_resolve_user_by_phone` (оставлен только read-only `search_by_phone`), контейнер перезапущен и проверен живым запросом `POST /users/by-phone`.
+  2. `backend/src/modules/crm/enrichment.service.ts`: удалён кросс-тенантный fallback выбора MAX-аккаунта без `WHERE tenant_id = $1`.
+  3. `backend/src/modules/channels/max-integration.routes.ts`: добавлен хелпер `formatMaxAccountLabel`, предотвращающий повторное добавление `(${firstName})`.
+
+
+## 2026-11-26 — Починка пересланных фото MAX (ForwardLink) и статуса «Писать от»
+- **Контекст и root cause:**
+  1. В сделке `d0f4f677-e8ca-4a68-840f-b94446ede1bd` (тенант `remtoua`) клиент переслал в MAX 2 фотографии (`FORWARD`). У пересланных сообщений в `pymax` `msg.attaches` и `msg.text` пустые, а реальные вложения лежат в `msg.link.message.attaches`. В `/opt/voxly/apps/max-bridge/src/main.py` (`_extract_inbound_attachments`, `_message_text`, `/messages/media`, `_resolve_media_from_message`) `link.message` не проверялся, поэтому сообщения сохранялись с `content = ''` и `attachment = NULL`.
+  2. В `max-bridge` `_listener_watchdog` каждые 5 минут повторно вешал `on_message` без флага дедупликации, а `_ensure_live_client` не проверял `client.is_connected`.
+  3. В `backend/src/modules/crm/deals/deal-messaging.service.ts` (`getSendFromOptions`, `getChannelOptions`) сессия MAX считалась мёртвой при застрявшем в БД `channel_accounts.status = 'error'` даже когда `liveMaxBotIds` подтверждал её активность в `max-bridge`.
+- **Что сделано:**
+  1. `/opt/voxly/apps/max-bridge/src/main.py`: добавлены `_forward_link_message` и `_msg_attaches`, пересланные фото/текст теперь извлекаются и скачиваются через `/messages/media`; добавлена дедупликация `_voxly_listener_attached` и проверка `is_connected` в `_ensure_live_client`.
+  2. [deal-messaging.service.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/crm/deals/deal-messaging.service.ts): приоритет отдаётся `liveMaxBotIds.has(acc.id)` при наличии ответа от `max-bridge`.
+  3. [max-integration.routes.ts](file:///home/vibeforge/.local/share/vibeforge/worktrees/5f1cc3e4-4427-4cfc-b4b4-8ca271a25634/session/backend/src/modules/channels/max-integration.routes.ts): при входящем/исходящем событии статус `channel_accounts` автоматически восстанавливается из `'error'` в `'connected'`, а `syncMaxPrivateDialog` заполняет `content` и `attachment` у уже существующих пустых сообщений.
+
+## 2026-11-26 — Сквозная серверная сортировка, сквозной выбор (`excluded_ids` + `filters`) и пагинация таблиц
+- **Контекст:** Во всех таблицах платформы («Склад», CRM, «Ремонты», «Финансы», «Услуги», логи админки) сортировка работала только по текущей странице, мультивыбор сбрасывался или игнорировал снятые чекбоксы после «Выбрать все N» (`excluded_ids`) и активные фильтры (включая баг `bulkDelete` в `tasks` без `filters` и `deals` без `stage_id`/`preset`), а часть разделов загружалась без пагинации или с жёстким `limit: 25/100/200`.
+- **Что изменено:**
+  1. **Backend:** Созданы `backend/src/lib/table-query.ts` (SQL-конструктор `buildSortOrderBy`, `nullableTextExpr`, `appendExcludedIdsCondition`, `resolveBulkTargetIds`, `bulkActionSchema`) и миграция `backend/src/db/migrations/0141_table_sorting_indexes.sql`. Серверная сортировка, пагинация и `mode: "all"` + `excluded_ids` + `filters` внедрены в `warehouse` (items + tabs + alias `POST /api/v1/purchase-requests` в `app.ts`), `crm/contacts`, `crm/companies`, `crm/tasks`, `crm/deals`, `repairs`, `finance`, `invoices`, `services`, `admin-platform.routes.ts`.
+  2. **Frontend:** Добавлен `frontend/src/lib/hooks/use-table-selection.ts`, обновлены `RecordTable` (`serverSort`), `TableBulkBar` (`excludedCount`), `WarehousePagination` (`entityLabel`, `limitOptions`), API-хуки и все целевые экраны (`warehouse/page.tsx`, `ProductBulkEditDialog.tsx`, `crm/contacts/page.tsx`, `crm/companies/page.tsx`, `crm/tasks/page.tsx`, `crm/deals/page.tsx`, `DealListView.tsx`, `repairs/page.tsx`, `RepairsTable.tsx`, `finance/page.tsx`, `TransactionsTable.tsx`, `BulkEditInvoicesModal.tsx`, `ServicesCatalogTab.tsx`, `ServiceList.tsx`, `admin/logs/page.tsx`).
+- **Осталось / проверка:** Проверить unit-тесты, выкатить через `/usr/local/bin/vf-deploy GETVOXLY` (миграция `0141` накатится автоматически) и прогнать live-проверки сортировки, «Выбрать все N» и пагинации на `https://getvoxly.ru/`.
+
+
+## 2026-11-26 — Автозаполнение приёмки из сделки и читаемый шрифт номера наряда (/repairs)
+- **Контекст и root cause:**
+  1. При открытии формы приёмки из сделки (`/repairs?action=intake&dealId=...`) локальный state `phoneInput` в `RepairClientSection.tsx` инициализировался только при монтировании (`useState`) и не синхронизировался при асинхронном обновлении `customer_phone` из `useDeal(initialDealId)`. Ветка `lookupData.client` также не заполняла телефон клиента, а `handleClearCustomer` не очищал `customer_phone` в форме.
+  2. В `RepairIntakeModal.tsx` эффект открытия формы включал `initialDeal`, `teamMembers` и `currentUser` в массив зависимостей, вызывая повторный `form.reset()` при их догрузке, а при подстановке компании из сделки не устанавливался флаг `is_company: true`.
+  3. В `RepairsTable.tsx` колонки «Акт приема» (номер наряда) и «Сумма» использовали `font-mono text-xs font-bold tracking-tight` — в мелком кегле моноширинный faux-bold сжимал символ `№` и делал цифры «заплывшими» и плохо читаемыми.
+- **Что изменено:**
+  1. `frontend/src/components/repairs/RepairClientSection.tsx`: добавлена синхронизация `phoneInput` / `debouncedPhone` при внешнем изменении `customer_phone` (через `lastLocalPhoneRef`), автозаполнение `client.phone` в ветке `lookupData.client`, форматирование телефона в `existingContact` / `handleApplyExistingContact` и сброс `customer_phone` в `handleClearCustomer`.
+  2. `frontend/src/components/repairs/RepairIntakeModal.tsx`: разделены эффект сброса при открытии и эффект однократного автозаполнения из `initialDeal` (`appliedDealIdRef`) без сброса формы и оборудования; добавлен fallback на `contactWhatsapp || companyPhone` и установка `is_company: true` при наличии компании.
+  3. `frontend/src/components/repairs/RepairsTable.tsx` и `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`: шрифт номера наряда (и суммы в таблице) переведён на `font-sans font-semibold tabular-nums` (Inter 600 с табличными цифрами, без `font-mono`, `font-bold` и `tracking-tight`).
+  4. `frontend/src/components/repairs/RepairIntakeModal.test.tsx`, `frontend/src/components/repairs/RepairClientSection.test.tsx`: добавлены регрессионные тесты.
+- **Проверка прода (сделка `d0f4f677-e8ca-4a68-840f-b94446ede1bd`, наряды `d4a06246-...` / `№0032` и `23eddfcd-...` / `№0033`):** `POST /api/v1/repairs/batch` завершился `201`, оба наряда корректно привязаны к сделке и контакту `b6a700c9-...` (Михаил, `+79321283877`, Фирма Михаила), дублей не создалось, сделка перешла в этап «В работе».
+
+## 2026-11-26 — Исправление синхронизации счетов нарядов с Контур.Эльбой (HTTP 400 для счетов без НДС)
+- **Контекст и root cause:**
+  1. У тенанта `remtoua` (ИП Сагайдак, `vat_mode = 'none'`, `vat_rate = 0`) интеграция Контур.Эльбы настроена (`elba_enabled = true`, `elba_auto_sync_invoices = true`), но все созданные счета (`СЧ-2026-0005`, `СЧ-2026-0006`, `СЧ-2026-0007`) отклонялись API Контур.Эльбы с `HTTP 400`.
+  2. По официальной OpenAPI-спецификации Контур.Эльбы (`POST /v1/organizations/{organizationId}/bills`) для счёта без НДС (`withNDS: false`) запрещены два поля, которые передавались нашим кодом:
+     - `sumsWithNDS: true` (было захардкожено в `invoices.service.ts:987`) → ошибка *«В счёте без НДС цена за единицу товара не может включать в себя НДС»*;
+     - `warehouseItems[].ndsRate: "withoutNds"` (передавалось вместо `null`) → ошибка *«Для счёта без НДС поле BillItemToCreate.NDSRate должно принимать значение null»*.
+  3. В `elba.client.ts` парсер ошибок ожидал плоское строковое `error`, тогда как Контур.Эльба возвращает вложенный `ErrorResponse { statusCode, traceId, error: { code, message, target, details, innerError } }`, из-за чего в БД попадало только `HTTP 400`.
+  4. В `invoices.service.ts` автосинхронизация при создании счёта запускалась через `void this.syncToElba(...)` без ожидания результата, поэтому UI не получал ни `elbaBillId`, ни `elbaSyncError`.
+- **Что изменено:**
+  1. `backend/src/modules/finance/elba.client.ts`: добавлены `buildCreateBillPayload` (при `withNDS=false` ставит `sumsWithNDS: null` и `warehouseItems[].ndsRate: null`, обрезает поля по лимитам Swagger) и `extractElbaErrorMessage` (рекурсивный разбор `ErrorResponse.error` / `details` / `innerError`); увеличено число попыток опроса `long-running-tasks` при поиске контрагента (до 8x500ms).
+  2. `backend/src/modules/finance/invoices.service.ts`: в `syncToElba` передаётся `withNDS = inv.vatMode !== "none" && inv.vatRate > 0`, `sumsWithNDS: withNDS ? true : null`, `ndsRate: withNDS ? mapVatModeToElbaNds(...) : null`; в `create` и `fromRepairs` автосинхронизация ожидается (с мягким `catch`, не роняющим создание счёта) для возврата актуального `elbaBillId` / `elbaSyncError`.
+  3. `frontend/src/components/repairs/detail/GenerateInvoiceModal.tsx` и `FinancialSummary.tsx`: добавлен показ реального статуса/ошибки синхронизации с Эльбой в toast и подсветка кнопки «Повторить Эльбу» при наличии `elbaSyncError`.
+  4. `backend/src/tests/elba-client.test.ts`: добавлены unit-тесты на формирование payload и разбор ошибок Эльбы.
+
+## 2026-11-26 — Стабилизация MAX-интеграции и нативный TypeScript-клиент `web.max.ru` (Wave 1 + Wave 2)
+- **Контекст и root cause:**
+  1. `max-bridge` жил только на VPS в `/opt/voxly/apps/max-bridge` и не деплоился из git; временный `WebClient` на `pending-*` не закрывался после переноса в `{bot_id}/`, `relogin=True` молча удалял `web.db`, а статус в Postgres разъезжался с реальностью (`021eb35f` в `error`, пустой `aff6c92c` в `connected`).
+  2. `PyMax 2.4.1` WebClient использовал устаревший JSON v11 и не поддерживал нативное управление сессиями / бинарный протокол `ver=10`.
+- **Что изменено (Wave 1):**
+  - Код `apps/max-bridge` перенесён в репозиторий, подключён к `docker-compose.yml`, `scripts/deploy.sh`, `scripts/remote-build.sh` и `docs/05_OPERATIONS/05_02_DEPLOY.md`.
+  - В `apps/max-bridge/src/main.py` добавлены `VoxlyWebClient(relogin=False)` (сброс токена только при фатальных ответах), переоткрытие рабочего клиента в `/data/max-sessions/{bot_id}`, фиксированный `device_id`/`user_agent`, `AutoRefreshQrAuthFlow` и `BridgePasswordProvider`.
+  - В `backend` добавлен зашифрованный бэкап `encrypted_session` (`credentials-cipher.ts`), восстановление из него, синк статусов `POST /bots/status`, фильтр исключения `native-ts` аккаунтов в `GET /bots/active`, `botId` в QR-переподключении без плодящихся лейблов и `POST /accounts/:id/check`.
+- **Что изменено (Wave 2):**
+  - `backend/src/modules/messaging/adapters/max/max-protocol.ts`: бинарный протокол `ver=10`, MessagePack c `ext type 1` (`BigInt`), LZ4 с соблюдением `MFLIMIT=12` / `LASTLITERALS=5`.
+  - `backend/src/modules/messaging/adapters/max/MaxTsAdapter.ts`: полнофункциональный WS-клиент (`SessionInit 6`, `LOGIN 19`, `AUTH_CONFIRM 23`, `cmd=1` ACK на `1`/`128`/`137`, `lastInSeq`, 35s read-timeout, jittered backoff reconnect, `cmd=2` retry queue, media upload/download, `getPrivateDialogs`, `lookupProfileByPhone 46`, сессии `96`/`97`, `resolveTargetChatId` с фоллбэком `userId -> XOR chatId`).
+  - `backend/src/modules/channels/max-native-auth.service.ts` и `max-integration.routes.ts`: нативная QR-авторизация (`288`/`289`/`291`), запасной вход по телефону + SMS/звонок (`17`/`18`/`294`) + 2FA (`115`), `POST /accounts/:id/provider` (переключение `native-ts` ↔ `max-bridge` без потери токена).
+  - `messaging-registry.ts` + `server.ts`: запуск `MaxTsAdapter.startAllNativeSessions()` при старте API, обработка входящих/нативных исходящих и AI-автоответа, типизированная отправка фото/видео/аудио/документов.
+  - UI (`ConnectMaxModal.tsx`, `ChannelAccountsTable.tsx`, `use-max-auth.ts`, `use-channels.ts`): выбор провайдера, вкладка входа по телефону, просмотр и завершение других сессий (`opcode 96`/`97`).
+- **Проверка локально и на проде (`150.241.98.135`):**
+  - Локально: `tsc --noEmit` (`backend` и `frontend`) — 0 ошибок; Vitest (`max-protocol`, `max-internal-auth`, `chat-write-first`, `channel-history-sync`) — 24/24 passed; `messaging-adapters.test.ts` — 8/8 passed; `scripts/test-deploy-safety.py` — 6/6 passed.
+  - На проде: аккаунт `021eb35f-2fd8-488c-bd64-6e14abfba252` переведён на `provider: 'native-ts'`, `status: 'connected'`; `GET /bots/active` исключил `021eb35f` (`max-bridge /health`: `sessions: 0`); `POST /accounts/021eb35f/check` → `alive: true`; `GET /accounts/021eb35f/sessions` (`opcode 96`) вернул 4 живые сессии; `getPrivateDialogs` + `downloadMedia` загрузили файл (`0032.pdf`, `1114344` байт) и фото (`70954` байт, `image/webp`); после `docker-compose restart backend` сессия `021eb35f` автоматически восстановилась из `encrypted_session`. Мёртвые аккаунты `aff6c92c...` и `98074187...` честно остаются в `status: 'error'` до сканирования QR.
+  - **Дополнительно устранены ошибки со страницы `/integrations/max`:**
+    - `channel-history-sync.service.ts`: в `findOrCreateDealForContactSync` запрос к `pipelines` ошибочно фильтровал `AND deleted_at IS NULL` (в `pipelines` нет `deleted_at`), из-за чего оба подключённых MAX-аккаунта падали в «Ошибка синка истории»; фильтр удалён, добавлен `try/catch` на отдельный контакт (например, контакты-поставщики).
+    - `ChannelAccountLinksCard.tsx`: на странице MAX в карточке Direct Link вместо ошибочной подписи `MTProto` выводится `MAX Web` и «Переход в профиль MAX».
+    - `ChannelAccountsTable.tsx` / `use-max-auth.ts`: в статусе показывается конкретная причина ошибки синка, повторное включение аккаунта с `hasCredentials` переводит его в `connected`, polling QR-статуса останавливается при `error`.
+  - Замечание по охвату живой проверки: реальная отправка нового исходящего сообщения клиенту через UI с `021eb35f` намеренно не выполнялась, чтобы не беспокоить реальных клиентов `remtoua`; исходящий/входящий пайплайн покрыт unit-тестами (`24/24`, `8/8`) и проверкой маршрутизации (`getSendFromOptions`).
+
+
+
+## 2026-11-26 — Выбор сделок/нарядов в кассовых операциях, прямые расходы и чистая прибыль в сделке и наряде
+- **Контекст:** В `CreateTransactionModal` поля привязки к сделке и заказ-наряду были обычными текстовыми `<input>` с ручным вводом UUID; привязанные расходы не отображались в таблице операций и не учитывались в прибыли сделки и наряда.
+- **Что изменено:**
+  1. **Backend (`finance.types.ts`, `finance.service.ts`, `finance.routes.ts`):**
+     - `GET /api/v1/finance/transactions` теперь поддерживает фильтры `deal_id` и `repair_order_id`, поиск по названию сделки/номеру наряда и возвращает `dealTitle` и `repairTicketNumber`.
+     - В `createTransaction` и `updateTransaction` добавлена валидация `deal_id` / `repair_order_id` в рамках тенанта и автоматическая подстановка `deal_id` при привязке к заказ-наряду.
+     - Добавлены `GET /api/v1/finance/deals/:dealId/economics` и `GET /api/v1/finance/repairs/:repairOrderId/economics` + чистая функция `computeNetProfitSummary`: считают выручку, себестоимость (`deal_items` + `repair_parts`), валовую прибыль, прямые некапитализированные расходы (исключая `is_capitalized_cost = true` и `supplier_order_id IS NOT NULL`, без двойного счёта) и чистую прибыль с маржой.
+  2. **Frontend:**
+     - Создан [TransactionEntityPickers.tsx](file:///home/vibeforge/.local/share/vibeforge/worktrees/2b204178-6230-472c-a7b9-0685b367162e/session/frontend/src/components/finance/TransactionEntityPickers.tsx) и подключён в `CreateTransactionModal.tsx` и `EditTransactionModal.tsx` (выбор существующих сделок и заказ-нарядов с поиском + автоподстановка сделки из наряда + поддержка предзаполненных `defaultType`/`defaultDealId`/`defaultRepairOrderId`).
+     - В `TransactionsTable.tsx` добавлены кликабельные бейджи привязанной сделки и заказ-наряда.
+     - Создан [DealEconomicsCard.tsx](file:///home/vibeforge/.local/share/vibeforge/worktrees/2b204178-6230-472c-a7b9-0685b367162e/session/frontend/src/components/crm/deals/DealEconomicsCard.tsx) и встроен в `deal-tabs.tsx` (`HomeTab`); также прямые расходы и чистая прибыль добавлены в сводку `DealProductsServicesTab.tsx` и в `FinancialSummary.tsx` карточки заказ-наряда (с кнопкой быстрого добавления прямого расхода прямо из сделки и из наряда).
+  3. **Тесты:** добавлен `backend/src/tests/finance-economics.test.ts`.
+
+## 2026-11-26 — Защита телефона контакта MAX от подмены третьих лиц из текста и резолв через MAX `CONTACT_INFO`
+- **Контекст и root cause (кейс `b6a700c9-4158-4f70-be02-cf7733ce672c`):**
+  1. `CrmPipelineService.processIncoming` и `findContact` (`crm-pipeline.service.ts`) безусловно вытаскивали первый встречный номер телефона из текста сообщения (`extractPhoneNumber(rawText)`), из-за чего указанный клиентом в MAX номер монтажника (`+7 932 128 38 77 Тимофей`) записался как основной `contacts.phone`, перетёр автообогащение WhatsApp/Telegram (`1830762247`) и ушёл в заказ-наряды `№0032`/`№0033`, тогда как реальный телефон и ФИО клиента были доступны в MAX `CONTACT_INFO (32)` (`+79257002262`, `Михаил Арабаджи`, `max_user_id = 77056581`).
+  2. `MaxTsAdapter.contactCache` кешировался глобально по голому `userId` без учёта `channelAccountId`: второй MAX-аккаунт тенанта (`98074187`), которому MAX скрывает телефон контакта, отравлял кеш для первого аккаунта (`021eb35f`), у которого телефон виден в `CONTACT_INFO (32)`.
+  3. `CrmEnrichmentService.enrichContact` искал в MAX только по телефону (`CONTACT_INFO_BY_PHONE (46)`), падал при пустом `phone` и не умел добирать телефон/фамилию и подтверждать MAX-профиль по `custom_fields.max_user_id` / `max_chat_id` с перебором всех живых MAX-аккаунтов тенанта; `syncChannelHistory` / `syncMaxDialogHistory` также не дозаполняли пустые `phone` / `last_name` из MAX.
+- **Что изменено:**
+  1. `backend/src/modules/crm/channel-identity.ts` и `backend/src/modules/crm/crm-pipeline.service.ts`: добавлены `isThirdPartyPhoneContext` и `extractSelfPhoneFromText` (с поддержкой кириллических границ слов); для `max` и `whatsapp` `processIncoming` берёт телефон строго из верифицированного профиля мессенджера (не из произвольного текста), а `findContact` не сопоставляет контакты мессенджеров по номерам из текста сообщений.
+  2. `backend/src/modules/messaging/adapters/max/MaxTsAdapter.ts` и `backend/src/modules/messaging/messaging-registry.ts`: `contactCache` переведён на ключ `${channelAccountId}:${userId}`; `lookupContactInfo` сохраняет раздельные `firstName`/`lastName` и перезапрашивает `CONTACT_INFO (32)` при отсутствии телефона; добавлен `lookupProfileByUserId` с проверкой `CHAT_INFO (48)` при резолве по `chatId`; `persistSessionUpdate` сохраняет `credentials.phone`.
+  3. `backend/src/modules/channels/max-identity.ts`, `max-integration.routes.ts`, `channel-history-sync.service.ts`: вынесен helper `syncMaxContactIdentityFromDialog` (вызывается до `findOrCreateDealForContactSync`), который дозаполняет только пустые `phone`, `last_name` и placeholder `first_name` из MAX, не затирая существующие данные.
+  4. `backend/src/modules/crm/enrichment.service.ts`: добавлен `defaultMaxByContactProvider` (`checkMaxByContact`) с перебором всех активных `native-ts` аккаунтов тенанта до нахождения профиля с телефоном; при пустом `contacts.phone` телефон и пустая фамилия добираются из MAX с последующей проверкой Telegram и WhatsApp.
+  5. Тесты: добавлены регрессионные сценарии в `backend/src/tests/phone-validation.test.ts`, `crm-enrichment.test.ts`, `crm-pipeline-null-safety.test.ts`, `channel-history-sync.test.ts`.
+  6. Прод-данные (`remtoua`): у `b6a700c9-4158-4f70-be02-cf7733ce672c` убраны данные монтажника (`+79321283877`, чужой Telegram ID `1830762247`), через реальный `sync` и `CrmEnrichmentService` восстановлены `Михаил Арабаджи`, `+79257002262`, WhatsApp `+79257002262` и Telegram `@Arabadji_Mikhail` (`6415795931`); в нарядах `№0032` и `№0033` исправлен основной телефон на `+79257002262`, а Тимофей (`+79321283877`, «Монтажник с объекта») перенесён в `additional_contacts`. Также при живом синке `021eb35f` автоматически восстановился телефон контакта `844f065d-4369-4f9d-af86-f62950325dae` (`Николай`, `+79015013097`).
+
+## 2026-11-26: Пересланные и множественные фото MAX в чатах сделок и отдача `.bin` вложений (`/uploads`)
+- **Контекст и root cause (`deal_id = d0f4f677-e8ca-4a68-840f-b94446ede1bd`, чат `196946784`, аккаунт `021eb35f`):**
+  1. **Невидимость уже сохранённых MAX-фото в UI:**
+     - `CrmChatView.tsx` в `getAuthTokenForUrl()` читал несуществующий ключ `localStorage.getItem("getvoxly_access_token")` вместо `readAccessToken()` (`getvoxly_auth_token`), из-за чего cross-subdomain запросы с `remtoua.getvoxly.ru` на `api.getvoxly.ru/uploads/...` уходили без `?token=`.
+     - Вложения MAX без имени сохранялись через `ChatMediaService.storeBuffer` с именем `file.bin`, а `GET /uploads/:filename` в `app.ts` определял `Content-Type` строго по расширению (`.bin` → `application/octet-stream`, `Content-Disposition: attachment`) при активном `X-Content-Type-Options: nosniff` — браузер блокировал `<img>` и на существующих `..._file.bin` фото (`f4f5aec2`, `04f1c5da`), причём текст `[фото]` скрывался как системный плейсхолдер.
+  2. **Потеря 2-го и последующих пересланных фото в одном MAX-сообщении:**
+     - В пересланном от стороннего аккаунта (`81343080`) сообщении `117681598465797942` содержалось 2 фото (`photoId: 60257021032` и `60257021544`), а `MessagingRegistry.handleIncomingEvent`, `syncMaxDialogHistory`, `processMaxInbound` и `processMaxOutbound` брали только `attachments[0]`, полностью теряя `attachments[1..N]`.
+     - В `CrmPipelineService` и `syncMaxDialogHistory` fallback-дедупликация по `content = $content` срабатывала даже при разных непустых `metadata->>'external_message_id'`, что склеивало соседние сообщения с одинаковым плейсхолдером `[фото]` или коротким текстом.
+- **Что изменено:**
+  1. `backend/src/lib/mime.utils.ts`, `backend/src/modules/crm/chat/media.service.ts`, `backend/src/app.ts`: добавлено определение MIME по magic bytes (`detectMimeFromBuffer`, `detectMimeFromFileHeader`) и канонический `mimeToExtension`; `storeBuffer` заменяет заглушку `.bin` на реальное расширение (`.webp`/`.jpg`/`.png` и т.д., с базовым именем `photo`/`video`/`audio`/`media`), а `GET /uploads/:filename` и `/api/v1/crm/messages/:id/attachment` определяют реальный `Content-Type` и отдают `inline` даже для существующих legacy `..._file.bin` файлов.
+  2. `backend/src/modules/messaging/adapters/max/MaxTsAdapter.ts` и `max-bridge.service.ts`: обход цепочки `link.type === "FORWARD"` (включая вложенные пересылки до глубины 5) с сохранением `isForwarded` и `forwardFromUserId` в метаданных.
+  3. `backend/src/modules/channels/max-attachments.ts`, `backend/src/modules/messaging/messaging-registry.ts`, `backend/src/modules/channels/max-integration.routes.ts`, `backend/src/modules/crm/crm-pipeline.service.ts`: единый хелпер сохранения всех вложений сообщения (`storeMaxMessageAttachments`, `maxAttachmentExternalId`, `buildMaxAttachmentMetadata`), поддержка множественных вложений в `MessagingRegistry`, `syncMaxDialogHistory` (с предварительной проверкой `deal_messages` до скачивания с CDN MAX), `processMaxInbound` и `processMaxOutbound`, защита `content`-дедупликации при разных `external_message_id`.
+  4. `frontend/src/components/crm/shared/CrmChatView.tsx`: исправлен `getAuthTokenForUrl()` на `readAccessToken()`, добавлен `ChatImageAttachment` с fallback-ссылкой при ошибке загрузки изображения.
+  5. `backend/src/tests/max-forwarded-multi-media.test.ts`: добавлены unit-тесты на magic bytes MIME, сохранение `.webp` вместо `file.bin`, извлечение пересланных множественных фото и генерацию уникальных `external_message_id`.
+
+## 2026-11-26 — Мультивыбор услуг в блоке «Выполненные работы» карточки наряда
+- **Контекст:** На странице карточки заказ-наряда (`/repairs/[id]`, вкладка «Работы и запчасти» → «Выполненные работы») выбор из выпадающего «Каталога типовых услуг» и диалога «Справочник услуг» работал строго по одной услуге с закрытием списка после каждого клика, что делало массовое добавление типовых работ медленным.
+- **Что изменено:**
+  1. **Backend (`backend/src/modules/repairs/repairs.types.ts`, `repairs.service.ts`, `repairs.routes.ts`):**
+     - Вынесена общая транзакционная логика дедупликации/вставки в `upsertWorkInTx`, добавлен метод `addWorksBatch` и роут `POST /api/v1/repairs/:id/works/batch` (`createWorksBatchSchema`, 1–100 позиций, с проверками `assertEditable`, `withTenant`, RLS и однократным пересчётом `recalculateOrderCost` + `syncDealBudgetFromRepairs`).
+  2. **Frontend (`frontend/src/lib/api/use-repairs.ts`, `WorkItemsTable.tsx`, `ServiceCatalogDialog.tsx`):**
+     - Добавлен хук `useCreateWorksBatch()` с однократной инвалидацией `works`, `detail`, `totals`, `lists` и `deals`.
+     - В выпадающем списке «Каталог типовых услуг» (`WorkItemsTable.tsx`) добавлены чекбоксы мультивыбора (список остаётся открытым после клика), кнопки «Выбрать все» / «Снять все», встроенный степпер количества `− / +` для выбранных строк, закреплённый футер «Выбрано: N · сумма · Добавить (N)» и панель предпросмотра выбранных услуг над строкой добавления (с редактированием кол-ва/цены, защитой от потери черновика через `onDraftStateChange` и сохранением ручного ввода одной произвольной работы).
+     - В `ServiceCatalogDialog.tsx` добавлен мультивыбор чекбоксами, «Выбрать все» / «Снять все» и кнопка «Добавить выбранные (N)» (с обратной совместимостью по `onSelectService`).
+  3. **Где используется:** `WorkItemsTable.tsx` используется только в `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`; `ServiceCatalogDialog.tsx` — только в `WorkItemsTable.tsx`.
+  4. **Тесты и документация:** добавлены `backend/src/tests/repair-works-batch.test.ts` и `frontend/src/components/repairs/detail/WorkItemsTable.test.tsx`; обновлён `docs/03_API_CONTRACTS/03_03_REPAIRS_AND_FINANCE_API.md`.
+
+## 2026-11-26 — Синхронизация розничных цен запчастей из нарядов в карточки товаров на складе (`/warehouse`)
+- **Контекст и root cause (наряд `cdfec2bc-7e31-443a-96ae-75615967e3a8` / `№0036`):**
+  1. `RepairsService.addPart` записывал `retail_price` только в `repair_parts` и никогда не обновлял `warehouse_items.retail_price` у существующих карточек товара (обновлялось только при `save_to_catalog` для новой позиции); кроме того, при `article = "Б/А"` (537 из 540 позиций `remtoua` без SKU) автопоиск склада шёл только по `sku`, без фоллбэка по точному `name`.
+  2. `RepairsService.updatePart` не синхронизировал `warehouse_items.retail_price` и работал вне `withTenant`.
+  3. На фронтенде `useCreatePart` / `useUpdatePart` / `useDeletePart` не инвалидировали кэш `["warehouse"]`, поэтому `/warehouse` и выпадающий список склада показывали устаревшие цены.
+  4. В `WarehouseIntakeDialog.tsx` при загрузке строк из заказа поставщику `retailPrice` всегда пересчитывался как `purchasePrice * 1.4` вместо сохранения уже установленной розничной цены товара на складе.
+- **Что изменено:**
+  1. `backend/src/modules/repairs/repairs.service.ts`: добавлен helper `syncWarehouseRetailPriceInTx` (обновляет `warehouse_items.retail_price` и `updated_at`, когда `retail_price > 0` и значение изменилось); подключён в `addPart` (плюс сопоставление по точному `lower(btrim(name))` при пустом SKU) и в `updatePart` (переведён в `withTenant` с `assertEditable`).
+  2. `frontend/src/lib/api/use-repairs.ts`: добавлена инвалидация `["warehouse"]` в `useCreatePart`, `useUpdatePart`, `useDeletePart`.
+  3. `frontend/src/components/repairs/detail/PartsTable.tsx`: добавлено инлайн-редактирование ячейки «Розница» (через `useUpdatePart`) с обновлением цены в наряде и на складе.
+  4. `frontend/src/components/warehouse/WarehouseIntakeDialog.tsx`: при подстановке позиций из заказа поставщику приоритетно берётся сохранённая `retailPrice` карточки товара со склада (`> 0`).
+  5. Тесты: добавлены `backend/src/tests/repair-part-retail-sync.test.ts` и `frontend/src/components/repairs/detail/PartsTable.test.tsx`.
+
+## 2026-11-26 — Карточки «Оплачено» и «К оплате» в строке статистики `/repairs`
+- **Контекст:** В верхней строке статистики `/repairs` (включая `/repairs?status=active`) отображались только 3 счётчика: «Всего наряд-заказов», «В работе», «Готовы к выдаче»; не хватало сводных финансовых показателей «Оплачено» и «К оплате» в ту же строку.
+- **Что изменено:**
+  1. `backend/src/modules/repairs/repairs.service.ts`, `repairs.routes.ts`: в `RepairsService.list` и `meta` ответа `GET /api/v1/repairs` добавлены `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount` на основе того же `effectiveCostExpr` (`final_cost` → сумма работ+запчастей → `estimated_cost`) по всей отфильтрованной выборке (в «К оплате» исключены заказы со статусом `rejected`).
+  2. `frontend/src/lib/api/use-repairs.ts`: расширен `RepairsListResult` полями `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount`.
+  3. `frontend/src/app/(dashboard)/repairs/page.tsx`: строка статистики переведена на `md:grid-cols-5`, добавлены карточки «Оплачено» и «К оплате» (сумма в ₽ и количество заказов).
+  4. Обновлён `docs/03_API_CONTRACTS/03_03_REPAIRS_AND_FINANCE_API.md` и добавлен тест в `frontend/src/app/(dashboard)/repairs/repairs-filters-persistence.test.tsx`.

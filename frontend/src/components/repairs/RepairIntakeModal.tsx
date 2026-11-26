@@ -400,6 +400,7 @@ export function RepairIntakeModal({
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
 
   const baselineSnapshotRef = useRef<string | null>(null);
+  const appliedDealIdRef = useRef<string | null>(null);
   const equipmentsRef = useRef<EquipmentCardItem[]>(equipments);
   const photosCountRef = useRef<number>(photos.length);
   const isSubmittingRef = useRef<boolean>(isSubmitting);
@@ -512,9 +513,10 @@ export function RepairIntakeModal({
     }
   }, [open, teamMembers, currentUser, form]);
 
-  // Сброс при открытии
+  // Сброс при открытии (без сброса при асинхронной догрузке initialDeal / teamMembers)
   useEffect(() => {
     if (open) {
+      appliedDealIdRef.current = null;
       form.reset();
       const initialEquipments = [createEmptyEquipment()];
       setEquipments(initialEquipments);
@@ -525,7 +527,7 @@ export function RepairIntakeModal({
       setHistorySerial("");
       setCloseConfirmOpen(false);
 
-      // Предвыбор мастера
+      // Предвыбор мастера (если список уже загружен; иначе сработает отдельный эффект ниже)
       const self = teamMembers.find(
         (m) => (currentUser ? m.id === currentUser.id : false),
       );
@@ -550,6 +552,9 @@ export function RepairIntakeModal({
         }
         if (copyFromTicket.customer_email) {
           form.setValue("customer_email", copyFromTicket.customer_email, { shouldValidate: true });
+        }
+        if (copyFromTicket.company_id || copyFromTicket.company_name || copyFromTicket.company_inn) {
+          form.setValue("is_company", true, { shouldValidate: true });
         }
         if (copyFromTicket.company_id) {
           form.setValue("company_id", copyFromTicket.company_id, { shouldValidate: true });
@@ -583,27 +588,7 @@ export function RepairIntakeModal({
       if (initialCustomerId) {
         form.setValue("customer_id", initialCustomerId, { shouldValidate: true });
       }
-      if (initialDeal) {
-        form.setValue("deal_id", initialDeal.id, { shouldValidate: true });
-        if (initialDeal.contactId) {
-          form.setValue("customer_id", initialDeal.contactId, { shouldValidate: true });
-        }
-        if (initialDeal.contactName) {
-          form.setValue("customer_name", initialDeal.contactName, { shouldValidate: true });
-        }
-        if (initialDeal.contactPhone) {
-          form.setValue("customer_phone", initialDeal.contactPhone, { shouldValidate: true });
-        }
-        if (initialDeal.contactEmail) {
-          form.setValue("customer_email", initialDeal.contactEmail, { shouldValidate: true });
-        }
-        if (initialDeal.companyId) {
-          form.setValue("company_id", initialDeal.companyId, { shouldValidate: true });
-        }
-        if (initialDeal.companyName) {
-          form.setValue("company_name", initialDeal.companyName, { shouldValidate: true });
-        }
-      } else if (initialDealId) {
+      if (initialDealId) {
         form.setValue("deal_id", initialDealId, { shouldValidate: true });
       }
 
@@ -613,10 +598,62 @@ export function RepairIntakeModal({
         0,
       );
     } else {
+      appliedDealIdRef.current = null;
       baselineSnapshotRef.current = null;
       setCloseConfirmOpen(false);
     }
-  }, [open, form, copyFromTicket, initialCustomerId, initialDeal, initialDealId, teamMembers, currentUser]);
+    // teamMembers и currentUser намеренно исключены: автовыбор мастера работает в отдельном эффекте,
+    // а повторный form.reset() стирал бы введённые пользователем данные.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, form, copyFromTicket, initialCustomerId, initialDealId]);
+
+  // Автозаполнение клиента и компании из сделки после её загрузки (без сброса формы)
+  useEffect(() => {
+    if (!open || !initialDeal || copyFromTicket) return;
+    if (appliedDealIdRef.current === initialDeal.id) return;
+
+    const wasUntouched =
+      baselineSnapshotRef.current !== null &&
+      serializeIntakeSnapshot(
+        form.getValues(),
+        equipmentsRef.current,
+        photosCountRef.current,
+      ) === baselineSnapshotRef.current;
+
+    appliedDealIdRef.current = initialDeal.id;
+
+    form.setValue("deal_id", initialDeal.id, { shouldValidate: true });
+    if (initialDeal.contactId && !form.getValues("customer_id")) {
+      form.setValue("customer_id", initialDeal.contactId, { shouldValidate: true });
+    }
+    if (initialDeal.contactName && !form.getValues("customer_name")) {
+      form.setValue("customer_name", initialDeal.contactName, { shouldValidate: true });
+    }
+    const dealPhone = initialDeal.contactPhone || initialDeal.contactWhatsapp || initialDeal.companyPhone;
+    if (dealPhone && !form.getValues("customer_phone")) {
+      form.setValue("customer_phone", dealPhone, { shouldValidate: true });
+    }
+    if (initialDeal.contactEmail && !form.getValues("customer_email")) {
+      form.setValue("customer_email", initialDeal.contactEmail, { shouldValidate: true });
+    }
+    if ((initialDeal.companyId || initialDeal.companyName) && !form.getValues("company_id") && !form.getValues("company_name")) {
+      form.setValue("is_company", true, { shouldValidate: true });
+      if (initialDeal.companyId) {
+        form.setValue("company_id", initialDeal.companyId, { shouldValidate: true });
+      }
+      if (initialDeal.companyName) {
+        form.setValue("company_name", initialDeal.companyName, { shouldValidate: true });
+      }
+    }
+
+    if (wasUntouched) {
+      baselineSnapshotRef.current = serializeIntakeSnapshot(
+        form.getValues(),
+        equipmentsRef.current,
+        photosCountRef.current,
+      );
+    }
+  }, [open, initialDeal, copyFromTicket, form]);
 
   const hasUnsavedChanges = useCallback((): boolean => {
     if (!baselineSnapshotRef.current) return false;

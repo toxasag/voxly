@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Package, Plus, Trash2, ShoppingCart, Check, AlertCircle, Loader2, Boxes } from "lucide-react";
+import { Package, Plus, Trash2, ShoppingCart, Check, AlertCircle, Loader2, Boxes, Pencil, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { PartItem } from "@/lib/repairs/repairs.types";
@@ -13,9 +13,9 @@ import {
   warehouseKeys,
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
-import { useCreatePart, useDeletePart } from "@/lib/api/use-repairs";
+import { useCreatePart, useUpdatePart, useDeletePart } from "@/lib/api/use-repairs";
 import { PartAddModal } from "./PartAddModal";
-import { cn } from "@/lib/utils";
+import { cn, matchesWarehouseItem } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 interface PartsTableProps {
@@ -42,6 +42,9 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
   const [selectedWarehouseItem, setSelectedWarehouseItem] = useState<WarehouseItemDTO | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingPricePartId, setEditingPricePartId] = useState<string | null>(null);
+  const [editingPriceValue, setEditingPriceValue] = useState("");
+  const [savingPricePartId, setSavingPricePartId] = useState<string | null>(null);
   const [addToPurchaseRequest, setAddToPurchaseRequest] = useState(false);
   const [partAddModalOpen, setPartAddModalOpen] = useState(false);
 
@@ -76,18 +79,17 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
   const allowNegativeStock = warehouseSettings ? Boolean(warehouseSettings.allowNegativeStock) : true;
   const { data: purchaseRequests = [] } = usePurchaseRequests(undefined, orderId);
   const createPartMutation = useCreatePart();
+  const updatePartMutation = useUpdatePart();
   const deletePartMutation = useDeletePart();
   const createPurchaseMutation = useCreatePurchaseRequest();
 
   // Закрытие выпадающего списка при клике снаружи или Escape
   useClickOutside(comboboxRef, () => setCatalogOpen(false), catalogOpen);
 
-  // Фильтрация номенклатуры склада по введенному поиску
-  const filteredWarehouseItems = warehouseItems.filter((wi) => {
-    const q = newName.trim().toLowerCase();
-    if (!q) return true;
-    return wi.name.toLowerCase().includes(q) || wi.sku.toLowerCase().includes(q);
-  });
+  // Многословная фильтрация номенклатуры склада по названию, артикулу, бренду, категории и моделям
+  const filteredWarehouseItems = warehouseItems.filter((wi) =>
+    matchesWarehouseItem(wi, newName),
+  );
 
   const queryClient = useQueryClient();
 
@@ -176,6 +178,57 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
     items,
     onChange,
   ]);
+
+  const handleStartEditPrice = useCallback((item: PartItem) => {
+    setEditingPricePartId(item.id);
+    setEditingPriceValue(String(item.retail_price ?? 0));
+  }, []);
+
+  const handleCancelEditPrice = useCallback(() => {
+    setEditingPricePartId(null);
+    setEditingPriceValue("");
+  }, []);
+
+  const handleSaveEditPrice = useCallback(
+    async (item: PartItem) => {
+      const parsed = parseFloat(editingPriceValue);
+      if (isNaN(parsed) || parsed < 0) {
+        toast.error("Укажите корректную розничную цену");
+        return;
+      }
+      if (Math.abs(parsed - item.retail_price) < 0.001) {
+        setEditingPricePartId(null);
+        return;
+      }
+
+      if (orderId) {
+        setSavingPricePartId(item.id);
+        try {
+          await updatePartMutation.mutateAsync({
+            orderId,
+            partId: item.id,
+            payload: { retail_price: parsed },
+          });
+          toast.success(
+            item.warehouse_item_id && parsed > 0
+              ? `Розничная цена «${item.name}» обновлена в наряде и на складе`
+              : `Розничная цена «${item.name}» обновлена`,
+          );
+          setEditingPricePartId(null);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Не удалось обновить розничную цену");
+        } finally {
+          setSavingPricePartId(null);
+        }
+      } else {
+        onChange?.(
+          items.map((it) => (it.id === item.id ? { ...it, retail_price: parsed } : it)),
+        );
+        setEditingPricePartId(null);
+      }
+    },
+    [editingPriceValue, orderId, updatePartMutation, items, onChange],
+  );
 
   const handleDelete = useCallback(
     async (id: string, name: string) => {
@@ -338,9 +391,63 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
                     <span className="text-[13px] font-mono text-[#111111]">{item.quantity}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-[13px] font-semibold text-[#111111] font-mono">
-                      {formatCost(item.retail_price)}
-                    </span>
+                    {editingPricePartId === item.id ? (
+                      <div className="inline-flex items-center justify-end gap-1">
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          autoFocus
+                          value={editingPriceValue}
+                          onChange={(e) => setEditingPriceValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void handleSaveEditPrice(item);
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              handleCancelEditPrice();
+                            }
+                          }}
+                          aria-label={`Розничная цена: ${item.name}`}
+                          className="w-[78px] rounded-[6px] border border-[#4a38f5] bg-white py-0.5 px-1.5 text-right text-xs font-semibold font-mono tabular-nums text-[#111111] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveEditPrice(item)}
+                          disabled={savingPricePartId === item.id}
+                          aria-label={`Сохранить цену: ${item.name}`}
+                          title="Сохранить розничную цену"
+                          className="rounded p-1 text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40"
+                        >
+                          {savingPricePartId === item.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditPrice}
+                          disabled={savingPricePartId === item.id}
+                          aria-label="Отменить редактирование цены"
+                          title="Отмена"
+                          className="rounded p-1 text-[#888888] hover:text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleStartEditPrice(item)}
+                        title="Изменить розничную цену (сохранится в наряде и карточке товара на складе)"
+                        className="group/price inline-flex items-center justify-end gap-1 rounded-[4px] px-1.5 py-0.5 text-[13px] font-semibold text-[#111111] font-mono tabular-nums hover:bg-[#4a38f5]/8 hover:text-[#4a38f5] transition-colors cursor-pointer"
+                      >
+                        <span>{formatCost(item.retail_price)}</span>
+                        <Pencil className="h-3 w-3 opacity-0 group-hover/price:opacity-100 transition-opacity text-[#4a38f5]" />
+                      </button>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex flex-col items-end">
@@ -482,7 +589,15 @@ export function PartsTable({ orderId, items, onChange, onDraftStateChange }: Par
                         >
                           <div className="min-w-0 flex-1 pr-2">
                             <span className="font-medium text-[#111111] truncate block">{wi.name}</span>
-                            <span className="text-[11px] font-mono text-[#888888]">{wi.sku}</span>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[#888888]">
+                              {wi.sku && <span className="font-mono">{wi.sku}</span>}
+                              {wi.brand && <span>{wi.sku ? "· " : ""}{wi.brand}</span>}
+                              {wi.modelNames && wi.modelNames.length > 0 && (
+                                <span className="truncate text-[#666666]">
+                                  · {wi.modelNames.join(", ")}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="text-right shrink-0">
                             <span

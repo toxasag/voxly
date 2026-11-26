@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bulkActionSchema, sortDirSchema } from "../../lib/table-query.js";
 
 export const warehouseItemUnitSchema = z.enum(["шт", "комплект", "м", "л", "кг", "упак"]).default("шт");
 
@@ -244,8 +245,14 @@ export const updateWarehouseMovementSchema = z.object({
 });
 export type UpdateWarehouseMovementPayload = z.infer<typeof updateWarehouseMovementSchema>;
 
-export const bulkDeleteIdsSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1, "Выберите хотя бы одну запись").max(500),
+export const bulkDeleteIdsSchema = bulkActionSchema.superRefine((val, ctx) => {
+  if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Выберите хотя бы одну запись",
+      path: ["ids"],
+    });
+  }
 });
 export type BulkDeleteIdsPayload = z.infer<typeof bulkDeleteIdsSchema>;
 
@@ -348,8 +355,33 @@ export const warehousePaginationQuerySchema = z.object({
   model_ids: z.preprocess(modelIdsPreprocessor, z.array(z.string().uuid()).optional()),
   modelIds: z.preprocess(modelIdsPreprocessor, z.array(z.string().uuid()).optional()),
   all: z.preprocess((v) => v === "true" || v === true, z.boolean().optional()),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
+  sortBy: z.string().max(64).optional(),
+  sortDir: sortDirSchema.optional(),
+  sort: z.string().max(64).optional(),
+  order: sortDirSchema.optional(),
 });
 export type WarehousePaginationQuery = z.infer<typeof warehousePaginationQuerySchema>;
+
+export const warehouseTabQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(250).optional(),
+  all: z.preprocess((v) => v === "true" || v === true, z.boolean().optional()),
+  search: z.string().max(200).optional(),
+  status: z.string().max(64).optional(),
+  item_id: z.string().uuid().optional(),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
+});
+export type WarehouseTabQuery = z.infer<typeof warehouseTabQuerySchema>;
+
+export interface WarehouseTabPaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
 
 export interface WarehousePaginationMeta {
   total: number;
@@ -632,8 +664,17 @@ export interface SupplierOrderDTO {
 
 export const exportWarehouseItemsSchema = z.object({
   format: z.enum(["xlsx", "csv"]).default("xlsx"),
+  mode: z.enum(["ids", "all"]).optional(),
   ids: z.array(z.string().uuid()).optional(),
+  excluded_ids: z.array(z.string().uuid()).optional(),
+  filters: z.record(z.unknown()).optional(),
   search: z.string().optional(),
+  category: z.string().optional(),
+  brand: z.string().optional(),
+  model_ids: z.preprocess(modelIdsPreprocessor, z.array(z.string().uuid()).optional()),
+  modelIds: z.preprocess(modelIdsPreprocessor, z.array(z.string().uuid()).optional()),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
 });
 export type ExportWarehouseItemsPayload = z.infer<typeof exportWarehouseItemsSchema>;
 
@@ -723,25 +764,52 @@ export const priceAdjustmentActionSchema = z.object({
 });
 export type PriceAdjustmentAction = z.infer<typeof priceAdjustmentActionSchema>;
 
-export const bulkUpdateWarehouseItemsSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1, "Select at least 1 item"),
-  category: z.string().max(100).optional(),
-  brand: z.string().max(100).optional(),
-  unit: z.string().max(20).optional(),
-  min_stock: z.number().nonnegative().optional(),
-  retail_price_action: priceAdjustmentActionSchema.optional(),
-  cost_price_action: priceAdjustmentActionSchema.optional(),
-  models: z.array(z.string().max(100)).optional(),
-  model_ids: z.array(z.string().uuid()).optional(),
-  modelIds: z.array(z.string().uuid()).optional(),
-  models_mode: z.enum(["replace", "add", "remove"]).optional().default("replace"),
-  modelsMode: z.enum(["replace", "add", "remove"]).optional(),
-});
+export const bulkUpdateWarehouseItemsSchema = bulkActionSchema
+  .extend({
+    category: z.string().max(100).optional(),
+    brand: z.string().max(100).optional(),
+    unit: z.string().max(20).optional(),
+    min_stock: z.number().nonnegative().optional(),
+    retail_price_action: priceAdjustmentActionSchema.optional(),
+    cost_price_action: priceAdjustmentActionSchema.optional(),
+    models: z.array(z.string().max(100)).optional(),
+    model_ids: z.array(z.string().uuid()).optional(),
+    modelIds: z.array(z.string().uuid()).optional(),
+    models_mode: z.enum(["replace", "add", "remove"]).optional().default("replace"),
+    modelsMode: z.enum(["replace", "add", "remove"]).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select at least 1 item",
+        path: ["ids"],
+      });
+    }
+  });
 export type BulkUpdateWarehouseItemsPayload = z.infer<typeof bulkUpdateWarehouseItemsSchema>;
 
-export const bulkDeleteWarehouseItemsSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1, "Select at least 1 item"),
-  force: z.boolean().optional().default(false),
-});
+export const bulkDeleteWarehouseItemsSchema = bulkActionSchema
+  .extend({
+    force: z.boolean().optional().default(false),
+  })
+  .superRefine((val, ctx) => {
+    if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select at least 1 item",
+        path: ["ids"],
+      });
+    }
+  });
 export type BulkDeleteWarehouseItemsPayload = z.infer<typeof bulkDeleteWarehouseItemsSchema>;
+
+export const bulkCreatePurchaseRequestsSchema = bulkActionSchema.extend({
+  itemIds: z.array(z.string().uuid()).optional(),
+  status: z.string().max(40).optional(),
+  comment: z.string().max(1000).optional(),
+  repair_order_id: z.string().uuid().optional(),
+  deal_id: z.string().uuid().optional(),
+});
+export type BulkCreatePurchaseRequestsPayload = z.infer<typeof bulkCreatePurchaseRequestsSchema>;
 

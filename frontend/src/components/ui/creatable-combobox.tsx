@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { Check, ChevronDown, Plus, Loader2, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, matchesSearchTokens } from "@/lib/utils";
 
 export interface CreatableComboboxProps {
   value: string;
@@ -60,9 +60,7 @@ export function CreatableCombobox({
 
   // Filter options based on query
   const filteredOptions = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter((opt) => opt.toLowerCase().includes(q));
+    return options.filter((opt) => matchesSearchTokens(query, [opt]));
   }, [options, query]);
 
   // Check if query exactly matches an existing option

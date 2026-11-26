@@ -21,17 +21,23 @@ import { queryOne } from "../../../db/client.js";
 import { AiService } from "../../ai/ai.service.js";
 import { createDialogueFeedbackSchema } from "../../ai/ai.types.js";
 import { bulkActionSchema } from "../shared/bulk-action.types.js";
+import { sortDirSchema } from "../../../lib/table-query.js";
 
 const listQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
   stage_id: z.string().uuid().optional(),
   status: z.enum(["active", "won", "lost", "all"]).optional(),
+  preset: z.enum(["all", "active", "high_value", "won"]).optional(),
   search: z.string().max(200).optional(),
   /** Фильтры для секций «Сделки» на карточках контакта и компании. */
   contact_id: z.string().uuid().optional(),
   company_id: z.string().uuid().optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
+  sort: z.string().max(64).optional(),
+  order: sortDirSchema.optional(),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
 });
 
 const kanbanQuerySchema = z.object({
@@ -59,18 +65,34 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /deals — paginated list
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { pipeline_id, stage_id, status, search, contact_id, company_id, limit, offset } =
-      listQuerySchema.parse(request.query);
+    const {
+      pipeline_id,
+      stage_id,
+      status,
+      preset,
+      search,
+      contact_id,
+      company_id,
+      limit,
+      offset,
+      sort,
+      order,
+      sort_by,
+      sort_dir,
+    } = listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       pipelineId: pipeline_id,
       stageId: stage_id,
       status,
+      preset,
       search,
       contactId: contact_id,
       companyId: company_id,
       limit,
       offset,
+      sortBy: sort_by ?? sort,
+      sortDir: sort_dir ?? order,
     });
 
     return reply.send({ data: items, meta: { limit, offset, total } });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractPhoneNumber,
+  extractSelfPhoneFromText,
   analyzePhoneInText,
   validatePhoneCandidate,
 } from "../modules/crm/channel-identity.js";
@@ -173,6 +174,32 @@ describe("Phone Validation & Incomplete Phone Detection", () => {
       expect(analysis3.hasAttempt).toBe(false);
       expect(analysis3.isValid).toBe(false);
       expect(extractPhoneNumber("статья 127 фз о банкротстве")).toBeNull();
+    });
+  });
+
+  describe("extractSelfPhoneFromText (third-party phone protection)", () => {
+    it("игнорирует телефон монтажника/третьего лица в тексте переписки (кейс MAX)", () => {
+      const msg = "контакт монтажника который передаст их с объекта +7 932 128 38 77 Тимофей";
+      expect(extractPhoneNumber(msg)).toBe("+79321283877");
+      expect(extractSelfPhoneFromText(msg, { selfFirstName: "Михаил" })).toBeNull();
+
+      expect(
+        extractSelfPhoneFromText("телефон водителя 8 (999) 123-45-67, встретит на проходной"),
+      ).toBeNull();
+      expect(
+        extractSelfPhoneFromText("+7 916 555-12-34 прораб на объекте"),
+      ).toBeNull();
+      expect(
+        extractSelfPhoneFromText("+7 932 128 38 77 Тимофей", { selfFirstName: "Михаил" }),
+      ).toBeNull();
+    });
+
+    it("извлекает собственный телефон отправителя даже при наличии номера третьего лица в сообщении", () => {
+      const mixed = "контакт монтажника +7 932 128 38 77 Тимофей, мой номер +7 925 700 22 62";
+      expect(extractSelfPhoneFromText(mixed, { selfFirstName: "Михаил" })).toBe("+79257002262");
+
+      expect(extractSelfPhoneFromText("89150946944")).toBe("+79150946944");
+      expect(extractSelfPhoneFromText("Позвоните мне 8 (926) 555-43-21 пожалуйста")).toBe("+79265554321");
     });
   });
 });

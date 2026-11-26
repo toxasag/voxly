@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
-import { X, Search, Plus, Trash2, BookOpen, Loader2, Pencil } from "lucide-react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { X, Search, Plus, Trash2, BookOpen, Loader2, Pencil, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 import {
@@ -12,11 +12,14 @@ import {
 } from "@/lib/api/use-repairs";
 import { EditServiceModal } from "@/components/services/EditServiceModal";
 import type { ServiceItemDTO } from "@/lib/api/use-services";
+import { cn, matchesSearchTokens } from "@/lib/utils";
 
 interface ServiceCatalogDialogProps {
   open: boolean;
   onClose: () => void;
   onSelectService?: (service: RepairServiceCatalogItemDTO) => void;
+  onSelectServices?: (services: RepairServiceCatalogItemDTO[]) => void | Promise<void>;
+  isSubmittingMultiple?: boolean;
 }
 
 function formatCost(amount: number): string {
@@ -31,6 +34,8 @@ export function ServiceCatalogDialog({
   open,
   onClose,
   onSelectService,
+  onSelectServices,
+  isSubmittingMultiple = false,
 }: ServiceCatalogDialogProps) {
   useOverlay(open, { onEscape: onClose });
 
@@ -40,16 +45,71 @@ export function ServiceCatalogDialog({
   const [newPrice, setNewPrice] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingService, setEditingService] = useState<ServiceItemDTO | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const { data: services = [], isLoading } = useRepairServicesCatalog();
   const addMutation = useAddRepairServiceToCatalog();
   const deleteMutation = useDeleteRepairServiceFromCatalog();
 
+  const isMultiSelectEnabled = Boolean(onSelectServices);
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedIds(new Set());
+      setSearchQuery("");
+    }
+  }, [open]);
+
   const filteredServices = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return services;
-    return services.filter((s) => s.name.toLowerCase().includes(q));
+    return services.filter((s) => matchesSearchTokens(searchQuery, [s.name, s.description]));
   }, [services, searchQuery]);
+
+  const selectedServicesList = useMemo(
+    () => services.filter((svc) => selectedIds.has(svc.id)),
+    [services, selectedIds],
+  );
+
+  const selectedTotalPrice = useMemo(
+    () => selectedServicesList.reduce((sum, svc) => sum + (svc.defaultPrice ?? 0), 0),
+    [selectedServicesList],
+  );
+
+  const allFilteredSelected =
+    filteredServices.length > 0 && filteredServices.every((svc) => selectedIds.has(svc.id));
+
+  const toggleSelectService = useCallback((serviceId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(serviceId)) {
+        next.delete(serviceId);
+      } else {
+        next.add(serviceId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleAllFiltered = useCallback(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const svc of filteredServices) {
+          next.delete(svc.id);
+        }
+      } else {
+        for (const svc of filteredServices) {
+          next.add(svc.id);
+        }
+      }
+      return next;
+    });
+  }, [allFilteredSelected, filteredServices]);
+
+  const handleConfirmMultiple = useCallback(async () => {
+    if (!onSelectServices || selectedServicesList.length === 0) return;
+    await onSelectServices(selectedServicesList);
+    setSelectedIds(new Set());
+  }, [onSelectServices, selectedServicesList]);
 
   const handleCreate = useCallback(async () => {
     const trimmed = newName.trim();
@@ -190,8 +250,8 @@ export function ServiceCatalogDialog({
         </div>
 
         {/* Search */}
-        <div className="px-4 py-2.5 border-b border-[#f0f0f0] bg-[#fafafa]">
-          <div className="relative">
+        <div className="px-4 py-2.5 border-b border-[#f0f0f0] bg-[#fafafa] flex items-center gap-2">
+          <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
             <input
               type="text"
@@ -201,6 +261,15 @@ export function ServiceCatalogDialog({
               className="w-full h-7 rounded-[6px] border border-[#e5e5e5] bg-white pl-8 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
             />
           </div>
+          {isMultiSelectEnabled && filteredServices.length > 0 && (
+            <button
+              type="button"
+              onClick={handleToggleAllFiltered}
+              className="shrink-0 h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
+            >
+              {allFilteredSelected ? "Снять все" : "Выбрать все"}
+            </button>
+          )}
         </div>
 
         {/* List of Services */}
@@ -217,101 +286,169 @@ export function ServiceCatalogDialog({
               </p>
             </div>
           ) : (
-            filteredServices.map((service) => (
-              <div
-                key={service.id}
-                className="flex items-center justify-between px-4 py-2.5 hover:bg-[#fafafa] transition-colors group"
-              >
+            filteredServices.map((service) => {
+              const isSelected = selectedIds.has(service.id);
+              return (
                 <div
-                  className="flex-1 min-w-0 pr-3 cursor-pointer"
-                  onClick={() => {
-                    if (onSelectService) {
-                      onSelectService(service);
-                      onClose();
-                    }
-                  }}
+                  key={service.id}
+                  className={cn(
+                    "flex items-center justify-between px-4 py-2.5 transition-colors group",
+                    isSelected ? "bg-[#4a38f5]/[0.05]" : "hover:bg-[#fafafa]",
+                  )}
                 >
-                  <p className="text-[13px] font-medium text-[#111111] truncate">
-                    {service.name}
-                  </p>
-                  {service.description ? (
-                    <p className="text-[11px] text-[#888888] line-clamp-1">
-                      {service.description}
-                    </p>
-                  ) : null}
-                  <span className="text-[11px] font-mono tabular-nums text-[#666666]">
-                    {service.defaultPrice && service.defaultPrice > 0
-                      ? formatCost(service.defaultPrice)
-                      : "Цена не указана"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {onSelectService && (
-                    <button
-                      type="button"
-                      onClick={() => {
+                  <div
+                    className="flex flex-1 min-w-0 items-center gap-2.5 pr-3 cursor-pointer"
+                    onClick={() => {
+                      if (isMultiSelectEnabled) {
+                        toggleSelectService(service.id);
+                      } else if (onSelectService) {
                         onSelectService(service);
                         onClose();
-                      }}
-                      className="rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
-                    >
-                      Выбрать
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEditingService({
-                        id: service.id,
-                        name: service.name,
-                        description: service.description ?? "",
-                        price: service.defaultPrice ?? 0,
-                        defaultPrice: service.defaultPrice ?? 0,
-                        unit: service.unit ?? "усл",
-                        durationMinutes: service.durationMinutes ?? null,
-                        createdAt: service.createdAt,
-                      })
-                    }
-                    aria-label={`Редактировать услугу ${service.name}`}
-                    title="Редактировать услугу"
-                    className="rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] hover:text-[#4a38f5] transition-colors cursor-pointer flex items-center gap-1"
+                      }
+                    }}
                   >
-                    <Pencil className="h-3 w-3 text-[#666666]" />
-                    <span>Редактировать</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete(service.id, service.name)}
-                    disabled={deletingId === service.id}
-                    title="Удалить из справочника"
-                    aria-label={`Удалить услугу ${service.name}`}
-                    className="rounded-[6px] p-1.5 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-40"
-                  >
-                    {deletingId === service.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-500" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
+                    {isMultiSelectEnabled && (
+                      <span
+                        role="checkbox"
+                        aria-checked={isSelected}
+                        aria-label={`Выбрать услугу ${service.name}`}
+                        className={cn(
+                          "flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                          isSelected
+                            ? "border-[#4a38f5] bg-[#4a38f5] text-white"
+                            : "border-[#cccccc] bg-white",
+                        )}
+                      >
+                        {isSelected && <Check className="h-3 w-3" />}
+                      </span>
                     )}
-                  </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-[#111111] truncate">
+                        {service.name}
+                      </p>
+                      {service.description ? (
+                        <p className="text-[11px] text-[#888888] line-clamp-1">
+                          {service.description}
+                        </p>
+                      ) : null}
+                      <span className="text-[11px] font-mono tabular-nums text-[#666666]">
+                        {service.defaultPrice && service.defaultPrice > 0
+                          ? formatCost(service.defaultPrice)
+                          : "Цена не указана"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {!isMultiSelectEnabled && onSelectService && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelectService(service);
+                          onClose();
+                        }}
+                        className="rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
+                      >
+                        Выбрать
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingService({
+                          id: service.id,
+                          name: service.name,
+                          description: service.description ?? "",
+                          price: service.defaultPrice ?? 0,
+                          defaultPrice: service.defaultPrice ?? 0,
+                          unit: service.unit ?? "усл",
+                          durationMinutes: service.durationMinutes ?? null,
+                          createdAt: service.createdAt,
+                        });
+                      }}
+                      aria-label={`Редактировать услугу ${service.name}`}
+                      title="Редактировать услугу"
+                      className="rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] hover:text-[#4a38f5] transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Pencil className="h-3 w-3 text-[#666666]" />
+                      <span>Редактировать</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleDelete(service.id, service.name);
+                      }}
+                      disabled={deletingId === service.id}
+                      title="Удалить из справочника"
+                      aria-label={`Удалить услугу ${service.name}`}
+                      className="rounded-[6px] p-1.5 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-40"
+                    >
+                      {deletingId === service.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-500" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-[#e5e5e5] px-4 py-2.5 bg-[#fafafa]">
-          <span className="text-xs text-[#888888]">
-            Всего в справочнике:{" "}
-            <span className="font-mono font-medium text-[#111111]">{services.length}</span>
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
-          >
-            Закрыть
-          </button>
+        <div className="flex items-center justify-between gap-2 border-t border-[#e5e5e5] px-4 py-2.5 bg-[#fafafa]">
+          {isMultiSelectEnabled && selectedServicesList.length > 0 ? (
+            <div className="flex items-center gap-2 text-xs text-[#666666]">
+              <span>
+                Выбрано:{" "}
+                <span className="font-mono font-semibold text-[#111111]">
+                  {selectedServicesList.length}
+                </span>
+              </span>
+              <span className="text-[#cccccc]">·</span>
+              <span className="font-mono font-semibold text-[#111111] tabular-nums">
+                {formatCost(selectedTotalPrice)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="text-[#888888] hover:text-[#111111] underline cursor-pointer"
+              >
+                Сбросить
+              </button>
+            </div>
+          ) : (
+            <span className="text-xs text-[#888888]">
+              Всего в справочнике:{" "}
+              <span className="font-mono font-medium text-[#111111]">{services.length}</span>
+            </span>
+          )}
+          <div className="flex items-center gap-2">
+            {isMultiSelectEnabled && selectedServicesList.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleConfirmMultiple()}
+                disabled={isSubmittingMultiple}
+                className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isSubmittingMultiple ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                Добавить выбранные ({selectedServicesList.length})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
+            >
+              Закрыть
+            </button>
+          </div>
         </div>
       </div>
 

@@ -36,6 +36,7 @@
 | DELETE | `/:id` | мягкое удаление |
 | GET | `/:id/totals` | пересчёт сумм |
 | GET/POST | `/:id/works` | работы |
+| POST | `/:id/works/batch` | пакетное добавление работ (1–100 позиций в одной транзакции) |
 | PATCH/DELETE | `/:id/works/:itemId` | правка и удаление работы |
 | GET/POST | `/:id/parts` | запчасти |
 | PATCH/DELETE | `/:id/parts/:itemId` | правка и удаление запчасти |
@@ -45,6 +46,8 @@
 ### `GET /repairs`
 
 Query: `status`, `priority`, `master_id`, `customer_id`, `search`, `limit`, `offset`.
+
+`meta`: `limit`, `offset`, `total`, `inProgressCount`, `readyCount`, `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount` (агрегаты считаются по всей отфильтрованной выборке; `unpaid*` включает заказы с `payment_status <> 'paid'` и `status <> 'rejected'`).
 
 `search` покрывает номер наряда, имя и телефон клиента, бренд, модель и серийный номер. Сортировка — по приоритету (`urgent` → `high` → `normal` → `low`), затем по дате приёмки.
 
@@ -153,9 +156,25 @@ Query: `status`, `priority`, `master_id`, `customer_id`, `search`, `limit`, `off
 { "description": "Замена платы питания", "master_id": "…uuid…", "master_name": "Павел Смирнов", "cost": 5000 }
 ```
 
+`POST /repairs/:id/works/batch` — массовое добавление услуг в наряд в рамках одной транзакции с дедупликацией по названию и цене за единицу:
+
+```json
+{
+  "items": [
+    { "description": "Очистка и смазка деталей", "master_id": "…uuid…", "master_name": "Павел Смирнов", "quantity": 1, "unit_price": 1000, "cost": 1000 },
+    { "description": "Сборка/Разборка", "master_id": "…uuid…", "master_name": "Павел Смирнов", "quantity": 1, "unit_price": 1000, "cost": 1000 }
+  ]
+}
+```
+
+Ответ `201`: `{ "data": RepairWorkDTO[], "meta": { "totals": RepairTotalsDTO, "addedCount": number, "mergedCount": number } }`.
+
 ### Запчасти
 
-`POST /repairs/:id/parts`:
+`POST /repairs/:id/parts` и `PATCH /repairs/:id/parts/:itemId`:
+
+- При добавлении запчасти с указанным `warehouse_item_id` (или найденным по `sku` / точному совпадению `name`) и `retail_price > 0` розничная цена автоматически синхронизируется в карточке товара `warehouse_items.retail_price` (при `retail_price = 0` цена склада не затирается).
+- При обновлении `retail_price > 0` через `PATCH /repairs/:id/parts/:itemId` у привязанной к складу запчасти также обновляется `warehouse_items.retail_price`.
 
 ```json
 { "name": "Плата питания", "article": "PWR-114", "quantity": 1, "retail_price": 3400, "cost_price": 2100 }

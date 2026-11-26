@@ -10,6 +10,10 @@ import type { Invoice } from "@/lib/finance/invoices.types";
 interface BulkEditInvoicesModalProps {
   open: boolean;
   invoices: Invoice[];
+  selectionMode?: "ids" | "all";
+  excludedIds?: string[];
+  scopeFilters?: Record<string, unknown>;
+  effectiveCount?: number;
   onClose: () => void;
   onSaved?: () => void;
 }
@@ -25,10 +29,16 @@ const STATUS_OPTIONS: { value: "" | "draft" | "sent" | "overdue" | "cancelled"; 
 export const BulkEditInvoicesModal = memo(function BulkEditInvoicesModal({
   open,
   invoices,
+  selectionMode = "ids",
+  excludedIds,
+  scopeFilters,
+  effectiveCount,
   onClose,
   onSaved,
 }: BulkEditInvoicesModalProps) {
   const bulkUpdateMutation = useBulkUpdateInvoices();
+  const isAllMode = selectionMode === "all";
+  const targetCount = effectiveCount ?? invoices.length;
 
   const [status, setStatus] = useState<"" | "draft" | "sent" | "overdue" | "cancelled">("");
   const [dueDate, setDueDate] = useState("");
@@ -45,15 +55,22 @@ export const BulkEditInvoicesModal = memo(function BulkEditInvoicesModal({
   }, [open]);
 
   const paidCount = invoices.filter((inv) => inv.status === "paid").length;
-  const editableCount = invoices.length - paidCount;
+  const editableCount = isAllMode ? targetCount : invoices.length - paidCount;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (invoices.length === 0) return;
+    if (targetCount === 0) return;
 
-    const payload: BulkUpdateInvoicesPayload = {
-      ids: invoices.map((inv) => inv.id),
-    };
+    const payload: BulkUpdateInvoicesPayload = isAllMode
+      ? {
+          mode: "all",
+          filters: scopeFilters,
+          excluded_ids: excludedIds && excludedIds.length > 0 ? excludedIds : undefined,
+        }
+      : {
+          mode: "ids",
+          ids: invoices.map((inv) => inv.id),
+        };
     if (status) {
       payload.status = status;
     }
@@ -97,7 +114,7 @@ export const BulkEditInvoicesModal = memo(function BulkEditInvoicesModal({
               Массовое редактирование счетов
             </h2>
             <p className="text-[11px] text-[#666666]">
-              Выбрано счетов: {invoices.length}
+              Выбрано счетов: {targetCount}
             </p>
           </div>
         </div>
@@ -105,7 +122,7 @@ export const BulkEditInvoicesModal = memo(function BulkEditInvoicesModal({
 
       <SheetContent className="p-6">
         <form onSubmit={handleSubmit} className="space-y-4">
-          {paidCount > 0 && (
+          {!isAllMode && paidCount > 0 && (
             <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
               <div>
@@ -190,7 +207,9 @@ export const BulkEditInvoicesModal = memo(function BulkEditInvoicesModal({
               ) : (
                 <Save className="h-3.5 w-3.5" />
               )}
-              <span>Применить ({editableCount})</span>
+              <span>
+                {isAllMode ? `Применить (${targetCount})` : `Применить (${editableCount})`}
+              </span>
             </button>
           </div>
         </form>

@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Search, BookOpen, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  useServices,
+  useServicesPaginated,
   useDeleteService,
   type ServiceItemDTO,
 } from "@/lib/api/use-services";
+import {
+  WarehousePagination,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
 import { ServiceItem } from "./ServiceItem";
 import { EditServiceModal } from "./EditServiceModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
@@ -18,22 +22,34 @@ export interface ServiceListProps {
 }
 
 export function ServiceList({ onSelectService, className }: ServiceListProps) {
+  const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WarehouseLimit>(25);
   const [editingService, setEditingService] = useState<ServiceItemDTO | null>(null);
   const [deletingService, setDeletingService] = useState<ServiceItemDTO | null>(null);
 
-  const { data: services = [], isLoading } = useServices(searchQuery);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const next = searchInput.trim();
+      setSearchQuery((prev) => {
+        if (prev !== next) setPage(1);
+        return next;
+      });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const { data, isLoading } = useServicesPaginated({
+    search: searchQuery || undefined,
+    page,
+    limit,
+  });
+  const services = data?.items ?? [];
+  const meta = data?.meta ?? { total: 0, page, limit, pages: 0 };
   const deleteMutation = useDeleteService();
 
-  const filteredServices = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return services;
-    return services.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        (s.description && s.description.toLowerCase().includes(q)),
-    );
-  }, [services, searchQuery]);
+  const filteredServices = services;
 
   const handleEdit = useCallback((service: ServiceItemDTO) => {
     setEditingService(service);
@@ -59,8 +75,8 @@ export function ServiceList({ onSelectService, className }: ServiceListProps) {
           <input
             type="text"
             placeholder="Поиск по наименованию или описанию услуги..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             className="w-full h-8 pl-8 pr-3 rounded-[8px] border border-[#e5e5e5] bg-white text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
         </div>
@@ -99,13 +115,20 @@ export function ServiceList({ onSelectService, className }: ServiceListProps) {
         )}
       </div>
 
-      {/* Footer stats */}
-      <div className="flex items-center justify-between border-t border-[#e5e5e5] px-4 py-2.5 bg-[#fafafa] text-xs text-[#888888]">
-        <span>
-          Всего в справочнике:{" "}
-          <span className="font-mono font-medium text-[#111111]">{services.length}</span>
-        </span>
-      </div>
+      {/* Footer stats & pagination */}
+      <WarehousePagination
+        total={meta.total}
+        page={meta.page}
+        pages={meta.pages}
+        limit={meta.limit}
+        entityLabel="услуг"
+        onPageChange={setPage}
+        onLimitChange={(newLimit) => {
+          setLimit(newLimit as WarehouseLimit);
+          setPage(1);
+        }}
+        disabled={isLoading}
+      />
 
       {/* Edit Modal */}
       <EditServiceModal

@@ -106,4 +106,72 @@ describe("CrmEnrichmentService (Block 4.2 Cross-Channel Enrichment)", () => {
     expect(dealUpdateSql).toContain("UPDATE deals");
     expect(dealUpdateParams?.[0]).toBe("Алексей Смирнов");
   });
+
+  it("resolves phone & surname from MAX CONTACT_INFO via max_user_id when phone is empty and privacy hides phone search", async () => {
+    mockQueryOne.mockResolvedValueOnce({
+      id: "contact-max-1",
+      first_name: "Михаил",
+      last_name: "",
+      phone: "",
+      telegram_username: null,
+      telegram_chat_id: null,
+      whatsapp: null,
+      socials: [{ kind: "max", value: "196946784" }],
+      messenger_id: "196946784",
+      custom_fields: { max_user_id: "77056581", max_chat_id: "196946784" },
+    });
+
+    const mockCheckMaxByContact = vi.fn().mockResolvedValue({
+      exists: true,
+      userId: "77056581",
+      firstName: "Михаил",
+      lastName: "Арабаджи",
+      phone: "+79257002262",
+    });
+    const mockMaxByPhone = vi.fn().mockResolvedValue({ exists: false });
+    const mockTelegram = vi.fn().mockResolvedValue({
+      exists: true,
+      userId: "6415795931",
+      username: "Arabadji_Mikhail",
+      firstName: "Mikhail",
+      lastName: "Arabadji",
+    });
+    const mockWhatsApp = vi.fn().mockResolvedValue({
+      exists: true,
+      jid: "79257002262@s.whatsapp.net",
+    });
+
+    const service = new CrmEnrichmentService({
+      checkMax: mockMaxByPhone,
+      checkMaxByContact: mockCheckMaxByContact,
+      checkTelegram: mockTelegram,
+      checkWhatsApp: mockWhatsApp,
+    });
+
+    const res = await service.enrichContact("tenant-1", "contact-max-1");
+
+    expect(res.ok).toBe(true);
+    expect(res.phone).toBe("+79257002262");
+    expect(res.enrichedFields).toContain("phone");
+    expect(res.enrichedFields).toContain("name");
+    expect(res.enrichedFields).toContain("telegram_username");
+    expect(res.enrichedFields).toContain("telegram_chat_id");
+    expect(res.enrichedFields).toContain("whatsapp");
+
+    expect(mockCheckMaxByContact).toHaveBeenCalledWith({
+      tenantId: "tenant-1",
+      maxUserId: "77056581",
+      maxChatId: "196946784",
+    });
+    expect(mockTelegram).toHaveBeenCalledWith("79257002262", "tenant-1");
+    expect(mockWhatsApp).toHaveBeenCalledWith("79257002262", "tenant-1");
+
+    const updateParams = mockTxQuery.mock.calls[0]?.[1];
+    expect(updateParams?.[0]).toBe("Михаил");
+    expect(updateParams?.[1]).toBe("Арабаджи");
+    expect(updateParams?.[2]).toBe("Arabadji_Mikhail");
+    expect(updateParams?.[3]).toBe("6415795931");
+    expect(updateParams?.[4]).toBe("+79257002262");
+    expect(updateParams?.[8]).toBe("+79257002262");
+  });
 });

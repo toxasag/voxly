@@ -222,7 +222,17 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
         sync_to_elba: canElbaSync ? syncToElba : false,
       });
 
-      toast.success(`Счёт № ${inv.invoiceNumber} на сумму ${formatCost(inv.total)} сформирован`);
+      if (inv.elbaBillId) {
+        toast.success(
+          `Счёт № ${inv.invoiceNumber} на сумму ${formatCost(inv.total)} сформирован и выгружен в Контур.Эльбу`,
+        );
+      } else if (inv.elbaSyncError) {
+        toast.warning(
+          `Счёт № ${inv.invoiceNumber} сформирован, но не выгружен в Контур.Эльбу: ${inv.elbaSyncError}`,
+        );
+      } else {
+        toast.success(`Счёт № ${inv.invoiceNumber} на сумму ${formatCost(inv.total)} сформирован`);
+      }
       onClose();
       if (onSuccess) onSuccess();
     } catch (err: unknown) {

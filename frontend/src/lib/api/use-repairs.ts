@@ -279,6 +279,12 @@ export interface RepairsListResult {
   total: number;
   limit: number;
   offset: number;
+  inProgressCount?: number;
+  readyCount?: number;
+  paidAmount?: number;
+  paidCount?: number;
+  unpaidAmount?: number;
+  unpaidCount?: number;
 }
 
 export interface RepairsQueryParams {
@@ -291,6 +297,8 @@ export interface RepairsQueryParams {
   search?: string;
   limit?: number;
   offset?: number;
+  sort?: string;
+  order?: "asc" | "desc";
 }
 
 export interface EquipmentIntakeItem {
@@ -421,6 +429,16 @@ export interface CreateWorkPayload {
   cost?: number;
 }
 
+export interface CreateWorksBatchPayload {
+  items: CreateWorkPayload[];
+}
+
+export interface CreateWorksBatchResult {
+  items: RepairWorkDTO[];
+  addedCount: number;
+  mergedCount: number;
+}
+
 export interface UpdateWorkPayload {
   description?: string;
   master_id?: string;
@@ -511,6 +529,8 @@ export function useRepairs(
           search: params.search,
           limit,
           offset,
+          sort_by: params.sort,
+          sort_dir: params.order,
         },
       });
 
@@ -521,6 +541,12 @@ export function useRepairs(
         total: typeof meta.total === "number" ? meta.total : res.data.length,
         limit: typeof meta.limit === "number" ? meta.limit : limit,
         offset: typeof meta.offset === "number" ? meta.offset : offset,
+        inProgressCount: typeof meta.inProgressCount === "number" ? meta.inProgressCount : undefined,
+        readyCount: typeof meta.readyCount === "number" ? meta.readyCount : undefined,
+        paidAmount: typeof meta.paidAmount === "number" ? meta.paidAmount : undefined,
+        paidCount: typeof meta.paidCount === "number" ? meta.paidCount : undefined,
+        unpaidAmount: typeof meta.unpaidAmount === "number" ? meta.unpaidAmount : undefined,
+        unpaidCount: typeof meta.unpaidCount === "number" ? meta.unpaidCount : undefined,
       };
     },
     enabled: options?.enabled ?? true,
@@ -917,6 +943,7 @@ export function useUpdateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(order.id) });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -951,6 +978,7 @@ export function useChangeRepairStatus(): UseMutationResult<RepairOrderDTO, ApiCl
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(order.id) });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -976,6 +1004,7 @@ export function useUpdateRepairPaymentStatus(): UseMutationResult<
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(order.id) });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -993,6 +1022,39 @@ export function useCreateWork(): UseMutationResult<RepairWorkDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+    },
+  });
+}
+
+export function useCreateWorksBatch(): UseMutationResult<
+  CreateWorksBatchResult,
+  ApiClientError,
+  { orderId: string; payload: CreateWorksBatchPayload }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    CreateWorksBatchResult,
+    ApiClientError,
+    { orderId: string; payload: CreateWorksBatchPayload }
+  >({
+    mutationFn: async ({ orderId, payload }) => {
+      const res = await apiClient.post<RepairWorkDTO[]>(`${BASE_PATH}/${orderId}/works/batch`, payload);
+      const meta = (res.meta ?? {}) as Record<string, unknown>;
+      const addedCount = typeof meta.addedCount === "number" ? meta.addedCount : res.data.length;
+      const mergedCount = typeof meta.mergedCount === "number" ? meta.mergedCount : 0;
+      return {
+        items: res.data,
+        addedCount,
+        mergedCount,
+      };
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1046,7 +1108,7 @@ export function useCreatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
-      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1065,6 +1127,7 @@ export function useUpdatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1083,6 +1146,7 @@ export function useDeletePart(): UseMutationResult<{ id: string; deleted: boolea
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1160,10 +1224,17 @@ export interface BatchUpdateStatusResult {
   errors: { id: string; error: string }[];
 }
 
+export type BatchRepairScopePayload = {
+  mode?: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+};
+
 export function useBatchUpdateRepairStatus(): UseMutationResult<
   BatchUpdateStatusResult,
   ApiClientError,
-  { ids: string[]; status: RepairStatus; comment?: string }
+  BatchRepairScopePayload & { status: RepairStatus; comment?: string }
 > {
   const queryClient = useQueryClient();
 
@@ -1182,14 +1253,14 @@ export function useBatchUpdateRepairStatus(): UseMutationResult<
 export function useBatchUpdateRepairPaymentStatus(): UseMutationResult<
   { updated: number; ids: string[] },
   ApiClientError,
-  { ids: string[]; paymentStatus: RepairPaymentStatus }
+  BatchRepairScopePayload & { paymentStatus: RepairPaymentStatus }
 > {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ ids, paymentStatus }) => {
+    mutationFn: async ({ paymentStatus, ...scope }) => {
       const res = await apiClient.post<{ updated: number; ids: string[] }>(`${BASE_PATH}/batch-payment-status`, {
-        ids,
+        ...scope,
         payment_status: paymentStatus,
       });
       return res.data;
@@ -1204,7 +1275,7 @@ export function useBatchUpdateRepairPaymentStatus(): UseMutationResult<
 export function useBatchDeleteRepairs(): UseMutationResult<
   { count: number; ids: string[] },
   ApiClientError,
-  { ids: string[] }
+  BatchRepairScopePayload
 > {
   const queryClient = useQueryClient();
 

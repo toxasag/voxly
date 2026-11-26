@@ -6,8 +6,6 @@ import { usePathname } from "next/navigation";
 import {
   Search,
   Plus,
-  Sun,
-  Moon,
   Handshake,
   Wrench,
   Bot,
@@ -21,7 +19,6 @@ import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import { isModuleInstalled } from "@/lib/context/tenant";
 import { useAuth } from "@/lib/auth/use-auth";
 import type { ModuleSlug } from "@/types";
-import { useTheme } from "@/lib/hooks/use-theme";
 import { CommandMenu } from "@/components/shared/CommandMenu";
 import { NotificationDropdown } from "@/components/layout/NotificationDropdown";
 import { UserNavDropdown } from "@/components/layout/UserNavDropdown";
@@ -51,7 +48,6 @@ export function Header() {
   const { user, tenant, impersonator } = useAuth();
   const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", is_partner: false, installedModules: [] };
   const { data: workspacesData } = useWorkspaces();
-  const { theme, toggleTheme } = useTheme();
   const [quickActionOpen, setQuickActionOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [isReturning, setIsReturning] = useState(false);
@@ -111,7 +107,7 @@ export function Header() {
 
   return (
     <>
-      <header className="sticky top-0 z-30 flex h-11 items-center gap-2 border-b border-[#e5e5e5] bg-white px-4 md:gap-3 md:px-5 dark:border-[#27272a] dark:bg-[#111111] transition-colors">
+      <header className="sticky top-0 z-30 flex h-11 items-center gap-2 border-b border-[#e5e5e5] bg-white px-4 md:gap-3 md:px-5 transition-colors">
         {/* Search / Command Palette Trigger */}
         <div className="relative hidden min-w-0 flex-1 max-w-sm md:block">
           <button
@@ -130,7 +126,7 @@ export function Header() {
         {/* Mobile brand text */}
         <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
           <Logo variant="mark" size="xs" href="/dashboard" />
-          <span className="truncate text-[13px] font-semibold text-[#111111] dark:text-white">
+          <span className="truncate text-[13px] font-semibold text-[#111111]">
             {displayTenant.tenantName}
           </span>
         </div>
@@ -210,17 +206,6 @@ export function Header() {
 
           {/* Notifications */}
           <NotificationDropdown />
-
-          {/* Theme Toggle */}
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#111111]"
-            title={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
-            aria-label={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
-          >
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
 
           {/* User Profile & Navigation Bridge Dropdown */}
           <UserNavDropdown />

@@ -38,6 +38,7 @@ import {
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { CreateAccountModal } from "./CreateAccountModal";
 import { CounterpartyCombobox } from "./CounterpartyCombobox";
+import { TransactionEntityPickers } from "./TransactionEntityPickers";
 import { cn } from "@/lib/utils";
 
 interface EditTransactionModalProps {
@@ -98,6 +99,8 @@ export function EditTransactionModal({
       description: "",
       counterparty_name: "",
       counterparty_inn: "",
+      deal_id: "",
+      repair_order_id: "",
       occurred_at: "",
     },
     mode: "onChange",
@@ -129,6 +132,12 @@ export function EditTransactionModal({
         description: transaction.description || "",
         counterparty_name: transaction.counterparty || "",
         counterparty_inn: transaction.counterparty_inn || "",
+        deal_id:
+          transaction.deal_id ||
+          (transaction.linked_entity_type === "deal" ? transaction.linked_entity_id || "" : ""),
+        repair_order_id:
+          transaction.repair_order_id ||
+          (transaction.linked_entity_type === "repair" ? transaction.linked_entity_id || "" : ""),
         occurred_at: formatIsoForInput(transaction.date),
       });
     }
@@ -159,6 +168,8 @@ export function EditTransactionModal({
           ...values,
           category_id: selectedCatId ? selectedCatId : undefined,
           category_name: matchedCat?.name || values.category_name || transaction.category || "Прочее",
+          deal_id: values.deal_id ? values.deal_id.trim() : null,
+          repair_order_id: values.repair_order_id ? values.repair_order_id.trim() : null,
           occurred_at: values.occurred_at
             ? new Date(values.occurred_at).toISOString()
             : undefined,
@@ -394,6 +405,25 @@ export function EditTransactionModal({
                       onChange={(name, inn) => {
                         form.setValue("counterparty_name", name);
                         form.setValue("counterparty_inn", inn || "");
+                      }}
+                    />
+                  </div>
+
+                  {/* Привязка к сделке и заказ-наряду */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-[#111111]">
+                      Привязка к сделке / наряду
+                    </label>
+                    <TransactionEntityPickers
+                      dealId={form.watch("deal_id") || ""}
+                      repairOrderId={form.watch("repair_order_id") || ""}
+                      initialDealTitle={transaction.deal_title ?? null}
+                      initialRepairTicketNumber={transaction.repair_ticket_number ?? null}
+                      onDealChange={(nextDealId) => {
+                        form.setValue("deal_id", nextDealId, { shouldDirty: true });
+                      }}
+                      onRepairOrderChange={(nextRepairId) => {
+                        form.setValue("repair_order_id", nextRepairId, { shouldDirty: true });
                       }}
                     />
                   </div>

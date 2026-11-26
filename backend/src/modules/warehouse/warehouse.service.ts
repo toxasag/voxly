@@ -1,4 +1,14 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
+import { escapeLikePattern, tokenizeSearchQuery } from "../../lib/string.utils.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  normalizeUuidArray,
+  nullableTextExpr,
+  resolveBulkTargetIds,
+  type BulkActionPayload,
+  type SortDirection,
+} from "../../lib/table-query.js";
 import { query, queryOne, queryOneOrThrow, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { ValidationError } from "../../plugins/errorHandler.js";
 import {
@@ -7,6 +17,7 @@ import {
 } from "./landed-cost.utils.js";
 import {
   type AggregatedPurchaseRequestDTO,
+  type BulkDeleteIdsPayload,
   type BulkDeleteWarehouseItemsPayload,
   type BulkUpdateWarehouseItemsPayload,
   type CreatePurchaseRequestPayload,
@@ -51,6 +62,8 @@ import {
   type WarehouseMovementDTO,
   type WarehouseMovementRow,
   type WarehouseSettingsDTO,
+  type WarehouseTabPaginationMeta,
+  type WarehouseTabQuery,
 } from "./warehouse.types.js";
 import {
   buildCsvBuffer,
@@ -398,6 +411,119 @@ export class WarehouseService {
     }
   }
 
+  private buildItemsWhereClause(
+    tenantId: string,
+    options?: {
+      search?: string;
+      category?: string;
+      brand?: string;
+      modelIds?: string[];
+      excludedIds?: string[];
+    },
+  ): { params: SqlParam[]; searchFilter: string } {
+    const params: SqlParam[] = [tenantId];
+    const conditions: string[] = [];
+
+    const searchTokens = tokenizeSearchQuery(options?.search);
+    for (const token of searchTokens) {
+      params.push(`%${escapeLikePattern(token)}%`);
+      const paramRef = `$${params.length}`;
+      conditions.push(`(
+        i.name ILIKE ${paramRef} ESCAPE '\\'
+        OR i.sku ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(i.brand, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(i.category, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1
+          FROM warehouse_item_models wim
+          JOIN equipment_models em ON em.id = wim.model_id AND em.tenant_id = wim.tenant_id
+          WHERE wim.tenant_id = i.tenant_id
+            AND wim.item_id = i.id
+            AND (em.name ILIKE ${paramRef} ESCAPE '\\' OR COALESCE(em.brand_name, '') ILIKE ${paramRef} ESCAPE '\\')
+        )
+      )`);
+    }
+
+    if (options?.category && options.category.trim()) {
+      params.push(options.category.trim());
+      conditions.push(`i.category = $${params.length}`);
+    }
+
+    if (options?.brand && options.brand.trim()) {
+      params.push(options.brand.trim());
+      conditions.push(`i.brand = $${params.length}`);
+    }
+
+    const modelIds = normalizeUuidArray(options?.modelIds);
+    if (modelIds.length > 0) {
+      params.push(modelIds);
+      conditions.push(`EXISTS (
+        SELECT 1 FROM warehouse_item_models wim
+        WHERE wim.tenant_id = i.tenant_id
+          AND wim.item_id = i.id
+          AND wim.model_id = ANY($${params.length}::uuid[])
+      )`);
+    }
+
+    appendExcludedIdsCondition(conditions, params, "i.id", options?.excludedIds);
+
+    return {
+      params,
+      searchFilter: conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "",
+    };
+  }
+
+  private extractItemsFilters(filters?: Record<string, unknown>): {
+    search?: string;
+    category?: string;
+    brand?: string;
+    modelIds?: string[];
+  } {
+    if (!filters) return {};
+    return {
+      search: typeof filters.search === "string" ? filters.search : undefined,
+      category: typeof filters.category === "string" ? filters.category : undefined,
+      brand: typeof filters.brand === "string" ? filters.brand : undefined,
+      modelIds: normalizeUuidArray(filters.modelIds ?? filters.model_ids),
+    };
+  }
+
+  private async resolveItemIdsInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    payload: {
+      mode?: "ids" | "all";
+      ids?: string[];
+      excluded_ids?: string[];
+      filters?: Record<string, unknown>;
+    },
+  ): Promise<string[]> {
+    return resolveBulkTargetIds({
+      executor: tx,
+      payload: {
+        mode: payload.mode ?? "ids",
+        ids: payload.ids,
+        excluded_ids: payload.excluded_ids,
+        filters: payload.filters,
+      },
+      buildFilteredQuery: (excludedIds) => {
+        const parsed = this.extractItemsFilters(payload.filters);
+        const { params, searchFilter } = this.buildItemsWhereClause(tenantId, {
+          ...parsed,
+          excludedIds,
+        });
+        return {
+          sql: `SELECT i.id
+                FROM warehouse_items i
+                WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
+                ${searchFilter}
+                ORDER BY i.id DESC`,
+          params,
+        };
+      },
+    });
+  }
+
   async listItems(
     tenantId: string,
     search?: string,
@@ -408,39 +534,52 @@ export class WarehouseService {
       category?: string;
       brand?: string;
       modelIds?: string[];
+      sortBy?: string;
+      sortDir?: SortDirection;
     },
   ): Promise<PaginatedWarehouseItemsDTO> {
     const page = Math.max(1, options?.page ?? 1);
     const limit = options?.limit ?? 25;
     const all = Boolean(options?.all);
 
-    const params: (string | number | string[])[] = [tenantId];
-    let searchFilter = "";
-
-    if (search && search.trim()) {
-      params.push(`%${search.trim().toLowerCase()}%`);
-      searchFilter += ` AND (lower(i.name) LIKE $${params.length} OR lower(i.sku) LIKE $${params.length} OR lower(COALESCE(i.brand, '')) LIKE $${params.length})`;
-    }
-    if (options?.category && options.category.trim()) {
-      params.push(options.category.trim());
-      searchFilter += ` AND i.category = $${params.length}`;
-    }
-    if (options?.brand && options.brand.trim()) {
-      params.push(options.brand.trim());
-      searchFilter += ` AND i.brand = $${params.length}`;
-    }
-    const modelIds = (options?.modelIds ?? []).filter((id) => typeof id === "string" && id.trim().length > 0);
-    if (modelIds.length > 0) {
-      params.push(modelIds);
-      searchFilter += ` AND EXISTS (
-        SELECT 1 FROM warehouse_item_models wim
-        WHERE wim.tenant_id = i.tenant_id
-          AND wim.item_id = i.id
-          AND wim.model_id = ANY($${params.length}::uuid[])
-      )`;
-    }
+    const { params, searchFilter } = this.buildItemsWhereClause(tenantId, {
+      search,
+      category: options?.category,
+      brand: options?.brand,
+      modelIds: options?.modelIds,
+    });
 
     const settings = await this.getSettings(tenantId);
+    const availableStockExpr = settings.allowNegativeStock
+      ? "(COALESCE(bat.total_stock, 0) - COALESCE(res.reserved_stock, 0))"
+      : "GREATEST(COALESCE(bat.total_stock, 0) - COALESCE(res.reserved_stock, 0), 0)";
+    const fifoCostExpr = "COALESCE(fifo.fifo_cost_price, i.cost_price, 0)";
+    const orderByClause = buildSortOrderBy({
+      sortBy: options?.sortBy,
+      sortDir: options?.sortDir,
+      columns: {
+        sku: { expr: nullableTextExpr("i.sku"), nullable: true },
+        name: nullableTextExpr("i.name"),
+        category: { expr: nullableTextExpr("i.category"), nullable: true },
+        brand: { expr: nullableTextExpr("i.brand"), nullable: true },
+        totalStock: "COALESCE(bat.total_stock, 0)",
+        total_stock: "COALESCE(bat.total_stock, 0)",
+        reservedStock: "COALESCE(res.reserved_stock, 0)",
+        reserved_stock: "COALESCE(res.reserved_stock, 0)",
+        availableStock: availableStockExpr,
+        available_stock: availableStockExpr,
+        minStock: "i.min_stock",
+        min_stock: "i.min_stock",
+        costPrice: fifoCostExpr,
+        cost_price: fifoCostExpr,
+        retailPrice: "i.retail_price",
+        retail_price: "i.retail_price",
+        createdAt: "i.created_at",
+        created_at: "i.created_at",
+      },
+      defaultOrderBy: "i.name ASC",
+      tieBreaker: "i.id DESC",
+    });
 
     return withTenant(tenantId, async (tx) => {
       // 1. Подсчет общего количества позиций для текущего тенанта с учетом поиска и фильтров
@@ -510,21 +649,11 @@ export class WarehouseService {
       const rows = await tx.query<WarehouseItemRow>(
         `SELECT i.id, i.tenant_id, i.sku, i.name, COALESCE(i.brand, '') AS brand, i.category, i.unit,
                 i.min_stock, i.retail_price, i.cost_price, COALESCE(i.reserved, false) AS reserved, i.created_at, i.updated_at,
-                COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
-                COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
-                COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count,
-                (
-                  SELECT b2.purchase_price
-                  FROM warehouse_batches b2
-                  WHERE b2.tenant_id = i.tenant_id AND b2.item_id = i.id AND b2.remaining_quantity > 0
-                  ORDER BY b2.received_at ASC, b2.created_at ASC
-                  LIMIT 1
-                ) AS fifo_cost_price,
-                COALESCE((
-                  SELECT SUM(r.quantity)
-                  FROM warehouse_reservations r
-                  WHERE r.tenant_id = i.tenant_id AND r.item_id = i.id AND r.status = 'reserved'
-                ), 0) AS reserved_stock,
+                COALESCE(bat.total_stock, 0) AS total_stock,
+                COALESCE(bat.stock_valuation, 0)::numeric(14,2) AS stock_valuation,
+                COALESCE(bat.active_batches_count, 0)::int AS active_batches_count,
+                fifo.fifo_cost_price,
+                COALESCE(res.reserved_stock, 0) AS reserved_stock,
                 COALESCE((
                   SELECT json_agg(json_build_object('id', em.id, 'name', em.name, 'brandId', em.brand_id, 'brandName', em.brand_name) ORDER BY em.name ASC)
                   FROM warehouse_item_models wim
@@ -532,11 +661,31 @@ export class WarehouseService {
                   WHERE wim.tenant_id = i.tenant_id AND wim.item_id = i.id
                 ), '[]'::json) AS models_json
          FROM warehouse_items i
-         LEFT JOIN warehouse_batches b ON b.tenant_id = i.tenant_id AND b.item_id = i.id
+         LEFT JOIN (
+           SELECT b.item_id,
+                  COALESCE(SUM(b.remaining_quantity), 0) AS total_stock,
+                  COALESCE(SUM(CASE WHEN b.remaining_quantity > 0 THEN b.remaining_quantity * b.purchase_price ELSE 0 END), 0)::numeric(14,2) AS stock_valuation,
+                  COUNT(CASE WHEN b.remaining_quantity > 0 THEN 1 END)::int AS active_batches_count
+           FROM warehouse_batches b
+           WHERE b.tenant_id = $1
+           GROUP BY b.item_id
+         ) bat ON bat.item_id = i.id
+         LEFT JOIN (
+           SELECT r.item_id, COALESCE(SUM(r.quantity), 0) AS reserved_stock
+           FROM warehouse_reservations r
+           WHERE r.tenant_id = $1 AND r.status = 'reserved'
+           GROUP BY r.item_id
+         ) res ON res.item_id = i.id
+         LEFT JOIN LATERAL (
+           SELECT b2.purchase_price AS fifo_cost_price
+           FROM warehouse_batches b2
+           WHERE b2.tenant_id = i.tenant_id AND b2.item_id = i.id AND b2.remaining_quantity > 0
+           ORDER BY b2.received_at ASC, b2.created_at ASC
+           LIMIT 1
+         ) fifo ON true
          WHERE i.tenant_id = $1 AND i.deleted_at IS NULL
          ${searchFilter}
-         GROUP BY i.id
-         ORDER BY i.name ASC
+         ORDER BY ${orderByClause}
          ${limitClause}`,
         itemParams,
       );
@@ -1383,31 +1532,34 @@ export class WarehouseService {
     });
   }
 
-  async listBatches(tenantId: string, itemId?: string): Promise<WarehouseBatchDTO[]> {
-    const params: string[] = [tenantId];
-    let filter = "";
+  private buildBatchesWhereClause(
+    tenantId: string,
+    options?: { itemId?: string; search?: string; excludedIds?: string[] },
+  ): { params: SqlParam[]; whereClause: string } {
+    const params: SqlParam[] = [tenantId];
+    const conditions: string[] = ["b.tenant_id = $1"];
 
-    if (itemId) {
-      params.push(itemId);
-      filter = `AND b.item_id = $2`;
+    if (options?.itemId) {
+      params.push(options.itemId);
+      conditions.push(`b.item_id = $${params.length}`);
     }
 
-    const rows = await query<WarehouseBatchRow>(
-      `SELECT b.id, b.tenant_id, b.item_id, b.supplier_order_id, b.receipt_id, b.batch_number, b.supplier_name,
-              b.purchase_price,
-              COALESCE(b.base_purchase_price, b.purchase_price) AS base_purchase_price,
-              COALESCE(b.landed_cost_per_unit, 0) AS landed_cost_per_unit,
-              COALESCE(b.landed_cost_total, 0) AS landed_cost_total,
-              b.initial_quantity, b.remaining_quantity,
-              b.received_at, b.created_at, i.name AS item_name
-       FROM warehouse_batches b
-       JOIN warehouse_items i ON i.id = b.item_id AND i.tenant_id = b.tenant_id
-       WHERE b.tenant_id = $1 ${filter}
-       ORDER BY b.received_at DESC`,
-      params,
-    );
+    for (const token of tokenizeSearchQuery(options?.search)) {
+      params.push(`%${escapeLikePattern(token)}%`);
+      const paramRef = `$${params.length}`;
+      conditions.push(`(
+        COALESCE(i.name, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(b.batch_number, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(b.supplier_name, '') ILIKE ${paramRef} ESCAPE '\\'
+      )`);
+    }
 
-    return rows.map((r) => ({
+    appendExcludedIdsCondition(conditions, params, "b.id", options?.excludedIds);
+    return { params, whereClause: conditions.join(" AND ") };
+  }
+
+  private mapBatchRow(r: WarehouseBatchRow): WarehouseBatchDTO {
+    return {
       id: r.id,
       itemId: r.item_id,
       supplierOrderId: r.supplier_order_id ?? null,
@@ -1423,7 +1575,110 @@ export class WarehouseService {
       remainingQuantity: Number(r.remaining_quantity),
       receivedAt: toIso(r.received_at),
       createdAt: toIso(r.created_at),
-    }));
+    };
+  }
+
+  async listBatches(tenantId: string, itemId?: string): Promise<WarehouseBatchDTO[]> {
+    const { params, whereClause } = this.buildBatchesWhereClause(tenantId, { itemId });
+
+    const rows = await query<WarehouseBatchRow>(
+      `SELECT b.id, b.tenant_id, b.item_id, b.supplier_order_id, b.receipt_id, b.batch_number, b.supplier_name,
+              b.purchase_price,
+              COALESCE(b.base_purchase_price, b.purchase_price) AS base_purchase_price,
+              COALESCE(b.landed_cost_per_unit, 0) AS landed_cost_per_unit,
+              COALESCE(b.landed_cost_total, 0) AS landed_cost_total,
+              b.initial_quantity, b.remaining_quantity,
+              b.received_at, b.created_at, i.name AS item_name
+       FROM warehouse_batches b
+       JOIN warehouse_items i ON i.id = b.item_id AND i.tenant_id = b.tenant_id
+       WHERE ${whereClause}
+       ORDER BY b.received_at DESC, b.id DESC`,
+      params,
+    );
+
+    return rows.map((r) => this.mapBatchRow(r));
+  }
+
+  async listBatchesPaginated(
+    tenantId: string,
+    tabQuery: WarehouseTabQuery,
+  ): Promise<{ data: WarehouseBatchDTO[]; meta: WarehouseTabPaginationMeta }> {
+    const page = Math.max(1, tabQuery.page ?? 1);
+    const limit = tabQuery.limit ?? 25;
+    const all = Boolean(tabQuery.all);
+    const { params, whereClause } = this.buildBatchesWhereClause(tenantId, {
+      itemId: tabQuery.item_id,
+      search: tabQuery.search,
+    });
+
+    const countRow = await queryOne<{ count: string | number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM warehouse_batches b
+       JOIN warehouse_items i ON i.id = b.item_id AND i.tenant_id = b.tenant_id
+       WHERE ${whereClause}`,
+      params,
+    );
+    const total = Number(countRow?.count ?? 0);
+    const pages = total === 0 ? 0 : Math.ceil(total / limit);
+    const offset = (page - 1) * limit;
+
+    if (total === 0 || (!all && offset >= total)) {
+      return {
+        data: [],
+        meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+      };
+    }
+
+    const orderBy = buildSortOrderBy({
+      sortBy: tabQuery.sort_by,
+      sortDir: tabQuery.sort_dir,
+      columns: {
+        batchNumber: { expr: nullableTextExpr("b.batch_number"), nullable: true },
+        batch_number: { expr: nullableTextExpr("b.batch_number"), nullable: true },
+        itemName: nullableTextExpr("i.name"),
+        item_name: nullableTextExpr("i.name"),
+        supplierName: { expr: nullableTextExpr("b.supplier_name"), nullable: true },
+        supplier_name: { expr: nullableTextExpr("b.supplier_name"), nullable: true },
+        initialQuantity: "b.initial_quantity",
+        initial_quantity: "b.initial_quantity",
+        remainingQuantity: "b.remaining_quantity",
+        remaining_quantity: "b.remaining_quantity",
+        purchasePrice: "b.purchase_price",
+        purchase_price: "b.purchase_price",
+        receivedAt: "b.received_at",
+        received_at: "b.received_at",
+      },
+      defaultOrderBy: "b.received_at DESC",
+      tieBreaker: "b.id DESC",
+    });
+
+    const rowParams = [...params];
+    let limitClause = "";
+    if (!all) {
+      rowParams.push(limit, offset);
+      limitClause = `LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}`;
+    }
+
+    const rows = await query<WarehouseBatchRow>(
+      `SELECT b.id, b.tenant_id, b.item_id, b.supplier_order_id, b.receipt_id, b.batch_number, b.supplier_name,
+              b.purchase_price,
+              COALESCE(b.base_purchase_price, b.purchase_price) AS base_purchase_price,
+              COALESCE(b.landed_cost_per_unit, 0) AS landed_cost_per_unit,
+              COALESCE(b.landed_cost_total, 0) AS landed_cost_total,
+              b.initial_quantity, b.remaining_quantity,
+              b.received_at, b.created_at, i.name AS item_name
+       FROM warehouse_batches b
+       JOIN warehouse_items i ON i.id = b.item_id AND i.tenant_id = b.tenant_id
+       WHERE ${whereClause}
+       ORDER BY ${orderBy}
+       ${limitClause}`,
+      rowParams,
+    );
+
+    return {
+      data: rows.map((r) => this.mapBatchRow(r)),
+      meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+    };
   }
 
   /**
@@ -1733,9 +1988,36 @@ export class WarehouseService {
     });
   }
 
-  async bulkDeleteBatches(tenantId: string, ids: string[]): Promise<{ deletedCount: number }> {
+  async bulkDeleteBatches(
+    tenantId: string,
+    payloadOrIds: string[] | BulkDeleteIdsPayload,
+  ): Promise<{ deletedCount: number }> {
+    const payload: BulkActionPayload = Array.isArray(payloadOrIds)
+      ? { mode: "ids", ids: payloadOrIds }
+      : payloadOrIds;
+
     return withTenant(tenantId, async (tx) => {
-      return this.deleteBatchesInTx(tx, tenantId, ids);
+      const targetIds = await resolveBulkTargetIds({
+        executor: tx,
+        payload,
+        buildFilteredQuery: (excludedIds) => {
+          const filters = payload.filters ?? {};
+          const { params, whereClause } = this.buildBatchesWhereClause(tenantId, {
+            itemId: typeof filters.item_id === "string" ? filters.item_id : undefined,
+            search: typeof filters.search === "string" ? filters.search : undefined,
+            excludedIds,
+          });
+          return {
+            sql: `SELECT b.id
+                  FROM warehouse_batches b
+                  JOIN warehouse_items i ON i.id = b.item_id AND i.tenant_id = b.tenant_id
+                  WHERE ${whereClause}
+                  ORDER BY b.id DESC`,
+            params,
+          };
+        },
+      });
+      return this.deleteBatchesInTx(tx, tenantId, targetIds);
     });
   }
 
@@ -2010,9 +2292,87 @@ export class WarehouseService {
     });
   }
 
-  async bulkDeleteMovements(tenantId: string, ids: string[]): Promise<{ deletedCount: number }> {
+  private buildMovementsWhereClause(
+    tenantId: string,
+    options?: { search?: string; type?: string; excludedIds?: string[] },
+  ): { params: SqlParam[]; whereClause: string } {
+    const params: SqlParam[] = [tenantId];
+    const conditions: string[] = ["m.tenant_id = $1"];
+
+    if (options?.type && options.type !== "all") {
+      params.push(options.type);
+      conditions.push(`m.type = $${params.length}`);
+    }
+
+    for (const token of tokenizeSearchQuery(options?.search)) {
+      params.push(`%${escapeLikePattern(token)}%`);
+      const paramRef = `$${params.length}`;
+      conditions.push(`(
+        COALESCE(i.name, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(m.description, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(ro.ticket_number, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(d.title, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(u.name, '') ILIKE ${paramRef} ESCAPE '\\'
+      )`);
+    }
+
+    appendExcludedIdsCondition(conditions, params, "m.id", options?.excludedIds);
+    return { params, whereClause: conditions.join(" AND ") };
+  }
+
+  private mapMovementRow(r: WarehouseMovementRow): WarehouseMovementDTO {
+    return {
+      id: r.id,
+      itemId: r.item_id,
+      itemName: r.item_name,
+      batchId: r.batch_id,
+      repairOrderId: r.repair_order_id,
+      repairTicketNumber: r.repair_ticket_number,
+      dealId: r.deal_id ?? null,
+      dealItemId: r.deal_item_id ?? null,
+      dealTitle: r.deal_title ?? null,
+      type: r.type,
+      quantity: Number(r.quantity),
+      costPrice: Number(r.cost_price),
+      description: r.description,
+      createdByName: r.created_by_name,
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  async bulkDeleteMovements(
+    tenantId: string,
+    payloadOrIds: string[] | BulkDeleteIdsPayload,
+  ): Promise<{ deletedCount: number }> {
+    const payload: BulkActionPayload = Array.isArray(payloadOrIds)
+      ? { mode: "ids", ids: payloadOrIds }
+      : payloadOrIds;
+
     return withTenant(tenantId, async (tx) => {
-      return this.deleteMovementsInTx(tx, tenantId, ids);
+      const targetIds = await resolveBulkTargetIds({
+        executor: tx,
+        payload,
+        buildFilteredQuery: (excludedIds) => {
+          const filters = payload.filters ?? {};
+          const { params, whereClause } = this.buildMovementsWhereClause(tenantId, {
+            search: typeof filters.search === "string" ? filters.search : undefined,
+            type: typeof filters.type === "string" ? filters.type : undefined,
+            excludedIds,
+          });
+          return {
+            sql: `SELECT m.id
+                  FROM warehouse_movements m
+                  JOIN warehouse_items i ON i.id = m.item_id AND i.tenant_id = m.tenant_id
+                  LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+                  LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+                  LEFT JOIN users u ON u.id = m.created_by AND u.tenant_id = m.tenant_id
+                  WHERE ${whereClause}
+                  ORDER BY m.id DESC`,
+            params,
+          };
+        },
+      });
+      return this.deleteMovementsInTx(tx, tenantId, targetIds);
     });
   }
 
@@ -2031,28 +2391,96 @@ export class WarehouseService {
        LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
        LEFT JOIN users u ON u.id = m.created_by AND u.tenant_id = m.tenant_id
        WHERE m.tenant_id = $1
-       ORDER BY m.created_at DESC
+       ORDER BY m.created_at DESC, m.id DESC
        LIMIT $2`,
       [tenantId, limit],
     );
 
-    return rows.map((r) => ({
-      id: r.id,
-      itemId: r.item_id,
-      itemName: r.item_name,
-      batchId: r.batch_id,
-      repairOrderId: r.repair_order_id,
-      repairTicketNumber: r.repair_ticket_number,
-      dealId: r.deal_id ?? null,
-      dealItemId: r.deal_item_id ?? null,
-      dealTitle: r.deal_title ?? null,
-      type: r.type,
-      quantity: Number(r.quantity),
-      costPrice: Number(r.cost_price),
-      description: r.description,
-      createdByName: r.created_by_name,
-      createdAt: toIso(r.created_at),
-    }));
+    return rows.map((r) => this.mapMovementRow(r));
+  }
+
+  async listMovementsPaginated(
+    tenantId: string,
+    tabQuery: WarehouseTabQuery,
+  ): Promise<{ data: WarehouseMovementDTO[]; meta: WarehouseTabPaginationMeta }> {
+    const page = Math.max(1, tabQuery.page ?? 1);
+    const limit = tabQuery.limit ?? 25;
+    const all = Boolean(tabQuery.all);
+    const { params, whereClause } = this.buildMovementsWhereClause(tenantId, {
+      search: tabQuery.search,
+      type: tabQuery.status,
+    });
+
+    const countRow = await queryOne<{ count: string | number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM warehouse_movements m
+       JOIN warehouse_items i ON i.id = m.item_id AND i.tenant_id = m.tenant_id
+       LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+       LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+       LEFT JOIN users u ON u.id = m.created_by AND u.tenant_id = m.tenant_id
+       WHERE ${whereClause}`,
+      params,
+    );
+    const total = Number(countRow?.count ?? 0);
+    const pages = total === 0 ? 0 : Math.ceil(total / limit);
+    const offset = (page - 1) * limit;
+
+    if (total === 0 || (!all && offset >= total)) {
+      return {
+        data: [],
+        meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+      };
+    }
+
+    const orderBy = buildSortOrderBy({
+      sortBy: tabQuery.sort_by,
+      sortDir: tabQuery.sort_dir,
+      columns: {
+        createdAt: "m.created_at",
+        created_at: "m.created_at",
+        type: "m.type",
+        itemName: nullableTextExpr("i.name"),
+        item_name: nullableTextExpr("i.name"),
+        quantity: "m.quantity",
+        costPrice: "m.cost_price",
+        cost_price: "m.cost_price",
+        createdByName: { expr: nullableTextExpr("u.name"), nullable: true },
+        created_by_name: { expr: nullableTextExpr("u.name"), nullable: true },
+      },
+      defaultOrderBy: "m.created_at DESC",
+      tieBreaker: "m.id DESC",
+    });
+
+    const rowParams = [...params];
+    let limitClause = "";
+    if (!all) {
+      rowParams.push(limit, offset);
+      limitClause = `LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}`;
+    }
+
+    const rows = await query<WarehouseMovementRow>(
+      `SELECT m.id, m.tenant_id, m.item_id, m.batch_id, m.repair_order_id,
+              m.deal_id, m.deal_item_id,
+              m.type, m.quantity, m.cost_price, m.description, m.created_by, m.created_at,
+              i.name AS item_name,
+              ro.ticket_number AS repair_ticket_number,
+              d.title AS deal_title,
+              u.name AS created_by_name
+       FROM warehouse_movements m
+       JOIN warehouse_items i ON i.id = m.item_id AND i.tenant_id = m.tenant_id
+       LEFT JOIN repair_orders ro ON ro.id = m.repair_order_id AND ro.tenant_id = m.tenant_id
+       LEFT JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+       LEFT JOIN users u ON u.id = m.created_by AND u.tenant_id = m.tenant_id
+       WHERE ${whereClause}
+       ORDER BY ${orderBy}
+       ${limitClause}`,
+      rowParams,
+    );
+
+    return {
+      data: rows.map((r) => this.mapMovementRow(r)),
+      meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -2130,12 +2558,56 @@ export class WarehouseService {
     tenantId: string,
     status?: string,
   ): Promise<AggregatedPurchaseRequestDTO[]> {
-    const params: (string | number)[] = [tenantId];
-    let statusFilter = "";
-    if (status && status !== "all") {
-      params.push(status);
-      statusFilter = `AND pr.status = $${params.length}`;
+    const res = await this.listAggregatedPurchaseRequestsPaginated(tenantId, {
+      status,
+      all: true,
+    });
+    return res.data;
+  }
+
+  async listAggregatedPurchaseRequestsPaginated(
+    tenantId: string,
+    tabQuery: WarehouseTabQuery,
+  ): Promise<{ data: AggregatedPurchaseRequestDTO[]; meta: WarehouseTabPaginationMeta }> {
+    const page = Math.max(1, tabQuery.page ?? 1);
+    const limit = tabQuery.limit ?? 25;
+    const all = Boolean(tabQuery.all);
+    const params: SqlParam[] = [tenantId];
+    const conditions: string[] = ["pr.tenant_id = $1"];
+
+    if (tabQuery.status && tabQuery.status !== "all") {
+      params.push(tabQuery.status);
+      conditions.push(`pr.status = $${params.length}`);
     }
+
+    for (const token of tokenizeSearchQuery(tabQuery.search)) {
+      params.push(`%${escapeLikePattern(token)}%`);
+      const paramRef = `$${params.length}`;
+      conditions.push(`(
+        pr.item_name ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(pr.sku, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(ro.ticket_number, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(d.title, '') ILIKE ${paramRef} ESCAPE '\\'
+      )`);
+    }
+
+    const whereClause = conditions.join(" AND ");
+
+    const orderBy = buildSortOrderBy({
+      sortBy: tabQuery.sort_by,
+      sortDir: tabQuery.sort_dir,
+      columns: {
+        sku: { expr: "NULLIF(BTRIM(MAX(pr.sku)), '')", nullable: true },
+        itemName: "LOWER(BTRIM(pr.item_name))",
+        item_name: "LOWER(BTRIM(pr.item_name))",
+        quantity: "SUM(pr.quantity)",
+        estimatedPrice: "COALESCE(AVG(pr.estimated_price), 0)",
+        estimated_price: "COALESCE(AVG(pr.estimated_price), 0)",
+        status: "pr.status",
+      },
+      defaultOrderBy: "pr.item_name ASC",
+      tieBreaker: "MIN(pr.id::text) ASC",
+    });
 
     const rows = await query<{
       id: string;
@@ -2188,13 +2660,13 @@ export class WarehouseService {
        FROM purchase_requests pr
        LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
        LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
-       WHERE pr.tenant_id = $1 ${statusFilter}
+       WHERE ${whereClause}
        GROUP BY pr.tenant_id, pr.item_id, pr.item_name, pr.sku, pr.unit, pr.status
-       ORDER BY pr.item_name ASC`,
+       ORDER BY ${orderBy}`,
       params,
     );
 
-    return rows.map((r) => {
+    const mapped = rows.map((r) => {
       const totalStock = Number(r.total_stock ?? 0);
       const reservedStock = Number(r.reserved_stock ?? 0);
       const repairOrders = r.repair_orders || "—";
@@ -2214,6 +2686,16 @@ export class WarehouseService {
         availableStock: totalStock - reservedStock,
       };
     });
+
+    const total = mapped.length;
+    const pages = total === 0 ? 0 : Math.ceil(total / limit);
+    const offset = (page - 1) * limit;
+    const data = all ? mapped : mapped.slice(offset, offset + limit);
+
+    return {
+      data,
+      meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+    };
   }
 
   async createPurchaseRequest(
@@ -2279,14 +2761,27 @@ export class WarehouseService {
     tenantId: string,
     userId: string | null,
     payload: {
-      itemIds: string[];
+      mode?: "ids" | "all";
+      ids?: string[];
+      itemIds?: string[];
+      excluded_ids?: string[];
+      filters?: Record<string, unknown>;
       status?: string;
       comment?: string;
       repair_order_id?: string;
       deal_id?: string;
     },
   ): Promise<PurchaseRequestDTO[]> {
-    const uniqueIds = Array.from(new Set(payload.itemIds.filter(Boolean)));
+    const uniqueIds =
+      payload.mode === "all"
+        ? await withTenant(tenantId, async (tx) =>
+            this.resolveItemIdsInTx(tx, tenantId, {
+              mode: "all",
+              excluded_ids: payload.excluded_ids,
+              filters: payload.filters,
+            }),
+          )
+        : Array.from(new Set([...(payload.itemIds ?? []), ...(payload.ids ?? [])].filter(Boolean)));
     const results: PurchaseRequestDTO[] = [];
 
     for (const itemId of uniqueIds) {
@@ -2436,12 +2931,49 @@ export class WarehouseService {
 
   async bulkDeletePurchaseRequests(
     tenantId: string,
-    requestIds: string[],
+    payloadOrIds: string[] | BulkDeleteIdsPayload,
   ): Promise<{ deletedCount: number }> {
-    const uniqueIds = Array.from(new Set(requestIds));
-    if (uniqueIds.length === 0) return { deletedCount: 0 };
+    const payload: BulkActionPayload = Array.isArray(payloadOrIds)
+      ? { mode: "ids", ids: payloadOrIds }
+      : payloadOrIds;
 
     return withTenant(tenantId, async (tx) => {
+      const uniqueIds = await resolveBulkTargetIds({
+        executor: tx,
+        payload,
+        buildFilteredQuery: (excludedIds) => {
+          const filters = payload.filters ?? {};
+          const params: SqlParam[] = [tenantId];
+          const conditions: string[] = ["pr.tenant_id = $1"];
+          if (typeof filters.status === "string" && filters.status.trim() && filters.status !== "all") {
+            params.push(filters.status.trim());
+            conditions.push(`pr.status = $${params.length}`);
+          }
+          if (typeof filters.search === "string") {
+            for (const token of tokenizeSearchQuery(filters.search)) {
+              params.push(`%${escapeLikePattern(token)}%`);
+              const paramRef = `$${params.length}`;
+              conditions.push(`(
+                pr.item_name ILIKE ${paramRef} ESCAPE '\\'
+                OR COALESCE(pr.sku, '') ILIKE ${paramRef} ESCAPE '\\'
+                OR COALESCE(ro.ticket_number, '') ILIKE ${paramRef} ESCAPE '\\'
+                OR COALESCE(d.title, '') ILIKE ${paramRef} ESCAPE '\\'
+              )`);
+            }
+          }
+          appendExcludedIdsCondition(conditions, params, "pr.id", excludedIds);
+          return {
+            sql: `SELECT pr.id
+                  FROM purchase_requests pr
+                  LEFT JOIN repair_orders ro ON ro.id = pr.repair_order_id AND ro.tenant_id = pr.tenant_id
+                  LEFT JOIN deals d ON d.id = pr.deal_id AND d.tenant_id = pr.tenant_id
+                  WHERE ${conditions.join(" AND ")}
+                  ORDER BY pr.id DESC`,
+            params,
+          };
+        },
+      });
+      if (uniqueIds.length === 0) return { deletedCount: 0 };
       // Очищаем ссылки в позициях заказов поставщикам (FK purchase_request_id + массив purchase_request_ids)
       await tx.query(
         `UPDATE supplier_order_items
@@ -2646,7 +3178,7 @@ export class WarehouseService {
     id: string,
     payload: UpdateSupplierOrderPayload,
   ): Promise<SupplierOrderDTO> {
-    return withTenant(tenantId, async (tx) => {
+    await withTenant(tenantId, async (tx) => {
       const order = await tx.queryOne<SupplierOrderRow>(
         `SELECT * FROM supplier_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
         [tenantId, id],
@@ -2805,10 +3337,10 @@ export class WarehouseService {
           }
         }
       }
-
-      const refreshed = await this.getSupplierOrder(tenantId, id);
-      return refreshed!;
     });
+
+    const refreshed = await this.getSupplierOrder(tenantId, id);
+    return refreshed!;
   }
 
   /**
@@ -2926,34 +3458,146 @@ export class WarehouseService {
     });
   }
 
+  private buildSupplierOrdersWhereClause(
+    tenantId: string,
+    options?: { status?: string; search?: string; excludedIds?: string[] },
+  ): { params: SqlParam[]; whereClause: string } {
+    const params: SqlParam[] = [tenantId];
+    const conditions: string[] = ["o.tenant_id = $1"];
+
+    if (options?.status && options.status !== "all") {
+      params.push(options.status);
+      conditions.push(`o.status = $${params.length}`);
+    }
+
+    for (const token of tokenizeSearchQuery(options?.search)) {
+      params.push(`%${escapeLikePattern(token)}%`);
+      const paramRef = `$${params.length}`;
+      conditions.push(`(
+        o.order_number ILIKE ${paramRef} ESCAPE '\\'
+        OR COALESCE(o.supplier_name, '') ILIKE ${paramRef} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM supplier_order_items soi
+          WHERE soi.tenant_id = o.tenant_id
+            AND soi.supplier_order_id = o.id
+            AND (soi.item_name ILIKE ${paramRef} ESCAPE '\\' OR COALESCE(soi.sku, '') ILIKE ${paramRef} ESCAPE '\\')
+        )
+      )`);
+    }
+
+    appendExcludedIdsCondition(conditions, params, "o.id", options?.excludedIds);
+    return { params, whereClause: conditions.join(" AND ") };
+  }
+
   async bulkDeleteSupplierOrders(
     tenantId: string,
-    ids: string[],
+    payloadOrIds: string[] | BulkDeleteIdsPayload,
   ): Promise<{ deletedCount: number; rolledBackBatchesCount: number }> {
+    const payload: BulkActionPayload = Array.isArray(payloadOrIds)
+      ? { mode: "ids", ids: payloadOrIds }
+      : payloadOrIds;
+
     return withTenant(tenantId, async (tx) => {
-      return this.deleteSupplierOrdersInTx(tx, tenantId, ids);
+      const targetIds = await resolveBulkTargetIds({
+        executor: tx,
+        payload,
+        buildFilteredQuery: (excludedIds) => {
+          const filters = payload.filters ?? {};
+          const { params, whereClause } = this.buildSupplierOrdersWhereClause(tenantId, {
+            status: typeof filters.status === "string" ? filters.status : undefined,
+            search: typeof filters.search === "string" ? filters.search : undefined,
+            excludedIds,
+          });
+          return {
+            sql: `SELECT o.id FROM supplier_orders o WHERE ${whereClause} ORDER BY o.id DESC`,
+            params,
+          };
+        },
+      });
+      return this.deleteSupplierOrdersInTx(tx, tenantId, targetIds);
     });
   }
 
   async listSupplierOrders(tenantId: string, status?: string): Promise<SupplierOrderDTO[]> {
-    const params: (string | number)[] = [tenantId];
-    let filter = "";
+    const res = await this.listSupplierOrdersPaginated(tenantId, {
+      status,
+      all: true,
+    });
+    return res.data;
+  }
 
-    if (status && status !== "all") {
-      params.push(status);
-      filter = `AND o.status = $${params.length}`;
+  async listSupplierOrdersPaginated(
+    tenantId: string,
+    tabQuery: WarehouseTabQuery,
+  ): Promise<{ data: SupplierOrderDTO[]; meta: WarehouseTabPaginationMeta }> {
+    const page = Math.max(1, tabQuery.page ?? 1);
+    const limit = tabQuery.limit ?? 25;
+    const all = Boolean(tabQuery.all);
+    const { params, whereClause } = this.buildSupplierOrdersWhereClause(tenantId, {
+      status: tabQuery.status,
+      search: tabQuery.search,
+    });
+
+    const countRow = await queryOne<{ count: string | number }>(
+      `SELECT COUNT(*)::int AS count FROM supplier_orders o WHERE ${whereClause}`,
+      params,
+    );
+    const total = Number(countRow?.count ?? 0);
+    const pages = total === 0 ? 0 : Math.ceil(total / limit);
+    const offset = (page - 1) * limit;
+
+    if (total === 0 || (!all && offset >= total)) {
+      return {
+        data: [],
+        meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+      };
+    }
+
+    const orderBy = buildSortOrderBy({
+      sortBy: tabQuery.sort_by,
+      sortDir: tabQuery.sort_dir,
+      columns: {
+        orderNumber: nullableTextExpr("o.order_number"),
+        order_number: nullableTextExpr("o.order_number"),
+        supplierName: { expr: nullableTextExpr("o.supplier_name"), nullable: true },
+        supplier_name: { expr: nullableTextExpr("o.supplier_name"), nullable: true },
+        status: "o.status",
+        totalAmount: "o.total_amount",
+        total_amount: "o.total_amount",
+        createdAt: "o.created_at",
+        created_at: "o.created_at",
+        paidAt: { expr: "o.paid_at", nullable: true },
+        paid_at: { expr: "o.paid_at", nullable: true },
+        receivedAt: { expr: "o.received_at", nullable: true },
+        received_at: { expr: "o.received_at", nullable: true },
+      },
+      defaultOrderBy: "o.created_at DESC",
+      tieBreaker: "o.id DESC",
+    });
+
+    const rowParams = [...params];
+    let limitClause = "";
+    if (!all) {
+      rowParams.push(limit, offset);
+      limitClause = `LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}`;
     }
 
     const orderRows = await query<SupplierOrderRow>(
       `SELECT o.*, u.name AS created_by_name
        FROM supplier_orders o
        LEFT JOIN users u ON u.id = o.created_by AND u.tenant_id = o.tenant_id
-       WHERE o.tenant_id = $1 ${filter}
-       ORDER BY o.created_at DESC`,
-      params,
+       WHERE ${whereClause}
+       ORDER BY ${orderBy}
+       ${limitClause}`,
+      rowParams,
     );
 
-    if (orderRows.length === 0) return [];
+    if (orderRows.length === 0) {
+      return {
+        data: [],
+        meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+      };
+    }
 
     const orderIds = orderRows.map((o) => o.id);
     const itemRows = await query<
@@ -3119,39 +3763,42 @@ export class WarehouseService {
       receiptsByOrder.set(r.supplier_order_id, arr);
     }
 
-    return orderRows.map((o) => {
-      const orderItems = itemsByOrder.get(o.id) ?? [];
-      const orderReceipts = receiptsByOrder.get(o.id) ?? [];
-      const orderedQuantityTotal =
-        Math.round(orderItems.reduce((s, it) => s + it.quantity, 0) * 100) / 100;
-      const receivedQuantityTotal =
-        Math.round(orderItems.reduce((s, it) => s + it.receivedQuantity, 0) * 100) / 100;
-      const extraCostsTotal =
-        Math.round(orderReceipts.reduce((s, r) => s + r.extraCostsTotal, 0) * 100) / 100;
+    return {
+      data: orderRows.map((o) => {
+        const orderItems = itemsByOrder.get(o.id) ?? [];
+        const orderReceipts = receiptsByOrder.get(o.id) ?? [];
+        const orderedQuantityTotal =
+          Math.round(orderItems.reduce((s, it) => s + it.quantity, 0) * 100) / 100;
+        const receivedQuantityTotal =
+          Math.round(orderItems.reduce((s, it) => s + it.receivedQuantity, 0) * 100) / 100;
+        const extraCostsTotal =
+          Math.round(orderReceipts.reduce((s, r) => s + r.extraCostsTotal, 0) * 100) / 100;
 
-      return {
-        id: o.id,
-        orderNumber: o.order_number,
-        supplierName: o.supplier_name,
-        supplierCompanyId: o.supplier_company_id ?? null,
-        status: (o.status as SupplierOrderStatus) || "pending_payment",
-        totalAmount: Number(o.total_amount),
-        cashAccountId: o.cash_account_id,
-        financeTransactionId: o.finance_transaction_id,
-        notes: o.notes,
-        paidAt: toNullableIso(o.paid_at),
-        receivedAt: toNullableIso(o.received_at),
-        createdBy: o.created_by,
-        createdByName: o.created_by_name,
-        items: orderItems,
-        orderedQuantityTotal,
-        receivedQuantityTotal,
-        extraCostsTotal,
-        receipts: orderReceipts,
-        createdAt: toIso(o.created_at),
-        updatedAt: toIso(o.updated_at),
-      };
-    });
+        return {
+          id: o.id,
+          orderNumber: o.order_number,
+          supplierName: o.supplier_name,
+          supplierCompanyId: o.supplier_company_id ?? null,
+          status: (o.status as SupplierOrderStatus) || "pending_payment",
+          totalAmount: Number(o.total_amount),
+          cashAccountId: o.cash_account_id,
+          financeTransactionId: o.finance_transaction_id,
+          notes: o.notes,
+          paidAt: toNullableIso(o.paid_at),
+          receivedAt: toNullableIso(o.received_at),
+          createdBy: o.created_by,
+          createdByName: o.created_by_name,
+          items: orderItems,
+          orderedQuantityTotal,
+          receivedQuantityTotal,
+          extraCostsTotal,
+          receipts: orderReceipts,
+          createdAt: toIso(o.created_at),
+          updatedAt: toIso(o.updated_at),
+        };
+      }),
+      meta: { total, page, limit: all ? total : limit, pages: all ? (total > 0 ? 1 : 0) : pages },
+    };
   }
 
   async getSupplierOrder(tenantId: string, id: string): Promise<SupplierOrderDTO | null> {
@@ -3801,14 +4448,24 @@ export class WarehouseService {
       const isFullyReceived = remainingRows.every((r) => Number(r.remaining) <= 0.0001);
       const nextStatus: SupplierOrderStatus = isFullyReceived ? "received" : "partially_received";
 
-      await tx.query(
-        `UPDATE supplier_orders
-         SET status = $1,
-             received_at = CASE WHEN $1 = 'received' THEN now() ELSE received_at END,
-             updated_at = now()
-         WHERE tenant_id = $2 AND id = $3`,
-        [nextStatus, tenantId, id],
-      );
+      if (isFullyReceived) {
+        await tx.query(
+          `UPDATE supplier_orders
+           SET status = 'received',
+               received_at = COALESCE(received_at, now()),
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, id],
+        );
+      } else {
+        await tx.query(
+          `UPDATE supplier_orders
+           SET status = 'partially_received',
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, id],
+        );
+      }
 
       return {
         batchesCreated: batchesCount,
@@ -4349,9 +5006,30 @@ export class WarehouseService {
     tenantId: string,
     payload: ExportWarehouseItemsPayload,
   ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
-    const result = await this.listItems(tenantId, payload.search, { all: true });
+    const scopeFilters = this.extractItemsFilters(payload.filters);
+    const mergedSearch = payload.search ?? scopeFilters.search;
+    const mergedCategory = payload.category ?? scopeFilters.category;
+    const mergedBrand = payload.brand ?? scopeFilters.brand;
+    const mergedModelIds =
+      normalizeUuidArray(payload.model_ids ?? payload.modelIds).length > 0
+        ? normalizeUuidArray(payload.model_ids ?? payload.modelIds)
+        : scopeFilters.modelIds;
+
+    const result = await this.listItems(tenantId, mergedSearch, {
+      all: true,
+      category: mergedCategory,
+      brand: mergedBrand,
+      modelIds: mergedModelIds,
+      sortBy: payload.sort_by,
+      sortDir: payload.sort_dir,
+    });
     let items = result.data;
-    if (payload.ids && payload.ids.length > 0) {
+    if (payload.mode === "all") {
+      if (payload.excluded_ids && payload.excluded_ids.length > 0) {
+        const excludedSet = new Set(payload.excluded_ids);
+        items = items.filter((i) => !excludedSet.has(i.id));
+      }
+    } else if (payload.ids && payload.ids.length > 0) {
       const idSet = new Set(payload.ids);
       items = items.filter((i) => idSet.has(i.id));
     }
@@ -4724,13 +5402,14 @@ export class WarehouseService {
     tenantId: string,
     payload: BulkUpdateWarehouseItemsPayload,
   ): Promise<{ updatedCount: number }> {
-    if (!payload.ids || payload.ids.length === 0) {
-      return { updatedCount: 0 };
-    }
-
     return withTenant(tenantId, async (tx) => {
+      const targetIds = await this.resolveItemIdsInTx(tx, tenantId, payload);
+      if (targetIds.length === 0) {
+        return { updatedCount: 0 };
+      }
+
       const updates: string[] = [];
-      const params: SqlParam[] = [tenantId, payload.ids];
+      const params: SqlParam[] = [tenantId, targetIds];
 
       const addParam = (val: SqlParam) => {
         params.push(val);
@@ -4831,7 +5510,7 @@ export class WarehouseService {
         if (modelsMode === "replace") {
           await tx.query(
             `DELETE FROM warehouse_item_models WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
-            [tenantId, payload.ids],
+            [tenantId, targetIds],
           );
           if (targetModelIds.size > 0) {
             await tx.query(
@@ -4840,7 +5519,7 @@ export class WarehouseService {
                FROM unnest($2::uuid[]) AS i(item_id)
                CROSS JOIN unnest($3::uuid[]) AS m(model_id)
                ON CONFLICT DO NOTHING`,
-              [tenantId, payload.ids, Array.from(targetModelIds)],
+              [tenantId, targetIds, Array.from(targetModelIds)],
             );
           }
         } else if (modelsMode === "add") {
@@ -4851,7 +5530,7 @@ export class WarehouseService {
                FROM unnest($2::uuid[]) AS i(item_id)
                CROSS JOIN unnest($3::uuid[]) AS m(model_id)
                ON CONFLICT DO NOTHING`,
-              [tenantId, payload.ids, Array.from(targetModelIds)],
+              [tenantId, targetIds, Array.from(targetModelIds)],
             );
           }
         } else if (modelsMode === "remove") {
@@ -4859,7 +5538,7 @@ export class WarehouseService {
             await tx.query(
               `DELETE FROM warehouse_item_models
                WHERE tenant_id = $1 AND item_id = ANY($2::uuid[]) AND model_id = ANY($3::uuid[])`,
-              [tenantId, payload.ids, Array.from(targetModelIds)],
+              [tenantId, targetIds, Array.from(targetModelIds)],
             );
           }
         }
@@ -4885,7 +5564,7 @@ export class WarehouseService {
           `UPDATE warehouse_items
            SET updated_at = now()
            WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`,
-          [tenantId, payload.ids],
+          [tenantId, targetIds],
         );
         return { updatedCount: res.length };
       }
@@ -4896,15 +5575,16 @@ export class WarehouseService {
     tenantId: string,
     payload: BulkDeleteWarehouseItemsPayload,
   ): Promise<{ deletedCount: number; errors?: string[] }> {
-    if (!payload.ids || payload.ids.length === 0) {
-      return { deletedCount: 0 };
-    }
-
     return withTenant(tenantId, async (tx) => {
+      const targetIds = await this.resolveItemIdsInTx(tx, tenantId, payload);
+      if (targetIds.length === 0) {
+        return { deletedCount: 0 };
+      }
+
       if (payload.force) {
         const batches = await tx.query<{ id: string }>(
           `SELECT id FROM warehouse_batches WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
-          [tenantId, payload.ids],
+          [tenantId, targetIds],
         );
         if (batches.length > 0) {
           await this.deleteBatchesInTx(
@@ -4915,11 +5595,11 @@ export class WarehouseService {
         }
         await tx.query(
           `DELETE FROM warehouse_reservations WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
-          [tenantId, payload.ids],
+          [tenantId, targetIds],
         );
         await tx.query(
           `DELETE FROM warehouse_movements WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`,
-          [tenantId, payload.ids],
+          [tenantId, targetIds],
         );
 
         const res = await tx.query<{ id: string }>(
@@ -4927,7 +5607,7 @@ export class WarehouseService {
            SET deleted_at = now()
            WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
            RETURNING id`,
-          [tenantId, payload.ids],
+          [tenantId, targetIds],
         );
         return { deletedCount: res.length };
       }
@@ -4939,11 +5619,11 @@ export class WarehouseService {
          WHERE i.tenant_id = $1 AND i.id = ANY($2) AND i.deleted_at IS NULL
          GROUP BY i.id
          HAVING COALESCE(SUM(b.remaining_quantity), 0) > 0`,
-        [tenantId, payload.ids],
+        [tenantId, targetIds],
       );
 
       const blockedIds = new Set(itemsWithStock.map((i) => i.id));
-      const deletableIds = payload.ids.filter((id) => !blockedIds.has(id));
+      const deletableIds = targetIds.filter((id) => !blockedIds.has(id));
 
       let deletedCount = 0;
       if (deletableIds.length > 0) {

@@ -165,14 +165,7 @@ export function Logo({
 
   const markElement = (
     <>
-      {theme === "light" && renderBlackMark("block")}
-      {theme === "dark" && renderWhiteMark("block")}
-      {theme === "auto" && (
-        <>
-          {renderBlackMark("block dark:hidden")}
-          {renderWhiteMark("hidden dark:block")}
-        </>
-      )}
+      {theme === "dark" ? renderWhiteMark("block") : renderBlackMark("block")}
     </>
   );
 
@@ -181,9 +174,7 @@ export function Logo({
       <span
         className={cn(
           sizeConfig.text,
-          theme === "light" && "text-[#111111]",
-          theme === "dark" && "text-white",
-          theme === "auto" && "text-[#111111] dark:text-white",
+          theme === "dark" ? "text-white" : "text-[#111111]",
           textClassName,
         )}
       >
@@ -193,9 +184,7 @@ export function Logo({
         <span
           className={cn(
             "mt-0.5 text-[10px] font-medium tracking-normal",
-            theme === "light" && "text-[#666666]",
-            theme === "dark" && "text-[#a1a1aa]",
-            theme === "auto" && "text-[#666666] dark:text-[#a1a1aa]",
+            theme === "dark" ? "text-[#a1a1aa]" : "text-[#666666]",
           )}
         >
           {subtitle}

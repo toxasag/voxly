@@ -20,3 +20,27 @@ export function pluralRu(
   if (mod10 >= 2 && mod10 <= 4) return forms[1];
   return forms[2];
 }
+
+/**
+ * Экранирует спецсимволы LIKE/ILIKE (`\`, `%`, `_`) при использовании `ESCAPE '\'`.
+ */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+/**
+ * Разбивает поисковый запрос по пробельным символам на уникальные непустые токены
+ * для многословного `AND`-поиска в любом порядке слов.
+ */
+export function tokenizeSearchQuery(
+  query: string | undefined | null,
+  maxTokens = 10,
+): string[] {
+  if (!query) return [];
+  const tokens = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+  return [...new Set(tokens)].slice(0, maxTokens);
+}

@@ -36,6 +36,8 @@ export interface UpdateServicePayload {
 export const serviceKeys = {
   all: ["services"] as const,
   list: (search?: string) => [...serviceKeys.all, "list", search ?? ""] as const,
+  paginated: (params: { search?: string; page?: number; limit?: number; sortBy?: string; sortDir?: string }) =>
+    [...serviceKeys.all, "paginated", params] as const,
   detail: (id: string) => [...serviceKeys.all, "detail", id] as const,
 };
 
@@ -46,6 +48,43 @@ export function useServices(search?: string) {
       const q = search ? `?search=${encodeURIComponent(search)}` : "";
       const res = await apiClient.get<ServiceItemDTO[]>(`/api/v1/services${q}`);
       return res.data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useServicesPaginated(params: {
+  search?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+} = {}) {
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 25;
+  return useQuery({
+    queryKey: serviceKeys.paginated({ ...params, page, limit }),
+    queryFn: async () => {
+      const q = new URLSearchParams();
+      q.set("page", String(page));
+      q.set("limit", String(limit));
+      if (params.search && params.search.trim()) q.set("search", params.search.trim());
+      if (params.sortBy) {
+        q.set("sort_by", params.sortBy);
+        if (params.sortDir) q.set("sort_dir", params.sortDir);
+      }
+      const res = await apiClient.get<ServiceItemDTO[]>(`/api/v1/services?${q.toString()}`);
+      const m = res.meta ?? {};
+      const total = Number(m.total ?? res.data.length);
+      return {
+        items: res.data ?? [],
+        meta: {
+          total,
+          page: Number(m.page ?? page),
+          limit: Number(m.limit ?? limit),
+          pages: Number(m.pages ?? (total === 0 ? 0 : Math.ceil(total / limit))),
+        },
+      };
     },
     staleTime: 30_000,
   });

@@ -66,5 +66,12 @@ if name=='curl': print(os.environ['HTTP_STATUS'],end='')
         result, _ = self.run_deploy("frontend", status="503")
         self.assertNotEqual(result.returncode, 0)
 
+    def test_max_bridge_deploy_isolated(self):
+        result, trace = self.run_deploy("max-bridge")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--force-recreate max-bridge", trace)
+        self.assertNotIn("--force-recreate backend", trace)
+        self.assertNotIn("--force-recreate frontend", trace)
+
 if __name__ == "__main__":
     unittest.main()

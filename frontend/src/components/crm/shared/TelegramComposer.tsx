@@ -1111,16 +1111,18 @@ export function TelegramComposer({
   const handleSendAction = () => {
     if (disabled || isSending || (!value.trim() && filesToUse.length === 0)) return;
     onSend(filesToUse.length === 1 ? filesToUse[0] : filesToUse);
-    updateAttachedFiles([]);
-    lastSerializedValueRef.current = "";
-    if (editorRef.current) {
-      editorRef.current.innerHTML = "";
-      editorRef.current.style.height = "38px";
+    if (!isControlled) {
+      updateAttachedFiles([]);
+      lastSerializedValueRef.current = "";
+      if (editorRef.current) {
+        editorRef.current.innerHTML = "";
+        editorRef.current.style.height = "38px";
+      }
+      if (fullscreenEditorRef.current) {
+        fullscreenEditorRef.current.innerHTML = "";
+      }
+      setHasContent(false);
     }
-    if (fullscreenEditorRef.current) {
-      fullscreenEditorRef.current.innerHTML = "";
-    }
-    setHasContent(false);
     if (isFullscreen) {
       setIsFullscreen(false);
     }

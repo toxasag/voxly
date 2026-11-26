@@ -83,6 +83,15 @@ export class DealMessagingService {
     );
   }
 
+  private isNativeTsMaxAccount(acc: {
+    channel: string;
+    credentials?: Record<string, unknown> | null;
+  }): boolean {
+    if (acc.channel !== "max" && acc.channel !== "rumax") return false;
+    const provider = acc.credentials?.provider ?? acc.credentials?.adapter;
+    return provider === "native-ts" || provider === "ts";
+  }
+
   private async getLiveMaxBotIds(
     accounts: Array<{ channel: string; credentials?: Record<string, unknown> | null }>,
   ): Promise<Set<string> | null> {
@@ -195,11 +204,14 @@ export class DealMessagingService {
 
       if (available && this.isMaxBridgeAccount(acc)) {
         const isSessionDead =
-          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+          liveMaxBotIds !== null ? !liveMaxBotIds.has(acc.id) : acc.status === "error";
         if (isSessionDead) {
           available = false;
           unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";
         }
+      } else if (available && this.isNativeTsMaxAccount(acc) && acc.status === "error") {
+        available = false;
+        unavailableReason = "Сессия MAX истекла — переподключите в «Интеграции → MAX»";
       }
 
       let channelPrefix = acc.channel.toUpperCase();
@@ -434,13 +446,25 @@ export class DealMessagingService {
         const liveMaxBotIds = await this.getLiveMaxBotIds(
           fallbackAccounts.map((a) => ({ channel: a.channel ?? "max", credentials: a.credentials })),
         );
-        const healthy = liveMaxBotIds
-          ? fallbackAccounts.find(
-              (a) =>
-                !this.isMaxBridgeAccount({ channel: a.channel ?? "max", credentials: a.credentials }) ||
-                liveMaxBotIds.has(a.id),
-            )
-          : undefined;
+        let liveNativeIds: Set<string> = new Set();
+        if (
+          fallbackAccounts.some((a) =>
+            this.isNativeTsMaxAccount({ channel: a.channel ?? "max", credentials: a.credentials }),
+          )
+        ) {
+          const { messagingRegistry } = await import("../../messaging/messaging-registry.js");
+          liveNativeIds = messagingRegistry.getMaxTsAdapter().getLiveBotIds();
+        }
+        const healthy = fallbackAccounts.find((a) => {
+          const accObj = { channel: a.channel ?? "max", credentials: a.credentials };
+          if (this.isNativeTsMaxAccount(accObj)) {
+            return liveNativeIds.size === 0 || liveNativeIds.has(a.id);
+          }
+          if (this.isMaxBridgeAccount(accObj)) {
+            return liveMaxBotIds === null || liveMaxBotIds.has(a.id);
+          }
+          return true;
+        });
         channelAccountId = healthy?.id ?? fallbackAccounts[0]?.id ?? null;
       } else {
         channelAccountId = fallbackAccounts[0]?.id ?? null;
@@ -839,11 +863,14 @@ export class DealMessagingService {
 
       if (available && this.isMaxBridgeAccount(acc)) {
         const isSessionDead =
-          acc.status === "error" || (liveMaxBotIds !== null && !liveMaxBotIds.has(acc.id));
+          liveMaxBotIds !== null ? !liveMaxBotIds.has(acc.id) : acc.status === "error";
         if (isSessionDead) {
           available = false;
           unavailableReason = "Сессия MAX истекла — переподключите по QR в «Интеграции → MAX»";
         }
+      } else if (available && this.isNativeTsMaxAccount(acc) && acc.status === "error") {
+        available = false;
+        unavailableReason = "Сессия MAX истекла — переподключите в «Интеграции → MAX»";
       }
 
       let channelPrefix = acc.channel.toUpperCase();

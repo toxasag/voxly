@@ -1,4 +1,12 @@
 import { nullIfBlank } from "../../lib/string.utils.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  nullableTextExpr,
+  resolveBulkTargetIds,
+  type BulkActionPayload,
+  type SortDirection,
+} from "../../lib/table-query.js";
 import type {
   ChangeStatusPayload,
   ClientLookupDealDTO,
@@ -96,9 +104,114 @@ export interface ListRepairsOptions {
   search?: string;
   limit: number;
   offset: number;
+  sortBy?: string;
+  sortDir?: SortDirection;
 }
 
 export class RepairsService {
+  private buildRepairsWhereClause(
+    tenantId: string,
+    options: {
+      dealId?: string;
+      status?: RepairStatus | "active";
+      paymentStatus?: RepairPaymentStatus;
+      priority?: RepairPriority;
+      masterId?: string;
+      customerId?: string;
+      search?: string;
+      excludedIds?: string[];
+    },
+  ): { where: string; params: SqlParam[] } {
+    const conditions: string[] = ["ro.tenant_id = $1", "ro.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    if (options.dealId !== undefined) {
+      params.push(options.dealId);
+      conditions.push(`ro.deal_id = $${params.length}`);
+    }
+
+    if (options.status === "active") {
+      conditions.push(`ro.status <> 'issued'`);
+    } else if (options.status !== undefined) {
+      params.push(options.status);
+      conditions.push(`ro.status = $${params.length}`);
+    }
+
+    if (options.paymentStatus !== undefined) {
+      params.push(options.paymentStatus);
+      conditions.push(`ro.payment_status = $${params.length}`);
+    }
+
+    if (options.priority !== undefined) {
+      params.push(options.priority);
+      conditions.push(`ro.priority = $${params.length}`);
+    }
+
+    if (options.masterId !== undefined) {
+      params.push(options.masterId);
+      conditions.push(`ro.master_id = $${params.length}`);
+    }
+
+    if (options.customerId !== undefined) {
+      params.push(options.customerId);
+      conditions.push(`ro.customer_id = $${params.length}`);
+    }
+
+    if (options.search !== undefined && options.search.trim().length > 0) {
+      params.push(`%${options.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(ro.ticket_number ILIKE ${placeholder}
+          OR ro.customer_name ILIKE ${placeholder}
+          OR ro.customer_phone ILIKE ${placeholder}
+          OR ro.equipment_brand ILIKE ${placeholder}
+          OR ro.equipment_model ILIKE ${placeholder}
+          OR ro.equipment_serial ILIKE ${placeholder})`,
+      );
+    }
+
+    appendExcludedIdsCondition(conditions, params, "ro.id", options.excludedIds);
+    return { where: conditions.join(" AND "), params };
+  }
+
+  private async resolveRepairTargetIds(
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<string[]> {
+    if (Array.isArray(idsOrPayload)) {
+      return Array.from(new Set(idsOrPayload.filter(Boolean)));
+    }
+    return resolveBulkTargetIds({
+      payload: idsOrPayload,
+      buildFilteredQuery: (excludedIds) => {
+        const filters = idsOrPayload.filters ?? {};
+        const { where, params } = this.buildRepairsWhereClause(tenantId, {
+          dealId: typeof filters.deal_id === "string" && filters.deal_id ? filters.deal_id : undefined,
+          status:
+            typeof filters.status === "string" && filters.status !== "all"
+              ? (filters.status as RepairStatus | "active")
+              : undefined,
+          paymentStatus:
+            typeof filters.payment_status === "string" && filters.payment_status !== "all"
+              ? (filters.payment_status as RepairPaymentStatus)
+              : undefined,
+          priority:
+            typeof filters.priority === "string" && filters.priority !== "all"
+              ? (filters.priority as RepairPriority)
+              : undefined,
+          masterId: typeof filters.master_id === "string" && filters.master_id ? filters.master_id : undefined,
+          customerId: typeof filters.customer_id === "string" && filters.customer_id ? filters.customer_id : undefined,
+          search: typeof filters.search === "string" ? filters.search : undefined,
+          excludedIds,
+        });
+        return {
+          sql: `SELECT ro.id FROM repair_orders ro WHERE ${where} ORDER BY ro.id DESC`,
+          params,
+        };
+      },
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Ticket numbering
   // -------------------------------------------------------------------------
@@ -221,63 +334,79 @@ export class RepairsService {
   async list(
     tenantId: string,
     options: ListRepairsOptions,
-  ): Promise<{ items: RepairOrderDTO[]; total: number }> {
-    const conditions: string[] = ["ro.tenant_id = $1", "ro.deleted_at IS NULL"];
-    const params: SqlParam[] = [tenantId];
+  ): Promise<{
+    items: RepairOrderDTO[];
+    total: number;
+    inProgressCount: number;
+    readyCount: number;
+    paidAmount: number;
+    paidCount: number;
+    unpaidAmount: number;
+    unpaidCount: number;
+  }> {
+    const { where, params } = this.buildRepairsWhereClause(tenantId, options);
 
-    if (options.dealId !== undefined) {
-      params.push(options.dealId);
-      conditions.push(`ro.deal_id = $${params.length}`);
-    }
+    const effectiveCostExpr = `COALESCE(
+      ro.final_cost,
+      NULLIF(
+        (SELECT COALESCE(SUM(rw.cost), 0) FROM repair_works rw WHERE rw.tenant_id = ro.tenant_id AND rw.repair_order_id = ro.id) +
+        (SELECT COALESCE(SUM(rp.retail_price * rp.quantity), 0) FROM repair_parts rp WHERE rp.tenant_id = ro.tenant_id AND rp.repair_order_id = ro.id),
+        0
+      ),
+      ro.estimated_cost,
+      0
+    )`;
 
-    if (options.status === "active") {
-      conditions.push(`ro.status <> 'issued'`);
-    } else if (options.status !== undefined) {
-      params.push(options.status);
-      conditions.push(`ro.status = $${params.length}`);
-    }
-
-    if (options.paymentStatus !== undefined) {
-      params.push(options.paymentStatus);
-      conditions.push(`ro.payment_status = $${params.length}`);
-    }
-
-    if (options.priority !== undefined) {
-      params.push(options.priority);
-      conditions.push(`ro.priority = $${params.length}`);
-    }
-
-    if (options.masterId !== undefined) {
-      params.push(options.masterId);
-      conditions.push(`ro.master_id = $${params.length}`);
-    }
-
-    if (options.customerId !== undefined) {
-      params.push(options.customerId);
-      conditions.push(`ro.customer_id = $${params.length}`);
-    }
-
-    if (options.search !== undefined && options.search.length > 0) {
-      params.push(`%${options.search}%`);
-      const placeholder = `$${params.length}`;
-      conditions.push(
-        `(ro.ticket_number ILIKE ${placeholder}
-          OR ro.customer_name ILIKE ${placeholder}
-          OR ro.customer_phone ILIKE ${placeholder}
-          OR ro.equipment_brand ILIKE ${placeholder}
-          OR ro.equipment_model ILIKE ${placeholder}
-          OR ro.equipment_serial ILIKE ${placeholder})`,
-      );
-    }
-
-    const where = conditions.join(" AND ");
-
-    const countRow = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM repair_orders ro WHERE ${where}`,
+    const countRow = await queryOne<{
+      total: string;
+      in_progress_cnt: string;
+      ready_cnt: string;
+      paid_cnt: string;
+      paid_amount: string;
+      unpaid_cnt: string;
+      unpaid_amount: string;
+    }>(
+      `SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE ro.status IN ('intake', 'waiting_parts', 'diagnostics', 'approval', 'in_progress'))::text AS in_progress_cnt,
+         COUNT(*) FILTER (WHERE ro.status = 'ready')::text AS ready_cnt,
+         COUNT(*) FILTER (WHERE ro.payment_status = 'paid')::text AS paid_cnt,
+         COALESCE(SUM(${effectiveCostExpr}) FILTER (WHERE ro.payment_status = 'paid'), 0)::text AS paid_amount,
+         COUNT(*) FILTER (WHERE ro.payment_status <> 'paid' AND ro.status <> 'rejected')::text AS unpaid_cnt,
+         COALESCE(SUM(${effectiveCostExpr}) FILTER (WHERE ro.payment_status <> 'paid' AND ro.status <> 'rejected'), 0)::text AS unpaid_amount
+       FROM repair_orders ro
+       WHERE ${where}`,
       params,
     );
 
     params.push(options.limit, options.offset);
+
+    const orderBy = buildSortOrderBy({
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+      columns: {
+        ticket_number: nullableTextExpr("ro.ticket_number"),
+        equipment: {
+          expr: nullableTextExpr("ro.equipment_brand"),
+          secondaryExpr: nullableTextExpr("ro.equipment_model"),
+          nullable: true,
+        },
+        customer_name: nullableTextExpr("ro.customer_name"),
+        deal: { expr: nullableTextExpr("d.title"), nullable: true },
+        deal_title: { expr: nullableTextExpr("d.title"), nullable: true },
+        status: "ro.status",
+        payment_status: "ro.payment_status",
+        priority: "CASE ro.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END",
+        team: { expr: nullableTextExpr("ro.master_name"), nullable: true },
+        master_name: { expr: nullableTextExpr("ro.master_name"), nullable: true },
+        cost: effectiveCostExpr,
+        final_cost: effectiveCostExpr,
+        received_at: "ro.received_at",
+        created_at: "ro.created_at",
+      },
+      defaultOrderBy: `CASE ro.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END ASC, ro.received_at DESC`,
+      tieBreaker: "ro.id DESC",
+    });
 
     const rows = await query<RepairOrderRow>(
       `SELECT
@@ -331,14 +460,21 @@ export class RepairsService {
        LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
        LEFT JOIN companies c ON c.id = COALESCE(d.company_id, ct.company_id) AND c.tenant_id = ro.tenant_id
        WHERE ${where}
-       ORDER BY
-         CASE ro.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END ASC,
-         ro.received_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
 
-    return { items: rows.map(toRepairOrderDTO), total: Number(countRow?.total ?? 0) };
+    return {
+      items: rows.map(toRepairOrderDTO),
+      total: Number(countRow?.total ?? 0),
+      inProgressCount: Number(countRow?.in_progress_cnt ?? 0),
+      readyCount: Number(countRow?.ready_cnt ?? 0),
+      paidAmount: Math.round(Number(countRow?.paid_amount ?? 0) * 100) / 100,
+      paidCount: Number(countRow?.paid_cnt ?? 0),
+      unpaidAmount: Math.round(Number(countRow?.unpaid_amount ?? 0) * 100) / 100,
+      unpaidCount: Number(countRow?.unpaid_cnt ?? 0),
+    };
   }
 
   async syncDealBudgetFromRepairs(tenantId: string, dealId: string | null | undefined): Promise<void> {
@@ -770,11 +906,11 @@ export class RepairsService {
       if (dealId && (companyId || customerId)) {
         await tx.query(
           `UPDATE deals
-           SET company_id = COALESCE(company_id, $1),
-               contact_id = COALESCE(contact_id, $2),
+           SET company_id = COALESCE(company_id, $1::uuid),
+               contact_id = COALESCE(contact_id, $2::uuid),
                updated_at = now()
            WHERE tenant_id = $3 AND id = $4
-             AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+             AND ((company_id IS NULL AND $1::uuid IS NOT NULL) OR (contact_id IS NULL AND $2::uuid IS NOT NULL))`,
           [companyId || null, customerId || null, tenantId, dealId],
         );
       }
@@ -923,6 +1059,10 @@ export class RepairsService {
         malfunctions: malfunctionsItems,
         accessories: packageContentsItems,
       });
+
+      if (dealId) {
+        await dealsService.advanceDealToInProgressInTx(tx, tenantId, dealId, author.id);
+      }
 
       const dto = toRepairOrderDTO(row);
       return { dto, customerId, dealId: dto.dealId };
@@ -1098,11 +1238,11 @@ export class RepairsService {
         if (companyId || customerId) {
           await tx.query(
             `UPDATE deals
-             SET company_id = COALESCE(company_id, $1),
-                 contact_id = COALESCE(contact_id, $2),
+             SET company_id = COALESCE(company_id, $1::uuid),
+                 contact_id = COALESCE(contact_id, $2::uuid),
                  updated_at = now()
              WHERE tenant_id = $3 AND id = $4
-               AND ((company_id IS NULL AND $1 IS NOT NULL) OR (contact_id IS NULL AND $2 IS NOT NULL))`,
+               AND ((company_id IS NULL AND $1::uuid IS NOT NULL) OR (contact_id IS NULL AND $2::uuid IS NOT NULL))`,
             [companyId || null, customerId || null, tenantId, dealId],
           );
         }
@@ -1246,6 +1386,10 @@ export class RepairsService {
         });
 
         createdOrders.push(toRepairOrderDTO(row));
+      }
+
+      if (dealId) {
+        await dealsService.advanceDealToInProgressInTx(tx, tenantId, dealId, author.id);
       }
 
       return { createdOrders, customerId, dealId };
@@ -1566,6 +1710,9 @@ export class RepairsService {
     const updated = await this.get(tenantId, id);
     if (updated?.dealId) {
       void this.syncDealBudgetFromRepairs(tenantId, updated.dealId);
+      if (updated.status !== "rejected") {
+        void dealsService.syncDealProgressFromRepairs(tenantId, updated.dealId);
+      }
       void dealsService.syncDealCompletionFromRepairs(tenantId, updated.dealId);
     }
     return updated;
@@ -1662,6 +1809,9 @@ export class RepairsService {
       const dto = toRepairOrderDTO(row);
       if (dto.dealId) {
         void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
+        if (to !== "rejected") {
+          void dealsService.syncDealProgressFromRepairs(tenantId, dto.dealId, author.id);
+        }
         void dealsService.syncDealCompletionFromRepairs(tenantId, dto.dealId, author.id);
       }
       return dto;
@@ -1707,6 +1857,71 @@ export class RepairsService {
   // Works
   // -------------------------------------------------------------------------
 
+  private async upsertWorkInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    orderId: string,
+    payload: CreateWorkPayload,
+  ): Promise<{ work: RepairWorkDTO; merged: boolean }> {
+    const quantity = payload.quantity ?? 1;
+    const unitPrice =
+      payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
+    const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
+    const normalizedDescription = payload.description.trim();
+
+    // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
+    // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
+    const existing = await tx.queryOne<RepairWorkRow>(
+      `SELECT ${WORK_COLUMNS}
+       FROM repair_works
+       WHERE tenant_id = $1
+         AND repair_order_id = $2
+         AND lower(btrim(description)) = lower(btrim($3))
+         AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [tenantId, orderId, normalizedDescription, unitPrice],
+    );
+
+    let row: RepairWorkRow;
+    let merged = false;
+    if (existing) {
+      merged = true;
+      const prevQty = Number(existing.quantity ?? 1);
+      const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
+      const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
+      const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+
+      row = await tx.queryOneOrThrow<RepairWorkRow>(
+        `UPDATE repair_works
+         SET quantity = $3, unit_price = $4, cost = $5
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING ${WORK_COLUMNS}`,
+        [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
+      );
+    } else {
+      row = await tx.queryOneOrThrow<RepairWorkRow>(
+        `INSERT INTO repair_works
+           (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING ${WORK_COLUMNS}`,
+        [
+          tenantId,
+          orderId,
+          normalizedDescription,
+          payload.master_id,
+          payload.master_name,
+          quantity,
+          unitPrice,
+          cost,
+        ],
+      );
+    }
+
+    return { work: toRepairWorkDTO(row), merged };
+  }
+
   async addWork(
     tenantId: string,
     orderId: string,
@@ -1714,69 +1929,54 @@ export class RepairsService {
   ): Promise<RepairWorkDTO> {
     await this.assertEditable(tenantId, orderId);
 
-    const quantity = payload.quantity ?? 1;
-    const unitPrice =
-      payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
-    const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
-    const normalizedDescription = payload.description.trim();
+    const { work } = await withTenant(tenantId, async (tx) =>
+      this.upsertWorkInTx(tx, tenantId, orderId, payload),
+    );
 
-    return withTenant(tenantId, async (tx) => {
-      // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
-      // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
-      const existing = await tx.queryOne<RepairWorkRow>(
-        `SELECT ${WORK_COLUMNS}
-         FROM repair_works
-         WHERE tenant_id = $1
-           AND repair_order_id = $2
-           AND lower(btrim(description)) = lower(btrim($3))
-           AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
-         ORDER BY created_at ASC
-         LIMIT 1
-         FOR UPDATE`,
-        [tenantId, orderId, normalizedDescription, unitPrice],
-      );
+    void this.recalculateOrderCost(tenantId, orderId).then(() => {
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+    });
 
-      let row: RepairWorkRow;
-      if (existing) {
-        const prevQty = Number(existing.quantity ?? 1);
-        const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
-        const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
-        const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+    return work;
+  }
 
-        row = await tx.queryOneOrThrow<RepairWorkRow>(
-          `UPDATE repair_works
-           SET quantity = $3, unit_price = $4, cost = $5
-           WHERE tenant_id = $1 AND id = $2
-           RETURNING ${WORK_COLUMNS}`,
-          [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
-        );
-      } else {
-        row = await tx.queryOneOrThrow<RepairWorkRow>(
-          `INSERT INTO repair_works
-             (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           RETURNING ${WORK_COLUMNS}`,
-          [
-            tenantId,
-            orderId,
-            normalizedDescription,
-            payload.master_id,
-            payload.master_name,
-            quantity,
-            unitPrice,
-            cost,
-          ],
-        );
+  async addWorksBatch(
+    tenantId: string,
+    orderId: string,
+    items: CreateWorkPayload[],
+  ): Promise<{ items: RepairWorkDTO[]; addedCount: number; mergedCount: number }> {
+    await this.assertEditable(tenantId, orderId);
+
+    const batchResult = await withTenant(tenantId, async (tx) => {
+      const resultById = new Map<string, RepairWorkDTO>();
+      let addedCount = 0;
+      let mergedCount = 0;
+
+      for (const payload of items) {
+        const { work, merged } = await this.upsertWorkInTx(tx, tenantId, orderId, payload);
+        resultById.set(work.id, work);
+        if (merged) {
+          mergedCount += 1;
+        } else {
+          addedCount += 1;
+        }
       }
 
-      const result = toRepairWorkDTO(row);
-      void this.recalculateOrderCost(tenantId, orderId).then(() => {
-        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
-        });
-      });
-      return result;
+      return {
+        items: Array.from(resultById.values()),
+        addedCount,
+        mergedCount,
+      };
     });
+
+    await this.recalculateOrderCost(tenantId, orderId);
+    void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+      if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+    });
+
+    return batchResult;
   }
 
   async updateWork(
@@ -1864,6 +2064,24 @@ export class RepairsService {
   // Parts
   // -------------------------------------------------------------------------
 
+  private async syncWarehouseRetailPriceInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    warehouseItemId: string,
+    retailPrice: number,
+  ): Promise<void> {
+    if (!(retailPrice > 0)) return;
+    await tx.query(
+      `UPDATE warehouse_items
+       SET retail_price = $1, updated_at = now()
+       WHERE tenant_id = $2
+         AND id = $3
+         AND deleted_at IS NULL
+         AND retail_price IS DISTINCT FROM $1`,
+      [retailPrice, tenantId, warehouseItemId],
+    );
+  }
+
   async addPart(
     tenantId: string,
     orderId: string,
@@ -1871,7 +2089,7 @@ export class RepairsService {
   ): Promise<RepairPartDTO> {
     await this.assertEditable(tenantId, orderId);
 
-    return withTenant(tenantId, async (tx) => {
+    const { part, shouldRecalculate } = await withTenant(tenantId, async (tx) => {
       // 0. Idempotency / Duplicate check:
       // If a part with identical name, article, quantity, retail_price was created within last 15 seconds, return it
       const recentDuplicate = await tx.queryOne<RepairPartRow>(
@@ -1888,12 +2106,12 @@ export class RepairsService {
         [tenantId, orderId, payload.name, payload.article ?? "", payload.quantity, payload.retail_price],
       );
       if (recentDuplicate) {
-        return toRepairPartDTO(recentDuplicate);
+        return { part: toRepairPartDTO(recentDuplicate), shouldRecalculate: false };
       }
 
       let resolvedWarehouseItemId = payload.warehouse_item_id ?? null;
 
-      // 1. If not explicitly linked to warehouse, check if an item with this SKU already exists
+      // 1. If not explicitly linked to warehouse, match existing item by SKU or exact name
       const articleClean = (payload.article ?? "").trim();
       if (!resolvedWarehouseItemId && articleClean && articleClean !== "Б/А") {
         const existingItem = await tx.queryOne<{ id: string }>(
@@ -1907,7 +2125,21 @@ export class RepairsService {
         }
       }
 
+      if (!resolvedWarehouseItemId && payload.name.trim()) {
+        const existingByName = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM warehouse_items
+           WHERE tenant_id = $1 AND lower(btrim(name)) = lower(btrim($2)) AND deleted_at IS NULL
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [tenantId, payload.name.trim()],
+        );
+        if (existingByName) {
+          resolvedWarehouseItemId = existingByName.id;
+        }
+      }
+
       // 2. If save_to_catalog is requested and still not in warehouse, create catalog item
+      let createdWarehouseItem = false;
       if (payload.save_to_catalog && !resolvedWarehouseItemId) {
         const newWarehouseRow = await tx.queryOne<{ id: string }>(
           `INSERT INTO warehouse_items
@@ -1916,7 +2148,7 @@ export class RepairsService {
            RETURNING id`,
           [
             tenantId,
-            articleClean || "",
+            articleClean === "Б/А" ? "" : articleClean,
             payload.name.trim(),
             payload.retail_price,
             payload.cost_price,
@@ -1924,7 +2156,18 @@ export class RepairsService {
         );
         if (newWarehouseRow) {
           resolvedWarehouseItemId = newWarehouseRow.id;
+          createdWarehouseItem = true;
         }
+      }
+
+      // 2.5. Сохраняем установленную в наряде розничную цену в карточке товара на складе
+      if (resolvedWarehouseItemId && !createdWarehouseItem && payload.retail_price > 0) {
+        await this.syncWarehouseRetailPriceInTx(
+          tx,
+          tenantId,
+          resolvedWarehouseItemId,
+          payload.retail_price,
+        );
       }
 
       // 3. Проверка остатка на складе, если отключена продажа в минус
@@ -2030,14 +2273,18 @@ export class RepairsService {
         });
       }
 
-      const result = toRepairPartDTO(row);
+      return { part: toRepairPartDTO(row), shouldRecalculate: true };
+    });
+
+    if (shouldRecalculate) {
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
         void this.getOrderDealId(tenantId, orderId).then((dealId) => {
           if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
         });
       });
-      return result;
-    });
+    }
+
+    return part;
   }
 
   async updatePart(
@@ -2046,6 +2293,8 @@ export class RepairsService {
     partId: string,
     payload: UpdatePartPayload,
   ): Promise<RepairPartDTO | null> {
+    await this.assertEditable(tenantId, orderId);
+
     const assignments: string[] = [];
     const params: SqlParam[] = [tenantId, orderId, partId];
 
@@ -2060,23 +2309,41 @@ export class RepairsService {
     if (payload.retail_price !== undefined) push("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) push("cost_price", payload.cost_price);
 
-    if (assignments.length === 0) {
-      const existing = await queryOne<RepairPartRow>(
-        `SELECT ${PART_COLUMNS} FROM repair_parts
-         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
-        [tenantId, orderId, partId],
+    const updated = await withTenant(tenantId, async (tx) => {
+      if (assignments.length === 0) {
+        const existing = await tx.queryOne<RepairPartRow>(
+          `SELECT ${PART_COLUMNS} FROM repair_parts
+           WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+          [tenantId, orderId, partId],
+        );
+        return existing === null ? null : toRepairPartDTO(existing);
+      }
+
+      const row = await tx.queryOne<RepairPartRow>(
+        `UPDATE repair_parts SET ${assignments.join(", ")}
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
+         RETURNING ${PART_COLUMNS}`,
+        params,
       );
-      return existing === null ? null : toRepairPartDTO(existing);
-    }
 
-    const row = await queryOne<RepairPartRow>(
-      `UPDATE repair_parts SET ${assignments.join(", ")}
-       WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
-       RETURNING ${PART_COLUMNS}`,
-      params,
-    );
+      if (
+        row !== null &&
+        row.warehouse_item_id &&
+        payload.retail_price !== undefined &&
+        payload.retail_price > 0
+      ) {
+        await this.syncWarehouseRetailPriceInTx(
+          tx,
+          tenantId,
+          row.warehouse_item_id,
+          payload.retail_price,
+        );
+      }
 
-    if (row !== null) {
+      return row === null ? null : toRepairPartDTO(row);
+    });
+
+    if (updated !== null && assignments.length > 0) {
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
         void this.getOrderDealId(tenantId, orderId).then((dealId) => {
           if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
@@ -2084,7 +2351,7 @@ export class RepairsService {
       });
     }
 
-    return row === null ? null : toRepairPartDTO(row);
+    return updated;
   }
 
   async deletePart(tenantId: string, orderId: string, partId: string): Promise<boolean> {
@@ -2272,7 +2539,11 @@ export class RepairsService {
   /**
    * Пакетное удаление наряд-заказов (soft-delete).
    */
-  async batchDelete(tenantId: string, ids: string[]): Promise<{ count: number; ids: string[] }> {
+  async batchDelete(
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<{ count: number; ids: string[] }> {
+    const ids = await this.resolveRepairTargetIds(tenantId, idsOrPayload);
     if (ids.length === 0) return { count: 0, ids: [] };
     const rows = await query<{ id: string; deal_id: string | null }>(
       `UPDATE repair_orders SET deleted_at = now()
@@ -2293,11 +2564,12 @@ export class RepairsService {
    */
   async batchUpdateStatus(
     tenantId: string,
-    ids: string[],
+    idsOrPayload: string[] | BulkActionPayload,
     status: RepairStatus,
     author: { id: string; name: string },
     comment?: string,
   ): Promise<{ updated: number; ids: string[]; errors: { id: string; error: string }[] }> {
+    const ids = await this.resolveRepairTargetIds(tenantId, idsOrPayload);
     const updatedIds: string[] = [];
     const errors: { id: string; error: string }[] = [];
 
@@ -2369,6 +2641,9 @@ export class RepairsService {
           );
           for (const { deal_id } of dealRows) {
             void this.syncDealBudgetFromRepairs(tenantId, deal_id);
+            if (status !== "rejected") {
+              void dealsService.syncDealProgressFromRepairs(tenantId, deal_id, author.id);
+            }
             void dealsService.syncDealCompletionFromRepairs(tenantId, deal_id, author.id);
           }
         } catch (e) {
@@ -2434,9 +2709,13 @@ export class RepairsService {
    */
   async batchUpdatePaymentStatus(
     tenantId: string,
-    ids: string[],
+    idsOrPayload: string[] | BulkActionPayload,
     paymentStatus: RepairPaymentStatus,
   ): Promise<{ updated: number; ids: string[] }> {
+    const ids = await this.resolveRepairTargetIds(tenantId, idsOrPayload);
+    if (ids.length === 0) {
+      return { updated: 0, ids: [] };
+    }
     await query(
       `UPDATE repair_orders
        SET payment_status = $1, updated_at = now()

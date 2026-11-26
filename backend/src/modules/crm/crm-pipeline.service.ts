@@ -9,12 +9,16 @@ import {
   contactSocialsFrom,
   displayNameFrom,
   extractPhoneNumber,
+  extractSelfPhoneFromText,
   extractEmailAddress,
   isBotSender,
   isBannedName,
   UNKNOWN_CONTACT_NAME,
   type ChannelProfile,
 } from "./channel-identity.js";
+
+const CHANNELS_WITH_PROTOCOL_PHONE = new Set(["max", "whatsapp"]);
+const MESSENGER_IDENTITY_CHANNELS = new Set(["max", "whatsapp", "telegram", "telegram_bot"]);
 import { NotFoundError } from "../../plugins/errorHandler.js";
 import { CrmEnrichmentService } from "./enrichment.service.js";
 import { MaxBridgeService } from "../channels/max-bridge.service.js";
@@ -280,9 +284,17 @@ export class CrmPipelineService {
       };
     }
 
-    const extractedPhone = extractPhoneNumber(rawText);
+    const isMessengerWithProtocolPhone = CHANNELS_WITH_PROTOCOL_PHONE.has(baseInput.channel);
     const validatedSenderPhone = baseInput.senderPhone ? extractPhoneNumber(baseInput.senderPhone) : null;
-    const effectiveSenderPhone = validatedSenderPhone || extractedPhone || undefined;
+    const validatedProfilePhone = baseInput.profile?.phone ? extractPhoneNumber(baseInput.profile.phone) : null;
+    const verifiedChannelPhone = validatedSenderPhone || validatedProfilePhone || null;
+    const selfFirstNameHint = baseInput.profile?.firstName || baseInput.senderName || null;
+    // Для MAX и WhatsApp телефон берётся строго из данных самого мессенджера — случайный номер
+    // монтажника/третьего лица в тексте чата не должен становиться телефоном карточки.
+    const extractedPhone = isMessengerWithProtocolPhone
+      ? null
+      : extractSelfPhoneFromText(rawText, { selfFirstName: selfFirstNameHint });
+    const effectiveSenderPhone = verifiedChannelPhone || extractedPhone || undefined;
     const extractedEmail = extractEmailAddress(rawText);
     const effectiveSenderEmail = baseInput.senderEmail?.trim() || extractedEmail || undefined;
 
@@ -1175,7 +1187,8 @@ export class CrmPipelineService {
             ? input.messageTimestamp
             : null;
 
-      // Защита от дублирования сообщений: сначала точный ключ external_message_id, затем окно 60 сек по контенту/вложению
+      // Защита от дублирования сообщений: сначала точный ключ external_message_id или exact attachment URL,
+      // а текстовое окно 60 сек применяем только если у входящего или существующего сообщения нет external_message_id
       const existingMsg = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
@@ -1184,8 +1197,13 @@ export class CrmPipelineService {
            AND delivery_status <> 'failed'
            AND (
              ($6::text IS NOT NULL AND metadata->>'external_message_id' = $6)
+             OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
              OR (
-               (content = $3 OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4))
+               (
+                 $6::text IS NULL
+                 OR COALESCE(NULLIF(metadata->>'external_message_id', ''), '') = ''
+               )
+               AND content = $3
                AND (
                  ($7::timestamptz IS NOT NULL AND created_at >= $7::timestamptz - interval '60 seconds' AND created_at <= $7::timestamptz + interval '60 seconds')
                  OR ($7::timestamptz IS NULL AND created_at > now() - interval '60 seconds')
@@ -1360,7 +1378,9 @@ export class CrmPipelineService {
 
     // Автоматическое кросс-канальное обогащение контакта по номеру телефона (Never invent)
     if (result.contactId) {
-      const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];
+      const phoneCandidates = isMessengerWithProtocolPhone
+        ? [verifiedChannelPhone]
+        : [effectiveSenderPhone, contactPhonesFrom(enrichedInput)[0]?.number];
       const validPhone = phoneCandidates.find((p) => p && p.replace(/\D/g, "").length >= 10);
       if (validPhone) {
         const enrichService = new CrmEnrichmentService();
@@ -1490,6 +1510,7 @@ export class CrmPipelineService {
     attachmentType?: string | null;
     externalMessageId?: string;
     messageTimestamp?: Date | string;
+    sourceMetadata?: Record<string, unknown>;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
     // Fallback через bridge для MAX выполняется вне открытой транзакции БД:
     // внешний HTTP-запрос никогда не удерживает коннект пула PostgreSQL.
@@ -1638,7 +1659,7 @@ export class CrmPipelineService {
             ? input.messageTimestamp
             : null;
 
-      // Дедупликация исходящих сообщений: по external_message_id или в пределах 60 секунд (исключает дубли при отправке из веб-CRM)
+      // Дедупликация исходящих сообщений: по external_message_id / вложению или в пределах 60 секунд для строк без external_message_id
       const existingOutbound = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
@@ -1647,8 +1668,13 @@ export class CrmPipelineService {
            AND delivery_status <> 'failed'
            AND (
              ($6::text IS NOT NULL AND metadata->>'external_message_id' = $6)
+             OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
              OR (
-               (content = $3 OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4))
+               (
+                 $6::text IS NULL
+                 OR COALESCE(NULLIF(metadata->>'external_message_id', ''), '') = ''
+               )
+               AND content = $3
                AND (
                  ($7::timestamptz IS NOT NULL AND created_at >= $7::timestamptz - interval '60 seconds' AND created_at <= $7::timestamptz + interval '60 seconds')
                  OR ($7::timestamptz IS NULL AND created_at >= now() - interval '60 seconds')
@@ -1710,6 +1736,11 @@ export class CrmPipelineService {
         [input.tenantId, activeDeal.id, "messenger_takeover", contact.id],
       );
 
+      const mergedOutboundMetadata: Record<string, unknown> = {
+        ...(input.sourceMetadata ?? {}),
+        ...(externalMsgId ? { external_message_id: externalMsgId } : {}),
+      };
+
       const msgRes = await tx.queryOne<{ id: string; created_at: Date | string }>(
         `INSERT INTO deal_messages
            (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
@@ -1724,7 +1755,7 @@ export class CrmPipelineService {
           input.channel,
           input.attachment ?? null,
           input.attachmentType ?? null,
-          JSON.stringify(externalMsgId ? { external_message_id: externalMsgId } : {}),
+          JSON.stringify(mergedOutboundMetadata),
           messageCreatedAtIso,
         ],
       );
@@ -1813,26 +1844,43 @@ export class CrmPipelineService {
         if (byMax !== null) return byMax;
       }
 
-      // Если контакт еще не найден, но канал MAX — пробуем через MaxBridgeService получить телефон из истории диалогов
+      // Если контакт еще не найден, но канал MAX — пробуем определить телефон через нативный MaxTsAdapter или MaxBridgeService
       if (input.channel === "max" && input.channelAccountId) {
         try {
-          const bridge = new MaxBridgeService();
-          const dialogsResp = await bridge.getPrivateDialogs({
-            botId: input.channelAccountId,
-            dialogLimit: 20,
-            messageLimit: 10,
-          });
-          if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
-            const foundDialog = dialogsResp.dialogs.find(
-              (d) => (input.chatId && d.chatId === input.chatId) || (input.peerUserId && d.userId === input.peerUserId),
-            );
-            if (foundDialog && foundDialog.phone) {
-              const byDialogPhone = await this.findContactByPhone(tx, tenantId, foundDialog.phone);
-              if (byDialogPhone !== null) return byDialogPhone;
+          const accRow = await tx.queryOne<{ credentials: Record<string, unknown> | null }>(
+            `SELECT credentials FROM channel_accounts
+             WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+            [tenantId, input.channelAccountId],
+          );
+          const provider = String(accRow?.credentials?.provider ?? accRow?.credentials?.adapter ?? "");
+          if (provider === "native-ts" || provider === "ts") {
+            const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+            const profileRes = await messagingRegistry
+              .getMaxTsAdapter()
+              .lookupProfileByUserId(tenantId, input.channelAccountId, input.peerUserId, input.chatId || input.chatThreadId);
+            if (profileRes.exists && profileRes.phone) {
+              const byMaxPhone = await this.findContactByPhone(tx, tenantId, profileRes.phone);
+              if (byMaxPhone !== null) return byMaxPhone;
+            }
+          } else {
+            const bridge = new MaxBridgeService();
+            const dialogsResp = await bridge.getPrivateDialogs({
+              botId: input.channelAccountId,
+              dialogLimit: 20,
+              messageLimit: 10,
+            });
+            if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
+              const foundDialog = dialogsResp.dialogs.find(
+                (d) => (input.chatId && d.chatId === input.chatId) || (input.peerUserId && d.userId === input.peerUserId),
+              );
+              if (foundDialog && foundDialog.phone) {
+                const byDialogPhone = await this.findContactByPhone(tx, tenantId, foundDialog.phone);
+                if (byDialogPhone !== null) return byDialogPhone;
+              }
             }
           }
         } catch {
-          // Игнорируем временные сетевые ошибки бриджа
+          // Игнорируем временные сетевые ошибки адаптера/бриджа
         }
       }
     }
@@ -1884,7 +1932,14 @@ export class CrmPipelineService {
       if (byUsername !== null) return byUsername;
     }
 
-    const phoneToSearch = input.senderPhone || extractPhoneNumber(input.text);
+    const verifiedLookupPhone =
+      extractPhoneNumber(input.senderPhone) || extractPhoneNumber(input.profile?.phone);
+    const phoneToSearch = MESSENGER_IDENTITY_CHANNELS.has(input.channel)
+      ? verifiedLookupPhone
+      : (verifiedLookupPhone ||
+          extractSelfPhoneFromText(input.text, {
+            selfFirstName: input.profile?.firstName || input.senderName,
+          }));
     if (phoneToSearch !== undefined && phoneToSearch !== null && phoneToSearch.length > 0) {
       const byPhone = await this.findContactByPhone(tx, tenantId, phoneToSearch);
       if (byPhone !== null) return byPhone;

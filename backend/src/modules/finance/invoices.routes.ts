@@ -11,11 +11,18 @@ import {
   updateInvoiceSchema,
 } from "./finance.types.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { sortDirSchema } from "../../lib/table-query.js";
 
 const page = z.object({
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
   company_id: z.string().uuid().optional(),
+  status: z.string().max(40).optional(),
+  search: z.string().max(200).optional(),
+  sort: z.string().max(64).optional(),
+  order: sortDirSchema.optional(),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
 });
 const id = z.object({ id: z.string().uuid() });
 
@@ -29,7 +36,13 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
 
   app.get("", { onRequest: read }, async (r, rep) => {
     const p = page.parse(r.query);
-    const x = await s.list(r.tenant_id, p.limit, p.offset, p.company_id);
+    const x = await s.list(r.tenant_id, p.limit, p.offset, {
+      companyId: p.company_id,
+      status: p.status,
+      search: p.search,
+      sortBy: p.sort_by ?? p.sort,
+      sortDir: p.sort_dir ?? p.order,
+    });
     return rep.send({ data: x.items, meta: { limit: p.limit, offset: p.offset, total: x.total } });
   });
 
@@ -94,8 +107,8 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
   });
 
   app.post("/bulk-delete", { onRequest: write }, async (r, rep) => {
-    const { ids } = bulkDeleteInvoicesSchema.parse(r.body);
-    return rep.send({ data: await s.bulkRemove(r.tenant_id, ids) });
+    const body = bulkDeleteInvoicesSchema.parse(r.body);
+    return rep.send({ data: await s.bulkRemove(r.tenant_id, body) });
   });
 
   app.patch("/:id", { onRequest: write }, async (r, rep) => {

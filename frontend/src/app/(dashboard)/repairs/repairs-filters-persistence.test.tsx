@@ -154,4 +154,37 @@ describe("Персистентность фильтров на /repairs", () => 
     expect(window.location.search).toBe("");
     await waitFor(() => expect(screen.queryByRole("button", { name: /Сбросить/i })).toBeNull());
   });
+
+  it("отображает в строке статистики карточки Оплачено и К оплате из meta ответа API", async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/repairs") {
+        return {
+          data: [makeRepair("r-1", "№0032", "in_progress", "paid")],
+          meta: {
+            total: 19,
+            limit: 25,
+            offset: 0,
+            inProgressCount: 10,
+            readyCount: 9,
+            paidAmount: 19700,
+            paidCount: 2,
+            unpaidAmount: 95800,
+            unpaidCount: 17,
+          },
+        };
+      }
+      return { data: [], meta: { total: 0 } };
+    });
+
+    const { default: RepairsPage } = await import("@/app/(dashboard)/repairs/page");
+    render(<RepairsPage />, { wrapper });
+
+    await waitFor(() => expect(screen.getByText("№0032")).toBeDefined());
+    expect(screen.getByText("Оплачено")).toBeDefined();
+    expect(screen.getByText("К оплате")).toBeDefined();
+    expect(screen.getByText(/19\s700\s₽/)).toBeDefined();
+    expect(screen.getByText("2 шт.")).toBeDefined();
+    expect(screen.getByText(/95\s800\s₽/)).toBeDefined();
+    expect(screen.getByText("17 шт.")).toBeDefined();
+  });
 });

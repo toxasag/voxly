@@ -39,25 +39,18 @@ export const viewport: Viewport = {
 };
 
 /**
- * Применяет сохранённую тему до первой отрисовки.
+ * Принудительно фиксирует светлую тему (Twenty CRM Light Canvas) до первой отрисовки.
  *
- * Блокирующий инлайновый скрипт намеренно: в эффекте он сработал бы уже после
- * рендера, и на каждой загрузке была бы вспышка чужой темы.
- *
- * Светлая тема — по умолчанию, поэтому тёмная включается только при явно
- * сохранённом выборе. Класс `light` уже стоит на <html> в разметке, так что при
- * отсутствии записи в localStorage скрипт не меняет ничего и мигания нет.
+ * Блокирующий инлайновый скрипт сбрасывает любые устаревшие значения тёмной темы
+ * из localStorage/cookie и гарантирует отсутствие класса 'dark' на <html>,
+ * полностью исключая flash of dark mode и hydration mismatch.
  */
 const THEME_INIT_SCRIPT = `
 try {
-  var stored = localStorage.getItem('getvoxly_theme');
-  if (stored === 'dark') {
-    document.documentElement.classList.add('dark');
-    document.documentElement.classList.remove('light');
-  } else {
-    document.documentElement.classList.add('light');
-    document.documentElement.classList.remove('dark');
-  }
+  localStorage.removeItem('getvoxly_theme');
+  localStorage.setItem('getvoxly_theme', 'light');
+  document.documentElement.classList.remove('dark');
+  document.documentElement.classList.add('light');
 } catch (e) {}
 `;
 
@@ -67,16 +60,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ru" className="light" suppressHydrationWarning>
+    <html lang="ru" className="light" style={{ colorScheme: "light" }} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       {/*
-        `text-sm` базовым размером: без него неразмеченный текст наследовал
+        text-sm базовым размером: без него неразмеченный текст наследовал
         браузерные 16px, а вся оболочка набрана 13px и 12px. У Twenty
         база 13px, чистый белый холст (#ffffff) и высококонтрастный текст (#111111).
       */}
-      <body className="min-h-screen bg-white text-sm text-[#111111] antialiased">
+      <body className="min-h-screen bg-white text-sm text-[#111111] antialiased" style={{ colorScheme: "light" }}>
         {/*
           AuthProvider sits at the root, not per route group: /login needs it
           too (the OTP form calls useAuth), and one provider per group would

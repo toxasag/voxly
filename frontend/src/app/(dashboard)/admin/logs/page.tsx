@@ -1,14 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Info, RefreshCw, ScrollText, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Info, RefreshCw, ScrollText, Search } from "lucide-react";
 import { PlatformOwnerGuard } from "@/components/auth/PlatformOwnerGuard";
 import { useAdminLogs } from "@/lib/api/use-admin";
+import {
+  WarehousePagination,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { cn } from "@/lib/utils";
 
-const PAGE_SIZE = 50;
+type AdminLogSortField = "created_at" | "tenant_name" | "actor_email" | "action" | "entity_type";
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -18,17 +22,34 @@ function formatDateTime(value: string): string {
 }
 
 export default function AdminLogsPage() {
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WarehouseLimit>(50);
   const [action, setAction] = useState("");
+  const [sortField, setSortField] = useState<AdminLogSortField | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const { data, isLoading, isError, error, refetch, isFetching } = useAdminLogs({
-    limit: PAGE_SIZE,
-    offset: page * PAGE_SIZE,
+    limit,
+    offset: (page - 1) * limit,
     ...(action.trim().length > 0 && { action: action.trim() }),
+    ...(sortField && { sortBy: sortField, sortDir }),
   });
 
+  const handleSort = (field: AdminLogSortField) => {
+    if (sortField !== field) {
+      setSortField(field);
+      setSortDir("asc");
+    } else if (sortDir === "asc") {
+      setSortDir("desc");
+    } else {
+      setSortField(null);
+      setSortDir("desc");
+    }
+    setPage(1);
+  };
+
   const total = data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(total / limit));
 
   return (
     <PlatformOwnerGuard>
@@ -71,7 +92,7 @@ export default function AdminLogsPage() {
             value={action}
             onChange={(e) => {
               setAction(e.target.value);
-              setPage(0);
+              setPage(1);
             }}
             placeholder="Фильтр по действию, например module.install"
             aria-label="Фильтр по действию"
@@ -101,11 +122,34 @@ export default function AdminLogsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-left text-xs uppercase tracking-wider text-[#666666]">
-                    <th className="px-4 py-3 font-medium">Время</th>
-                    <th className="px-4 py-3 font-medium">Компания</th>
-                    <th className="px-4 py-3 font-medium">Пользователь</th>
-                    <th className="px-4 py-3 font-medium">Действие</th>
-                    <th className="px-4 py-3 font-medium">Объект</th>
+                    {(
+                      [
+                        { id: "created_at", label: "Время" },
+                        { id: "tenant_name", label: "Компания" },
+                        { id: "actor_email", label: "Пользователь" },
+                        { id: "action", label: "Действие" },
+                        { id: "entity_type", label: "Объект" },
+                      ] as const
+                    ).map((col) => (
+                      <th
+                        key={col.id}
+                        onClick={() => handleSort(col.id)}
+                        className="px-4 py-3 font-medium select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {col.label}
+                          {sortField === col.id ? (
+                            sortDir === "asc" ? (
+                              <ArrowUp className="h-3 w-3 text-[#4a38f5]" />
+                            ) : (
+                              <ArrowDown className="h-3 w-3 text-[#4a38f5]" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100" />
+                          )}
+                        </span>
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -136,30 +180,19 @@ export default function AdminLogsPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-
-            <div className="flex items-center justify-between text-sm text-[#666666]">
-              <span>
-                {total} записей · страница {page + 1} из {pages}
-              </span>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
-                  disabled={page === 0}
-                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-40"
-                >
-                  Назад
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => p + 1)}
-                  disabled={page + 1 >= pages}
-                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-40"
-                >
-                  Вперёд
-                </button>
-              </div>
+              <WarehousePagination
+                total={total}
+                page={page}
+                pages={pages}
+                limit={limit}
+                entityLabel="записей"
+                onPageChange={setPage}
+                onLimitChange={(newLimit) => {
+                  setLimit(newLimit as WarehouseLimit);
+                  setPage(1);
+                }}
+                disabled={isFetching}
+              />
             </div>
           </>
         )}

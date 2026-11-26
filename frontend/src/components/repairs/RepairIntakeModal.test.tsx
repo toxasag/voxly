@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 import { RepairIntakeModal } from "./RepairIntakeModal";
+import type { DealDTO } from "@/lib/api/use-deals";
+
+let mockDealData: DealDTO | undefined = undefined;
 
 const MOCK_USER = {
   id: "master-1",
@@ -56,7 +59,7 @@ vi.mock("@/lib/api/use-deals", () => ({
     isLoading: false,
   }),
   useDeal: () => ({
-    data: undefined,
+    data: mockDealData,
     isLoading: false,
   }),
   useCreateDeal: () => ({
@@ -136,6 +139,7 @@ describe("RepairIntakeModal Component", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDealData = undefined;
   });
 
   it("does not render when open is false", () => {
@@ -168,5 +172,65 @@ describe("RepairIntakeModal Component", () => {
     expect(screen.getByText("Комплектация")).toBeDefined();
     expect(screen.getByText("Заявленные неисправности")).toBeDefined();
     expect(screen.getByText("Внешний вид")).toBeDefined();
+  });
+
+  it("populates ФИО, Телефон, and company inputs when initialDeal loads asynchronously", async () => {
+    const { rerender } = render(
+      <RepairIntakeModal
+        open={true}
+        initialDealId="deal-async-1"
+        onClose={mockOnClose}
+        onSubmit={mockOnSubmit}
+      />,
+    );
+
+    const phoneInput = screen.getByPlaceholderText("+7 (999) 000-00-00") as HTMLInputElement;
+    const nameInput = screen.getByPlaceholderText("Иванов Иван Иванович") as HTMLInputElement;
+    expect(phoneInput.value).toBe("");
+    expect(nameInput.value).toBe("");
+
+    mockDealData = {
+      id: "deal-async-1",
+      pipelineId: "pipe-1",
+      stageId: "stage-1",
+      contactId: "contact-1",
+      companyId: "company-1",
+      title: "Заявка от Михаил (MAX)",
+      description: "",
+      budget: 0,
+      currency: "RUB",
+      customFields: {},
+      createdBy: "user-1",
+      ownerId: "user-1",
+      closeDate: null,
+      position: 0,
+      closedAt: null,
+      createdAt: "2026-11-26T07:20:00.000Z",
+      updatedAt: "2026-11-26T07:20:00.000Z",
+      companyName: "Фирма Михаила",
+      contactName: "Михаил",
+      contactPhone: "+79321283877",
+      contactEmail: null,
+      ownerName: "Мастер",
+    };
+
+    rerender(
+      <RepairIntakeModal
+        open={true}
+        initialDealId="deal-async-1"
+        onClose={mockOnClose}
+        onSubmit={mockOnSubmit}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(nameInput.value).toBe("Михаил");
+      expect(phoneInput.value).toContain("932");
+      expect(phoneInput.value).toContain("128");
+      const companyCheckbox = screen.getByRole("checkbox") as HTMLInputElement;
+      expect(companyCheckbox.checked).toBe(true);
+      const companyNameInput = screen.getByPlaceholderText("ООО «Вектор», ИП Иванов") as HTMLInputElement;
+      expect(companyNameInput.value).toBe("Фирма Михаила");
+    });
   });
 });

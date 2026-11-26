@@ -1,4 +1,10 @@
 import { toIsoOrNow as toIso } from "../../lib/date.utils.js";
+import { escapeLikePattern, tokenizeSearchQuery } from "../../lib/string.utils.js";
+import {
+  buildSortOrderBy,
+  nullableTextExpr,
+  type SortDirection,
+} from "../../lib/table-query.js";
 import { withTenant, type SqlParam } from "../../db/client.js";
 import { NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import type {
@@ -28,23 +34,83 @@ function mapRowToDTO(row: ServiceItemRow): ServiceItemDTO {
 
 export class ServicesService {
   async list(tenantId: string, search?: string): Promise<ServiceItemDTO[]> {
+    const res = await this.listPaginated(tenantId, { search });
+    return res.data;
+  }
+
+  async listPaginated(
+    tenantId: string,
+    options?: {
+      search?: string;
+      page?: number;
+      limit?: number;
+      sortBy?: string;
+      sortDir?: SortDirection;
+    },
+  ): Promise<{
+    data: ServiceItemDTO[];
+    meta: { total: number; page: number; limit: number; pages: number };
+  }> {
     return withTenant(tenantId, async (tx) => {
-      let query = `
-        SELECT id, tenant_id, name, description, default_price, unit, duration_minutes, created_at, updated_at
-        FROM repair_services_catalog
-        WHERE tenant_id = $1
-      `;
+      const conditions: string[] = ["tenant_id = $1"];
       const params: SqlParam[] = [tenantId];
 
-      if (search && search.trim()) {
-        params.push(`%${search.trim()}%`);
-        query += ` AND (name ILIKE $${params.length} OR description ILIKE $${params.length})`;
+      for (const token of tokenizeSearchQuery(options?.search)) {
+        params.push(`%${escapeLikePattern(token)}%`);
+        const paramRef = `$${params.length}`;
+        conditions.push(
+          `(name ILIKE ${paramRef} ESCAPE '\\' OR COALESCE(description, '') ILIKE ${paramRef} ESCAPE '\\')`,
+        );
       }
 
-      query += ` ORDER BY name ASC`;
+      const whereSql = conditions.join(" AND ");
+      const countRow = await tx.queryOne<{ total: string | number }>(
+        `SELECT COUNT(*)::int AS total FROM repair_services_catalog WHERE ${whereSql}`,
+        params,
+      );
+      const total = Number(countRow?.total ?? 0);
 
-      const rows = await tx.query<ServiceItemRow>(query, params);
-      return rows.map(mapRowToDTO);
+      const paginated = options?.page !== undefined;
+      const page = Math.max(1, options?.page ?? 1);
+      const limit = paginated ? (options?.limit ?? 25) : Math.max(1, total);
+      const pages = paginated ? (total === 0 ? 0 : Math.ceil(total / limit)) : (total > 0 ? 1 : 0);
+
+      const orderBy = buildSortOrderBy({
+        sortBy: options?.sortBy,
+        sortDir: options?.sortDir,
+        columns: {
+          name: nullableTextExpr("name"),
+          description: { expr: nullableTextExpr("description"), nullable: true },
+          price: "default_price",
+          default_price: "default_price",
+          unit: nullableTextExpr("unit"),
+          duration_minutes: { expr: "duration_minutes", nullable: true },
+          created_at: "created_at",
+        },
+        defaultOrderBy: "name ASC",
+        tieBreaker: "id DESC",
+      });
+
+      const queryParams = [...params];
+      let limitClause = "";
+      if (paginated) {
+        const offset = (page - 1) * limit;
+        queryParams.push(limit, offset);
+        limitClause = `LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`;
+      }
+
+      const rows = await tx.query<ServiceItemRow>(
+        `SELECT id, tenant_id, name, description, default_price, unit, duration_minutes, created_at, updated_at
+         FROM repair_services_catalog
+         WHERE ${whereSql}
+         ORDER BY ${orderBy}
+         ${limitClause}`,
+        queryParams,
+      );
+      return {
+        data: rows.map(mapRowToDTO),
+        meta: { total, page, limit, pages },
+      };
     });
   }
 

@@ -6,6 +6,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { EmailService } from "../../services/email.service.js";
 import { platformConfigService } from "./platform-config.service.js";
 import { modelHealthService } from "../ai/gateway/model-health.service.js";
+import { buildSortOrderBy, nullableTextExpr, sortDirSchema } from "../../lib/table-query.js";
 
 // ---------------------------------------------------------------------------
 // Платформенные разделы: тарифы/биллинг и системные логи.
@@ -59,6 +60,8 @@ const logsQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   tenant_id: z.string().uuid().optional(),
   action: z.string().max(100).optional(),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
 });
 
 /**
@@ -183,7 +186,7 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
    * Поэтому раздел показывает аудит действий, а не поток stdout.
    */
   app.get("/logs", { onRequest: platformOwner }, async (request, reply) => {
-    const { limit, offset, tenant_id, action } = logsQuery.parse(request.query);
+    const { limit, offset, tenant_id, action, sort_by, sort_dir } = logsQuery.parse(request.query);
 
     const conditions: string[] = [];
     const params: (string | number)[] = [];
@@ -205,6 +208,20 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
       params,
     );
 
+    const orderBy = buildSortOrderBy({
+      sortBy: sort_by,
+      sortDir: sort_dir,
+      columns: {
+        created_at: "l.created_at",
+        action: nullableTextExpr("l.action"),
+        entity_type: { expr: nullableTextExpr("l.entity_type"), nullable: true },
+        tenant_name: { expr: nullableTextExpr("t.name"), nullable: true },
+        actor_email: { expr: nullableTextExpr("u.email"), nullable: true },
+      },
+      defaultOrderBy: "l.created_at DESC",
+      tieBreaker: "l.id DESC",
+    });
+
     params.push(limit, offset);
 
     const rows = await query<AuditRow>(
@@ -215,7 +232,7 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
        LEFT JOIN tenants t ON t.id = l.tenant_id
        LEFT JOIN users u ON u.id = l.actor_user_id
        ${where}
-       ORDER BY l.created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );

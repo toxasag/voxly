@@ -31,6 +31,7 @@ import {
 import {
   useCreateDeal,
   useCreateStage,
+  useDeals,
   useDeleteStage,
   useKanban,
   usePipelines,
@@ -38,6 +39,7 @@ import {
   useExportDeals,
   type KanbanColumnDTO,
 } from "@/lib/api/use-deals";
+import type { WarehouseLimit } from "@/components/warehouse/WarehousePagination";
 import { useTenantUsers, indexTenantUsers } from "@/lib/api/use-tenant-users";
 import { useRecordParam } from "@/lib/utils/use-record-param";
 import {
@@ -155,16 +157,31 @@ function DealsContent() {
   const { viewMode: view, setViewMode: setView } = useDealsViewMode();
   const { presetView, search, sortBy } = filters;
 
+  const [listPage, setListPage] = useState(1);
+  const [listLimit, setListLimit] = useState<WarehouseLimit>(25);
+  const [listSortColumn, setListSortColumn] = useState<string | null>(null);
+  const [listSortAsc, setListSortAsc] = useState(true);
+
   const setPresetView = useCallback(
-    (next: DealPresetView) => setFilter("presetView", next),
+    (next: DealPresetView) => {
+      setFilter("presetView", next);
+      setListPage(1);
+    },
     [setFilter],
   );
   const setSearch = useCallback(
-    (next: string) => setFilter("search", next),
+    (next: string) => {
+      setFilter("search", next);
+      setListPage(1);
+    },
     [setFilter],
   );
   const setSortBy = useCallback(
-    (next: DealSortKey) => setFilter("sortBy", next),
+    (next: DealSortKey) => {
+      setFilter("sortBy", next);
+      setListSortColumn(null);
+      setListPage(1);
+    },
     [setFilter],
   );
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -236,7 +253,41 @@ function DealsContent() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
+  const effectiveListSort = useMemo(() => {
+    if (listSortColumn) {
+      return {
+        sortBy: listSortColumn,
+        sortOrder: (listSortAsc ? "asc" : "desc") as "asc" | "desc",
+      };
+    }
+    switch (sortBy) {
+      case "last_message":
+        return { sortBy: "last_message", sortOrder: "desc" as const };
+      case "last_event":
+        return { sortBy: "last_event", sortOrder: "desc" as const };
+      case "title":
+        return { sortBy: "title", sortOrder: "asc" as const };
+      case "budget":
+        return { sortBy: "budget", sortOrder: "desc" as const };
+      case "created":
+      default:
+        return { sortBy: "created", sortOrder: "desc" as const };
+    }
+  }, [listSortColumn, listSortAsc, sortBy]);
+
   const kanban = useKanban(pipelineId);
+  const dealsListQuery = useDeals(
+    {
+      pipelineId: pipelineId ?? undefined,
+      preset: presetView,
+      search: search.trim() || undefined,
+      limit: listLimit,
+      offset: (listPage - 1) * listLimit,
+      sortBy: effectiveListSort.sortBy,
+      sortOrder: effectiveListSort.sortOrder,
+    },
+    { enabled: isFiltersHydrated && view === "table" && pipelineId !== null },
+  );
   const usersById = useMemo(() => indexTenantUsers(tenantUsers.data), [tenantUsers.data]);
 
   // Автообновление воронки каждые 30 секунд — опционально из меню •••.
@@ -506,6 +557,7 @@ function DealsContent() {
         pipelineId={pipelineId ?? ""}
         onPipelineChange={(id) => {
           setFilter("pipelineId", id === defaultPipelineId ? null : id);
+          setListPage(1);
           setConfigureMode(false);
         }}
         view={view}
@@ -603,7 +655,7 @@ function DealsContent() {
         </p>
       )}
 
-      {!isFiltersHydrated || kanban.isLoading ? <SkeletonTable rows={5} columns={6} /> : kanban.isError ? <DealKanbanError message={kanban.error.message} onRetry={() => void kanban.refetch()} /> :
+      {!isFiltersHydrated || kanban.isLoading || (view === "table" && dealsListQuery.isLoading && !dealsListQuery.data) ? <SkeletonTable rows={5} columns={6} /> : kanban.isError ? <DealKanbanError message={kanban.error.message} onRetry={() => void kanban.refetch()} /> :
         view === "kanban" ? (
           <DealKanban
             pipelineId={pipelineId ?? ""}
@@ -623,12 +675,34 @@ function DealsContent() {
           />
         ) : (
           <DealListView
-            deals={sortedDeals}
+            deals={dealsListQuery.data?.items ?? sortedDeals}
             columns={kanban.data ?? []}
             pipelineId={pipelineId ?? ""}
             usersById={usersById}
             onOpenDeal={configureMode ? undefined : handleOpenDeal}
             bulkEnabled={bulkEnabled && !configureMode}
+            totalCount={dealsListQuery.data?.total ?? sortedDeals.length}
+            page={listPage}
+            limit={listLimit}
+            onPageChange={setListPage}
+            onLimitChange={(newLimit) => {
+              setListLimit(newLimit as WarehouseLimit);
+              setListPage(1);
+            }}
+            serverSort={true}
+            sortColumn={effectiveListSort.sortBy}
+            sortAsc={effectiveListSort.sortOrder === "asc"}
+            onSortChange={(col, asc) => {
+              setListSortColumn(col);
+              setListSortAsc(asc);
+              setListPage(1);
+            }}
+            activeFilters={{
+              pipeline_id: pipelineId ?? undefined,
+              preset: presetView,
+              search: search.trim() || undefined,
+            }}
+            isLoading={dealsListQuery.isLoading}
           />
         )}
 

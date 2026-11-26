@@ -23,7 +23,7 @@ import {
   type TimelineEventDTO,
 } from "@/lib/api/use-timeline";
 import { NoteFormattedBody } from "@/components/crm/shared/RecordNotesTab";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, formatTaskDue, timeAgo } from "@/lib/utils";
 
 interface RecordTimelineTabProps {
   recordType: TimelineRecordType;
@@ -183,7 +183,7 @@ function EventContent({ event }: { event: TimelineEventDTO }) {
           {dueDate !== null && (
             <span className="flex items-center gap-1 text-xs text-[#888888]">
               <Clock className="h-3 w-3" />
-              до {new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit" }).format(new Date(dueDate))}
+              до {formatTaskDue(dueDate)}
             </span>
           )}
         </div>

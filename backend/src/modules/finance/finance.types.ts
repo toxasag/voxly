@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bulkActionSchema } from "../../lib/table-query.js";
 import {
   vatModeSchema,
   type InvoiceIssuerSnapshot,
@@ -116,15 +117,22 @@ export const updateInvoiceSchema = z.object({
   line_items: z.array(invoiceItemSchema).min(1).max(100).optional(),
 });
 
-export const bulkUpdateInvoicesSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1).max(200),
-  status: z.enum(["draft", "sent", "overdue", "cancelled"]).optional(),
-  due_date: isoDate.optional(),
-  notes: z.string().max(2000).optional(),
-});
+export const bulkUpdateInvoicesSchema = bulkActionSchema
+  .extend({
+    status: z.enum(["draft", "sent", "overdue", "cancelled"]).optional(),
+    due_date: isoDate.optional(),
+    notes: z.string().max(2000).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select at least 1 invoice", path: ["ids"] });
+    }
+  });
 
-export const bulkDeleteInvoicesSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1).max(200),
+export const bulkDeleteInvoicesSchema = bulkActionSchema.superRefine((val, ctx) => {
+  if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select at least 1 invoice", path: ["ids"] });
+  }
 });
 
 export const markInvoicePaidSchema = z.object({
@@ -165,8 +173,14 @@ export const sendInvoiceSchema = z.object({
   channel_type: z.enum(["telegram", "whatsapp", "max", "all"]).default("all"),
 });
 
-export const bulkTransactionsSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1, "Select at least 1 transaction"),
+export const bulkTransactionsSchema = bulkActionSchema.superRefine((val, ctx) => {
+  if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Select at least 1 transaction",
+      path: ["ids"],
+    });
+  }
 });
 
 export type AccountType = z.infer<typeof accountTypeSchema>;
@@ -209,14 +223,81 @@ export interface TransactionDTO {
   accountId: string;
   accountName: string;
   dealId: string | null;
+  dealTitle?: string | null;
   repairOrderId: string | null;
+  repairTicketNumber?: string | null;
   invoiceId: string | null;
   supplierOrderId?: string | null;
+  isCapitalizedCost?: boolean;
   counterpartyName: string;
   counterpartyInn: string;
   occurredAt: string;
   createdById?: string | null;
   createdByName?: string | null;
+}
+
+export interface DirectExpenseItemDTO {
+  id: string;
+  amount: number;
+  currency: string;
+  categoryName: string;
+  description: string;
+  counterpartyName: string;
+  accountName: string;
+  occurredAt: string;
+  dealId: string | null;
+  repairOrderId: string | null;
+  repairTicketNumber: string | null;
+  scope: "deal" | "repair";
+}
+
+export interface DealEconomicsDTO {
+  dealId: string;
+  revenue: number;
+  itemsRevenue: number;
+  repairsRevenue: number;
+  cogs: number;
+  grossProfit: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+  expenses: DirectExpenseItemDTO[];
+}
+
+export interface RepairEconomicsDTO {
+  repairOrderId: string;
+  dealId: string | null;
+  revenue: number;
+  cogs: number;
+  grossProfit: number;
+  directRepairExpenses: number;
+  dealSharedExpenses: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+  expenses: DirectExpenseItemDTO[];
+}
+
+export function computeNetProfitSummary(input: {
+  revenue: number;
+  cogs: number;
+  directExpenses: number;
+}): {
+  revenue: number;
+  cogs: number;
+  grossProfit: number;
+  directExpenses: number;
+  netProfit: number;
+  netMarginPercent: number;
+} {
+  const round2 = (v: number): number => Math.round(v * 100) / 100;
+  const revenue = round2(input.revenue);
+  const cogs = round2(input.cogs);
+  const directExpenses = round2(input.directExpenses);
+  const grossProfit = round2(revenue - cogs);
+  const netProfit = round2(grossProfit - directExpenses);
+  const netMarginPercent = revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0;
+  return { revenue, cogs, grossProfit, directExpenses, netProfit, netMarginPercent };
 }
 
 export interface InvoiceItemDTO {

@@ -258,14 +258,14 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-[#e5e5e5] bg-[#fbfbfb] text-[#111111] transition-all duration-200 ease-in-out md:flex dark:border-[#27272a] dark:bg-[#111111]",
+        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-[#e5e5e5] bg-[#fbfbfb] text-[#111111] transition-all duration-200 ease-in-out md:flex",
         collapsed ? "w-16" : "w-60",
       )}
     >
       {/* Platform Brand Anchor */}
       <div
         className={cn(
-          "flex h-11 items-center border-b border-[#e5e5e5] dark:border-[#27272a] px-3.5 transition-colors",
+          "flex h-11 items-center border-b border-[#e5e5e5] px-3.5 transition-colors",
           collapsed ? "justify-center px-1" : "justify-between",
         )}
       >

@@ -596,7 +596,7 @@ export default function RepairDetailPage() {
               Назад
             </Link>
             <div className="h-4 w-px bg-[#e5e5e5]" />
-            <span className="text-[13px] font-mono tabular-nums font-semibold text-[#111111]">
+            <span className="text-[13px] font-sans tabular-nums font-semibold text-[#111111]">
               {formatOrderNumber(ticket.ticket_number)}
             </span>
             <span
@@ -1726,6 +1726,7 @@ export default function RepairDetailPage() {
                 <div className="space-y-6 w-full max-w-6xl">
                   <FinancialSummary
                     repairOrderId={ticket.id}
+                    ticketNumber={ticket.ticket_number}
                     workItems={ticket.work_items}
                     parts={ticket.parts_used}
                     hasFinanceModule={hasFinance}
@@ -1735,6 +1736,7 @@ export default function RepairDetailPage() {
                     customerName={ticket.customer_name}
                     customerPhone={ticket.customer_phone}
                     dealId={ticket.deal_id}
+                    dealTitle={ticket.deal_title}
                     paymentStatus={ticket.payment_status}
                     dealPaymentStatus={ticket.deal_payment_status}
                     onRefresh={() => void refetchRepair()}

@@ -61,7 +61,7 @@ import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import { getRedisHealth } from "./infrastructure/redis.js";
 import { getBullQueueMetrics } from "./infrastructure/queue-metrics.js";
-import { extensionToMime } from "./lib/mime.utils.js";
+import { detectMimeFromFileHeader, extensionToMime, mimeToExtension } from "./lib/mime.utils.js";
 import releaseManifest from "./release-manifest.json" with { type: "json" };
 import fastify from "fastify";
 
@@ -292,23 +292,31 @@ export async function buildApp(): Promise<FastifyInstance> {
       const userId = request.authUser?.id ?? null;
       const body = request.body as Record<string, unknown>;
       const { warehouseService } = await import("./modules/warehouse/warehouse.service.js");
+      const {
+        bulkCreatePurchaseRequestsSchema,
+        createPurchaseRequestSchema,
+      } = await import("./modules/warehouse/warehouse.types.js");
 
-      if (Array.isArray(body?.itemIds) && body.itemIds.length > 0) {
+      if (body?.mode === "all" || (Array.isArray(body?.itemIds) && body.itemIds.length > 0)) {
+        const parsedBulk = bulkCreatePurchaseRequestsSchema.parse(body);
         const created = await warehouseService.createBulkPurchaseRequests(
           tenant_id,
           userId,
           {
-            itemIds: body.itemIds as string[],
-            status: typeof body.status === "string" ? body.status : undefined,
-            comment: typeof body.comment === "string" ? body.comment : undefined,
-            repair_order_id: typeof body.repair_order_id === "string" ? body.repair_order_id : undefined,
-            deal_id: typeof body.deal_id === "string" ? body.deal_id : undefined,
+            mode: parsedBulk.mode,
+            ids: parsedBulk.ids,
+            itemIds: parsedBulk.itemIds ?? parsedBulk.ids ?? [],
+            excluded_ids: parsedBulk.excluded_ids,
+            filters: parsedBulk.filters,
+            status: parsedBulk.status,
+            comment: parsedBulk.comment,
+            repair_order_id: parsedBulk.repair_order_id,
+            deal_id: parsedBulk.deal_id,
           },
         );
         return reply.status(201).send({ data: created });
       }
 
-      const { createPurchaseRequestSchema } = await import("./modules/warehouse/warehouse.types.js");
       const parsed = createPurchaseRequestSchema.parse(request.body);
       const created = await warehouseService.createPurchaseRequest(tenant_id, userId, parsed);
       return reply.status(201).send({ data: created });
@@ -586,7 +594,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
     const { safeFilename, filePath } = resolvedUpload;
     const ext = path.extname(safeFilename).toLowerCase();
-    const contentType = extensionToMime(ext);
+    let contentType = extensionToMime(ext);
+    if (contentType === "application/octet-stream") {
+      contentType = (await detectMimeFromFileHeader(filePath).catch(() => null)) ?? contentType;
+    }
 
     const isPublicAsset =
       safeFilename.includes("_avatar_") ||
@@ -636,7 +647,13 @@ export async function buildApp(): Promise<FastifyInstance> {
         return reply.status(404).send({ error: "File not found" });
       }
 
-      const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+      let originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+      if (ext === ".bin") {
+        const inferredExt = mimeToExtension(contentType);
+        if (inferredExt !== ".bin") {
+          originalName = originalName.replace(/\.bin$/i, inferredExt);
+        }
+      }
       const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
       const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
       const disposition = isInline
@@ -696,7 +713,10 @@ export async function buildApp(): Promise<FastifyInstance> {
           const stat = await fs.stat(filePath);
           if (stat.isFile()) {
             const ext = path.extname(safeFilename).toLowerCase();
-            const contentType = message.attachment_type || extensionToMime(ext);
+            let contentType = message.attachment_type || extensionToMime(ext);
+            if (contentType === "application/octet-stream") {
+              contentType = (await detectMimeFromFileHeader(filePath).catch(() => null)) ?? contentType;
+            }
             const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
             const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
             const disposition = isInline

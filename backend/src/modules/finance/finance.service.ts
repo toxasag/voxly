@@ -1,19 +1,31 @@
-import type {
-  AccountDTO,
-  AccountType,
-  BatchPaymentPayload,
-  CreateCategoryPayload,
-  CreateTransactionPayload,
-  FinanceCategoryDTO,
-  PnlDTO,
-  TransactionDTO,
-  TransferPayload,
-  UpdateCategoryPayload,
-  UpdateTransactionPayload,
+import {
+  computeNetProfitSummary,
+  type AccountDTO,
+  type AccountType,
+  type BatchPaymentPayload,
+  type CreateCategoryPayload,
+  type CreateTransactionPayload,
+  type DealEconomicsDTO,
+  type DirectExpenseItemDTO,
+  type FinanceCategoryDTO,
+  type PnlDTO,
+  type RepairEconomicsDTO,
+  type TransactionDTO,
+  type TransferPayload,
+  type UpdateCategoryPayload,
+  type UpdateTransactionPayload,
 } from "./finance.types.js";
 import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import { dealsService } from "../crm/deals/deals.service.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  nullableTextExpr,
+  resolveBulkTargetIds,
+  type BulkActionPayload,
+  type SortDirection,
+} from "../../lib/table-query.js";
 
 interface AccountRow {
   id: string;
@@ -36,15 +48,20 @@ interface TxRow {
   cash_account_id: string;
   account_name: string;
   deal_id: string | null;
+  deal_title?: string | null;
   repair_order_id: string | null;
+  repair_ticket_number?: string | null;
   invoice_id: string | null;
   supplier_order_id?: string | null;
+  is_capitalized_cost?: boolean;
   counterparty_name: string;
   counterparty_inn: string;
   occurred_at: Date | string;
   created_by_id?: string | null;
   created_by_name?: string | null;
 }
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
 const iso = (value: Date | string) => value instanceof Date ? value.toISOString() : value;
 const blank = (v: string | undefined) => v === undefined || v === "" ? null : v;
 const isUuid = (v: string | undefined | null): boolean =>
@@ -150,12 +167,16 @@ export class FinanceService {
     }));
   }
 
-  async transactions(
+  private buildTransactionsWhereClause(
     tenantId: string,
-    limit: number,
-    offset: number,
-    options?: { search?: string; type?: "income" | "expense" },
-  ): Promise<{ items: TransactionDTO[]; total: number }> {
+    options?: {
+      search?: string;
+      type?: "income" | "expense";
+      dealId?: string;
+      repairOrderId?: string;
+      excludedIds?: string[];
+    },
+  ): { whereSql: string; params: SqlParam[] } {
     const conditions: string[] = ["t.tenant_id = $1", "t.deleted_at IS NULL"];
     const params: SqlParam[] = [tenantId];
 
@@ -164,22 +185,73 @@ export class FinanceService {
       conditions.push(`t.direction = $${params.length}`);
     }
 
-    if (options?.search && options.search.trim()) {
-      params.push(`%${options.search.trim()}%`);
+    if (options?.dealId && isUuid(options.dealId)) {
+      params.push(options.dealId.trim());
       conditions.push(
-        `(t.description ILIKE $${params.length} OR t.counterparty_name ILIKE $${params.length} OR COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '') ILIKE $${params.length} OR a.name ILIKE $${params.length} OR u.name ILIKE $${params.length})`,
+        `(t.deal_id = $${params.length} OR t.repair_order_id IN (SELECT ro2.id FROM repair_orders ro2 WHERE ro2.tenant_id = $1 AND ro2.deal_id = $${params.length} AND ro2.deleted_at IS NULL))`,
       );
     }
 
-    const whereSql = conditions.join(" AND ");
+    if (options?.repairOrderId && isUuid(options.repairOrderId)) {
+      params.push(options.repairOrderId.trim());
+      conditions.push(`t.repair_order_id = $${params.length}`);
+    }
+
+    if (options?.search && options.search.trim()) {
+      params.push(`%${options.search.trim()}%`);
+      conditions.push(
+        `(t.description ILIKE $${params.length} OR t.counterparty_name ILIKE $${params.length} OR COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '') ILIKE $${params.length} OR a.name ILIKE $${params.length} OR u.name ILIKE $${params.length} OR COALESCE(d.title, '') ILIKE $${params.length} OR COALESCE(ro.ticket_number, '') ILIKE $${params.length})`,
+      );
+    }
+
+    appendExcludedIdsCondition(conditions, params, "t.id", options?.excludedIds);
+    return { whereSql: conditions.join(" AND "), params };
+  }
+
+  async transactions(
+    tenantId: string,
+    limit: number,
+    offset: number,
+    options?: {
+      search?: string;
+      type?: "income" | "expense";
+      dealId?: string;
+      repairOrderId?: string;
+      sortBy?: string;
+      sortDir?: SortDirection;
+    },
+  ): Promise<{ items: TransactionDTO[]; total: number }> {
+    const { whereSql, params } = this.buildTransactionsWhereClause(tenantId, options);
 
     const countSql = `SELECT COUNT(*)::text AS total
                       FROM transactions t
                       JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
                       LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
                       LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
+                      LEFT JOIN deals d ON d.id = t.deal_id AND d.tenant_id = t.tenant_id AND d.deleted_at IS NULL
+                      LEFT JOIN repair_orders ro ON ro.id = t.repair_order_id AND ro.tenant_id = t.tenant_id AND ro.deleted_at IS NULL
                       WHERE ${whereSql}`;
     const total = await queryOne<{ total: string }>(countSql, params);
+
+    const orderBy = buildSortOrderBy({
+      sortBy: options?.sortBy,
+      sortDir: options?.sortDir,
+      columns: {
+        date: "t.occurred_at",
+        occurred_at: "t.occurred_at",
+        type: "t.direction",
+        direction: "t.direction",
+        category: { expr: "LOWER(COALESCE(NULLIF(BTRIM(t.category_name), ''), NULLIF(BTRIM(fc.name), '')))", nullable: true },
+        description: { expr: nullableTextExpr("t.description"), nullable: true },
+        amount: "t.amount",
+        account: { expr: nullableTextExpr("a.name"), nullable: true },
+        account_name: { expr: nullableTextExpr("a.name"), nullable: true },
+        counterparty: { expr: nullableTextExpr("t.counterparty_name"), nullable: true },
+        author: { expr: "LOWER(NULLIF(BTRIM(COALESCE(u.name, u.email, '')), ''))", nullable: true },
+      },
+      defaultOrderBy: "t.occurred_at DESC",
+      tieBreaker: "t.id DESC",
+    });
 
     const selectParams: SqlParam[] = [...params, limit, offset];
     const rowsSql = `SELECT t.id, t.direction, t.amount, t.currency, t.category_id,
@@ -188,15 +260,23 @@ export class FinanceService {
                             COALESCE(t.counterparty_name, '') AS counterparty_name,
                             COALESCE(t.counterparty_inn, '') AS counterparty_inn,
                             t.cash_account_id, a.name AS account_name,
-                            t.deal_id, t.repair_order_id, t.invoice_id, t.supplier_order_id, t.occurred_at,
+                            t.deal_id,
+                            d.title AS deal_title,
+                            t.repair_order_id,
+                            ro.ticket_number AS repair_ticket_number,
+                            t.invoice_id, t.supplier_order_id,
+                            COALESCE(t.is_capitalized_cost, false) AS is_capitalized_cost,
+                            t.occurred_at,
                             t.created_by AS created_by_id,
                             COALESCE(u.name, u.email, '') AS created_by_name
                      FROM transactions t
                      JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
                      LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
                      LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
+                     LEFT JOIN deals d ON d.id = t.deal_id AND d.tenant_id = t.tenant_id AND d.deleted_at IS NULL
+                     LEFT JOIN repair_orders ro ON ro.id = t.repair_order_id AND ro.tenant_id = t.tenant_id AND ro.deleted_at IS NULL
                      WHERE ${whereSql}
-                     ORDER BY t.occurred_at DESC
+                     ORDER BY ${orderBy}
                      LIMIT $${selectParams.length - 1} OFFSET $${selectParams.length}`;
 
     const rows = await query<TxRow>(rowsSql, selectParams);
@@ -215,9 +295,12 @@ export class FinanceService {
       accountId: row.cash_account_id,
       accountName: row.account_name,
       dealId: row.deal_id,
+      dealTitle: row.deal_title ?? null,
       repairOrderId: row.repair_order_id,
+      repairTicketNumber: row.repair_ticket_number ?? null,
       invoiceId: row.invoice_id,
       supplierOrderId: row.supplier_order_id ?? null,
+      isCapitalizedCost: Boolean(row.is_capitalized_cost),
       counterpartyName: row.counterparty_name || "",
       counterpartyInn: row.counterparty_inn || "",
       occurredAt: iso(row.occurred_at),
@@ -308,9 +391,49 @@ export class FinanceService {
     );
   }
 
-  async bulkDeleteTransactions(tenantId: string, ids: string[]): Promise<{ count: number }> {
-    if (ids.length === 0) return { count: 0 };
+  private async resolveTransactionIdsInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<string[]> {
+    if (Array.isArray(idsOrPayload)) {
+      return Array.from(new Set(idsOrPayload.filter(Boolean)));
+    }
+    return resolveBulkTargetIds({
+      executor: tx,
+      payload: idsOrPayload,
+      buildFilteredQuery: (excludedIds) => {
+        const filters = idsOrPayload.filters ?? {};
+        const validType =
+          filters.type === "income" || filters.type === "expense" ? filters.type : undefined;
+        const { whereSql, params } = this.buildTransactionsWhereClause(tenantId, {
+          search: typeof filters.search === "string" ? filters.search : undefined,
+          type: validType,
+          excludedIds,
+        });
+        return {
+          sql: `SELECT t.id
+                FROM transactions t
+                JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+                LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
+                LEFT JOIN users u ON u.id = t.created_by AND u.tenant_id = t.tenant_id
+                LEFT JOIN deals d ON d.id = t.deal_id AND d.tenant_id = t.tenant_id AND d.deleted_at IS NULL
+                LEFT JOIN repair_orders ro ON ro.id = t.repair_order_id AND ro.tenant_id = t.tenant_id AND ro.deleted_at IS NULL
+                WHERE ${whereSql}
+                ORDER BY t.id DESC`,
+          params,
+        };
+      },
+    });
+  }
+
+  async bulkDeleteTransactions(
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<{ count: number }> {
     return withTenant(tenantId, async (tx) => {
+      const ids = await this.resolveTransactionIdsInTx(tx, tenantId, idsOrPayload);
+      if (ids.length === 0) return { count: 0 };
       const deleted = await tx.query<{
         id: string;
         cash_account_id: string;
@@ -420,11 +543,12 @@ export class FinanceService {
 
   async bulkDuplicateTransactions(
     tenantId: string,
-    ids: string[],
+    idsOrPayload: string[] | BulkActionPayload,
     userId?: string,
   ): Promise<TransactionDTO[]> {
-    if (ids.length === 0) return [];
     return withTenant(tenantId, async (tx) => {
+      const ids = await this.resolveTransactionIdsInTx(tx, tenantId, idsOrPayload);
+      if (ids.length === 0) return [];
       const sources = await tx.query<TxRow>(
         `SELECT t.id, t.direction, t.amount, t.currency, t.category_id,
                 COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, '') AS category_name,
@@ -559,10 +683,50 @@ export class FinanceService {
     return row;
   }
 
+  private async resolveEntityLinksInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    rawDealId: string | undefined | null,
+    rawRepairOrderId: string | undefined | null,
+  ): Promise<{ dealId: string | null; repairOrderId: string | null }> {
+    let dealId = safeUuid(rawDealId);
+    let repairOrderId = safeUuid(rawRepairOrderId);
+
+    if (repairOrderId) {
+      const repair = await tx.queryOne<{ id: string; deal_id: string | null }>(
+        `SELECT id, deal_id FROM repair_orders WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, repairOrderId],
+      );
+      if (!repair) {
+        repairOrderId = null;
+      } else if (!dealId && repair.deal_id) {
+        dealId = repair.deal_id;
+      }
+    }
+
+    if (dealId) {
+      const deal = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, dealId],
+      );
+      if (!deal) {
+        dealId = null;
+      }
+    }
+
+    return { dealId, repairOrderId };
+  }
+
   async createTransaction(tenantId: string, p: CreateTransactionPayload, userId?: string): Promise<TransactionDTO> {
     return withTenant(tenantId, async (tx) => {
       const a = await this.account(tx, tenantId, p.account_id);
       if (a.currency !== p.currency) throw new ValidationError("Account currency differs from transaction currency");
+      const { dealId, repairOrderId } = await this.resolveEntityLinksInTx(
+        tx,
+        tenantId,
+        p.deal_id,
+        p.repair_order_id,
+      );
       // Разрешено списание в минус (овердрафт / отрицательный остаток кассы) согласно бизнес-требованию
       const row = await tx.queryOneOrThrow<TxRow>(
         `INSERT INTO transactions
@@ -573,7 +737,11 @@ export class FinanceService {
                    COALESCE(counterparty_name, '') AS counterparty_name,
                    COALESCE(counterparty_inn, '') AS counterparty_inn,
                    cash_account_id, (SELECT name FROM cash_accounts WHERE id = $2) AS account_name,
-                   deal_id, repair_order_id, invoice_id, occurred_at,
+                   deal_id,
+                   (SELECT title FROM deals WHERE id = deal_id AND tenant_id = $1 AND deleted_at IS NULL) AS deal_title,
+                   repair_order_id,
+                   (SELECT ticket_number FROM repair_orders WHERE id = repair_order_id AND tenant_id = $1 AND deleted_at IS NULL) AS repair_ticket_number,
+                   invoice_id, occurred_at,
                    created_by AS created_by_id,
                    (SELECT COALESCE(name, email, '') FROM users WHERE id = $15 AND tenant_id = $1) AS created_by_name`,
         [
@@ -587,8 +755,8 @@ export class FinanceService {
           p.description ?? "",
           p.counterparty_name ?? "",
           p.counterparty_inn ?? "",
-          safeUuid(p.deal_id),
-          safeUuid(p.repair_order_id),
+          dealId,
+          repairOrderId,
           safeUuid(p.invoice_id),
           safeDate(p.occurred_at),
           blank(userId),
@@ -646,6 +814,20 @@ export class FinanceService {
       const shouldUpdateCategoryId =
         p.category_id !== undefined && (p.category_id === null || resolvedCategoryId !== null);
 
+      const shouldUpdateLinks = p.deal_id !== undefined || p.repair_order_id !== undefined;
+      let resolvedDealId = current.deal_id;
+      let resolvedRepairOrderId = current.repair_order_id;
+      if (shouldUpdateLinks) {
+        const nextLinks = await this.resolveEntityLinksInTx(
+          tx,
+          tenantId,
+          p.deal_id !== undefined ? p.deal_id : current.deal_id,
+          p.repair_order_id !== undefined ? p.repair_order_id : current.repair_order_id,
+        );
+        resolvedDealId = nextLinks.dealId;
+        resolvedRepairOrderId = nextLinks.repairOrderId;
+      }
+
       const updated = await tx.queryOneOrThrow<TxRow>(
         `UPDATE transactions
          SET cash_account_id = COALESCE($3, cash_account_id),
@@ -673,7 +855,11 @@ export class FinanceService {
                    COALESCE(counterparty_name, '') AS counterparty_name,
                    COALESCE(counterparty_inn, '') AS counterparty_inn,
                    cash_account_id, (SELECT name FROM cash_accounts WHERE id = cash_account_id) AS account_name,
-                   deal_id, repair_order_id, invoice_id, supplier_order_id, occurred_at,
+                   deal_id,
+                   (SELECT title FROM deals WHERE id = deal_id AND tenant_id = $1 AND deleted_at IS NULL) AS deal_title,
+                   repair_order_id,
+                   (SELECT ticket_number FROM repair_orders WHERE id = repair_order_id AND tenant_id = $1 AND deleted_at IS NULL) AS repair_ticket_number,
+                   invoice_id, supplier_order_id, occurred_at,
                    created_by AS created_by_id,
                    (SELECT COALESCE(name, email, '') FROM users WHERE id = created_by AND tenant_id = $1) AS created_by_name`,
         [
@@ -692,10 +878,10 @@ export class FinanceService {
           p.counterparty_name ?? "",
           p.counterparty_inn !== undefined,
           p.counterparty_inn ?? "",
-          p.deal_id !== undefined,
-          safeUuid(p.deal_id),
-          p.repair_order_id !== undefined,
-          safeUuid(p.repair_order_id),
+          shouldUpdateLinks,
+          resolvedDealId,
+          shouldUpdateLinks,
+          resolvedRepairOrderId,
           p.invoice_id !== undefined,
           safeUuid(p.invoice_id),
           safeDate(p.occurred_at),
@@ -1270,6 +1456,220 @@ export class FinanceService {
         [tenantId, id],
       );
       return row !== null;
+    });
+  }
+
+  async dealEconomics(tenantId: string, dealId: string): Promise<DealEconomicsDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{ id: string; budget: string }>(
+        `SELECT id, budget::text AS budget FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, dealId],
+      );
+      if (!deal) throw new NotFoundError("Deal not found");
+
+      const itemsRow = await tx.queryOne<{ revenue: string; cogs: string }>(
+        `SELECT COALESCE(SUM(total_amount), 0)::text AS revenue,
+                COALESCE(SUM(COALESCE(cost_price, 0) * COALESCE(quantity, 1)), 0)::text AS cogs
+         FROM deal_items
+         WHERE tenant_id = $1 AND deal_id = $2`,
+        [tenantId, dealId],
+      );
+
+      const repairWorksRow = await tx.queryOne<{ revenue: string }>(
+        `SELECT COALESCE(SUM(rw.cost), 0)::text AS revenue
+         FROM repair_works rw
+         JOIN repair_orders ro ON ro.id = rw.repair_order_id AND ro.tenant_id = rw.tenant_id
+         WHERE rw.tenant_id = $1 AND ro.deal_id = $2 AND ro.deleted_at IS NULL`,
+        [tenantId, dealId],
+      );
+
+      const repairPartsRow = await tx.queryOne<{ revenue: string; cogs: string }>(
+        `SELECT COALESCE(SUM(rp.retail_price * rp.quantity), 0)::text AS revenue,
+                COALESCE(SUM(rp.cost_price * rp.quantity), 0)::text AS cogs
+         FROM repair_parts rp
+         JOIN repair_orders ro ON ro.id = rp.repair_order_id AND ro.tenant_id = rp.tenant_id
+         WHERE rp.tenant_id = $1 AND ro.deal_id = $2 AND ro.deleted_at IS NULL`,
+        [tenantId, dealId],
+      );
+
+      const expenseRows = await tx.query<{
+        id: string;
+        amount: string;
+        currency: string;
+        category_name: string;
+        description: string;
+        counterparty_name: string;
+        account_name: string;
+        occurred_at: Date | string;
+        deal_id: string | null;
+        repair_order_id: string | null;
+        repair_ticket_number: string | null;
+      }>(
+        `SELECT t.id,
+                t.amount::text AS amount,
+                t.currency,
+                COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, 'Без категории') AS category_name,
+                COALESCE(t.description, '') AS description,
+                COALESCE(t.counterparty_name, '') AS counterparty_name,
+                COALESCE(a.name, '') AS account_name,
+                t.occurred_at,
+                t.deal_id,
+                t.repair_order_id,
+                ro.ticket_number AS repair_ticket_number
+         FROM transactions t
+         JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+         LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
+         LEFT JOIN repair_orders ro ON ro.id = t.repair_order_id AND ro.tenant_id = t.tenant_id AND ro.deleted_at IS NULL
+         WHERE t.tenant_id = $1
+           AND t.deleted_at IS NULL
+           AND t.direction = 'expense'
+           AND COALESCE(t.is_capitalized_cost, false) = false
+           AND t.supplier_order_id IS NULL
+           AND (
+             t.deal_id = $2
+             OR t.repair_order_id IN (
+               SELECT id FROM repair_orders WHERE tenant_id = $1 AND deal_id = $2 AND deleted_at IS NULL
+             )
+           )
+         ORDER BY t.occurred_at DESC, t.id DESC`,
+        [tenantId, dealId],
+      );
+
+      const itemsRevenue = round2(Number(itemsRow?.revenue ?? 0));
+      const repairsRevenue = round2(
+        Number(repairWorksRow?.revenue ?? 0) + Number(repairPartsRow?.revenue ?? 0),
+      );
+      const calculatedRevenue = round2(itemsRevenue + repairsRevenue);
+      const revenue = calculatedRevenue > 0 ? calculatedRevenue : round2(Number(deal.budget ?? 0));
+      const cogs = round2(Number(itemsRow?.cogs ?? 0) + Number(repairPartsRow?.cogs ?? 0));
+
+      const expenses: DirectExpenseItemDTO[] = expenseRows.map((r) => ({
+        id: r.id,
+        amount: Number(r.amount),
+        currency: r.currency,
+        categoryName: r.category_name,
+        description: r.description,
+        counterpartyName: r.counterparty_name,
+        accountName: r.account_name,
+        occurredAt: iso(r.occurred_at),
+        dealId: r.deal_id,
+        repairOrderId: r.repair_order_id,
+        repairTicketNumber: r.repair_ticket_number,
+        scope: r.repair_order_id ? "repair" : "deal",
+      }));
+
+      const directExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+      const totals = computeNetProfitSummary({ revenue, cogs, directExpenses });
+
+      return {
+        dealId,
+        itemsRevenue,
+        repairsRevenue,
+        ...totals,
+        expenses,
+      };
+    });
+  }
+
+  async repairEconomics(tenantId: string, repairOrderId: string): Promise<RepairEconomicsDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const order = await tx.queryOne<{ id: string; deal_id: string | null }>(
+        `SELECT id, deal_id FROM repair_orders WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, repairOrderId],
+      );
+      if (!order) throw new NotFoundError("Repair order not found");
+
+      const worksRow = await tx.queryOne<{ revenue: string }>(
+        `SELECT COALESCE(SUM(cost), 0)::text AS revenue
+         FROM repair_works
+         WHERE tenant_id = $1 AND repair_order_id = $2`,
+        [tenantId, repairOrderId],
+      );
+
+      const partsRow = await tx.queryOne<{ revenue: string; cogs: string }>(
+        `SELECT COALESCE(SUM(retail_price * quantity), 0)::text AS revenue,
+                COALESCE(SUM(cost_price * quantity), 0)::text AS cogs
+         FROM repair_parts
+         WHERE tenant_id = $1 AND repair_order_id = $2`,
+        [tenantId, repairOrderId],
+      );
+
+      const expenseRows = await tx.query<{
+        id: string;
+        amount: string;
+        currency: string;
+        category_name: string;
+        description: string;
+        counterparty_name: string;
+        account_name: string;
+        occurred_at: Date | string;
+        deal_id: string | null;
+        repair_order_id: string | null;
+        repair_ticket_number: string | null;
+      }>(
+        `SELECT t.id,
+                t.amount::text AS amount,
+                t.currency,
+                COALESCE(NULLIF(BTRIM(t.category_name), ''), fc.name, 'Без категории') AS category_name,
+                COALESCE(t.description, '') AS description,
+                COALESCE(t.counterparty_name, '') AS counterparty_name,
+                COALESCE(a.name, '') AS account_name,
+                t.occurred_at,
+                t.deal_id,
+                t.repair_order_id,
+                ro.ticket_number AS repair_ticket_number
+         FROM transactions t
+         JOIN cash_accounts a ON a.id = t.cash_account_id AND a.tenant_id = t.tenant_id
+         LEFT JOIN finance_categories fc ON fc.id = t.category_id AND fc.tenant_id = t.tenant_id
+         LEFT JOIN repair_orders ro ON ro.id = t.repair_order_id AND ro.tenant_id = t.tenant_id AND ro.deleted_at IS NULL
+         WHERE t.tenant_id = $1
+           AND t.deleted_at IS NULL
+           AND t.direction = 'expense'
+           AND COALESCE(t.is_capitalized_cost, false) = false
+           AND t.supplier_order_id IS NULL
+           AND (
+             t.repair_order_id = $2
+             OR ($3::uuid IS NOT NULL AND t.deal_id = $3 AND t.repair_order_id IS NULL)
+           )
+         ORDER BY t.occurred_at DESC, t.id DESC`,
+        [tenantId, repairOrderId, order.deal_id],
+      );
+
+      const revenue = round2(Number(worksRow?.revenue ?? 0) + Number(partsRow?.revenue ?? 0));
+      const cogs = round2(Number(partsRow?.cogs ?? 0));
+
+      const expenses: DirectExpenseItemDTO[] = expenseRows.map((r) => ({
+        id: r.id,
+        amount: Number(r.amount),
+        currency: r.currency,
+        categoryName: r.category_name,
+        description: r.description,
+        counterpartyName: r.counterparty_name,
+        accountName: r.account_name,
+        occurredAt: iso(r.occurred_at),
+        dealId: r.deal_id,
+        repairOrderId: r.repair_order_id,
+        repairTicketNumber: r.repair_ticket_number,
+        scope: r.repair_order_id === repairOrderId ? "repair" : "deal",
+      }));
+
+      const directRepairExpenses = round2(
+        expenses.filter((e) => e.scope === "repair").reduce((s, e) => s + e.amount, 0),
+      );
+      const dealSharedExpenses = round2(
+        expenses.filter((e) => e.scope === "deal").reduce((s, e) => s + e.amount, 0),
+      );
+      const directExpenses = round2(directRepairExpenses + dealSharedExpenses);
+      const totals = computeNetProfitSummary({ revenue, cogs, directExpenses });
+
+      return {
+        repairOrderId,
+        dealId: order.deal_id,
+        directRepairExpenses,
+        dealSharedExpenses,
+        ...totals,
+        expenses,
+      };
     });
   }
 }

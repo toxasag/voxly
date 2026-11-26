@@ -19,7 +19,8 @@ import {
 } from "@/lib/api/use-tasks";
 import { useTenantUsers, indexTenantUsers } from "@/lib/api/use-tenant-users";
 import { useAuth } from "@/lib/auth/use-auth";
-import { cn } from "@/lib/utils";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
+import { cn, formatTaskDue, localDateTimeToIso } from "@/lib/utils";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
@@ -65,9 +66,7 @@ const STATUS_CLASSES: Record<TaskStatus, string> = {
 };
 
 function formatDue(value: string | null): string {
-  if (value === null) return "без срока";
-
-  return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long" }).format(new Date(value));
+  return formatTaskDue(value, { longMonth: true, emptyLabel: "без срока" });
 }
 
 export function RecordTasksTab({
@@ -104,8 +103,7 @@ export function RecordTasksTab({
       {
         title: trimmed,
         priority,
-        // Дата из <input type="date"> приходит без времени; бэкенд ждёт ISO 8601.
-        due_date: dueDate === "" ? undefined : new Date(`${dueDate}T12:00:00`).toISOString(),
+        due_date: localDateTimeToIso(dueDate),
         assignee_id: user.id,
         linked_entity_type: targetType,
         linked_entity_id: targetId,
@@ -234,23 +232,23 @@ export function RecordTasksTab({
               placeholder="Что нужно сделать?"
               className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
             />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <select
                 aria-label="Приоритет"
                 value={priority}
                 onChange={(event) => setPriority(event.target.value as TaskPriority)}
-                className="rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               >
                 <option value="high">Высокий</option>
                 <option value="medium">Средний</option>
                 <option value="low">Низкий</option>
               </select>
-              <input
-                type="date"
-                aria-label="Срок"
+              <DateTimePicker
+                variant="compact"
+                ariaLabel="Срок"
+                placeholder="Дата и время"
                 value={dueDate}
-                onChange={(event) => setDueDate(event.target.value)}
-                className="rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                onChange={setDueDate}
               />
               <button
                 type="button"
@@ -267,7 +265,7 @@ export function RecordTasksTab({
               <span className="ml-auto flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => { setComposing(false); setTitle(""); }}
+                  onClick={() => { setComposing(false); setTitle(""); setDueDate(""); }}
                   className="rounded-[8px] px-2.5 py-1 text-xs text-[#666666] hover:text-[#111111]"
                 >
                   Отмена
@@ -392,7 +390,7 @@ export function RecordTasksTab({
             description: "",
             priority: priority,
             status: "todo",
-            due_date: dueDate === "" ? "" : new Date(`${dueDate}T12:00:00`).toISOString(),
+            due_date: localDateTimeToIso(dueDate) ?? "",
             assignee_id: user?.id ?? "",
             linked_entity_type: targetType,
             linked_entity_id: targetId,

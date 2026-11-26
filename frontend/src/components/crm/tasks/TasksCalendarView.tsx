@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { useCheckTaskReminders, type TaskDTO } from "@/lib/api/use-tasks";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
-import { cn } from "@/lib/utils";
+import { cn, formatTaskTime, toLocalDateKey } from "@/lib/utils";
 
 interface TasksCalendarViewProps {
   tasks: TaskDTO[];
@@ -147,7 +147,11 @@ export function TasksCalendarView({
         continue;
       }
 
-      const datePart = task.dueDate.slice(0, 10);
+      const datePart = toLocalDateKey(task.dueDate);
+      if (!datePart) {
+        unscheduled.push(task);
+        continue;
+      }
       const existing = map.get(datePart) ?? [];
       existing.push(task);
       map.set(datePart, existing);
@@ -396,6 +400,11 @@ export function TasksCalendarView({
                               isDone ? "text-[#888888] line-through" : "text-[#111111]",
                             )}
                           >
+                            {task.dueDate && (
+                              <span className="mr-1 font-mono text-[10px] font-normal text-[#666666]">
+                                {formatTaskTime(task.dueDate)}
+                              </span>
+                            )}
                             {task.title}
                           </span>
                         </div>

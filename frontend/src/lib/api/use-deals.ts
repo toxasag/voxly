@@ -61,7 +61,7 @@ export interface KanbanColumnDTO { stageId: string; stageName: string; sortOrder
 export type DealMessageDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
 export interface DealMessageDTO { id: string; dealId: string; channelAccountId: string | null; source: DealMessageSource; direction: DealMessageDirection; senderName: string; content: string; channel: string; attachment: string | null; attachmentType: string | null; metadata?: Record<string, unknown> | null; deliveryStatus: DealMessageDeliveryStatus; deliveryError: string | null; createdAt: string; }
 /** contactId / companyId — секции «Сделки» на карточках контакта и компании. */
-export interface DealsParams { pipelineId?: string; stageId?: string; status?: "active" | "won" | "lost" | "all"; search?: string; contactId?: string; companyId?: string; limit?: number; offset?: number; }
+export interface DealsParams { pipelineId?: string; stageId?: string; status?: "active" | "won" | "lost" | "all"; preset?: "all" | "active" | "high_value" | "won"; search?: string; contactId?: string; companyId?: string; limit?: number; offset?: number; sortBy?: string; sortOrder?: "asc" | "desc"; }
 export interface DealsResult { items: DealDTO[]; total: number; limit: number; offset: number; }
 export interface SendDealMessagePayload { content: string; channel: string; source?: DealMessageSource; direction?: DealMessageDirection; attachment?: string; attachment_type?: string; }
 export interface CreateDealPayload { title: string; description?: string; budget: number; currency?: string; pipeline_id: string; stage_id: string; contact_id?: string; company_id?: string; owner_id?: string; source_widget_id?: string; close_date?: string; custom_fields?: Record<string, unknown>; }
@@ -74,16 +74,20 @@ export function usePipelines(): UseQueryResult<PipelineDTO[], ApiClientError> {
   return useQuery({ queryKey: dealKeys.pipelines, queryFn: async () => (await apiClient.get<PipelineDTO[]>(`${BASE}/pipelines`)).data });
 }
 
-export function useDeals(params: DealsParams = {}): UseQueryResult<DealsResult, ApiClientError> {
+export function useDeals(
+  params: DealsParams = {},
+  options?: { enabled?: boolean },
+): UseQueryResult<DealsResult, ApiClientError> {
   const limit = params.limit ?? 100;
   const offset = params.offset ?? 0;
   return useQuery({
     queryKey: dealKeys.list({ ...params, limit, offset }),
     queryFn: async () => {
-      const response = await apiClient.get<DealDTO[]>(BASE, { query: { pipeline_id: params.pipelineId, stage_id: params.stageId, status: params.status, search: params.search, contact_id: params.contactId, company_id: params.companyId, limit, offset } });
+      const response = await apiClient.get<DealDTO[]>(BASE, { query: { pipeline_id: params.pipelineId, stage_id: params.stageId, status: params.status, preset: params.preset, search: params.search, contact_id: params.contactId, company_id: params.companyId, limit, offset, sort_by: params.sortBy, sort_dir: params.sortOrder } });
       const meta: ApiMeta = response.meta ?? {};
       return { items: response.data, total: typeof meta.total === "number" ? meta.total : response.data.length, limit: typeof meta.limit === "number" ? meta.limit : limit, offset: typeof meta.offset === "number" ? meta.offset : offset };
     },
+    enabled: options?.enabled ?? true,
     placeholderData: (previous) => previous,
   });
 }

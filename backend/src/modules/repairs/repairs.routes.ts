@@ -13,6 +13,7 @@ import {
   createRepairSchema,
   createRepairServiceCatalogSchema,
   createWorkSchema,
+  createWorksBatchSchema,
   renameDictionaryItemSchema,
   repairPaymentStatusSchema,
   repairPrioritySchema,
@@ -23,6 +24,7 @@ import {
 } from "./repairs.types.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
+import { bulkActionSchema, sortDirSchema } from "../../lib/table-query.js";
 
 const listQuerySchema = z.object({
   deal_id: z.string().uuid().optional(),
@@ -34,6 +36,10 @@ const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
+  sort: z.string().max(64).optional(),
+  order: sortDirSchema.optional(),
+  sort_by: z.string().max(64).optional(),
+  sort_dir: sortDirSchema.optional(),
 });
 
 const clientLookupQuerySchema = z.object({
@@ -89,7 +95,16 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
   app.get("", { onRequest: canRead }, async (request, reply) => {
     const params = listQuerySchema.parse(request.query);
 
-    const { items, total } = await service.list(request.tenant_id, {
+    const {
+      items,
+      total,
+      inProgressCount,
+      readyCount,
+      paidAmount,
+      paidCount,
+      unpaidAmount,
+      unpaidCount,
+    } = await service.list(request.tenant_id, {
       dealId: params.deal_id,
       status: params.status,
       paymentStatus: params.payment_status,
@@ -99,11 +114,23 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
       search: params.search,
       limit: params.limit,
       offset: params.offset,
+      sortBy: params.sort_by ?? params.sort,
+      sortDir: params.sort_dir ?? params.order,
     });
 
     return reply.send({
       data: items,
-      meta: { limit: params.limit, offset: params.offset, total },
+      meta: {
+        limit: params.limit,
+        offset: params.offset,
+        total,
+        inProgressCount,
+        readyCount,
+        paidAmount,
+        paidCount,
+        unpaidAmount,
+        unpaidCount,
+      },
     });
   });
 
@@ -266,17 +293,27 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: result });
   });
 
-  // POST /repairs/batch-status — пакетное изменение статуса наряд-заказов
+  // POST /repairs/batch-status — пакетное изменение статуса (ids или mode="all")
   app.post("/batch-status", { onRequest: canWrite }, async (request, reply) => {
-    const body = z.object({
-      ids: z.array(z.string().uuid("id must be a UUID")).min(1, "At least one ID is required"),
-      status: repairStatusSchema,
-      comment: z.string().max(2000).optional(),
-    }).parse(request.body);
+    const body = bulkActionSchema
+      .extend({
+        status: repairStatusSchema,
+        comment: z.string().max(2000).optional(),
+      })
+      .superRefine((val, ctx) => {
+        if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "At least one ID is required",
+            path: ["ids"],
+          });
+        }
+      })
+      .parse(request.body);
 
     const result = await service.batchUpdateStatus(
       request.tenant_id,
-      body.ids,
+      body,
       body.status,
       { id: request.authUser.id, name: request.authUser.name },
       body.comment,
@@ -286,22 +323,40 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
 
   // POST /repairs/batch-payment-status — пакетное изменение статуса оплаты
   app.post("/batch-payment-status", { onRequest: canWrite }, async (request, reply) => {
-    const body = z.object({
-      ids: z.array(z.string().uuid("id must be a UUID")).min(1, "At least one ID is required"),
-      payment_status: repairPaymentStatusSchema,
-    }).parse(request.body);
+    const body = bulkActionSchema
+      .extend({
+        payment_status: repairPaymentStatusSchema,
+      })
+      .superRefine((val, ctx) => {
+        if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "At least one ID is required",
+            path: ["ids"],
+          });
+        }
+      })
+      .parse(request.body);
 
-    const result = await service.batchUpdatePaymentStatus(request.tenant_id, body.ids, body.payment_status);
+    const result = await service.batchUpdatePaymentStatus(request.tenant_id, body, body.payment_status);
     return reply.send({ data: result });
   });
 
   // POST /repairs/batch-delete — пакетное удаление наряд-заказов
   app.post("/batch-delete", { onRequest: canWrite }, async (request, reply) => {
-    const body = z.object({
-      ids: z.array(z.string().uuid("id must be a UUID")).min(1, "At least one ID is required"),
-    }).parse(request.body);
+    const body = bulkActionSchema
+      .superRefine((val, ctx) => {
+        if (val.mode === "ids" && (!val.ids || val.ids.length === 0)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "At least one ID is required",
+            path: ["ids"],
+          });
+        }
+      })
+      .parse(request.body);
 
-    const result = await service.batchDelete(request.tenant_id, body.ids);
+    const result = await service.batchDelete(request.tenant_id, body);
     return reply.send({ data: result });
   });
 
@@ -418,6 +473,21 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.status(201).send({
       data: work,
       meta: { totals: await service.totals(request.tenant_id, id) },
+    });
+  });
+
+  app.post("/:id/works/batch", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = createWorksBatchSchema.parse(request.body);
+    const result = await service.addWorksBatch(request.tenant_id, id, body.items);
+
+    return reply.status(201).send({
+      data: result.items,
+      meta: {
+        totals: await service.totals(request.tenant_id, id),
+        addedCount: result.addedCount,
+        mergedCount: result.mergedCount,
+      },
     });
   });
 

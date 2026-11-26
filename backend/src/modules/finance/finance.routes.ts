@@ -27,6 +27,7 @@ import {
 import { renderInvoiceRfHtml } from "./invoice-html.service.js";
 import { innLookupService } from "../integrations/inn-lookup.service.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { sortDirSchema } from "../../lib/table-query.js";
 
 const page = z.object({
   limit: z.coerce.number().int().positive().max(100).default(25),
@@ -64,9 +65,30 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     const filterQuery = z.object({
       search: z.string().optional(),
       type: z.enum(["income", "expense"]).optional(),
+      deal_id: z.string().uuid().optional(),
+      repair_order_id: z.string().uuid().optional(),
+      sort: z.string().max(64).optional(),
+      order: sortDirSchema.optional(),
+      sort_by: z.string().max(64).optional(),
+      sort_dir: sortDirSchema.optional(),
     }).parse(req.query);
-    const r = await service.transactions(req.tenant_id, p.limit, p.offset, filterQuery);
+    const r = await service.transactions(req.tenant_id, p.limit, p.offset, {
+      search: filterQuery.search,
+      type: filterQuery.type,
+      dealId: filterQuery.deal_id,
+      repairOrderId: filterQuery.repair_order_id,
+      sortBy: filterQuery.sort_by ?? filterQuery.sort,
+      sortDir: filterQuery.sort_dir ?? filterQuery.order,
+    });
     return reply.send({ data: r.items, meta: { limit: p.limit, offset: p.offset, total: r.total } });
+  });
+  app.get("/deals/:dealId/economics", { onRequest: read }, async (req, reply) => {
+    const { dealId } = z.object({ dealId: z.string().uuid() }).parse(req.params);
+    return reply.send({ data: await service.dealEconomics(req.tenant_id, dealId) });
+  });
+  app.get("/repairs/:repairOrderId/economics", { onRequest: read }, async (req, reply) => {
+    const { repairOrderId } = z.object({ repairOrderId: z.string().uuid() }).parse(req.params);
+    return reply.send({ data: await service.repairEconomics(req.tenant_id, repairOrderId) });
   });
   app.post("/transactions", { onRequest: write }, async (req, reply) =>
     reply.status(201).send({
@@ -78,13 +100,13 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     }),
   );
   app.post("/transactions/bulk-delete", { onRequest: write }, async (req, reply) => {
-    const { ids } = bulkTransactionsSchema.parse(req.body);
-    const result = await service.bulkDeleteTransactions(req.tenant_id, ids);
+    const payload = bulkTransactionsSchema.parse(req.body);
+    const result = await service.bulkDeleteTransactions(req.tenant_id, payload);
     return reply.send({ data: { success: true, count: result.count }, success: true, count: result.count });
   });
   app.post("/transactions/bulk-duplicate", { onRequest: write }, async (req, reply) => {
-    const { ids } = bulkTransactionsSchema.parse(req.body);
-    const items = await service.bulkDuplicateTransactions(req.tenant_id, ids, req.authUser?.id);
+    const payload = bulkTransactionsSchema.parse(req.body);
+    const items = await service.bulkDuplicateTransactions(req.tenant_id, payload, req.authUser?.id);
     return reply.status(201).send({ data: items, count: items.length });
   });
   app.patch("/transactions/:id", { onRequest: write }, async (req, reply) => {

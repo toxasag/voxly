@@ -7,6 +7,7 @@ import {
   Banknote,
   Receipt,
   TrendingUp,
+  TrendingDown,
   Wrench,
   Package,
   CheckCircle2,
@@ -20,10 +21,13 @@ import {
   CloudUpload,
   Pencil,
   Trash2,
+  Plus,
 } from "lucide-react";
 import type { WorkItem, PartItem } from "@/lib/repairs/repairs.types";
 import {
   useRepairInvoices,
+  useRepairEconomics,
+  useCreateTransaction,
   useSendInvoice,
   useMarkInvoicePaid,
   useSyncInvoiceToElba,
@@ -35,6 +39,8 @@ import {
 import { BatchPaymentModal } from "./BatchPaymentModal";
 import { GenerateInvoiceModal } from "./GenerateInvoiceModal";
 import { InvoiceEditModal } from "@/components/finance/InvoiceEditModal";
+import { CreateTransactionModal } from "@/components/finance/CreateTransactionModal";
+import type { CreateTransactionPayload } from "@/schemas/finance.schema";
 import { Guard } from "@/components/shared/Guard";
 import { TagPill } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
@@ -42,6 +48,7 @@ import { apiClient } from "@/lib/api/apiClient";
 
 interface FinancialSummaryProps {
   repairOrderId: string;
+  ticketNumber?: string;
   workItems: WorkItem[];
   parts: PartItem[];
   hasFinanceModule: boolean;
@@ -52,6 +59,7 @@ interface FinancialSummaryProps {
   customerName?: string;
   customerPhone?: string;
   dealId?: string | null;
+  dealTitle?: string | null;
   paymentStatus?: string;
   dealPaymentStatus?: string | null;
   onRefresh?: () => void;
@@ -80,6 +88,7 @@ function formatDateRu(isoString: string): string {
 
 export const FinancialSummary = memo(function FinancialSummary({
   repairOrderId,
+  ticketNumber = "",
   workItems,
   parts,
   hasFinanceModule,
@@ -90,12 +99,14 @@ export const FinancialSummary = memo(function FinancialSummary({
   customerName = "",
   customerPhone = "",
   dealId = null,
+  dealTitle = null,
   paymentStatus = "unpaid",
   dealPaymentStatus = null,
   onRefresh,
 }: FinancialSummaryProps) {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<InvoiceDTO | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [printingId, setPrintingId] = useState<string | null>(null);
@@ -113,7 +124,12 @@ export const FinancialSummary = memo(function FinancialSummary({
   const messengerTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const { data: invoices = [], isLoading: isLoadingInvoices, refetch: refetchInvoices } = useRepairInvoices(repairOrderId);
+  const { data: repairEconomics, refetch: refetchEconomics } = useRepairEconomics(
+    repairOrderId,
+    hasFinanceModule,
+  );
   const { data: organizations = [] } = useFinanceOrganizations();
+  const createTransaction = useCreateTransaction();
   const sendInvoice = useSendInvoice();
   const markInvoicePaid = useMarkInvoicePaid();
   const syncElba = useSyncInvoiceToElba();
@@ -180,6 +196,9 @@ export const FinancialSummary = memo(function FinancialSummary({
     const totalCost = totalPartsCost;
     const grossProfit = totalClient - totalCost;
     const marginPct = totalClient > 0 ? Math.round((grossProfit / totalClient) * 100) : 0;
+    const directExpenses = repairEconomics?.directExpenses ?? 0;
+    const netProfit = Math.round((grossProfit - directExpenses) * 100) / 100;
+    const netMarginPct = totalClient > 0 ? Math.round((netProfit / totalClient) * 100) : 0;
 
     return {
       totalWork,
@@ -191,10 +210,24 @@ export const FinancialSummary = memo(function FinancialSummary({
       totalCost,
       grossProfit,
       marginPct,
+      directExpenses,
+      netProfit,
+      netMarginPct,
     };
-  }, [workItems, parts]);
+  }, [workItems, parts, repairEconomics?.directExpenses]);
 
-  const hasData = workItems.length > 0 || parts.length > 0;
+  const directExpenseItems = repairEconomics?.expenses ?? [];
+  const hasData = workItems.length > 0 || parts.length > 0 || directExpenseItems.length > 0;
+
+  const handleCreateExpense = useCallback(
+    async (payload: CreateTransactionPayload) => {
+      await createTransaction.mutateAsync(payload);
+      toast.success("Прямой расход добавлен и учтён в чистой прибыли");
+      void refetchEconomics();
+      if (onRefresh) onRefresh();
+    },
+    [createTransaction, refetchEconomics, onRefresh],
+  );
 
   // Заказ или вся сделка полностью оплачены
   const isFullyPaid = useMemo(() => {
@@ -413,14 +446,127 @@ export const FinancialSummary = memo(function FinancialSummary({
             </div>
 
             {/* Gross Profit / Margin */}
-            <div className="flex items-center justify-between rounded-[8px] border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3">
               <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-emerald-700" />
-                <span className="text-sm font-semibold text-emerald-700">Валовая прибыль</span>
+                <TrendingUp className="h-4 w-4 text-[#666666]" />
+                <span className="text-sm font-medium text-[#111111]">Валовая прибыль</span>
               </div>
               <div className="text-right">
-                <span className="text-lg font-bold text-emerald-700">{formatCost(summary.grossProfit)}</span>
-                <span className="block text-xs text-emerald-700/80">маржа {summary.marginPct}%</span>
+                <span className="text-base font-semibold tabular-nums text-[#111111]">{formatCost(summary.grossProfit)}</span>
+                <span className="block text-xs text-[#666666] tabular-nums">маржа {summary.marginPct}%</span>
+              </div>
+            </div>
+
+            {/* Прямые расходы (привязанные к наряду / сделке) */}
+            {hasFinanceModule && (
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <TrendingDown className="h-4 w-4 text-rose-600" />
+                    <span className="text-sm font-medium text-[#111111]">
+                      Прямые расходы{directExpenseItems.length > 0 ? ` (${directExpenseItems.length})` : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        summary.directExpenses > 0 ? "text-rose-700" : "text-[#666666]",
+                      )}
+                    >
+                      {summary.directExpenses > 0 ? `−${formatCost(summary.directExpenses)}` : formatCost(0)}
+                    </span>
+                    <Guard requiredPermission="finance:write">
+                      <button
+                        type="button"
+                        onClick={() => setIsExpenseModalOpen(true)}
+                        className="inline-flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] font-medium text-[#111111] hover:border-[#cccccc] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                      >
+                        <Plus className="h-3 w-3 text-[#4a38f5]" />
+                        <span>Расход</span>
+                      </button>
+                    </Guard>
+                  </div>
+                </div>
+
+                {directExpenseItems.length > 0 && (
+                  <div className="border-t border-[#f0f0f0] pt-2 space-y-1.5">
+                    {directExpenseItems.map((exp) => (
+                      <div
+                        key={exp.id}
+                        className="flex items-start justify-between gap-2 text-xs"
+                      >
+                        <div className="min-w-0 pl-6">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-medium text-[#111111]">{exp.categoryName}</span>
+                            {exp.scope === "deal" && (
+                              <span className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-1.5 py-0.25 text-[10px] font-medium text-[#4a38f5]">
+                                по сделке
+                              </span>
+                            )}
+                          </div>
+                          {(exp.counterpartyName || exp.description) && (
+                            <span className="block truncate text-[11px] text-[#666666]">
+                              {[exp.counterpartyName, exp.description].filter(Boolean).join(" · ")}
+                            </span>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <span className="font-semibold tabular-nums text-rose-700">
+                            −{formatCost(exp.amount)}
+                          </span>
+                          <span className="block text-[10px] text-[#888888]">
+                            {formatDateRu(exp.occurredAt)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Чистая прибыль (после вычета прямых расходов) */}
+            <div
+              className={cn(
+                "flex items-center justify-between rounded-[8px] border px-4 py-3",
+                summary.netProfit < 0
+                  ? "border-rose-200 bg-rose-50"
+                  : "border-emerald-200 bg-emerald-50",
+              )}
+            >
+              <div className="flex items-center gap-2">
+                {summary.netProfit < 0 ? (
+                  <TrendingDown className="h-4 w-4 text-rose-700" />
+                ) : (
+                  <TrendingUp className="h-4 w-4 text-emerald-700" />
+                )}
+                <span
+                  className={cn(
+                    "text-sm font-semibold",
+                    summary.netProfit < 0 ? "text-rose-700" : "text-emerald-700",
+                  )}
+                >
+                  Чистая прибыль
+                </span>
+              </div>
+              <div className="text-right">
+                <span
+                  className={cn(
+                    "text-lg font-bold tabular-nums",
+                    summary.netProfit < 0 ? "text-rose-700" : "text-emerald-700",
+                  )}
+                >
+                  {formatCost(summary.netProfit)}
+                </span>
+                <span
+                  className={cn(
+                    "block text-xs tabular-nums",
+                    summary.netProfit < 0 ? "text-rose-700/80" : "text-emerald-700/80",
+                  )}
+                >
+                  маржа {summary.netMarginPct}%
+                </span>
               </div>
             </div>
           </div>
@@ -634,15 +780,31 @@ export const FinancialSummary = memo(function FinancialSummary({
                             type="button"
                             onClick={() => void handleSyncToElba(inv)}
                             disabled={syncingElbaId === inv.id}
-                            title="Выгрузить счёт в Контур.Эльбу"
-                            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                            title={
+                              inv.elbaSyncError
+                                ? `Ошибка выгрузки в Контур.Эльбу: ${inv.elbaSyncError}. Нажмите, чтобы повторить`
+                                : "Выгрузить счёт в Контур.Эльбу"
+                            }
+                            className={cn(
+                              "flex h-8 items-center gap-1 rounded-[8px] border px-2 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap",
+                              inv.elbaSyncError
+                                ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                : "border-[#e5e5e5] bg-white text-[#111111] hover:bg-[#f5f5f5]",
+                            )}
                           >
                             {syncingElbaId === inv.id ? (
                               <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
                             ) : (
-                              <CloudUpload className="h-3.5 w-3.5 text-[#4a38f5]" />
+                              <CloudUpload
+                                className={cn(
+                                  "h-3.5 w-3.5",
+                                  inv.elbaSyncError ? "text-rose-600" : "text-[#4a38f5]",
+                                )}
+                              />
                             )}
-                            <span className="hidden sm:inline">В Эльбу</span>
+                            <span className="hidden sm:inline">
+                              {inv.elbaSyncError ? "Повторить Эльбу" : "В Эльбу"}
+                            </span>
                           </button>
                         ) : null}
 
@@ -798,6 +960,22 @@ export const FinancialSummary = memo(function FinancialSummary({
           if (onRefresh) onRefresh();
         }}
       />
+
+      {/* Modal 4: Добавить прямой расход по наряду */}
+      {hasFinanceModule && (
+        <CreateTransactionModal
+          open={isExpenseModalOpen}
+          onClose={() => setIsExpenseModalOpen(false)}
+          onSubmit={handleCreateExpense}
+          defaultType="expense"
+          defaultRepairOrderId={repairOrderId}
+          defaultRepairTicketNumber={ticketNumber || null}
+          defaultDealId={dealId}
+          defaultDealTitle={dealTitle}
+          defaultCounterpartyName={companyName || customerName || ""}
+          defaultCounterpartyInn={companyInn || ""}
+        />
+      )}
     </div>
   );
 });

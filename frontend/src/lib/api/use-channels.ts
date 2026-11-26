@@ -35,10 +35,19 @@ export interface ChannelAccountDTO {
   isEnabled?: boolean;
   /** Признак заполненности авторизации: сами токены сервер не отдаёт. */
   hasCredentials: boolean;
+  /** Провайдер транспорта (например, 'native-ts' | 'max-bridge' для MAX). */
+  provider?: string | null;
   credentials?: Record<string, unknown>;
   /** Числовой id аккаунта на стороне канала; у Telegram — id пользователя. */
   remoteUserId: string | null;
   lastSyncAt: string | null;
+  historySyncStatus?: "idle" | "queued" | "syncing" | "completed" | "error";
+  historySyncTotal?: number;
+  historySyncProcessed?: number;
+  historySyncMessages?: number;
+  historySyncError?: string | null;
+  historySyncStartedAt?: string | null;
+  historySyncFinishedAt?: string | null;
   connectedAt: string | null;
   createdAt: string;
   boundAgentId?: string | null;
@@ -103,6 +112,29 @@ export function useChannelAccounts(
               trialActive: false,
             },
       };
+    },
+    refetchInterval: (query) => {
+      const items = query.state.data?.items;
+      const hasActiveSync = items?.some(
+        (acc) => acc.historySyncStatus === "queued" || acc.historySyncStatus === "syncing",
+      );
+      return hasActiveSync ? 3000 : false;
+    },
+  });
+}
+
+export function useSyncChannelHistory(
+  channel: ChannelSlug,
+): UseMutationResult<{ queued: boolean }, ApiClientError, { id: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id }) =>
+      (await apiClient.post<{ queued: boolean }>(`${BASE_PATH}/${channel}/accounts/${id}/sync-history`)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
     },
   });
 }

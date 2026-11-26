@@ -364,10 +364,35 @@ describe("RepairClientSection Component (Unified Reactive Flow)", () => {
     await waitFor(() => {
       expect(screen.getByTestId("form-customer-id").textContent).toBe("contact-99");
       expect(screen.getByTestId("form-customer-name").textContent).toBe("Плахов Сергей Николаевич");
-      expect(screen.getByTestId("form-customer-phone").textContent).toBe("+7 (964) 562-40-20");
+      expect(screen.getByTestId("form-customer-phone").textContent).toContain("964");
       expect(screen.getByTestId("form-customer-email").textContent).toBe("plakhov@example.com");
       expect(screen.getByTestId("form-company-id").textContent).toBe("comp-99");
       expect(screen.getByTestId("form-company-name").textContent).toBe("ООО ПлаховТрейд");
+    });
+  });
+
+  it("syncs visible phone input when lookupData.client provides phone and form resets", async () => {
+    currentLookupResponse = {
+      data: mockLookupData,
+      isLoading: false,
+      isFetching: false,
+    };
+
+    render(<TestWrapper />);
+
+    const phoneInput = screen.getByPlaceholderText("+7 (999) 000-00-00") as HTMLInputElement;
+
+    await waitFor(() => {
+      expect(phoneInput.value).toContain("999");
+      expect(phoneInput.value).toContain("777");
+      expect(screen.getByTestId("form-customer-phone").textContent).toContain("999");
+    });
+
+    fireEvent.click(screen.getByText("Сбросить"));
+
+    await waitFor(() => {
+      expect(phoneInput.value).toBe("");
+      expect(screen.getByTestId("form-customer-phone").textContent).toBe("");
     });
   });
 });

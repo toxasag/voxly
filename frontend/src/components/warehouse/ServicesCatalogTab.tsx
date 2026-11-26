@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Search,
   Plus,
@@ -9,37 +9,74 @@ import {
   Trash2,
   Loader2,
   Clock,
-  Sparkles,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  useServices,
+  useServicesPaginated,
   useDeleteService,
   type ServiceItemDTO,
 } from "@/lib/api/use-services";
+import {
+  WarehousePagination,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
 import { CreateOrEditServiceModal } from "./CreateOrEditServiceModal";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 
 import { formatRub } from "@/lib/utils/format";
 
+type ServiceSortField = "name" | "description" | "price" | "duration_minutes";
+
 export function ServicesCatalogTab() {
+  const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WarehouseLimit>(25);
+  const [sortField, setSortField] = useState<ServiceSortField | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceItemDTO | null>(null);
   const [deletingService, setDeletingService] = useState<ServiceItemDTO | null>(null);
 
-  const { data: services = [], isLoading } = useServices(searchQuery);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const next = searchInput.trim();
+      setSearchQuery((prev) => {
+        if (prev !== next) setPage(1);
+        return next;
+      });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const { data, isLoading } = useServicesPaginated({
+    search: searchQuery || undefined,
+    page,
+    limit,
+    sortBy: sortField ?? undefined,
+    sortDir: sortField ? sortDir : undefined,
+  });
+  const services = data?.items ?? [];
+  const meta = data?.meta ?? { total: 0, page, limit, pages: 0 };
   const deleteMutation = useDeleteService();
 
-  const filteredServices = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return services;
-    return services.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        (s.description && s.description.toLowerCase().includes(q)),
-    );
-  }, [services, searchQuery]);
+  const filteredServices = services;
+
+  const handleSort = (field: ServiceSortField) => {
+    if (sortField !== field) {
+      setSortField(field);
+      setSortDir("asc");
+    } else if (sortDir === "asc") {
+      setSortDir("desc");
+    } else {
+      setSortField(null);
+      setSortDir("asc");
+    }
+    setPage(1);
+  };
 
   const handleEdit = useCallback((service: ServiceItemDTO) => {
     setEditingService(service);
@@ -71,8 +108,8 @@ export function ServicesCatalogTab() {
           <input
             type="text"
             placeholder="Поиск по названию или описанию услуги..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             className="w-full h-8 pl-9 pr-3 rounded-[8px] border border-[#e5e5e5] bg-white text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
         </div>
@@ -80,7 +117,7 @@ export function ServicesCatalogTab() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-[#666666] hidden sm:inline">
             Всего услуг:{" "}
-            <span className="font-mono font-medium text-[#111111]">{services.length}</span>
+            <span className="font-mono font-medium text-[#111111]">{meta.total}</span>
           </span>
           <button
             type="button"
@@ -127,10 +164,58 @@ export function ServicesCatalogTab() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-[11px] font-medium uppercase tracking-wider text-[#666666]">
-                <th className="py-2.5 px-4 font-medium w-1/4">Название</th>
-                <th className="py-2.5 px-4 font-medium w-2/5">Описание</th>
-                <th className="py-2.5 px-4 font-medium text-right">Цена</th>
-                <th className="py-2.5 px-4 font-medium text-center">Длительность / Ед.</th>
+                <th
+                  onClick={() => handleSort("name")}
+                  className="py-2.5 px-4 font-medium w-1/4 cursor-pointer select-none hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    Название
+                    {sortField === "name" ? (
+                      sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5]" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5]" />
+                    ) : (
+                      <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100" />
+                    )}
+                  </span>
+                </th>
+                <th
+                  onClick={() => handleSort("description")}
+                  className="py-2.5 px-4 font-medium w-2/5 cursor-pointer select-none hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    Описание
+                    {sortField === "description" ? (
+                      sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5]" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5]" />
+                    ) : (
+                      <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100" />
+                    )}
+                  </span>
+                </th>
+                <th
+                  onClick={() => handleSort("price")}
+                  className="py-2.5 px-4 font-medium text-right cursor-pointer select-none hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group"
+                >
+                  <span className="inline-flex items-center justify-end gap-1">
+                    Цена
+                    {sortField === "price" ? (
+                      sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5]" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5]" />
+                    ) : (
+                      <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100" />
+                    )}
+                  </span>
+                </th>
+                <th
+                  onClick={() => handleSort("duration_minutes")}
+                  className="py-2.5 px-4 font-medium text-center cursor-pointer select-none hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group"
+                >
+                  <span className="inline-flex items-center justify-center gap-1">
+                    Длительность / Ед.
+                    {sortField === "duration_minutes" ? (
+                      sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-[#4a38f5]" /> : <ArrowDown className="h-3 w-3 text-[#4a38f5]" />
+                    ) : (
+                      <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100" />
+                    )}
+                  </span>
+                </th>
                 <th className="py-2.5 px-4 font-medium text-right w-24">Действия</th>
               </tr>
             </thead>
@@ -199,6 +284,20 @@ export function ServicesCatalogTab() {
           </table>
         )}
       </div>
+
+      <WarehousePagination
+        total={meta.total}
+        page={meta.page}
+        pages={meta.pages}
+        limit={meta.limit}
+        entityLabel="услуг"
+        onPageChange={setPage}
+        onLimitChange={(newLimit) => {
+          setLimit(newLimit as WarehouseLimit);
+          setPage(1);
+        }}
+        disabled={isLoading}
+      />
 
       {/* Modal create / edit */}
       <CreateOrEditServiceModal

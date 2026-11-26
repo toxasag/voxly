@@ -15,6 +15,8 @@ export interface TableBulkBarProps {
   entityNamePlural: string;
   /** Число записей на текущей странице (обычно rows.length) */
   pageItemCount: number;
+  /** Сколько строк снято вручную после нажатия «Выбрать все N» */
+  excludedCount?: number;
   /** Выбрать все записи выборки по фильтрам */
   onSelectAll: () => void;
   /** Снять выделение со всех записей */
@@ -35,6 +37,7 @@ export const TableBulkBar = memo(function TableBulkBar({
   isAllSelected,
   entityNamePlural,
   pageItemCount,
+  excludedCount = 0,
   onSelectAll,
   onClearSelection,
   onDelete,
@@ -42,6 +45,10 @@ export const TableBulkBar = memo(function TableBulkBar({
   deleteLabel = "Удалить",
   children,
 }: TableBulkBarProps) {
+  const effectiveSelectedCount = isAllSelected
+    ? Math.max(0, totalCount - excludedCount)
+    : selectedCount;
+
   // Показываем кнопку «Выбрать все N», когда выбраны все элементы на текущей странице,
   // общее число превышает число на странице, и режим «все» ещё не активирован.
   const canSelectAllAcrossPages =
@@ -57,12 +64,22 @@ export const TableBulkBar = memo(function TableBulkBar({
           <span className="flex items-center gap-1.5 font-medium text-[#111111]">
             <CheckSquare className="h-4 w-4 text-[#4a38f5]" />
             <span>
-              Выбраны все <span className="tabular-nums font-semibold">{totalCount}</span> {entityNamePlural}
+              {excludedCount > 0 ? (
+                <>
+                  Выбрано <span className="tabular-nums font-semibold">{effectiveSelectedCount}</span>{" "}
+                  из <span className="tabular-nums font-semibold">{totalCount}</span> {entityNamePlural}
+                </>
+              ) : (
+                <>
+                  Выбраны все <span className="tabular-nums font-semibold">{totalCount}</span>{" "}
+                  {entityNamePlural}
+                </>
+              )}
             </span>
           </span>
         ) : (
           <span className="font-medium text-[#111111]">
-            Выбрано: <span className="tabular-nums font-semibold">{selectedCount}</span>
+            Выбрано: <span className="tabular-nums font-semibold">{effectiveSelectedCount}</span>
             {canSelectAllAcrossPages && <span className="text-[#666666] font-normal"> на этой странице</span>}
           </span>
         )}
@@ -101,7 +118,7 @@ export const TableBulkBar = memo(function TableBulkBar({
             <Trash2 className="h-3.5 w-3.5" />
             <span>
               {deleteLabel}
-              {isAllSelected && totalCount > 0 ? ` (${totalCount})` : selectedCount > 0 ? ` (${selectedCount})` : ""}
+              {effectiveSelectedCount > 0 ? ` (${effectiveSelectedCount})` : ""}
             </span>
           </button>
         )}
