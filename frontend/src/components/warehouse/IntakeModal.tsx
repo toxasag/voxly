@@ -10,6 +10,7 @@ import {
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
 import { useAccounts } from "@/lib/api/use-invoices";
+import { toLocalDateKey } from "@/lib/utils";
 
 interface IntakeModalProps {
   open: boolean;
@@ -64,7 +65,7 @@ export function IntakeModal({
         setPurchasePrice(initialPrice ? String(initialPrice) : "");
         setRetailPrice("");
       }
-      setBatchNumber(`ПХ-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${Math.floor(100 + Math.random() * 900)}`);
+      setBatchNumber(`ПХ-${toLocalDateKey(new Date()).slice(2).replace(/-/g, "")}-${Math.floor(100 + Math.random() * 900)}`);
       setSupplierName("");
       setRecordFinanceExpense(false);
 

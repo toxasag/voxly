@@ -1,3 +1,7 @@
+- **Fixed Local Datetime Double-Shift Across Finance, Warehouse & Repairs Forms (2026-11-26)**:
+  - `frontend/src/lib/utils.ts`: расширен `toLocalDateTimeInput` для `Date | string` и добавлен `localDateInputToIso` (сохраняет точное текущее время при выборе сегодняшней даты в `input[type="date"]` и локальный полдень для других дат).
+  - `CreateTransactionModal.tsx`, `EditTransactionModal.tsx`, `InvoiceCreateModal.tsx`, `InvoicePaymentModal.tsx`, `TransactionsTable.tsx`, `WarehouseIntakeDialog.tsx`, `IntakeModal.tsx`, `GenerateInvoiceModal.tsx`: убраны все `new Date().toISOString().slice(0, 16|10)`, вызывавшие двойной сдвиг времени на `-3 часа` (UTC вместо локальной таймзоны в `datetime-local`) и ночной сдвиг даты / `03:00` при `type="date"`.
+
 - **Added Paid & Due Summary Cards to Repairs Stats Bar (2026-11-26)**:
   - `backend/src/modules/repairs/` (`repairs.service.ts`, `repairs.routes.ts`): `GET /api/v1/repairs` теперь возвращает в `meta` агрегаты `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount` по всей отфильтрованной выборке с учётом итоговой стоимости наряда (работы + запчасти / `final_cost`, без отказных в «К оплате»).
   - `frontend/src/lib/api/use-repairs.ts`, `frontend/src/app/(dashboard)/repairs/page.tsx`: в строку статистики `/repairs` добавлены карточки «Оплачено» и «К оплате» (сумма в ₽ + количество заказов) в единую 5-колоночную строку `md:grid-cols-5`.

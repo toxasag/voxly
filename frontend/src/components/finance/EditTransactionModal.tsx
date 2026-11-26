@@ -39,7 +39,7 @@ import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { CreateAccountModal } from "./CreateAccountModal";
 import { CounterpartyCombobox } from "./CounterpartyCombobox";
 import { TransactionEntityPickers } from "./TransactionEntityPickers";
-import { cn } from "@/lib/utils";
+import { cn, localDateTimeToIso, toLocalDateTimeInput } from "@/lib/utils";
 
 interface EditTransactionModalProps {
   open: boolean;
@@ -58,20 +58,7 @@ const ACCOUNT_ICONS: Record<AccountType, LucideIcon> = {
 };
 
 function formatIsoForInput(isoString?: string): string {
-  if (!isoString) return new Date().toISOString().slice(0, 16);
-  try {
-    const d = new Date(isoString);
-    if (isNaN(d.getTime())) return new Date().toISOString().slice(0, 16);
-    // YYYY-MM-DDTHH:mm
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    const hours = String(d.getHours()).padStart(2, "0");
-    const mins = String(d.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day}T${hours}:${mins}`;
-  } catch {
-    return new Date().toISOString().slice(0, 16);
-  }
+  return toLocalDateTimeInput(isoString) || toLocalDateTimeInput(new Date());
 }
 
 export function EditTransactionModal({
@@ -170,9 +157,7 @@ export function EditTransactionModal({
           category_name: matchedCat?.name || values.category_name || transaction.category || "Прочее",
           deal_id: values.deal_id ? values.deal_id.trim() : null,
           repair_order_id: values.repair_order_id ? values.repair_order_id.trim() : null,
-          occurred_at: values.occurred_at
-            ? new Date(values.occurred_at).toISOString()
-            : undefined,
+          occurred_at: localDateTimeToIso(values.occurred_at),
         };
         await updateMutation.mutateAsync({ id: transaction.id, payload });
         toast.success("Операция успешно обновлена");

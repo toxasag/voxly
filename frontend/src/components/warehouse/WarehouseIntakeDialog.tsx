@@ -34,7 +34,7 @@ import {
 import { useCompanies, useCreateCompany, type CompanyDTO } from "@/lib/api/use-companies";
 import { useAccounts } from "@/lib/api/use-invoices";
 import { formatRub } from "@/lib/utils/format";
-import { cn, matchesWarehouseItem } from "@/lib/utils";
+import { cn, localDateInputToIso, matchesWarehouseItem, toLocalDateKey } from "@/lib/utils";
 
 export interface WarehouseIntakeDialogProps {
   open: boolean;
@@ -78,7 +78,7 @@ export function WarehouseIntakeDialog({
   const [basis, setBasis] = useState<IntakeDocumentBasis>("direct_purchase");
   const [docNumber, setDocNumber] = useState("");
   const [incomingDocNumber, setIncomingDocNumber] = useState("");
-  const [docDate, setDocDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [docDate, setDocDate] = useState(() => toLocalDateKey(new Date()));
   const [notes, setNotes] = useState("");
 
   // 2. Поставщик / Заказ поставщику
@@ -133,7 +133,7 @@ export function WarehouseIntakeDialog({
 
   // Генерация номера при смене основания
   const generatePrefixNumber = (b: IntakeDocumentBasis) => {
-    const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+    const dateStr = toLocalDateKey(new Date()).slice(2).replace(/-/g, "");
     const rand = Math.floor(100 + Math.random() * 900);
     switch (b) {
       case "initial_balance":
@@ -189,7 +189,7 @@ export function WarehouseIntakeDialog({
       ]);
     }
 
-    setDocDate(new Date().toISOString().slice(0, 10));
+    setDocDate(toLocalDateKey(new Date()));
     setIncomingDocNumber("");
     setNotes("");
     setSupplierInput("");
@@ -462,7 +462,7 @@ export function WarehouseIntakeDialog({
       supplier_name: finalSupplierName,
       supplier_company_id: selectedCompany?.id ?? null,
       incoming_document_number: incomingDocNumber.trim() || undefined,
-      document_date: docDate || undefined,
+      document_date: localDateInputToIso(docDate),
       notes: notes.trim() || undefined,
       items: validItems,
       record_finance_expense: shouldRecordExpense,

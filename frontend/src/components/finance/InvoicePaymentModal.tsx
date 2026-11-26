@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAccounts, useMarkInvoicePaid } from "@/lib/api/use-invoices";
+import { localDateInputToIso, toLocalDateKey } from "@/lib/utils";
 
 interface InvoicePaymentModalProps {
   open: boolean;
@@ -36,19 +37,17 @@ export function InvoicePaymentModal({
   const markPaid = useMarkInvoicePaid();
 
   const [accountId, setAccountId] = useState("");
-  const [occurredAt, setOccurredAt] = useState(() => {
-    const today = new Date();
-    return today.toISOString().slice(0, 10);
-  });
+  const [occurredAt, setOccurredAt] = useState(() => toLocalDateKey(new Date()));
   const [description, setDescription] = useState("");
 
   const invoiceNumber = invoice?.invoice_number ?? invoice?.invoiceNumber ?? "";
 
   useEffect(() => {
-    if (invoice) {
+    if (open && invoice) {
       setDescription(`Оплата счёта №${invoiceNumber}`);
+      setOccurredAt(toLocalDateKey(new Date()));
     }
-  }, [invoice, invoiceNumber]);
+  }, [open, invoice, invoiceNumber]);
 
   useEffect(() => {
     if (accounts.length > 0 && !accountId) {
@@ -74,7 +73,7 @@ export function InvoicePaymentModal({
         id: invoice.id,
         payload: {
           account_id: accountId,
-          occurred_at: occurredAt ? new Date(occurredAt).toISOString() : undefined,
+          occurred_at: localDateInputToIso(occurredAt),
           description: description.trim() || undefined,
         },
       });

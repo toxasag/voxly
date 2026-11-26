@@ -38,7 +38,7 @@ import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { CreateAccountModal } from "./CreateAccountModal";
 import { CounterpartyCombobox } from "./CounterpartyCombobox";
 import { TransactionEntityPickers } from "./TransactionEntityPickers";
-import { cn } from "@/lib/utils";
+import { cn, localDateTimeToIso, toLocalDateTimeInput } from "@/lib/utils";
 
 interface CreateTransactionModalProps {
   open: boolean;
@@ -105,7 +105,7 @@ export function CreateTransactionModal({
       deal_id: "",
       repair_order_id: "",
       invoice_id: "",
-      occurred_at: new Date().toISOString().slice(0, 16),
+      occurred_at: toLocalDateTimeInput(new Date()),
     },
     mode: "onChange",
   });
@@ -154,11 +154,7 @@ export function CreateTransactionModal({
         const isUuid = (val?: string | null): boolean =>
           typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
 
-        let occurredAtIso: string | undefined = undefined;
-        if (values.occurred_at && values.occurred_at.trim()) {
-          const d = new Date(values.occurred_at);
-          occurredAtIso = !isNaN(d.getTime()) ? d.toISOString() : undefined;
-        }
+        const occurredAtIso = localDateTimeToIso(values.occurred_at);
 
         const payload: CreateTransactionPayload = {
           ...values,
@@ -200,7 +196,7 @@ export function CreateTransactionModal({
         deal_id: defaultDealId || "",
         repair_order_id: defaultRepairOrderId || "",
         invoice_id: "",
-        occurred_at: new Date().toISOString().slice(0, 16),
+        occurred_at: toLocalDateTimeInput(new Date()),
       });
       setShowLinks(Boolean(defaultDealId || defaultRepairOrderId));
     }

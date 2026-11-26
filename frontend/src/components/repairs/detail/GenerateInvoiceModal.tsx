@@ -12,7 +12,7 @@ import {
   type VatMode,
 } from "@/lib/api/use-invoices";
 import { TagPill } from "@/components/ui/tag";
-import { cn } from "@/lib/utils";
+import { cn, toLocalDateKey } from "@/lib/utils";
 
 interface GenerateInvoiceModalProps {
   open: boolean;
@@ -75,7 +75,7 @@ export const GenerateInvoiceModal = memo(function GenerateInvoiceModal({
   const [contactPhone, setContactPhone] = useState<string>("");
   const [dueDate, setDueDate] = useState<string>(() => {
     const d = new Date(Date.now() + 3 * 86400 * 1000);
-    return d.toISOString().slice(0, 10);
+    return toLocalDateKey(d);
   });
   const [vatMode, setVatMode] = useState<VatMode>("none");
   const [notes, setNotes] = useState<string>("");
