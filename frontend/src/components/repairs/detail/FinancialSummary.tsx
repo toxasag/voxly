@@ -634,15 +634,31 @@ export const FinancialSummary = memo(function FinancialSummary({
                             type="button"
                             onClick={() => void handleSyncToElba(inv)}
                             disabled={syncingElbaId === inv.id}
-                            title="Выгрузить счёт в Контур.Эльбу"
-                            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                            title={
+                              inv.elbaSyncError
+                                ? `Ошибка выгрузки в Контур.Эльбу: ${inv.elbaSyncError}. Нажмите, чтобы повторить`
+                                : "Выгрузить счёт в Контур.Эльбу"
+                            }
+                            className={cn(
+                              "flex h-8 items-center gap-1 rounded-[8px] border px-2 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap",
+                              inv.elbaSyncError
+                                ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                : "border-[#e5e5e5] bg-white text-[#111111] hover:bg-[#f5f5f5]",
+                            )}
                           >
                             {syncingElbaId === inv.id ? (
                               <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
                             ) : (
-                              <CloudUpload className="h-3.5 w-3.5 text-[#4a38f5]" />
+                              <CloudUpload
+                                className={cn(
+                                  "h-3.5 w-3.5",
+                                  inv.elbaSyncError ? "text-rose-600" : "text-[#4a38f5]",
+                                )}
+                              />
                             )}
-                            <span className="hidden sm:inline">В Эльбу</span>
+                            <span className="hidden sm:inline">
+                              {inv.elbaSyncError ? "Повторить Эльбу" : "В Эльбу"}
+                            </span>
                           </button>
                         ) : null}
 

@@ -1873,3 +1873,17 @@
   3. `frontend/src/components/repairs/RepairsTable.tsx` и `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`: шрифт номера наряда (и суммы в таблице) переведён на `font-sans font-semibold tabular-nums` (Inter 600 с табличными цифрами, без `font-mono`, `font-bold` и `tracking-tight`).
   4. `frontend/src/components/repairs/RepairIntakeModal.test.tsx`, `frontend/src/components/repairs/RepairClientSection.test.tsx`: добавлены регрессионные тесты.
 - **Проверка прода (сделка `d0f4f677-e8ca-4a68-840f-b94446ede1bd`, наряды `d4a06246-...` / `№0032` и `23eddfcd-...` / `№0033`):** `POST /api/v1/repairs/batch` завершился `201`, оба наряда корректно привязаны к сделке и контакту `b6a700c9-...` (Михаил, `+79321283877`, Фирма Михаила), дублей не создалось, сделка перешла в этап «В работе».
+
+## 2026-11-26 — Исправление синхронизации счетов нарядов с Контур.Эльбой (HTTP 400 для счетов без НДС)
+- **Контекст и root cause:**
+  1. У тенанта `remtoua` (ИП Сагайдак, `vat_mode = 'none'`, `vat_rate = 0`) интеграция Контур.Эльбы настроена (`elba_enabled = true`, `elba_auto_sync_invoices = true`), но все созданные счета (`СЧ-2026-0005`, `СЧ-2026-0006`, `СЧ-2026-0007`) отклонялись API Контур.Эльбы с `HTTP 400`.
+  2. По официальной OpenAPI-спецификации Контур.Эльбы (`POST /v1/organizations/{organizationId}/bills`) для счёта без НДС (`withNDS: false`) запрещены два поля, которые передавались нашим кодом:
+     - `sumsWithNDS: true` (было захардкожено в `invoices.service.ts:987`) → ошибка *«В счёте без НДС цена за единицу товара не может включать в себя НДС»*;
+     - `warehouseItems[].ndsRate: "withoutNds"` (передавалось вместо `null`) → ошибка *«Для счёта без НДС поле BillItemToCreate.NDSRate должно принимать значение null»*.
+  3. В `elba.client.ts` парсер ошибок ожидал плоское строковое `error`, тогда как Контур.Эльба возвращает вложенный `ErrorResponse { statusCode, traceId, error: { code, message, target, details, innerError } }`, из-за чего в БД попадало только `HTTP 400`.
+  4. В `invoices.service.ts` автосинхронизация при создании счёта запускалась через `void this.syncToElba(...)` без ожидания результата, поэтому UI не получал ни `elbaBillId`, ни `elbaSyncError`.
+- **Что изменено:**
+  1. `backend/src/modules/finance/elba.client.ts`: добавлены `buildCreateBillPayload` (при `withNDS=false` ставит `sumsWithNDS: null` и `warehouseItems[].ndsRate: null`, обрезает поля по лимитам Swagger) и `extractElbaErrorMessage` (рекурсивный разбор `ErrorResponse.error` / `details` / `innerError`); увеличено число попыток опроса `long-running-tasks` при поиске контрагента (до 8x500ms).
+  2. `backend/src/modules/finance/invoices.service.ts`: в `syncToElba` передаётся `withNDS = inv.vatMode !== "none" && inv.vatRate > 0`, `sumsWithNDS: withNDS ? true : null`, `ndsRate: withNDS ? mapVatModeToElbaNds(...) : null`; в `create` и `fromRepairs` автосинхронизация ожидается (с мягким `catch`, не роняющим создание счёта) для возврата актуального `elbaBillId` / `elbaSyncError`.
+  3. `frontend/src/components/repairs/detail/GenerateInvoiceModal.tsx` и `FinancialSummary.tsx`: добавлен показ реального статуса/ошибки синхронизации с Эльбой в toast и подсветка кнопки «Повторить Эльбу» при наличии `elbaSyncError`.
+  4. `backend/src/tests/elba-client.test.ts`: добавлены unit-тесты на формирование payload и разбор ошибок Эльбы.

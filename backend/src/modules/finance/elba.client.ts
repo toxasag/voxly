@@ -54,18 +54,53 @@ export interface ElbaBillItemInput {
   unitName: string;
   quantity: number;
   price: number;
-  ndsRate: ElbaNdsRate;
+  ndsRate?: ElbaNdsRate | null;
 }
 
 export interface ElbaCreateBillInput {
   number?: string;
   date: string; // YYYY-MM-DD
   withNDS: boolean;
-  sumsWithNDS: boolean;
+  sumsWithNDS?: boolean | null;
   comment?: string;
   bankAccountId?: string;
   contractorId?: string;
   warehouseItems: ElbaBillItemInput[];
+}
+
+export function buildCreateBillPayload(input: ElbaCreateBillInput): Record<string, unknown> {
+  const withNDS = Boolean(input.withNDS);
+  const body: Record<string, unknown> = {
+    date: input.date,
+    withNDS,
+    warehouseItems: input.warehouseItems.map((item) => ({
+      productName: item.productName.trim().slice(0, 2000) || "Позиция",
+      unitName: item.unitName.trim().slice(0, 1000) || "шт.",
+      quantity: item.quantity,
+      price: item.price,
+      // По OpenAPI Контур.Эльбы для счёта без НДС (withNDS=false) поле ndsRate обязано быть null
+      ndsRate: withNDS ? (item.ndsRate ?? "withoutNds") : null,
+    })),
+  };
+  // По OpenAPI Контур.Эльбы в счёте без НДС цена не может включать НДС (sumsWithNDS=true даёт HTTP 400)
+  if (withNDS) {
+    body.sumsWithNDS = input.sumsWithNDS ?? true;
+  } else {
+    body.sumsWithNDS = null;
+  }
+  if (input.number && input.number.trim()) {
+    body.number = input.number.trim().slice(0, 30);
+  }
+  if (input.comment && input.comment.trim()) {
+    body.comment = input.comment.trim().slice(0, 10000);
+  }
+  if (input.bankAccountId && input.bankAccountId.trim()) {
+    body.bankAccountId = input.bankAccountId.trim();
+  }
+  if (input.contractorId && input.contractorId.trim()) {
+    body.contractorId = input.contractorId.trim();
+  }
+  return body;
 }
 
 export function mapVatModeToElbaNds(vatMode: VatMode, vatRate: number): ElbaNdsRate {
@@ -83,6 +118,46 @@ function asRecord(v: unknown): Record<string, unknown> {
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+function collectNestedElbaErrors(node: unknown, out: string[], depth = 0): void {
+  if (depth > 4 || node === null || typeof node !== "object") return;
+  const rec = asRecord(node);
+  const msg = asString(rec.message).trim();
+  const target = asString(rec.target).trim();
+  if (msg) {
+    out.push(target ? `${target}: ${msg}` : msg);
+  }
+  if (Array.isArray(rec.details)) {
+    for (const item of rec.details) {
+      collectNestedElbaErrors(item, out, depth + 1);
+    }
+  }
+  if (rec.innerError && typeof rec.innerError === "object") {
+    collectNestedElbaErrors(rec.innerError, out, depth + 1);
+  }
+}
+
+export function extractElbaErrorMessage(parsed: unknown, status: number): string {
+  const errObj = asRecord(parsed);
+  const collected: string[] = [];
+
+  if (errObj.error && typeof errObj.error === "object") {
+    collectNestedElbaErrors(errObj.error, collected);
+  }
+
+  const unique = Array.from(new Set(collected.filter(Boolean)));
+  if (unique.length > 0) {
+    return unique.join("; ");
+  }
+
+  const flat =
+    asString(errObj.message).trim() ||
+    asString(errObj.title).trim() ||
+    asString(errObj.error).trim() ||
+    asString(errObj.raw).trim().slice(0, 300);
+
+  return flat || `HTTP ${status}`;
 }
 
 async function elbaFetch<T>(
@@ -117,12 +192,7 @@ async function elbaFetch<T>(
     }
 
     if (!res.ok) {
-      const errObj = asRecord(parsed);
-      const errMsg =
-        asString(errObj.message) ||
-        asString(errObj.title) ||
-        asString(errObj.error) ||
-        `HTTP ${res.status}`;
+      const errMsg = extractElbaErrorMessage(parsed, res.status);
       if (res.status === 401 || res.status === 403) {
         throw new AppError(
           400,
@@ -244,11 +314,11 @@ export class ElbaClient {
         if (id) return id;
       }
 
-      // Async long-running task response (poll up to 4 times)
+      // Async long-running task response (poll up to 8 times)
       const taskId = asString(rec.taskId) || asString(rec.id);
       if (taskId) {
-        for (let attempt = 0; attempt < 4; attempt += 1) {
-          await new Promise((r) => setTimeout(r, 400));
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          await new Promise((r) => setTimeout(r, 500));
           const taskState = asRecord(
             await elbaFetch<unknown>(
               apiKey,
@@ -274,15 +344,16 @@ export class ElbaClient {
     }
 
     // 2. Create contractor
+    const safeName = trimmedName.slice(0, 400);
     const createPayload: Record<string, unknown> = {
-      name: trimmedName,
-      shortName: trimmedName,
+      name: safeName,
+      shortName: safeName,
     };
     if (inn.length === 10 || inn.length === 12) {
       createPayload.inn = inn;
     }
     if (params.address && params.address.trim()) {
-      createPayload.address = params.address.trim();
+      createPayload.address = params.address.trim().slice(0, 2000);
     }
 
     const created = asRecord(
@@ -301,24 +372,7 @@ export class ElbaClient {
     organizationId: string,
     input: ElbaCreateBillInput,
   ): Promise<{ id: string }> {
-    const body: Record<string, unknown> = {
-      date: input.date,
-      withNDS: input.withNDS,
-      sumsWithNDS: input.sumsWithNDS,
-      warehouseItems: input.warehouseItems,
-    };
-    if (input.number && input.number.trim()) {
-      body.number = input.number.trim().slice(0, 30);
-    }
-    if (input.comment && input.comment.trim()) {
-      body.comment = input.comment.trim().slice(0, 10000);
-    }
-    if (input.bankAccountId && input.bankAccountId.trim()) {
-      body.bankAccountId = input.bankAccountId.trim();
-    }
-    if (input.contractorId && input.contractorId.trim()) {
-      body.contractorId = input.contractorId.trim();
-    }
+    const body = buildCreateBillPayload(input);
 
     const res = asRecord(
       await elbaFetch<unknown>(
