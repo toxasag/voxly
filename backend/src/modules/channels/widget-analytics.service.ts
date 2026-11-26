@@ -93,6 +93,24 @@ export class WidgetAnalyticsService {
 
     try {
       const res = await runWithTenantContext(account.tenant_id, async () => {
+        // Если пришло событие глубже по воронке (WIDGET_OPEN, CHAT_START, LEAD_CAPTURED),
+        // но событие VISIT для данной сессии ещё не зафиксировано — гарантируем наличие VISIT
+        if (eventType !== "VISIT") {
+          await query(
+            `INSERT INTO widget_analytics_events
+               (tenant_id, widget_id, session_id, visitor_id, event_type, metadata, created_at)
+             VALUES ($1, $2, $3, $4, 'VISIT', $5::jsonb, now())
+             ON CONFLICT (widget_id, session_id, event_type) DO NOTHING`,
+            [
+              account.tenant_id,
+              account.id,
+              sessionId.trim(),
+              visitorId.trim(),
+              JSON.stringify(metadata),
+            ],
+          );
+        }
+
         return queryOne<{ id: string }>(
           `INSERT INTO widget_analytics_events
              (tenant_id, widget_id, session_id, visitor_id, event_type, metadata, created_at)
@@ -349,9 +367,24 @@ export class WidgetAnalyticsService {
        )
        SELECT
          to_char(dt.day, 'YYYY-MM-DD') AS date,
-         COALESCE(e.visitors, 0)::int AS visitors,
-         COALESCE(e.opens, 0)::int AS opens,
-         COALESCE(e.chats, 0)::int AS chats,
+         GREATEST(
+           COALESCE(e.visitors, 0),
+           COALESCE(e.opens, 0),
+           COALESCE(e.chats, 0),
+           COALESCE(e.leads, 0),
+           COALESCE(dl.crm_leads, 0)
+         )::int AS visitors,
+         GREATEST(
+           COALESCE(e.opens, 0),
+           COALESCE(e.chats, 0),
+           COALESCE(e.leads, 0),
+           COALESCE(dl.crm_leads, 0)
+         )::int AS opens,
+         GREATEST(
+           COALESCE(e.chats, 0),
+           COALESCE(e.leads, 0),
+           COALESCE(dl.crm_leads, 0)
+         )::int AS chats,
          GREATEST(COALESCE(e.leads, 0), COALESCE(dl.crm_leads, 0))::int AS leads,
          COALESCE(w.won, 0)::int AS won,
          COALESCE(w.revenue, 0)::numeric AS revenue
@@ -363,15 +396,23 @@ export class WidgetAnalyticsService {
       [tenantId, widgetId, effectiveSeriesStart.toISOString(), endDate.toISOString()],
     );
 
-    const daily: WidgetDailyDynamicDTO[] = dailyRows.map((r) => ({
-      date: r.date,
-      visitors: Number(r.visitors),
-      opens: Number(r.opens),
-      chats: Number(r.chats),
-      leads: Number(r.leads),
-      won: Number(r.won),
-      revenue: Number(r.revenue),
-    }));
+    const daily: WidgetDailyDynamicDTO[] = dailyRows.map((r) => {
+      const won = Number(r.won);
+      const leads = Number(r.leads);
+      const chats = Math.max(Number(r.chats), leads);
+      const opens = Math.max(Number(r.opens), chats);
+      const visitors = Math.max(Number(r.visitors), opens);
+
+      return {
+        date: r.date,
+        visitors,
+        opens,
+        chats,
+        leads,
+        won,
+        revenue: Number(r.revenue),
+      };
+    });
 
     return {
       widgetId,

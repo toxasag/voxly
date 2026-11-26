@@ -1998,3 +1998,32 @@
   3. **Backend-триггеры прочтения:** подключены в `chat-stream.routes.ts` (`POST /crm/chat/read`), `deals.routes.ts` (`POST /:id/messages`), `contacts.routes.ts` (`POST /:id/messages`) и `tasks.routes.ts` (`PATCH /:id`).
   4. **Frontend (`use-inapp-notifications.ts`, `NotificationDropdown.tsx`, `use-crm-chat.ts`, `CrmChatView.tsx`, `DealDrawer.tsx`, `crm/deals/[id]/page.tsx`):** прочитанные уведомления сразу убираются из кеша и списка (в том числе по SSE `event: read` и при клике на toast «Открыть»); добавлен лёгкий хук `useMarkEntityNotificationsRead` для синхронизации при открытии чата/сделки и клике по уведомлению.
   5. **Тесты:** добавлен `frontend/src/components/layout/NotificationDropdown.test.tsx`.
+
+## 2026-11-26 — Сквозная аналитика: исправление нулевых посетителей в воронке виджета и офлайн-конверсий Google Ads
+- **Контекст и root cause:**
+  1. **Статистика посетителей сайта (воронка онлайн-чата):**
+     - В `getWidgetFunnelStats` (`widget-analytics.service.ts`) верхние карточки воронки применяли монотонное сглаживание (`rawVisitors >= rawOpens >= rawChats >= rawLeads`), тогда как разбивка по дням (`dailyRows`) брала `e.visitors` напрямую из `widget_analytics_events`. Для дней, когда диалоги/лиды создавались в CRM/чате, а отдельное событие `VISIT` не успело записаться или было отфильтровано, таблица динамики показывала `Посетители: 0` и `Запуски: 0` при наличии заявок, что визуально противоречило верхним карточкам.
+     - В `widget.js` событие `VISIT` отправлялось только через `navigator.sendBeacon`, который часто молча блокируется или прерывается блокировщиками рекламы; кроме того, при старте чата без предварительного вызова `VISIT` событие первого этапа не фиксировалось в БД.
+  2. **Офлайн-конверсии в Google Ads (0,00 в кабинете рекламы):**
+     - `GoogleAdsConversionProvider` выполнял браузерный GET-запрос 1x1 пикселя на `https://www.googleadservices.com/pagead/conversion/...`, который не является серверным API и игнорируется Google Ads для офлайн-атрибуции. Сервер возвращал 200/302, провайдер фиксировал `[200] Status: 200`, а в Google Ads отображалось `0,00` конверсий.
+     - В форме настроек интеграции не были предусмотрены поля для передачи через Google Ads API (Developer Token, OAuth) либо через связанный поток Google Analytics 4 (Measurement Protocol) с GCLID/GBRAID/WBRAID.
+- **Что изменено:**
+  1. **Backend (`widget-analytics.service.ts`, `widgets.routes.ts`):**
+     - В `getWidgetFunnelStats` в SQL-запросе `dailyRows` и маппинге добавлено строгое монотонное сглаживание: `visitors >= opens >= chats >= leads`, что гарантирует полное соответствие ежедневной таблицы верхним KPI-карточкам.
+     - В `trackPublicEvent` при фиксации любого события воронки (`CHAT_START`, `WIDGET_OPEN`, `LEAD_CAPTURED`) автоматически гарантируется регистрация базового события `VISIT` для сессии, если оно отсутствовало.
+     - Выполнен SQL-бэкфилл 231 исторического события `VISIT` для существующих сессий с чатами/лидами.
+  2. **Google Ads Provider (`google-ads-conversion.provider.ts`, `conversion-dispatcher.service.ts`, `analytics.types.ts`):**
+     - Полный рефакторинг провайдера с поддержкой:
+       1) Прямой загрузки в Google Ads API v17 (`uploadClickConversions`) с форматированием даты `yyyy-mm-dd hh:mm:ss+00:00`, передачей `gclid`, `gbraid`, `wbraid`, Enhanced Conversions (хэшированные SHA-256 email и телефон) и проверкой `partialFailureError`.
+       2) Моста через Google Analytics 4 (Measurement Protocol) с передачей `gclid` (рекомендуемый способ импорта конверсий в Google Ads).
+       3) Автоматического обнаружения связанного активного потока GA4 в рамках тенанта, если в карточке Google Ads не заданы собственные API-ключи.
+       4) Честного возврата ошибки `400` / `422` с понятными диагностическими инструкциями вместо ложного статуса `200`.
+     - Скорректированы 12 ложных записей `Status: 200` в `conversion_delivery_attempts` на реальный диагностический статус.
+  3. **Виджет (`frontend/public/widget.js`, `backend/src/modules/channels/widget-script.ts`):**
+     - Надежная отправка событий через `fetch` с `keepalive: true` и `cors` в приоритете перед `sendBeacon`.
+     - Захват и передача меток `gbraid` и `wbraid` наряду с `gclid` при создании лидов и посещениях.
+     - Синхронизирован `WIDGET_SCRIPT` в backend.
+  4. **Frontend (`ServerConversionIntegrationsView.tsx`):**
+     - В шторке настройки Google Ads добавлены подсказки и поля для ввода параметров потока GA4 (`Measurement ID`, `API Secret`) или `Developer Token`.
+     - Обновлены бейджи и описания в каталоге провайдеров.
+  5. **Тесты:** добавлен `backend/src/tests/google-ads-conversion-provider.test.ts`.

@@ -107,6 +107,22 @@ function extractAttribution(
     ((sourceMetadata.form_data as Record<string, unknown> | undefined)?.gclid as string) ||
     null;
 
+  const gbraid =
+    (dealCustomFields.gbraid as string) ||
+    (metaClickIds.gbraid as string) ||
+    (contactCustomFields.gbraid as string) ||
+    (sourceMetadata.gbraid as string) ||
+    ((sourceMetadata.form_data as Record<string, unknown> | undefined)?.gbraid as string) ||
+    null;
+
+  const wbraid =
+    (dealCustomFields.wbraid as string) ||
+    (metaClickIds.wbraid as string) ||
+    (contactCustomFields.wbraid as string) ||
+    (sourceMetadata.wbraid as string) ||
+    ((sourceMetadata.form_data as Record<string, unknown> | undefined)?.wbraid as string) ||
+    null;
+
   const clientId =
     (dealCustomFields.client_id as string) ||
     (dealCustomFields.ga_client_id as string) ||
@@ -150,7 +166,7 @@ function extractAttribution(
     (sourceMetadata.page_url as string) ||
     null;
 
-  return { ymUid, yclid, gclid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl };
+  return { ymUid, yclid, gclid, gbraid, wbraid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl };
 }
 
 export class ConversionDispatcherService {
@@ -377,7 +393,7 @@ export class ConversionDispatcherService {
       const sourceMetadata =
         deal.source_metadata && typeof deal.source_metadata === "object" ? deal.source_metadata : {};
 
-      const { ymUid, yclid, gclid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl } =
+      const { ymUid, yclid, gclid, gbraid, wbraid, clientId, yandexuid, gaId, fbId, tmrLvid, sourceUrl } =
         extractAttribution(dealCustomFields, contactCustomFields, sourceMetadata);
 
       let eventName = overrideEventName;
@@ -410,6 +426,8 @@ export class ConversionDispatcherService {
         ymUid,
         yclid,
         gclid,
+        gbraid,
+        wbraid,
         yandexuid,
         gaId,
         fbId,
@@ -636,6 +654,26 @@ export class ConversionDispatcherService {
         }
         if (typeof decryptedConfig.accessToken === "string") {
           decryptedConfig.accessToken = safeDecrypt(decryptedConfig.accessToken);
+        }
+        if (typeof decryptedConfig.developerToken === "string") {
+          decryptedConfig.developerToken = safeDecrypt(decryptedConfig.developerToken);
+        }
+        if (typeof decryptedConfig.refreshToken === "string") {
+          decryptedConfig.refreshToken = safeDecrypt(decryptedConfig.refreshToken);
+        }
+
+        // Если Google Ads не имеет собственных API-ключей, проверяем наличие активного потока GA4 для моста
+        if (canonical === "google_ads" && !decryptedConfig.ga4MeasurementId && !decryptedConfig.developerToken) {
+          const linkedGa4 = integrations.find(
+            (i) => normalizeAnalyticsProvider(i.provider) === "ga4" && i.is_active,
+          );
+          if (linkedGa4) {
+            const ga4Config = (linkedGa4.config as Record<string, unknown>) || {};
+            decryptedConfig.ga4MeasurementId = linkedGa4.counter_id || ga4Config.measurementId;
+            if (typeof ga4Config.apiSecret === "string") {
+              decryptedConfig.ga4ApiSecret = safeDecrypt(ga4Config.apiSecret);
+            }
+          }
         }
 
         const eventPayloadWithMappedName: ConversionEventPayload = {

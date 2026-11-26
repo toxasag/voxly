@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   Globe,
+  Info,
   KeyRound,
   Loader2,
   Megaphone,
@@ -81,12 +82,12 @@ const PROVIDERS_CATALOG: ProviderMeta[] = [
   {
     provider: "google_ads",
     name: "Google Ads",
-    badge: "Offline Conversion Import",
-    description: "Передача ценности выигранных сделок и квалифицированных лидов по GCLID в Google Рекламу.",
-    counterLabel: "Customer ID / Conversion ID",
+    badge: "API & GA4 MP",
+    description: "Серверная передача офлайн-конверсий по GCLID/GBRAID/WBRAID через связанный поток GA4 или напрямую через Google Ads API v17.",
+    counterLabel: "Customer ID (CID)",
     counterPlaceholder: "123-456-7890",
-    tokenLabel: "Conversion Action Label",
-    tokenPlaceholder: "AbC_123456789",
+    tokenLabel: "Conversion Action ID / Label",
+    tokenPlaceholder: "123456789 или dOAeCP6H_b0dEJ3mu4pF",
     tokenKey: "conversionLabel",
   },
   {
@@ -196,6 +197,9 @@ export function ServerConversionIntegrationsView() {
   const [sheetSiteUrl, setSheetSiteUrl] = useState("");
   const [sheetCounterId, setSheetCounterId] = useState("");
   const [sheetToken, setSheetToken] = useState("");
+  const [sheetDeveloperToken, setSheetDeveloperToken] = useState("");
+  const [sheetGa4MeasurementId, setSheetGa4MeasurementId] = useState("");
+  const [sheetGa4ApiSecret, setSheetGa4ApiSecret] = useState("");
   const [sheetTestEventCode, setSheetTestEventCode] = useState("");
   const [sheetIsActive, setSheetIsActive] = useState(true);
   const [sheetEventRules, setSheetEventRules] = useState({
@@ -258,6 +262,9 @@ export function ServerConversionIntegrationsView() {
     setSheetSiteUrl("");
     setSheetCounterId("");
     setSheetToken("");
+    setSheetDeveloperToken("");
+    setSheetGa4MeasurementId("");
+    setSheetGa4ApiSecret("");
     setSheetTestEventCode("");
     setSheetIsActive(true);
     setSheetEventRules({
@@ -280,6 +287,9 @@ export function ServerConversionIntegrationsView() {
     const meta = PROVIDERS_CATALOG.find((p) => p.provider === canonical);
     const tokenVal = meta ? (cfg[meta.tokenKey] as string) || "" : "";
     setSheetToken(tokenVal);
+    setSheetDeveloperToken((cfg.developerToken as string) || "");
+    setSheetGa4MeasurementId((cfg.ga4MeasurementId as string) || "");
+    setSheetGa4ApiSecret((cfg.ga4ApiSecret as string) || "");
     setSheetTestEventCode((cfg.testEventCode as string) || "");
 
     setSheetIsActive(item.isActive);
@@ -314,7 +324,19 @@ export function ServerConversionIntegrationsView() {
       credentials.apiSecret = sheetToken.trim();
     } else if (sheetProvider === "google_ads") {
       credentials.conversionId = sheetCounterId.trim();
+      credentials.customerId = sheetCounterId.trim();
       credentials.conversionLabel = sheetToken.trim();
+      credentials.conversionActionId = sheetToken.trim();
+      credentials.accessToken = sheetToken.trim();
+      if (sheetDeveloperToken.trim()) {
+        credentials.developerToken = sheetDeveloperToken.trim();
+      }
+      if (sheetGa4MeasurementId.trim()) {
+        credentials.ga4MeasurementId = sheetGa4MeasurementId.trim();
+      }
+      if (sheetGa4ApiSecret.trim()) {
+        credentials.ga4ApiSecret = sheetGa4ApiSecret.trim();
+      }
     } else if (sheetProvider === "meta") {
       credentials.pixelId = sheetCounterId.trim();
       credentials.accessToken = sheetToken.trim();
@@ -1029,6 +1051,64 @@ export function ServerConversionIntegrationsView() {
                       placeholder="Например: TEST12345"
                       className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-hidden focus:ring-1 focus:ring-[#4a38f5]/20"
                     />
+                  </div>
+                )}
+
+                {sheetProvider === "google_ads" && (
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] p-3.5 space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[#111111]">
+                      <Info className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      <span>Способы доставки офлайн-конверсий в Google Ads</span>
+                    </div>
+
+                    <div className="rounded-[6px] border border-indigo-100 bg-indigo-50/40 p-2.5 text-[11px] text-[#444444] leading-relaxed space-y-1">
+                      <p className="font-semibold text-[#111111]">
+                        1. Через связанный поток GA4 (рекомендуется):
+                      </p>
+                      <p className="text-[10.5px] text-[#666666]">
+                        Укажите Measurement ID и API Secret потока GA4, связанного с вашим Google Ads. Все конверсии по GCLID будут передаваться в GA4 и автоматически импортироваться в Google Рекламу без получения Developer Token.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-medium text-[#666666]">
+                          GA4 Measurement ID (опционально)
+                        </label>
+                        <input
+                          type="text"
+                          value={sheetGa4MeasurementId}
+                          onChange={(e) => setSheetGa4MeasurementId(e.target.value)}
+                          placeholder="G-6TJPQLGLF5"
+                          className="h-7 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-hidden"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-medium text-[#666666]">
+                          GA4 API Secret (опционально)
+                        </label>
+                        <input
+                          type="password"
+                          value={sheetGa4ApiSecret}
+                          onChange={(e) => setSheetGa4ApiSecret(e.target.value)}
+                          placeholder="Секрет потока GA4"
+                          className="h-7 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-hidden"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="border-t border-[#f0f0f0] pt-2 space-y-1">
+                      <label className="text-[10px] font-medium text-[#666666]">
+                        2. Или Google Ads Developer Token (для прямого API):
+                      </label>
+                      <input
+                        type="password"
+                        value={sheetDeveloperToken}
+                        onChange={(e) => setSheetDeveloperToken(e.target.value)}
+                        placeholder="Developer Token из MCC (если есть прямой доступ к Google Ads API)"
+                        className="h-7 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-hidden"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
