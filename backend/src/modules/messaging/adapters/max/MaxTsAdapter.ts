@@ -226,7 +226,16 @@ export class MaxTsAdapter implements IMessagingAdapter {
   private readonly eventSubscribers = new Set<(event: IncomingEvent) => void>();
   private readonly contactCache = new Map<
     string,
-    { firstName?: string; lastName?: string; senderName: string; phone?: string; username?: string; isBot?: boolean; expiresAt: number }
+    {
+      firstName?: string;
+      lastName?: string;
+      senderName: string;
+      phone?: string;
+      username?: string;
+      link?: string;
+      isBot?: boolean;
+      expiresAt: number;
+    }
   >();
   private readonly dedupInbound = new Map<string, number>();
 
@@ -355,7 +364,7 @@ export class MaxTsAdapter implements IMessagingAdapter {
                  'encrypted_session', $8::text,
                  'encrypted_token', $9::text,
                  'session_backed_up_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-               )
+               ) || CASE WHEN $10::text <> '' THEN jsonb_build_object('phone', $10::text) ELSE '{}'::jsonb END
              END,
              credentials_encrypted = CASE WHEN $6::boolean THEN false ELSE true END
          WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
@@ -369,6 +378,7 @@ export class MaxTsAdapter implements IMessagingAdapter {
           session.deviceId,
           encryptedSession,
           encryptedToken,
+          session.selfPhone ?? "",
         ],
       );
     }).catch(() => {});
@@ -928,9 +938,9 @@ export class MaxTsAdapter implements IMessagingAdapter {
     const senderId = asStrId(rawMsg.sender ?? rawMsg.senderId ?? rawMsg.from);
     const isOut = Boolean(rawMsg.out) || Boolean(session.selfUserId && senderId === session.selfUserId);
 
-    // Для исходящих сообщений определяем peerUserId из chat.participants или XOR
+    // Для входящих и исходящих сообщений при необходимости довычисляем peerUserId из chat.participants или XOR
     let peerUserId = senderId;
-    if (isOut && session.selfUserId) {
+    if ((isOut || !peerUserId) && session.selfUserId) {
       if (chatObj?.participants) {
         const other = Object.keys(chatObj.participants).find((k) => k !== session.selfUserId && k !== "0");
         if (other) peerUserId = other;
@@ -975,6 +985,8 @@ export class MaxTsAdapter implements IMessagingAdapter {
           ...payload,
           peerUserId,
           selfPhone: session.selfPhone,
+          senderFirstName: profile?.firstName,
+          senderLastName: profile?.lastName,
         },
       },
     };
@@ -989,24 +1001,40 @@ export class MaxTsAdapter implements IMessagingAdapter {
   private async lookupContactInfo(
     session: ActiveSession,
     userId: string,
-  ): Promise<{ senderName: string; phone?: string; username?: string; isBot?: boolean } | null> {
+    forceRefresh = false,
+  ): Promise<{
+    firstName?: string;
+    lastName?: string;
+    senderName: string;
+    phone?: string;
+    username?: string;
+    link?: string;
+    isBot?: boolean;
+  } | null> {
     if (!userId || !/^\d+$/.test(userId)) return null;
-    const cached = this.contactCache.get(userId);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached;
+    if (!forceRefresh) {
+      const cached = this.contactCache.get(userId);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached;
+      }
     }
 
-    let rawContact = session.contacts.get(userId);
-    if (!rawContact) {
+    let rawContact = forceRefresh ? undefined : session.contacts.get(userId);
+    const missingPhone =
+      !rawContact ||
+      (rawContact.phone === undefined && (!rawContact.phones || rawContact.phones.length === 0));
+    if (!rawContact || missingPhone) {
       try {
         const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO, {
           contactIds: [toMaxIdValue(userId)],
         });
         const list = Array.isArray(res.contacts) ? (res.contacts as RawMaxContact[]) : [];
-        rawContact = list[0];
-        if (rawContact) session.contacts.set(userId, rawContact);
+        if (list[0]) {
+          rawContact = rawContact ? { ...rawContact, ...list[0] } : list[0];
+          session.contacts.set(userId, rawContact);
+        }
       } catch {
-        return null;
+        if (!rawContact) return null;
       }
     }
 
@@ -1028,9 +1056,12 @@ export class MaxTsAdapter implements IMessagingAdapter {
       );
 
     const result = {
+      firstName: identity.firstName,
+      lastName: identity.lastName,
       senderName: identity.senderName,
       phone: identity.phone,
       username: rawContact.username,
+      link: rawContact.link,
       isBot,
       expiresAt: Date.now() + 10 * 60_000,
     };
@@ -1413,8 +1444,10 @@ export class MaxTsAdapter implements IMessagingAdapter {
           chatId,
           userId: peerUserId,
           username: profile?.username ?? null,
-          firstName: profile?.senderName ?? null,
+          firstName: profile?.firstName ?? (profile?.senderName && profile.senderName !== "Клиент MAX" ? profile.senderName : null),
+          lastName: profile?.lastName ?? null,
           phone: profile?.phone ?? null,
+          link: profile?.link ?? null,
           messages: msgs,
         });
       }
@@ -1547,6 +1580,72 @@ export class MaxTsAdapter implements IMessagingAdapter {
       if (err instanceof MaxProtocolError && err.code.includes("not.found")) {
         return { exists: false };
       }
+      return {
+        exists: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async lookupProfileByUserId(
+    tenantId: string,
+    channelAccountId: string,
+    userId?: string | null,
+    chatId?: string | null,
+  ): Promise<{
+    exists: boolean;
+    userId?: string;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    link?: string;
+    isBot?: boolean;
+    error?: string;
+  }> {
+    try {
+      const session = await this.getOrCreateSession(tenantId, channelAccountId);
+      let targetUserId = (userId ?? "").trim();
+      const cleanChatId = (chatId ?? "").trim();
+      if (!targetUserId && cleanChatId) {
+        let chat = session.chats.get(cleanChatId);
+        if (!chat) {
+          const chatInfoRes = await this.sendRpc(session, MaxOpcode.CHAT_INFO, {
+            chatIds: [toMaxIdValue(cleanChatId)],
+          }).catch(() => null);
+          const list = Array.isArray(chatInfoRes?.chats) ? (chatInfoRes?.chats as RawMaxChat[]) : [];
+          if (list[0]) {
+            chat = list[0];
+            session.chats.set(cleanChatId, chat);
+          }
+        }
+        if (chat?.participants) {
+          targetUserId = Object.keys(chat.participants).find((k) => k !== session.selfUserId && k !== "0") ?? "";
+        }
+        if (!targetUserId && chat && session.selfUserId && /^\d+$/.test(cleanChatId) && /^\d+$/.test(session.selfUserId)) {
+          targetUserId = (BigInt(cleanChatId) ^ BigInt(session.selfUserId)).toString();
+        }
+      }
+      if (!targetUserId || !/^\d+$/.test(targetUserId) || (session.selfUserId && targetUserId === session.selfUserId)) {
+        return { exists: false };
+      }
+
+      const profile = await this.lookupContactInfo(session, targetUserId, true);
+      if (!profile || profile.isBot) {
+        return { exists: false, isBot: profile?.isBot };
+      }
+
+      return {
+        exists: true,
+        userId: targetUserId,
+        username: profile.username,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        phone: profile.phone,
+        link: profile.link,
+        isBot: false,
+      };
+    } catch (err) {
       return {
         exists: false,
         error: err instanceof Error ? err.message : String(err),

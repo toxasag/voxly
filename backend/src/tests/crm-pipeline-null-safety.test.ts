@@ -187,6 +187,70 @@ describe("CrmPipelineService null-safety regression (WhatsApp webhook last_name:
     expect(result.contactId).toBe(contactId);
     expect(result.dealId).toBe(dealId);
   });
+
+  it("never saves third-party phone from MAX message body onto the client contact", async () => {
+    const maxContact = {
+      id: contactId,
+      first_name: "Михаил",
+      last_name: "",
+      phone: "",
+      email: null,
+      telegram_chat_id: null,
+      telegram_username: null,
+      whatsapp: null,
+      socials: [{ kind: "max", value: "196946784" }],
+      is_personal: false,
+      custom_fields: { max_chat_id: "196946784", max_user_id: "77056581" },
+      messenger_id: "196946784",
+      messenger_name: "Макс",
+    };
+
+    const queriedPhones: string[] = [];
+    mockTxQueryOne.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes("FROM contacts")) {
+        if (sql.includes("phone IN") && Array.isArray(params)) {
+          queriedPhones.push(String(params[1] ?? ""));
+        }
+        return sql.includes("max_chat_id") ? maxContact : null;
+      }
+      if (sql.includes("FROM deals")) {
+        return {
+          id: dealId,
+          title: "Заявка от Михаил (MAX)",
+          stage_id: "stage-1",
+          pipeline_id: "pipe-1",
+          is_won: false,
+          is_lost: false,
+        };
+      }
+      if (sql.includes("FROM stages")) {
+        return { id: "stage-1", name: "Новый лид", pipeline_id: "pipe-1" };
+      }
+      return null;
+    });
+
+    mockTxQueryOneOrThrow.mockResolvedValue({
+      id: "msg-max-1",
+      created_at: new Date().toISOString(),
+    });
+
+    const service = new CrmPipelineService();
+    await service.processIncoming({
+      tenantId,
+      channel: "max",
+      channelAccountId,
+      chatId: "196946784",
+      peerUserId: "77056581",
+      senderName: "Михаил",
+      text: "контакт монтажника который передаст их с объекта +7 932 128 38 77 Тимофей",
+    });
+
+    const phoneUpdateCalls = mockTxQuery.mock.calls.filter(
+      (c) => typeof c[0] === "string" && String(c[0]).includes("SET phone = $1"),
+    );
+    expect(phoneUpdateCalls).toHaveLength(0);
+    expect(queriedPhones).not.toContain("+79321283877");
+  });
 });
 
 describe("mask.utils", () => {

@@ -226,16 +226,24 @@ export class MessagingRegistry {
       return;
     }
 
+    const rawFirstName =
+      typeof rawPayload.senderFirstName === "string" ? rawPayload.senderFirstName.trim() : "";
+    const rawLastName =
+      typeof rawPayload.senderLastName === "string" ? rawPayload.senderLastName.trim() : "";
+
     const senderName =
       msg.senderName ||
       msg.senderUsername ||
       peerPhone ||
       event.chatId;
 
-    const nameParts = senderName.trim().split(/\s+/);
+    const cleanSenderForSplit = /^(?:клиент\s+max|клиент|посетитель|unknown|неизвестно)$/i.test(senderName.trim())
+      ? ""
+      : senderName.trim();
+    const nameParts = cleanSenderForSplit ? cleanSenderForSplit.split(/\s+/) : [];
     const profile: ChannelProfile = {
-      firstName: nameParts[0] || undefined,
-      lastName: nameParts.length > 1 ? nameParts.slice(1).join(" ") : undefined,
+      firstName: rawFirstName || nameParts[0] || undefined,
+      lastName: rawLastName || (nameParts.length > 1 ? nameParts.slice(1).join(" ") : undefined),
       phone: peerPhone,
       username: msg.senderUsername,
       isBot: false,

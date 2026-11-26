@@ -2,7 +2,7 @@ import { query, queryOne, runWithTenantContext, transaction, withTenant } from "
 import { queueManager } from "../../infrastructure/queue.js";
 import { DealsService } from "../crm/deals/deals.service.js";
 import { MaxBridgeService, type MaxBridgeDialog, type MaxPrivateDialogsResponse } from "./max-bridge.service.js";
-import { normalizeMaxPhone } from "./max-identity.js";
+import { normalizeMaxPhone, syncMaxContactIdentityFromDialog } from "./max-identity.js";
 import { syncMaxDialogHistory } from "./max-integration.routes.js";
 import { resolveTelegramHistorySyncer } from "./outbound-registry.js";
 import { WhatsappEvolutionService } from "./whatsapp-evolution.service.js";
@@ -390,23 +390,14 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
                 });
                 totalMessages += inserted;
 
-                // Привязываем max_chat_id к контакту, не перезаписывая существующие ФИО и телефон
-                await withTenant(tenantId, (tx) =>
-                  tx.query(
-                    `UPDATE contacts
-                     SET messenger_id = COALESCE(messenger_id, $1),
-                         messenger_name = COALESCE(messenger_name, 'Макс'),
-                         custom_fields = jsonb_set(
-                           jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
-                           '{max_user_id}',
-                           CASE WHEN $4::text IS NOT NULL THEN to_jsonb($4::text) ELSE COALESCE(custom_fields->'max_user_id', 'null'::jsonb) END,
-                           true
-                         ),
-                         updated_at = now()
-                     WHERE tenant_id = $2 AND id = $3`,
-                    [dialog.chatId, tenantId, contact.id, dialog.userId ?? null],
-                  ),
-                );
+                // Привязываем max_chat_id/max_user_id к контакту и безопасно дозаполняем пустые телефон/ФИО из MAX
+                await syncMaxContactIdentityFromDialog({
+                  tenantId,
+                  contactId: contact.id,
+                  existingContact: contact,
+                  dialog,
+                  selfPhone: dialogsResp.selfPhone,
+                });
               }
             } catch {
               // Игнорируем ошибку отдельного контакта (например, контакт в статусе поставщика), не прерывая общий синк

@@ -453,6 +453,162 @@ function isCurrencyOrNonPhoneMatch(
   return false;
 }
 
+const PHONE_CANDIDATE_PATTERN_SOURCES: ReadonlyArray<string> = [
+  // Международные (+7..., +375...)
+  "(?:^|[^\\d+])(\\+[1-9][\\d\\s\\-()]{6,}\\d)(?!\\d)",
+  // Российские с разделителями (+7, 7, 8, 9)
+  "(?:^|[^\\d+])((?:\\+?7|8|9)[\\s(-]*\\d{2,4}[\\s)-]*\\d{2,4}[\\s-]*\\d{2,4}(?:[\\s-]*\\d{2,4})?)(?!\\d)",
+  // Слитные 7-15 цифр, начинающиеся с 7, 8, 9 или +
+  "(?:^|[^\\d+])(\\+?[789]\\d{6,14})(?!\\d)",
+  // Запасной: любые слитные 10-15 цифр
+  "(?:^|[^\\d+])(\\d{10,15})(?!\\d)",
+];
+
+interface PhoneMatchCandidate {
+  candidate: string;
+  matchIndex: number;
+  digits: string;
+}
+
+function collectPhoneCandidates(cleaned: string): PhoneMatchCandidate[] {
+  const results: PhoneMatchCandidate[] = [];
+  for (const source of PHONE_CANDIDATE_PATTERN_SOURCES) {
+    const regex = new RegExp(source, "g");
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(cleaned)) !== null) {
+      const candidateStr = match[1] ?? match[0];
+      const prefixLen = match[1] ? match[0].length - match[1].length : 0;
+      const matchIdx = match.index + prefixLen;
+      const digits = candidateStr.replace(/\D/g, "");
+      if (digits.length < 7) continue;
+      if (isCurrencyOrNonPhoneMatch(cleaned, matchIdx, candidateStr.length, digits)) {
+        continue;
+      }
+      results.push({ candidate: candidateStr, matchIndex: matchIdx, digits });
+    }
+  }
+  return results;
+}
+
+const THIRD_PARTY_ROLE_STEMS =
+  "(?:монтажник|курьер|водител|прораб|мастер|инженер|механик|электрик|сварщик|грузчик|бригадир|кладовщик|диспетчер|экспедитор|подрядчик|субподрядчик|менеджер|бухгалтер|директор|руководител|начальник|сотрудник|коллег|напарник|помощник|представител|получател|отправител|заказчик|исполнител|техник|специалист|при[её]мщик|администратор|секретар|жен[ыеа]|муж[ауе]?|супруг|брат|сестр|отц[ауе]|мам[ыеа]|матер|сын|доч|родствен|знаком|друг|товарищ|сосед|посредник)[а-яё]*";
+
+// JS `\b` не работает с кириллицей, поэтому используем явную границу слова для кириллицы и латиницы.
+const WB_START = "(?:^|[^а-яёa-z0-9_])";
+const WB_END = "(?=$|[^а-яёa-z0-9_])";
+
+const THIRD_PARTY_LEADING_REGEX = new RegExp(
+  `(?:${WB_START}${THIRD_PARTY_ROLE_STEMS}${WB_END}|друго(?:й|го|му|й)\\s+человек|не\\s+мой|контактн\\w*\\s+лиц|(?:его|е[её]|их)\\s+(?:номер|телефон|тел|контакт)|${WB_START}контакт\\s+${THIRD_PARTY_ROLE_STEMS}|(?:который|которая|кто)\\s+(?:передаст|забер[её]т|отдаст|встретит|привез[её]т|принес[её]т|вынесет|примет)|(?:передаст|забер[её]т|отдаст|встретит|привез[её]т)\\s+(?:с\\s+объекта|на\\s+объекте|товар|инструмент|заказ|их|его|её)|${WB_START}(?:позвон|набер|напиш|свяж)[а-яё]*\\s+(?:ему|ей|им)${WB_END}|${WB_START}(?:с|от)\\s+(?:ним|ней|объекта)${WB_END})`,
+  "i",
+);
+
+const THIRD_PARTY_TRAILING_ROLE_REGEX = new RegExp(
+  `^\\s*[,\\-():]*\\s*${THIRD_PARTY_ROLE_STEMS}${WB_END}`,
+  "i",
+);
+
+const SELF_OWNERSHIP_REGEX =
+  /(?:^|[,.;!\n-])\s*(?:мой|моя|мое|моё|я\s+на\s+связи|со\s+мной|мне\s+звон|перезвоните\s+мне|наберите\s+мне|у\s+меня)(?=$|[^а-яёa-z0-9_])[^,.;!\n]*$/i;
+
+/**
+ * Определяет по окружающему тексту, относится ли найденный телефон к третьему лицу
+ * (например, монтажнику, курьеру, водителю, коллеге), а не к самому отправителю.
+ */
+export function isThirdPartyPhoneContext(
+  text: string,
+  matchIndex: number,
+  matchLength: number,
+  options?: { selfFirstName?: string | null },
+): boolean {
+  const beforeAll = text.slice(0, matchIndex);
+  const lastBreak = Math.max(
+    beforeAll.lastIndexOf("\n"),
+    beforeAll.lastIndexOf("."),
+    beforeAll.lastIndexOf("!"),
+    beforeAll.lastIndexOf("?"),
+    beforeAll.lastIndexOf(";"),
+  );
+  const leadingSentence = beforeAll.slice(lastBreak + 1).slice(-120);
+
+  // Локальная клауза после последней запятой или тире (для сообщений вида «монтажник ..., мой номер +7...»)
+  const clauseBreak = Math.max(leadingSentence.lastIndexOf(","), leadingSentence.lastIndexOf(" - "));
+  const leadingClause = clauseBreak >= 0 ? leadingSentence.slice(clauseBreak + 1) : leadingSentence;
+
+  if (SELF_OWNERSHIP_REGEX.test(leadingClause)) {
+    return false;
+  }
+
+  if (THIRD_PARTY_LEADING_REGEX.test(leadingSentence)) {
+    return true;
+  }
+
+  const afterRaw = text.slice(matchIndex + matchLength, matchIndex + matchLength + 60);
+  const trailingStop = afterRaw.search(/[.,;!?\n]/);
+  const trailingSegment = (trailingStop >= 0 ? afterRaw.slice(0, trailingStop) : afterRaw).trim();
+
+  if (trailingSegment && THIRD_PARTY_TRAILING_ROLE_REGEX.test(trailingSegment)) {
+    return true;
+  }
+
+  // Если сразу после номера указано чужое имя (например «+7 932 128 38 77 Тимофей»),
+  // а имя самого отправителя известно и не совпадает — это контакт другого человека.
+  if (trailingSegment && options?.selfFirstName) {
+    const cleanSelf = options.selfFirstName.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+    const isSelfPlaceholder =
+      cleanSelf.length < 2 ||
+      /^(?:клиент|посетитель|unknown|undefined|без|\+?\d+)/i.test(cleanSelf);
+    if (!isSelfPlaceholder) {
+      const trailingNameMatch = trailingSegment.match(
+        /^[-,:]?\s*([А-ЯЁA-Z][а-яёa-z]{2,})(?:\s+[А-ЯЁA-Z][а-яёa-z]{2,})?(?=$|[^а-яёa-z0-9_])/,
+      );
+      const mentionedName = trailingNameMatch?.[1]?.toLowerCase();
+      if (mentionedName && mentionedName !== cleanSelf) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Извлекает телефон самого отправителя из текста, отсеивая номера третьих лиц
+ * (монтажников, курьеров, водителей и т.п.).
+ */
+export function extractSelfPhoneFromText(
+  text?: string | null,
+  options?: { selfFirstName?: string | null },
+): string | null {
+  if (!text || typeof text !== "string") return null;
+  const cleaned = text.trim();
+  if (cleaned.length === 0) return null;
+
+  const onlyDigits = cleaned.replace(/\D/g, "");
+  if (
+    cleaned.length <= 24 &&
+    /^[\d+\s().-]+$/.test(cleaned) &&
+    onlyDigits.length >= 7 &&
+    onlyDigits.length <= 16 &&
+    (cleaned.startsWith("+") || /^[789]/.test(onlyDigits)) &&
+    !isCurrencyOrNonPhoneMatch(cleaned, 0, cleaned.length, onlyDigits)
+  ) {
+    const direct = validatePhoneCandidate(cleaned);
+    return direct.isValid ? direct.normalized : null;
+  }
+
+  const candidates = collectPhoneCandidates(cleaned);
+  for (const { candidate, matchIndex } of candidates) {
+    const valResult = validatePhoneCandidate(candidate);
+    if (!valResult.isValid || !valResult.normalized) continue;
+    if (isThirdPartyPhoneContext(cleaned, matchIndex, candidate.length, options)) {
+      continue;
+    }
+    return valResult.normalized;
+  }
+
+  return null;
+}
+
 /**
  * Анализирует входящий текст на наличие валидного номера или попытки ввода номера.
  */
@@ -497,61 +653,37 @@ export function analyzePhoneInText(text?: string | null): PhoneAnalysis {
   }
 
   // 2. Ищем кандидатов внутри текста
-  const candidateRegexes = [
-    // Международные (+7..., +375...)
-    /(?:^|[^\d+])(\+[1-9][\d\s\-()]{6,}\d)(?!\d)/g,
-    // Российские с разделителями (+7, 7, 8, 9)
-    /(?:^|[^\d+])((?:\+?7|8|9)[\s(-]*\d{2,4}[\s)-]*\d{2,4}[\s-]*\d{2,4}(?:[\s-]*\d{2,4})?)(?!\d)/g,
-    // Слитные 7-15 цифр, начинающиеся с 7, 8, 9 или +
-    /(?:^|[^\d+])(\+?[789]\d{6,14})(?!\d)/g,
-    // Запасной: любые слитные 10-15 цифр
-    /(?:^|[^\d+])(\d{10,15})(?!\d)/g,
-  ];
-
   let firstInvalidAttempt: {
     issue?: "too_short" | "too_long" | "invalid_format" | "fake_number";
     candidate: string;
     digits: string;
   } | null = null;
 
-  for (const regex of candidateRegexes) {
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(cleaned)) !== null) {
-      const candidateStr = match[1] ?? match[0];
-      const matchIdx = match.index;
-      const digits = candidateStr.replace(/\D/g, "");
+  for (const { candidate: candidateStr, digits } of collectPhoneCandidates(cleaned)) {
+    const valResult = validatePhoneCandidate(candidateStr);
+    if (valResult.isValid && valResult.normalized) {
+      return {
+        hasAttempt: true,
+        isValid: true,
+        phone: valResult.normalized,
+        rawCandidate: candidateStr,
+        digitsCount: valResult.digits.length,
+      };
+    }
 
-      if (digits.length < 7) continue;
+    // Если это невалидный номер, но похож на попытку ввода (начинается с +, 7, 8 или 9)
+    const looksLikePhoneAttempt =
+      candidateStr.trim().startsWith("+") ||
+      digits.startsWith("7") ||
+      digits.startsWith("8") ||
+      digits.startsWith("9");
 
-      if (isCurrencyOrNonPhoneMatch(cleaned, matchIdx, candidateStr.length, digits)) {
-        continue;
-      }
-
-      const valResult = validatePhoneCandidate(candidateStr);
-      if (valResult.isValid && valResult.normalized) {
-        return {
-          hasAttempt: true,
-          isValid: true,
-          phone: valResult.normalized,
-          rawCandidate: candidateStr,
-          digitsCount: valResult.digits.length,
-        };
-      }
-
-      // Если это невалидный номер, но похож на попытку ввода (начинается с +, 7, 8 или 9)
-      const looksLikePhoneAttempt =
-        candidateStr.trim().startsWith("+") ||
-        digits.startsWith("7") ||
-        digits.startsWith("8") ||
-        digits.startsWith("9");
-
-      if (looksLikePhoneAttempt && !firstInvalidAttempt) {
-        firstInvalidAttempt = {
-          issue: valResult.issue,
-          candidate: candidateStr,
-          digits: valResult.digits,
-        };
-      }
+    if (looksLikePhoneAttempt && !firstInvalidAttempt) {
+      firstInvalidAttempt = {
+        issue: valResult.issue,
+        candidate: candidateStr,
+        digits: valResult.digits,
+      };
     }
   }
 
