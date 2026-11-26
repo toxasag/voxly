@@ -4,7 +4,6 @@ import { z } from "zod";
 import QRCode from "qrcode";
 
 import { getEnv } from "../../config/env.js";
-import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { decryptSecret, encryptSecret, isEncryptionConfigured } from "../../services/credentials-cipher.js";
@@ -21,10 +20,15 @@ import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope
 import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
 import { isBannedName } from "../crm/channel-identity.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
-import { ChatMediaService } from "../crm/chat/media.service.js";
 import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
 import { chatEventBus } from "../crm/chat/chat-events.js";
 import { messageTranslationService } from "../crm/translation/message-translation.service.js";
+import {
+  buildMaxAttachmentMetadata,
+  maxAttachmentDefaultLabel,
+  maxAttachmentExternalId,
+  storeMaxMessageAttachments,
+} from "./max-attachments.js";
 
 /**
  * INC-113: никогда не записывать номер подключенного аккаунта оператора
@@ -213,6 +217,32 @@ function isDuplicateInbound(key: string): boolean {
   return false;
 }
 
+async function downloadMaxMediaBuffer(opts: {
+  tenantId: string;
+  botId: string;
+  fileId: string;
+  isNativeTs?: boolean;
+}): Promise<{ ok: boolean; buffer?: Buffer; mimeType?: string; error?: string }> {
+  let useNative = opts.isNativeTs;
+  if (useNative === undefined) {
+    const acc = await runWithTenantContext(opts.tenantId, () =>
+      queryOne<{ credentials: Record<string, unknown> | null }>(
+        `SELECT credentials FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [opts.tenantId, opts.botId],
+      ),
+    ).catch(() => null);
+    useNative = isNativeMaxAccount(acc?.credentials);
+  }
+
+  return useNative
+    ? messagingRegistry.getMaxTsAdapter().downloadMedia(opts.tenantId, opts.botId, opts.fileId)
+    : new MaxBridgeService().downloadMedia({
+        botId: opts.botId,
+        fileId: opts.fileId,
+      });
+}
+
 async function resolveAndStoreMaxAttachment(opts: {
   tenantId: string;
   botId: string;
@@ -222,43 +252,20 @@ async function resolveAndStoreMaxAttachment(opts: {
   isNativeTs?: boolean;
   log?: FastifyBaseLogger;
 }): Promise<{ url: string; mimeType: string } | null> {
-  try {
-    let useNative = opts.isNativeTs;
-    if (useNative === undefined) {
-      const acc = await runWithTenantContext(opts.tenantId, () =>
-        queryOne<{ credentials: Record<string, unknown> | null }>(
-          `SELECT credentials FROM channel_accounts
-           WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
-          [opts.tenantId, opts.botId],
-        ),
-      ).catch(() => null);
-      useNative = isNativeMaxAccount(acc?.credentials);
-    }
-
-    const downloaded = useNative
-      ? await messagingRegistry.getMaxTsAdapter().downloadMedia(opts.tenantId, opts.botId, opts.fileId)
-      : await new MaxBridgeService().downloadMedia({
-          botId: opts.botId,
-          fileId: opts.fileId,
-        });
-    if (!downloaded.ok || !downloaded.buffer) {
-      opts.log?.warn({ fileId: opts.fileId, error: downloaded.error }, "Failed to download MAX media");
-      return null;
-    }
-    const cleanName = opts.fileName || "file.bin";
-    const realMime = guessMimeType(cleanName, downloaded.mimeType || opts.mimeType);
-    const mediaService = new ChatMediaService();
-    const stored = await mediaService.storeBuffer({
-      buffer: downloaded.buffer,
-      originalName: cleanName,
-      mimeType: realMime,
-      tenantId: opts.tenantId,
-    });
-    return { url: stored.url, mimeType: stored.mimeType };
-  } catch (err) {
-    opts.log?.warn({ err, fileId: opts.fileId }, "Exception downloading MAX media");
-    return null;
-  }
+  const stored = await storeMaxMessageAttachments({
+    tenantId: opts.tenantId,
+    attachments: [{ fileId: opts.fileId, fileName: opts.fileName, mimeType: opts.mimeType }],
+    downloadMedia: (fileId) =>
+      downloadMaxMediaBuffer({
+        tenantId: opts.tenantId,
+        botId: opts.botId,
+        fileId,
+        isNativeTs: opts.isNativeTs,
+      }),
+    log: opts.log,
+  });
+  const first = stored[0];
+  return first ? { url: first.url, mimeType: first.mimeType } : null;
 }
 
 /**
@@ -331,8 +338,7 @@ export async function syncMaxDialogHistory(opts: {
     for (const msg of target.messages) {
       const rawText = (msg.text || "").trim();
       const msgAtts = Array.isArray(msg.attachments) ? msg.attachments : [];
-      const firstAtt = msgAtts[0];
-      if (!rawText && !(firstAtt && firstAtt.fileId)) continue;
+      const attSlots = msgAtts.length > 0 ? msgAtts : [null];
 
       const rawDate: unknown = msg.date;
       let msgDate: Date;
@@ -350,130 +356,186 @@ export async function syncMaxDialogHistory(opts: {
         msgDate = new Date();
       }
 
-      let attachmentUrl: string | null = null;
-      let attachmentType: string | null = null;
-      if (firstAtt && firstAtt.fileId) {
-        const stored = await resolveAndStoreMaxAttachment({
-          tenantId: opts.tenantId,
-          botId: opts.channelAccountId,
-          fileId: firstAtt.fileId,
-          fileName: firstAtt.fileName,
-          mimeType: firstAtt.mimeType,
-          isNativeTs: useNative,
-          log: opts.log,
-        });
-        if (stored) {
-          attachmentUrl = stored.url;
-          attachmentType = stored.mimeType;
-        }
-      }
-
-      const text = rawText || firstAtt?.fileName || "[Вложение]";
-      if (!text && !attachmentUrl) continue;
-
       const source = msg.out ? "manager" : "client";
       const direction = msg.out ? "outbound" : "inbound";
       const rawTargetName = target.firstName || opts.senderName || "Клиент MAX";
       const cleanTargetName = isBannedName(rawTargetName) ? "Клиент MAX" : rawTargetName;
       const senderName = msg.out ? "Менеджер" : cleanTargetName;
-      const externalMsgId = msg.id != null ? String(msg.id) : null;
+      const parentMsgId = msg.id != null ? String(msg.id) : null;
 
-      const existing = await queryOne<{ id: string }>(
-        `SELECT id FROM deal_messages
-         WHERE tenant_id = $1 AND deal_id = $2
-           AND delivery_status <> 'failed'
-           AND (
-             ($3::text IS NOT NULL AND metadata->>'external_message_id' = $3)
-             OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
-             OR (
-               content = $5 AND direction = $6 AND channel = 'max'
-               AND (
-                 (created_at >= $7::timestamptz - interval '12 hours' AND created_at <= $7::timestamptz + interval '12 hours')
-                 OR created_at >= now() - interval '24 hours'
+      for (const [attIndex, att] of attSlots.entries()) {
+        const attFileId = att?.fileId ?? null;
+        const text =
+          (attIndex === 0 && rawText) ||
+          maxAttachmentDefaultLabel(att?.type, att?.fileName, att?.mimeType);
+        if (!text && !attFileId) continue;
+
+        const externalMsgId = parentMsgId ? maxAttachmentExternalId(parentMsgId, attIndex) : null;
+        const itemDate = new Date(msgDate.getTime() + attIndex);
+
+        const existing = await queryOne<{
+          id: string;
+          attachment: string | null;
+          metadata: Record<string, unknown> | null;
+        }>(
+          `SELECT id, attachment, metadata FROM deal_messages
+           WHERE tenant_id = $1 AND deal_id = $2
+             AND delivery_status <> 'failed'
+             AND (
+               ($3::text IS NOT NULL AND metadata->>'external_message_id' = $3)
+               OR ($4::text IS NOT NULL AND metadata->>'external_attachment_id' = $4)
+               OR (
+                 (
+                   $3::text IS NULL
+                   OR COALESCE(NULLIF(metadata->>'external_message_id', ''), '') = ''
+                 )
+                 AND content = $5 AND direction = $6 AND channel = 'max'
+                 AND (
+                   (created_at >= $7::timestamptz - interval '12 hours' AND created_at <= $7::timestamptz + interval '12 hours')
+                   OR created_at >= now() - interval '24 hours'
+                 )
                )
              )
-           )
-         LIMIT 1`,
-        [
-          opts.tenantId,
-          opts.dealId,
-          externalMsgId,
-          attachmentUrl,
-          text,
-          direction,
-          msgDate.toISOString(),
-        ],
-      );
+           LIMIT 1`,
+          [
+            opts.tenantId,
+            opts.dealId,
+            externalMsgId,
+            attFileId,
+            text,
+            direction,
+            itemDate.toISOString(),
+          ],
+        );
 
-      if (existing) {
-        if (attachmentUrl) {
-          await query(
-            `UPDATE deal_messages
-             SET attachment = COALESCE(attachment, $1),
-                 attachment_type = COALESCE(attachment_type, $2),
-                 content = CASE WHEN BTRIM(content) = '' THEN $5 ELSE content END
-             WHERE id = $3 AND tenant_id = $4`,
-            [attachmentUrl, attachmentType, existing.id, opts.tenantId, text],
-          );
-          void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, existing.id).catch(() => {});
+        if (existing && (existing.attachment || !attFileId)) {
+          if (msg.isForwarded && existing.metadata?.is_forwarded !== true) {
+            await query(
+              `UPDATE deal_messages
+               SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+               WHERE id = $2 AND tenant_id = $3`,
+              [
+                JSON.stringify({
+                  is_forwarded: true,
+                  ...(msg.forwardFromUserId ? { forward_from_user_id: msg.forwardFromUserId } : {}),
+                }),
+                existing.id,
+                opts.tenantId,
+              ],
+            ).catch(() => {});
+          }
+          continue;
         }
-        continue;
-      }
 
-      const [inserted] = await query<{ id: string }>(
-        `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11::jsonb, $12)
-         RETURNING id`,
-        [
-          opts.tenantId,
-          opts.dealId,
-          opts.channelAccountId,
-          source,
-          direction,
-          senderName,
-          text,
-          msg.out ? "sent" : "neutral",
-          attachmentUrl,
-          attachmentType,
-          JSON.stringify(externalMsgId ? { external_message_id: externalMsgId } : {}),
-          msgDate.toISOString(),
-        ],
-      );
-      if (inserted && attachmentUrl) {
-        void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, inserted.id).catch(() => {});
-      }
-      if (inserted) {
-        if (!msg.out && text) {
-          messageTranslationService.autoTranslateIfForeign({
+        let attachmentUrl: string | null = null;
+        let attachmentType: string | null = null;
+        if (att && att.fileId) {
+          const stored = await resolveAndStoreMaxAttachment({
             tenantId: opts.tenantId,
-            messageId: inserted.id,
-            content: text,
+            botId: opts.channelAccountId,
+            fileId: att.fileId,
+            fileName: att.fileName,
+            mimeType: att.mimeType,
+            isNativeTs: useNative,
+            log: opts.log,
           });
+          if (stored) {
+            attachmentUrl = stored.url;
+            attachmentType = stored.mimeType;
+          }
         }
-        chatEventBus.emitChatEvent({
-          type: "message_created",
-          tenantId: opts.tenantId,
-          dealId: opts.dealId,
-          data: {
-            id: inserted.id,
-            tenantId: opts.tenantId,
-            dealId: opts.dealId,
-            channelAccountId: opts.channelAccountId,
+
+        if (!text && !attachmentUrl) continue;
+
+        if (existing) {
+          if (attachmentUrl) {
+            await query(
+              `UPDATE deal_messages
+               SET attachment = COALESCE(attachment, $1),
+                   attachment_type = COALESCE(attachment_type, $2),
+                   content = CASE WHEN BTRIM(content) = '' THEN $5 ELSE content END
+               WHERE id = $3 AND tenant_id = $4`,
+              [attachmentUrl, attachmentType, existing.id, opts.tenantId, text],
+            );
+            void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, existing.id).catch(() => {});
+          }
+          continue;
+        }
+
+        if (attachmentUrl) {
+          const dupByUrl = await queryOne<{ id: string }>(
+            `SELECT id FROM deal_messages
+             WHERE tenant_id = $1 AND deal_id = $2 AND attachment = $3 AND delivery_status <> 'failed'
+             LIMIT 1`,
+            [opts.tenantId, opts.dealId, attachmentUrl],
+          );
+          if (dupByUrl) continue;
+        }
+
+        const itemMetadata = buildMaxAttachmentMetadata({
+          externalMessageId: externalMsgId,
+          parentMessageId: parentMsgId,
+          attachmentFileId: attFileId,
+          isForwarded: msg.isForwarded,
+          forwardFromUserId: msg.forwardFromUserId,
+        });
+
+        const [inserted] = await query<{ id: string }>(
+          `INSERT INTO deal_messages
+             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11::jsonb, $12)
+           RETURNING id`,
+          [
+            opts.tenantId,
+            opts.dealId,
+            opts.channelAccountId,
             source,
             direction,
             senderName,
-            content: text,
-            channel: "max",
-            deliveryStatus: msg.out ? "sent" : "neutral",
-            attachment: attachmentUrl,
+            text,
+            msg.out ? "sent" : "neutral",
+            attachmentUrl,
             attachmentType,
-            createdAt: msgDate.toISOString(),
-          },
-          timestamp: new Date().toISOString(),
-        });
+            JSON.stringify(itemMetadata),
+            itemDate.toISOString(),
+          ],
+        );
+        if (inserted && attachmentUrl) {
+          void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, inserted.id).catch(() => {});
+        }
+        if (inserted) {
+          if (!msg.out && text) {
+            messageTranslationService.autoTranslateIfForeign({
+              tenantId: opts.tenantId,
+              messageId: inserted.id,
+              content: text,
+            });
+          }
+          chatEventBus.emitChatEvent({
+            type: "message_created",
+            tenantId: opts.tenantId,
+            dealId: opts.dealId,
+            data: {
+              id: inserted.id,
+              tenantId: opts.tenantId,
+              dealId: opts.dealId,
+              channelAccountId: opts.channelAccountId,
+              source,
+              direction,
+              senderName,
+              content: text,
+              channel: "max",
+              deliveryStatus: msg.out ? "sent" : "neutral",
+              attachment: attachmentUrl,
+              attachmentType,
+              metadata: itemMetadata,
+              createdAt: itemDate.toISOString(),
+            },
+            timestamp: new Date().toISOString(),
+          });
+        }
+        insertedCount++;
       }
-      insertedCount++;
     }
   });
 
@@ -677,25 +739,21 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   const cleanFirstName = extracted.firstName;
   const cleanLastName = extracted.lastName;
 
-  let attachmentUrl: string | undefined;
-  let attachmentType: string | undefined;
-  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
-    const att = body.attachments[0];
-    if (att && att.fileId) {
-      const stored = await resolveAndStoreMaxAttachment({
-        tenantId,
-        botId: channelAccountId,
-        fileId: att.fileId,
-        fileName: att.fileName,
-        mimeType: att.mimeType,
-        log: request.log,
-      });
-      if (stored) {
-        attachmentUrl = stored.url;
-        attachmentType = stored.mimeType;
-      }
-    }
-  }
+  const bodyAtts = Array.isArray(body.attachments) ? body.attachments : [];
+  const storedAttachments =
+    bodyAtts.length > 0
+      ? await storeMaxMessageAttachments({
+          tenantId,
+          attachments: bodyAtts,
+          downloadMedia: (fileId) =>
+            downloadMaxMediaBuffer({
+              tenantId,
+              botId: channelAccountId,
+              fileId,
+            }),
+          log: request.log,
+        })
+      : [];
 
   const isBotFlag =
     body.isBot === true ||
@@ -728,25 +786,74 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     return reply.send({ ok: true, skipped: "bot" });
   }
 
+  const baseMessageId = body.messageId ? String(body.messageId) : undefined;
+  const baseText = (body.text ?? "").trim();
+  const baseTs = Date.now();
+  const inboundEntries =
+    storedAttachments.length > 0
+      ? storedAttachments.map((item, pos) => ({
+          text: (pos === 0 && baseText) || item.textLabel,
+          attachment: item.url,
+          attachmentType: item.mimeType,
+          externalMessageId: baseMessageId ? maxAttachmentExternalId(baseMessageId, item.index) : undefined,
+          sourceMetadata: baseMessageId
+            ? buildMaxAttachmentMetadata({
+                externalMessageId: maxAttachmentExternalId(baseMessageId, item.index),
+                parentMessageId: baseMessageId,
+                attachmentFileId: item.attachment.fileId ?? null,
+              })
+            : item.attachment.fileId
+              ? buildMaxAttachmentMetadata({ attachmentFileId: item.attachment.fileId })
+              : undefined,
+          messageTimestamp: new Date(baseTs + item.index),
+        }))
+      : [
+          {
+            text: body.text,
+            attachment: undefined as string | undefined,
+            attachmentType: undefined as string | undefined,
+            externalMessageId: baseMessageId,
+            sourceMetadata: baseMessageId
+              ? buildMaxAttachmentMetadata({ externalMessageId: baseMessageId, parentMessageId: baseMessageId })
+              : undefined,
+            messageTimestamp: new Date(baseTs),
+          },
+        ];
+
   const crm = new CrmPipelineService();
-  const crmResult = await runWithTenantContext(tenantId, () =>
-    crm.processIncoming({
-      tenantId,
-      channel: "max",
-      channelAccountId,
-      chatId: peerId,
-      peerUserId,
-      chatThreadId,
-      text: body.text,
-      senderName,
-      senderPhone: peerPhone,
-      attachment: attachmentUrl,
-      attachmentType: attachmentType,
-      externalMessageId: body.messageId ? String(body.messageId) : undefined,
-      isBot: isBotFlag,
-      profile: maxProfile,
-    }),
-  );
+  let crmResult: Awaited<ReturnType<typeof crm.processIncoming>> | null = null;
+  for (const entry of inboundEntries) {
+    const res = await runWithTenantContext(tenantId, () =>
+      crm.processIncoming({
+        tenantId,
+        channel: "max",
+        channelAccountId,
+        chatId: peerId,
+        peerUserId,
+        chatThreadId,
+        text: entry.text,
+        senderName,
+        senderPhone: peerPhone,
+        attachment: entry.attachment,
+        attachmentType: entry.attachmentType,
+        externalMessageId: entry.externalMessageId,
+        messageTimestamp: entry.messageTimestamp,
+        sourceMetadata: entry.sourceMetadata,
+        isBot: isBotFlag,
+        profile: maxProfile,
+      }),
+    );
+    if (!crmResult) {
+      crmResult = res;
+    }
+    if (res.isPersonal || res.isBot) {
+      break;
+    }
+  }
+
+  if (!crmResult) {
+    return reply.send({ ok: true });
+  }
 
   if (crmResult.isPersonal) {
     request.log.info({ peerId }, "Personal MAX contact message ignored by CRM");
@@ -923,43 +1030,83 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
   const peerPhone = stripOwnerPhone(rawPhone, selfPhone);
 
   const crm = new CrmPipelineService();
-  let attachmentUrl: string | undefined;
-  let attachmentType: string | undefined;
-  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
-    const att = body.attachments[0];
-    if (att && att.fileId) {
-      const stored = await resolveAndStoreMaxAttachment({
+  const bodyAtts = Array.isArray(body.attachments) ? body.attachments : [];
+  const storedAttachments =
+    bodyAtts.length > 0
+      ? await storeMaxMessageAttachments({
+          tenantId: account.tenant_id,
+          attachments: bodyAtts,
+          downloadMedia: (fileId) =>
+            downloadMaxMediaBuffer({
+              tenantId: account.tenant_id,
+              botId: account.id,
+              fileId,
+            }),
+          log: request.log,
+        })
+      : [];
+
+  const baseMessageId = body.messageId ? String(body.messageId) : undefined;
+  const baseText = (body.text ?? "").trim();
+  const baseTs = Date.now();
+  const outboundEntries =
+    storedAttachments.length > 0
+      ? storedAttachments.map((item, pos) => ({
+          text: (pos === 0 && baseText) || item.textLabel,
+          attachment: item.url,
+          attachmentType: item.mimeType,
+          externalMessageId: baseMessageId ? maxAttachmentExternalId(baseMessageId, item.index) : undefined,
+          sourceMetadata: buildMaxAttachmentMetadata({
+            externalMessageId: baseMessageId ? maxAttachmentExternalId(baseMessageId, item.index) : undefined,
+            parentMessageId: baseMessageId ?? null,
+            attachmentFileId: item.attachment.fileId ?? null,
+          }),
+          messageTimestamp: new Date(baseTs + item.index),
+        }))
+      : [
+          {
+            text: body.text,
+            attachment: undefined as string | undefined,
+            attachmentType: undefined as string | undefined,
+            externalMessageId: baseMessageId,
+            sourceMetadata: baseMessageId
+              ? buildMaxAttachmentMetadata({ externalMessageId: baseMessageId, parentMessageId: baseMessageId })
+              : undefined,
+            messageTimestamp: new Date(baseTs),
+          },
+        ];
+
+  let result: Awaited<ReturnType<typeof crm.processNativeOutbound>> = {
+    dealId: null,
+    messageId: null,
+    pausedUntil: null,
+  };
+  for (const entry of outboundEntries) {
+    const res = await runWithTenantContext(account.tenant_id, () =>
+      crm.processNativeOutbound({
         tenantId: account.tenant_id,
-        botId: account.id,
-        fileId: att.fileId,
-        fileName: att.fileName,
-        mimeType: att.mimeType,
-        log: request.log,
-      });
-      if (stored) {
-        attachmentUrl = stored.url;
-        attachmentType = stored.mimeType;
-      }
+        channel: "max",
+        channelAccountId: account.id,
+        chatId: peerId,
+        peerUserId: peerUser || null,
+        senderPhone: peerPhone || null,
+        username: body.username ?? body.senderUsername ?? null,
+        text: entry.text,
+        senderName: "Менеджер",
+        pauseMinutes: 60,
+        attachment: entry.attachment,
+        attachmentType: entry.attachmentType,
+        externalMessageId: entry.externalMessageId,
+        messageTimestamp: entry.messageTimestamp,
+        sourceMetadata: entry.sourceMetadata,
+      }),
+    );
+    if (!result.messageId && res.messageId) {
+      result = res;
+    } else if (!result.dealId && res.dealId) {
+      result = res;
     }
   }
-
-  const result = await runWithTenantContext(account.tenant_id, () =>
-    crm.processNativeOutbound({
-      tenantId: account.tenant_id,
-      channel: "max",
-      channelAccountId: account.id,
-      chatId: peerId,
-      peerUserId: peerUser || null,
-      senderPhone: peerPhone || null,
-      username: body.username ?? body.senderUsername ?? null,
-      text: body.text,
-      senderName: "Менеджер",
-      pauseMinutes: 60,
-      attachment: attachmentUrl,
-      attachmentType: attachmentType,
-      externalMessageId: body.messageId ? String(body.messageId) : undefined,
-    }),
-  );
 
   request.log.info(
     { peerId, peerUser, peerPhone, text: body.text, dealId: result.dealId, messageId: result.messageId },

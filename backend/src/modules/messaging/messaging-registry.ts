@@ -15,9 +15,13 @@ import type { OutboundSender, OutboundMessage, OutboundSendResult } from "../cha
 import { resolveOutboundMedia, isMeaningfulCaption } from "../channels/media-resolver.js";
 import { normalizeMaxPhone } from "../channels/max-identity.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
-import { ChatMediaService } from "../crm/chat/media.service.js";
 import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
-import { guessMimeType } from "../../lib/mime.utils.js";
+import {
+  buildMaxAttachmentMetadata,
+  maxAttachmentDefaultLabel,
+  maxAttachmentExternalId,
+  storeMaxMessageAttachments,
+} from "../channels/max-attachments.js";
 import { MaxService } from "../../services/max.service.js";
 
 // ---------------------------------------------------------------------------
@@ -164,64 +168,93 @@ export class MessagingRegistry {
         ? normalizeMaxPhone(msg.senderPhone, selfPhone)
         : msg.senderPhone;
 
-    let attachmentUrl: string | undefined;
-    let attachmentType: string | undefined;
-    const firstAtt = msg.attachments?.[0];
-    if (event.channel === "max" && firstAtt?.fileId) {
-      try {
-        const downloaded = await this.maxTsAdapter.downloadMedia(
-          event.tenantId,
-          event.channelAccountId,
-          firstAtt.fileId,
-        );
-        if (downloaded.ok && downloaded.buffer) {
-          const cleanName = firstAtt.fileName || "file.bin";
-          const realMime = guessMimeType(cleanName, downloaded.mimeType || firstAtt.mimeType);
-          const stored = await new ChatMediaService().storeBuffer({
-            buffer: downloaded.buffer,
-            originalName: cleanName,
-            mimeType: realMime,
+    const isForwarded = rawPayload.isForwarded === true;
+    const forwardFromUserId =
+      typeof rawPayload.forwardFromUserId === "string" ? rawPayload.forwardFromUserId : null;
+    const msgAtts = Array.isArray(msg.attachments) ? msg.attachments : [];
+
+    const storedAttachments =
+      event.channel === "max" && msgAtts.length > 0
+        ? await storeMaxMessageAttachments({
             tenantId: event.tenantId,
-          });
-          attachmentUrl = stored.url;
-          attachmentType = stored.mimeType;
-        }
-      } catch {
-        // Не блокируем доставку текста сообщения при временном сбое скачивания медиа
-      }
-    }
+            attachments: msgAtts,
+            downloadMedia: (fileId) =>
+              this.maxTsAdapter.downloadMedia(event.tenantId, event.channelAccountId, fileId),
+          })
+        : [];
 
-    const effectiveText =
-      msg.text.trim() ||
-      (attachmentUrl
-        ? attachmentType?.startsWith("image/")
-          ? "[фото]"
-          : firstAtt?.fileName || "[Вложение]"
-        : "");
+    const baseText = msg.text.trim();
+    const persistedEntries =
+      storedAttachments.length > 0
+        ? storedAttachments.map((item, pos) => ({
+            text: (pos === 0 && baseText) || item.textLabel,
+            attachmentUrl: item.url,
+            attachmentType: item.mimeType,
+            externalMessageId: msg.id ? maxAttachmentExternalId(msg.id, item.index) : undefined,
+            sourceMetadata: buildMaxAttachmentMetadata({
+              externalMessageId: msg.id ? maxAttachmentExternalId(msg.id, item.index) : undefined,
+              parentMessageId: msg.id ?? null,
+              attachmentFileId: item.attachment.fileId ?? null,
+              isForwarded,
+              forwardFromUserId,
+            }),
+            messageTimestamp: new Date(msg.timestamp + item.index),
+          }))
+        : [
+            {
+              text:
+                baseText ||
+                (msgAtts[0]
+                  ? maxAttachmentDefaultLabel(
+                      msgAtts[0].type,
+                      msgAtts[0].fileName,
+                      msgAtts[0].mimeType,
+                    )
+                  : ""),
+              attachmentUrl: undefined as string | undefined,
+              attachmentType: undefined as string | undefined,
+              externalMessageId: msg.id,
+              sourceMetadata:
+                msg.id || isForwarded
+                  ? buildMaxAttachmentMetadata({
+                      externalMessageId: msg.id,
+                      parentMessageId: msg.id ?? null,
+                      isForwarded,
+                      forwardFromUserId,
+                    })
+                  : undefined,
+              messageTimestamp: new Date(msg.timestamp),
+            },
+          ];
 
+    const effectiveText = persistedEntries[0]?.text ?? baseText;
     const pipeline = await this.getCrmPipeline();
 
     if (msg.direction === "outbound" || msg.fromMe === true) {
-      const outRes = await runWithTenantContext(event.tenantId, () =>
-        pipeline.processNativeOutbound({
-          tenantId: event.tenantId,
-          channel: event.channel,
-          channelAccountId: event.channelAccountId,
-          chatId: event.chatId,
-          peerUserId: peerUserId || null,
-          senderPhone: peerPhone ?? null,
-          username: msg.senderUsername ?? null,
-          text: effectiveText,
-          senderName: "Менеджер",
-          pauseMinutes: 60,
-          attachment: attachmentUrl ?? null,
-          attachmentType: attachmentType ?? null,
-          externalMessageId: msg.id,
-          messageTimestamp: new Date(msg.timestamp),
-        }),
-      );
-      if (outRes.messageId && attachmentUrl) {
-        void mediaEnrichmentService.enrichMessageMedia(event.tenantId, outRes.messageId).catch(() => {});
+      for (const entry of persistedEntries) {
+        if (!entry.text && !entry.attachmentUrl) continue;
+        const outRes = await runWithTenantContext(event.tenantId, () =>
+          pipeline.processNativeOutbound({
+            tenantId: event.tenantId,
+            channel: event.channel,
+            channelAccountId: event.channelAccountId,
+            chatId: event.chatId,
+            peerUserId: peerUserId || null,
+            senderPhone: peerPhone ?? null,
+            username: msg.senderUsername ?? null,
+            text: entry.text,
+            senderName: "Менеджер",
+            pauseMinutes: 60,
+            attachment: entry.attachmentUrl ?? null,
+            attachmentType: entry.attachmentType ?? null,
+            externalMessageId: entry.externalMessageId,
+            messageTimestamp: entry.messageTimestamp,
+            sourceMetadata: entry.sourceMetadata,
+          }),
+        );
+        if (outRes.messageId && entry.attachmentUrl) {
+          void mediaEnrichmentService.enrichMessageMedia(event.tenantId, outRes.messageId).catch(() => {});
+        }
       }
       return;
     }
@@ -249,27 +282,38 @@ export class MessagingRegistry {
       isBot: false,
     };
 
-    const crmResult = await runWithTenantContext(event.tenantId, () =>
-      pipeline.processIncoming({
-        tenantId: event.tenantId,
-        channel: event.channel,
-        channelAccountId: event.channelAccountId,
-        chatId: event.chatId,
-        peerUserId: peerUserId || undefined,
-        chatThreadId: event.chatId,
-        text: effectiveText,
-        senderName,
-        senderPhone: peerPhone,
-        senderUsername: msg.senderUsername,
-        attachment: attachmentUrl ?? null,
-        attachmentType: attachmentType ?? null,
-        externalMessageId: msg.id,
-        messageTimestamp: new Date(msg.timestamp),
-        profile,
-      }),
-    );
+    let crmResult: Awaited<ReturnType<typeof pipeline.processIncoming>> | null = null;
+    for (const entry of persistedEntries) {
+      if (!entry.text && !entry.attachmentUrl) continue;
+      const entryResult = await runWithTenantContext(event.tenantId, () =>
+        pipeline.processIncoming({
+          tenantId: event.tenantId,
+          channel: event.channel,
+          channelAccountId: event.channelAccountId,
+          chatId: event.chatId,
+          peerUserId: peerUserId || undefined,
+          chatThreadId: event.chatId,
+          text: entry.text,
+          senderName,
+          senderPhone: peerPhone,
+          senderUsername: msg.senderUsername,
+          attachment: entry.attachmentUrl ?? null,
+          attachmentType: entry.attachmentType ?? null,
+          externalMessageId: entry.externalMessageId,
+          messageTimestamp: entry.messageTimestamp,
+          sourceMetadata: entry.sourceMetadata,
+          profile,
+        }),
+      );
+      if (entryResult.isPersonal || entryResult.isBot) {
+        return;
+      }
+      if (!crmResult) {
+        crmResult = entryResult;
+      }
+    }
 
-    if (crmResult.isPersonal || crmResult.isBot) {
+    if (!crmResult) {
       return;
     }
 
