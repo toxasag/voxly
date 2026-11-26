@@ -1,3 +1,7 @@
+- **Fixed `/integrations/max` History Sync & Direct Link UI (2026-11-26)**:
+  - `channel-history-sync.service.ts`: удалён несуществующий фильтр `deleted_at IS NULL` у таблицы `pipelines` (исправляло ошибку `column "deleted_at" does not exist` при синке истории MAX); добавлена изоляция ошибок отдельных контактов (например, контактов-поставщиков) в MAX-цикле.
+  - `ChannelAccountLinksCard.tsx`, `ChannelAccountsTable.tsx`, `use-max-auth.ts`: в блоке `Прямая ссылка (Direct Link)` на странице MAX заменена ошибочная метка `MTProto` на `MAX Web` / `Переход в профиль MAX`, добавлен вывод причины при ошибке синка, переключение disabled → connected при наличии `credentials` и остановка polling при `status === "error"`.
+
 ### Improved · Двухэтапная переработка интеграции личных аккаунтов MAX и нативный клиент `web.max.ru` (2026-11-26)
 
 - **Wave 1 (`max-bridge` & Session Resilience)**:

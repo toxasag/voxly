@@ -42,6 +42,7 @@ import {
   isHistorySyncSupportedChannel,
   runChannelHistorySync,
 } from "../modules/channels/channel-history-sync.service.js";
+import { DealsService } from "../modules/crm/deals/deals.service.js";
 
 describe("ChannelHistorySyncService", () => {
   beforeEach(() => {
@@ -160,5 +161,91 @@ describe("ChannelHistorySyncService", () => {
     expect(contactUpdateCall).toBeDefined();
     expect(contactUpdateCall?.[0]).not.toContain("first_name");
     expect(contactUpdateCall?.[0]).not.toContain("last_name");
+  });
+
+  it("queries pipelines without non-existent deleted_at column and isolates single-contact failures", async () => {
+    const createSpy = vi
+      .spyOn(DealsService.prototype, "createInTx")
+      .mockResolvedValueOnce({ id: "deal-created-1" } as never)
+      .mockRejectedValueOnce(new Error("Нельзя создать сделку с поставщиком"));
+
+    mockQueryOne
+      .mockResolvedValueOnce({ id: "acc-max", status: "connected", credentials: {} })
+      // Contact 1: no existing deal -> pipeline -> stage -> owner -> createInTx ok
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "pipe-1" })
+      .mockResolvedValueOnce({ id: "stage-1" })
+      .mockResolvedValueOnce({ id: "owner-1" })
+      // Contact 2 (vendor): no existing deal -> pipeline -> stage -> owner -> createInTx rejects cleanly
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "pipe-1" })
+      .mockResolvedValueOnce({ id: "stage-1" })
+      .mockResolvedValueOnce({ id: "owner-1" });
+
+    mockQuery
+      .mockResolvedValueOnce([
+        {
+          id: "c-1",
+          first_name: "Анна",
+          last_name: "Клиент",
+          phone: "+79161112233",
+          telegram_chat_id: null,
+          telegram_username: null,
+          messenger_id: null,
+          socials: [],
+          custom_fields: {},
+        },
+        {
+          id: "c-2",
+          first_name: "Поставщик",
+          last_name: null,
+          phone: "+79162223344",
+          telegram_chat_id: null,
+          telegram_username: null,
+          messenger_id: null,
+          socials: [],
+          custom_fields: {},
+        },
+      ])
+      .mockResolvedValue([]);
+
+    mockGetPrivateDialogs.mockResolvedValueOnce({
+      ok: true,
+      dialogs: [
+        {
+          chatId: "max-chat-1",
+          userId: "user-1",
+          phone: "+79161112233",
+          messages: [{ id: "m1", out: false, text: "Привет", date: 1732500000 }],
+        },
+        {
+          chatId: "max-chat-2",
+          userId: "user-2",
+          phone: "+79162223344",
+          messages: [{ id: "m2", out: false, text: "Прайс", date: 1732500001 }],
+        },
+      ],
+    });
+
+    mockSyncMaxDialogHistory.mockResolvedValueOnce(1);
+
+    const res = await runChannelHistorySync({
+      tenantId: "tenant-1",
+      channelAccountId: "acc-max",
+      channel: "max",
+    });
+
+    expect(res.processedContacts).toBe(2);
+    expect(res.syncedMessages).toBe(1);
+
+    const pipelineSql = mockQueryOne.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("FROM pipelines"),
+    )?.[0] as string | undefined;
+    expect(pipelineSql).toBeDefined();
+    expect(pipelineSql).not.toContain("deleted_at");
+
+    createSpy.mockRestore();
   });
 });

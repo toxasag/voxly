@@ -113,7 +113,7 @@ export function useMaxQrStatus(
     enabled: Boolean(name) && enabled,
     refetchInterval: (query) => {
       const data = query.state.data;
-      if (data?.status === "authorized") return false;
+      if (data?.status === "authorized" || data?.status === "error") return false;
       return 2500;
     },
   });

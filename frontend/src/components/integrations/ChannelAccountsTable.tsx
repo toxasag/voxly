@@ -168,7 +168,11 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   const handleConfirmToggle = useCallback(async () => {
     if (toggleTarget === null) return;
     const isDisabling = toggleTarget.status !== "disabled";
-    const nextStatus: ChannelStatus = isDisabling ? "disabled" : "pending";
+    const nextStatus: ChannelStatus = isDisabling
+      ? "disabled"
+      : toggleTarget.hasCredentials
+        ? "connected"
+        : "pending";
     setBusyId(toggleTarget.id);
 
     try {
@@ -314,9 +318,14 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                         История: {account.historySyncMessages} сообщ.
                       </span>
                     )}
-                    {account.historySyncStatus === "error" && account.historySyncError && (
-                      <span className="text-[11px] text-rose-600" title={account.historySyncError}>
-                        Ошибка синка истории
+                    {account.historySyncStatus === "error" && (
+                      <span
+                        className="max-w-[260px] truncate text-[11px] text-rose-600"
+                        title={account.historySyncError || "Ошибка синка истории"}
+                      >
+                        {account.historySyncError
+                          ? `Ошибка синка: ${account.historySyncError}`
+                          : "Ошибка синка истории"}
                       </span>
                     )}
                   </div>

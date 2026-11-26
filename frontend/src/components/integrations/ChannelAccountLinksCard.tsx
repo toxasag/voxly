@@ -274,7 +274,13 @@ export function ChannelAccountLinksCard({
                 Прямая ссылка (Direct Link)
               </span>
               <span className="text-[11px] font-medium text-[#666666]">
-                {isBot ? "Bot API" : channel === "whatsapp" ? "WhatsApp Web" : "MTProto"}
+                {isBot
+                  ? "Bot API"
+                  : channel === "whatsapp"
+                    ? "WhatsApp Web"
+                    : channel === "max"
+                      ? "MAX Web"
+                      : "MTProto"}
               </span>
             </div>
             <p className="text-xs text-[#666666]">
@@ -311,7 +317,9 @@ export function ChannelAccountLinksCard({
             <div className="text-[11px] text-[#888888]">
               {isBot
                 ? "Запуск бота через команду /start"
-                : "Открывает диалог с предзаполненным текстом"}
+                : channel === "max"
+                  ? "Переход в профиль MAX"
+                  : "Открывает диалог с предзаполненным текстом"}
             </div>
           </div>
         </div>

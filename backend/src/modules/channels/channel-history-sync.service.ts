@@ -163,7 +163,7 @@ async function findOrCreateDealForContactSync(opts: {
 
     // 3. Создаём новую сделку в первом этапе первой воронки
     const pipeline = await tx.queryOne<{ id: string }>(
-      `SELECT id FROM pipelines WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+      `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
       [tenantId],
     );
     if (!pipeline) return null;
@@ -368,44 +368,48 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
             (p10 ? byPhone10.get(p10) : undefined);
 
           if (dialog && Array.isArray(dialog.messages) && dialog.messages.length > 0) {
-            const dealId = await findOrCreateDealForContactSync({
-              tenantId,
-              contact,
-              channel: "max",
-              chatThreadId: dialog.chatId,
-              lastMessagePreview: dialog.messages[dialog.messages.length - 1]?.text,
-            });
-
-            if (dealId) {
-              const inserted = await syncMaxDialogHistory({
+            try {
+              const dealId = await findOrCreateDealForContactSync({
                 tenantId,
-                dealId,
-                channelAccountId,
-                peerId: dialog.chatId,
-                peerPhone: contact.phone,
-                peerUserId: dialog.userId ?? (maxUserId || null),
-                senderName: contactDisplayName(contact),
-                preloadedDialogs: dialogsResp,
+                contact,
+                channel: "max",
+                chatThreadId: dialog.chatId,
+                lastMessagePreview: dialog.messages[dialog.messages.length - 1]?.text,
               });
-              totalMessages += inserted;
 
-              // Привязываем max_chat_id к контакту, не перезаписывая существующие ФИО и телефон
-              await withTenant(tenantId, (tx) =>
-                tx.query(
-                  `UPDATE contacts
-                   SET messenger_id = COALESCE(messenger_id, $1),
-                       messenger_name = COALESCE(messenger_name, 'Макс'),
-                       custom_fields = jsonb_set(
-                         jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
-                         '{max_user_id}',
-                         CASE WHEN $4::text IS NOT NULL THEN to_jsonb($4::text) ELSE COALESCE(custom_fields->'max_user_id', 'null'::jsonb) END,
-                         true
-                       ),
-                       updated_at = now()
-                   WHERE tenant_id = $2 AND id = $3`,
-                  [dialog.chatId, tenantId, contact.id, dialog.userId ?? null],
-                ),
-              );
+              if (dealId) {
+                const inserted = await syncMaxDialogHistory({
+                  tenantId,
+                  dealId,
+                  channelAccountId,
+                  peerId: dialog.chatId,
+                  peerPhone: contact.phone,
+                  peerUserId: dialog.userId ?? (maxUserId || null),
+                  senderName: contactDisplayName(contact),
+                  preloadedDialogs: dialogsResp,
+                });
+                totalMessages += inserted;
+
+                // Привязываем max_chat_id к контакту, не перезаписывая существующие ФИО и телефон
+                await withTenant(tenantId, (tx) =>
+                  tx.query(
+                    `UPDATE contacts
+                     SET messenger_id = COALESCE(messenger_id, $1),
+                         messenger_name = COALESCE(messenger_name, 'Макс'),
+                         custom_fields = jsonb_set(
+                           jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
+                           '{max_user_id}',
+                           CASE WHEN $4::text IS NOT NULL THEN to_jsonb($4::text) ELSE COALESCE(custom_fields->'max_user_id', 'null'::jsonb) END,
+                           true
+                         ),
+                         updated_at = now()
+                     WHERE tenant_id = $2 AND id = $3`,
+                    [dialog.chatId, tenantId, contact.id, dialog.userId ?? null],
+                  ),
+                );
+              }
+            } catch {
+              // Игнорируем ошибку отдельного контакта (например, контакт в статусе поставщика), не прерывая общий синк
             }
           }
 
