@@ -56,6 +56,7 @@ import {
   type DocumentInfoMetadata,
 } from "@/lib/api/use-crm-chat";
 import { useChatStream } from "@/lib/api/use-chat-stream";
+import { useMarkEntityNotificationsRead } from "@/lib/notifications/use-inapp-notifications";
 import {
   TelegramComposer,
   type AttachedFile,
@@ -951,6 +952,21 @@ export function CrmChatView({
   const contactQuery = useContact(!isDeal && entityId ? entityId : null);
 
   const heartbeatMutation = useSendPresenceHeartbeat();
+  const { markEntityRead: markEntityNotificationsRead } = useMarkEntityNotificationsRead();
+  const lastMarkedEntityRef = useRef<string | null>(null);
+
+  // Помечаем прочитанными все уведомления по сделке/контакту при открытии чата
+  useEffect(() => {
+    if (!entityId) return;
+    const key = `${entityType}:${entityId}`;
+    if (lastMarkedEntityRef.current === key) return;
+    lastMarkedEntityRef.current = key;
+    markEntityNotificationsRead({
+      entity_type: isDeal ? "deal" : "contact",
+      entity_id: entityId,
+      categories: ["message", "lead"],
+    });
+  }, [entityType, entityId, isDeal, markEntityNotificationsRead]);
 
   // Heartbeat оператора CRM пока открыт диалог
   useEffect(() => {

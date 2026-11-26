@@ -6,13 +6,79 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api/apiClient";
 import { useNotificationPreferences } from "@/lib/api/use-notification-preferences";
-import type { AppNotification } from "@/types";
+import type { AppNotification, NotificationCategory } from "@/types";
+
+export const INAPP_NOTIFICATIONS_QUERY_KEY = ["inapp-notifications"] as const;
 
 interface NotificationsResponse {
   data: AppNotification[];
   meta: {
     unreadCount: number;
   };
+}
+
+export interface MarkEntityReadParams {
+  entity_type: AppNotification["entity_type"];
+  entity_id: string;
+  categories?: NotificationCategory[];
+}
+
+function matchesEntityTarget(n: AppNotification, params: MarkEntityReadParams): boolean {
+  if (n.entity_id !== params.entity_id) return false;
+  const sameGroup =
+    params.entity_type === "deal" || params.entity_type === "chat" || params.entity_type === "lead"
+      ? n.entity_type === "deal" || n.entity_type === "chat" || n.entity_type === "lead"
+      : n.entity_type === params.entity_type;
+  if (!sameGroup) return false;
+  if (params.categories && params.categories.length > 0) {
+    return params.categories.includes(n.category);
+  }
+  return true;
+}
+
+/**
+ * Лёгкий хук без SSE-подключения: помечает прочитанными все уведомления
+ * по сущности (сделка, контакт, чат, задача, наряд) и синхронизирует кеш колокольчика.
+ */
+export function useMarkEntityNotificationsRead() {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: async (params: MarkEntityReadParams) => {
+      await apiClient.post("/api/v1/notifications/read-by-entity", params);
+    },
+    onMutate: (params) => {
+      queryClient.setQueryData<NotificationsResponse>(INAPP_NOTIFICATIONS_QUERY_KEY, (old) => {
+        if (!old) return old;
+        let removedCount = 0;
+        const remaining = old.data.filter((n) => {
+          const hit = matchesEntityTarget(n, params);
+          if (hit && !n.read) removedCount += 1;
+          return !hit;
+        });
+        if (removedCount === 0 && remaining.length === old.data.length) return old;
+        return {
+          data: remaining,
+          meta: {
+            unreadCount: Math.max(0, old.meta.unreadCount - removedCount),
+          },
+        };
+      });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: INAPP_NOTIFICATIONS_QUERY_KEY });
+    },
+  });
+
+  const markEntityRead = useCallback(
+    (params: MarkEntityReadParams) => {
+      if (!params.entity_id) return;
+      mutation.mutate(params);
+    },
+    [mutation],
+  );
+
+  return { markEntityRead, isPending: mutation.isPending };
 }
 
 function playNotificationChime() {
@@ -59,21 +125,80 @@ export function useInAppNotifications() {
   }, [preferences]);
 
   const { data, isLoading, refetch } = useQuery<NotificationsResponse>({
-    queryKey: ["inapp-notifications"],
+    queryKey: INAPP_NOTIFICATIONS_QUERY_KEY,
     queryFn: async () => {
       const res = await apiClient.get<AppNotification[]>("/api/v1/notifications?limit=30");
+      const unreadItems = (res.data ?? []).filter((n) => !n.read);
       return {
-        data: res.data ?? [],
+        data: unreadItems,
         meta: {
-          unreadCount: (res as unknown as { meta?: { unreadCount: number } }).meta?.unreadCount ?? 0,
+          unreadCount:
+            (res as unknown as { meta?: { unreadCount: number } }).meta?.unreadCount ??
+            unreadItems.length,
         },
       };
     },
     staleTime: 30_000,
   });
 
+  const { markEntityRead } = useMarkEntityNotificationsRead();
+
   const notifications = data?.data ?? [];
   const unreadCount = data?.meta.unreadCount ?? 0;
+
+  // Мутация: пометить все как прочитанные (сразу очищаем список непрочитанных)
+  const markAllMutation = useMutation({
+    mutationFn: async () => {
+      await apiClient.post("/api/v1/notifications/mark-all-read");
+    },
+    onMutate: () => {
+      queryClient.setQueryData<NotificationsResponse>(INAPP_NOTIFICATIONS_QUERY_KEY, {
+        data: [],
+        meta: { unreadCount: 0 },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Все уведомления прочитаны");
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: INAPP_NOTIFICATIONS_QUERY_KEY });
+    },
+  });
+
+  // Мутация: пометить одно как прочитанное (сразу убираем из списка непрочитанных)
+  const markOneMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.post(`/api/v1/notifications/${id}/read`);
+    },
+    onMutate: (id) => {
+      queryClient.setQueryData<NotificationsResponse>(INAPP_NOTIFICATIONS_QUERY_KEY, (old) => {
+        if (!old) return { data: [], meta: { unreadCount: 0 } };
+        const target = old.data.find((n) => n.id === id);
+        const hadUnread = Boolean(target && !target.read);
+        return {
+          data: old.data.filter((n) => n.id !== id),
+          meta: {
+            unreadCount: Math.max(0, old.meta.unreadCount - (hadUnread ? 1 : 0)),
+          },
+        };
+      });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: INAPP_NOTIFICATIONS_QUERY_KEY });
+    },
+  });
+
+  const markOneRead = useCallback(
+    (id: string) => {
+      markOneMutation.mutate(id);
+    },
+    [markOneMutation],
+  );
+
+  const markOneReadRef = useRef(markOneRead);
+  useEffect(() => {
+    markOneReadRef.current = markOneRead;
+  }, [markOneRead]);
 
   // Синхронизация системного счетчика бейджа на иконке PWA (Android One UI / Desktop)
   useEffect(() => {
@@ -87,7 +212,7 @@ export function useInAppNotifications() {
     }
   }, [unreadCount, preferences.notifications_enabled]);
 
-  // Realtime SSE подключение для мгновенной доставки уведомлений во вкладку
+  // Realtime SSE подключение для мгновенной доставки и синхронизации прочтения уведомлений
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -99,6 +224,7 @@ export function useInAppNotifications() {
     eventSource.addEventListener("notification", (event) => {
       try {
         const item = JSON.parse(event.data) as AppNotification & { data?: { url?: string } };
+        if (item.read) return;
 
         const currentPrefs = preferencesRef.current;
         if (!currentPrefs.notifications_enabled) {
@@ -120,25 +246,64 @@ export function useInAppNotifications() {
             description: item.description,
             action: {
               label: "Открыть",
-              onClick: () => router.push(targetUrl),
+              onClick: () => {
+                markOneReadRef.current(item.id);
+                router.push(targetUrl);
+              },
             },
           });
         }
 
         // Мгновенное обновление кеша в памяти
-        queryClient.setQueryData<NotificationsResponse>(["inapp-notifications"], (old) => {
+        queryClient.setQueryData<NotificationsResponse>(INAPP_NOTIFICATIONS_QUERY_KEY, (old) => {
           if (!old) {
             return { data: [item], meta: { unreadCount: 1 } };
           }
+          const alreadyExists = old.data.some((n) => n.id === item.id);
           return {
-            data: [item, ...old.data.filter((n) => n.id !== item.id)],
+            data: [item, ...old.data.filter((n) => n.id !== item.id && !n.read)],
             meta: {
-              unreadCount: old.meta.unreadCount + 1,
+              unreadCount: old.meta.unreadCount + (alreadyExists ? 0 : 1),
             },
           };
         });
       } catch (err) {
         console.warn("[SSE:Notification] Parse error:", err);
+      }
+    });
+
+    eventSource.addEventListener("read", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { ids?: string[]; all?: boolean };
+        if (payload.all) {
+          queryClient.setQueryData<NotificationsResponse>(INAPP_NOTIFICATIONS_QUERY_KEY, {
+            data: [],
+            meta: { unreadCount: 0 },
+          });
+          return;
+        }
+        const readIds = new Set(payload.ids ?? []);
+        if (readIds.size === 0) return;
+
+        let shouldRefetch = false;
+        queryClient.setQueryData<NotificationsResponse>(INAPP_NOTIFICATIONS_QUERY_KEY, (old) => {
+          if (!old) return old;
+          const remaining = old.data.filter((n) => !readIds.has(n.id));
+          const removed = old.data.length - remaining.length;
+          const nextUnread = Math.max(0, old.meta.unreadCount - Math.max(removed, readIds.size));
+          if (remaining.length === 0 && nextUnread > 0) {
+            shouldRefetch = true;
+          }
+          return {
+            data: remaining,
+            meta: { unreadCount: nextUnread },
+          };
+        });
+        if (shouldRefetch) {
+          void queryClient.invalidateQueries({ queryKey: INAPP_NOTIFICATIONS_QUERY_KEY });
+        }
+      } catch (err) {
+        console.warn("[SSE:NotificationRead] Parse error:", err);
       }
     });
 
@@ -151,59 +316,9 @@ export function useInAppNotifications() {
     };
   }, [queryClient, router]);
 
-  // Мутация: пометить все как прочитанные
-  const markAllMutation = useMutation({
-    mutationFn: async () => {
-      await apiClient.post("/api/v1/notifications/mark-all-read");
-    },
-    onSuccess: () => {
-      queryClient.setQueryData<NotificationsResponse>(["inapp-notifications"], (old) => {
-        if (!old) return { data: [], meta: { unreadCount: 0 } };
-        return {
-          data: old.data.map((n) => ({ ...n, read: true })),
-          meta: { unreadCount: 0 },
-        };
-      });
-      toast.success("Все уведомления прочитаны");
-    },
-  });
-
-  // Мутация: пометить одно как прочитанное
-  const markOneMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiClient.post(`/api/v1/notifications/${id}/read`);
-    },
-    onSuccess: (_, id) => {
-      queryClient.setQueryData<NotificationsResponse>(["inapp-notifications"], (old) => {
-        if (!old) return { data: [], meta: { unreadCount: 0 } };
-        let hadUnread = false;
-        const updated = old.data.map((n) => {
-          if (n.id === id) {
-            if (!n.read) hadUnread = true;
-            return { ...n, read: true };
-          }
-          return n;
-        });
-        return {
-          data: updated,
-          meta: {
-            unreadCount: Math.max(0, old.meta.unreadCount - (hadUnread ? 1 : 0)),
-          },
-        };
-      });
-    },
-  });
-
   const markAllRead = useCallback(() => {
     markAllMutation.mutate();
   }, [markAllMutation]);
-
-  const markOneRead = useCallback(
-    (id: string) => {
-      markOneMutation.mutate(id);
-    },
-    [markOneMutation],
-  );
 
   return {
     notifications,
@@ -212,5 +327,6 @@ export function useInAppNotifications() {
     refetch,
     markAllRead,
     markOneRead,
+    markEntityRead,
   };
 }

@@ -113,18 +113,28 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  const { notifications, unreadCount, markAllRead, markOneRead } = useInAppNotifications();
+  const { notifications, unreadCount, markAllRead, markOneRead, markEntityRead } = useInAppNotifications();
   const { isSupported, isSubscribed, subscribe, isLoading: isPushLoading } = useWebPush();
+
+  // В дропдауне показываются только непрочитанные уведомления
+  const unreadNotifications = notifications.filter((n) => !n.read);
 
   const handleNavigate = useCallback(
     (n: AppNotification) => {
-      markOneRead(n.id);
+      if (n.entity_type !== "system" && n.entity_id) {
+        markEntityRead({
+          entity_type: n.entity_type,
+          entity_id: n.entity_id,
+        });
+      } else {
+        markOneRead(n.id);
+      }
       setOpen(false);
       const urlFromData = n.data?.url as string | undefined;
       const href = urlFromData || (ENTITY_HREF[n.entity_type]?.(n.entity_id) ?? "/dashboard");
       router.push(href);
     },
-    [markOneRead, router],
+    [markEntityRead, markOneRead, router],
   );
 
   useClickOutside(dropdownRef, () => setOpen(false), open);
@@ -171,20 +181,20 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
             )}
           </div>
 
-          {/* Список уведомлений */}
+          {/* Список уведомлений (только непрочитанные) */}
           <div className="max-h-[380px] overflow-y-auto divide-y divide-[#f0f0f0]">
-            {notifications.length === 0 ? (
+            {unreadNotifications.length === 0 ? (
               <div className="px-4 py-10 text-center">
                 <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-[#fafafa] text-[#888888]">
                   <Bell className="h-5 w-5" />
                 </div>
-                <p className="text-[13px] font-medium text-[#111111]">Уведомлений пока нет</p>
+                <p className="text-[13px] font-medium text-[#111111]">Нет непрочитанных уведомлений</p>
                 <p className="text-[12px] text-[#888888] mt-0.5">
                   Новые заявки, сообщения и задачи будут отображаться здесь
                 </p>
               </div>
             ) : (
-              notifications.map((n) => {
+              unreadNotifications.map((n) => {
                 const config = CATEGORY_CONFIG[n.category] ?? CATEGORY_CONFIG.system;
                 const Icon = config.icon;
 
