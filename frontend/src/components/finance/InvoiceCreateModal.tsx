@@ -8,7 +8,7 @@ import { createInvoiceSchema, type CreateInvoicePayload } from "@/schemas/invoic
 import { useCompanies } from "@/lib/api/use-companies";
 import { useFinanceOrganizations, type VatMode } from "@/lib/api/use-invoices";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+import { cn, toLocalDateTimeInput } from "@/lib/utils";
 
 const VAT_RATES: { rate: number; mode: VatMode; label: string }[] = [
   { rate: 0, mode: "none", label: "Без НДС" },
@@ -43,7 +43,7 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
       company_address: "",
       contact_name: "",
       contact_phone: "",
-      due_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16),
+      due_date: toLocalDateTimeInput(new Date(Date.now() + 7 * 86400000)),
       vat_mode: "none",
       vat_rate: 0,
       notes: "",
@@ -64,7 +64,7 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
         company_address: "",
         contact_name: "",
         contact_phone: "",
-        due_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16),
+        due_date: toLocalDateTimeInput(new Date(Date.now() + 7 * 86400000)),
         vat_mode: defaultOrg?.vatMode ?? "none",
         vat_rate: defaultOrg?.vatRate ?? 0,
         notes: "",

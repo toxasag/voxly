@@ -61,19 +61,25 @@ export function formatDateTime(iso: string | Date | null | undefined): string {
 }
 
 /**
- * Конвертирует ISO-метку (или локальную дату) в строку формата «YYYY-MM-DDTHH:mm»
+ * Конвертирует Date / ISO-метку (или локальную дату) в строку формата «YYYY-MM-DDTHH:mm»
  * в локальной таймзоне пользователя для DateTimePicker и input[type="datetime-local"].
  */
-export function toLocalDateTimeInput(value: string | null | undefined): string {
+export function toLocalDateTimeInput(value: Date | string | null | undefined): string {
   if (!value) return "";
-  const trimmed = value.trim();
-  if (!trimmed) return "";
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return `${trimmed}T12:00`;
+  let parsed: Date;
+  if (value instanceof Date) {
+    parsed = value;
+  } else {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return `${trimmed}T12:00`;
+    }
+    parsed = new Date(trimmed);
   }
 
-  const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return "";
 
   const pad = (n: number): string => String(n).padStart(2, "0");
@@ -101,6 +107,26 @@ export function toLocalDateKey(value: string | Date): string {
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n: number): string => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Переводит значение input[type="date"] («YYYY-MM-DD») в ISO-8601 UTC:
+ * если выбрана сегодняшняя локальная дата — фиксирует точное текущее время,
+ * иначе — локальный полдень (12:00), чтобы дата не съезжала на границе часовых поясов.
+ */
+export function localDateInputToIso(
+  value: string | null | undefined,
+  referenceNow: Date = new Date(),
+): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed) && trimmed === toLocalDateKey(referenceNow)) {
+    return referenceNow.toISOString();
+  }
+
+  return localDateTimeToIso(trimmed);
 }
 
 /** Форматирует только локальное время («HH:mm») для компактных ячеек календаря. */

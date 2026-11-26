@@ -2028,6 +2028,15 @@
      - Обновлены бейджи и описания в каталоге провайдеров.
   5. **Тесты:** добавлен `backend/src/tests/google-ads-conversion-provider.test.ts`.
 
+## 2026-11-26 — Исправление сдвига времени на -3 часа в финансовых операциях и всех связанных формах даты/времени
+- **Контекст и root cause:**
+  - В БД (`PostgreSQL`, `TimeZone = UTC`) все события хранятся в `TIMESTAMPTZ` (UTC), серверные автоматические операции (`now()`) отображались в браузере корректно в MSK (`UTC+3`), но в `CreateTransactionModal.tsx` дефолтное значение для `<input type="datetime-local">` задавалось через `new Date().toISOString().slice(0, 16)` (UTC без `Z`), а при сабмите `new Date(val).toISOString()` интерпретировало эту UTC-строку как локальное MSK и вычитало ещё 3 часа (операция в `16:20 MSK` уходила как `10:20Z` и отображалась как `13:20`, ломая порядок в таблице).
+  - Аналогичные `toISOString().slice(0, 16|10)` и `new Date("YYYY-MM-DD").toISOString()` (`00:00Z = 03:00 MSK`) найдены в `EditTransactionModal.tsx`, `InvoiceCreateModal.tsx`, `InvoicePaymentModal.tsx`, `TransactionsTable.tsx`, `WarehouseIntakeDialog.tsx`, `IntakeModal.tsx` и `GenerateInvoiceModal.tsx`.
+- **Что изменено:**
+  1. `frontend/src/lib/utils.ts`: `toLocalDateTimeInput` принимает `Date | string`, добавлен `localDateInputToIso` (для сегодняшней локальной даты возвращает текущее время `ISO`, для иной даты — локальный полдень `12:00`).
+  2. Все 8 перечисленных компонентов переведены на `toLocalDateTimeInput` / `localDateTimeToIso` / `toLocalDateKey` / `localDateInputToIso` (во всём `frontend/src/` не осталось ни одного `.toISOString().slice(...)` для дат форм).
+  3. Добавлен unit-тест `frontend/src/lib/utils.datetime.test.ts`.
+  4. В прод-БД (`remtoua`) скорректированы на `+3 hours` 3 ручные операции от `2026-11-26` (`17cf586a`, `2177cf2c`, `8af39165`), записанные со сдвигом `diff_min = 180..181`.
 
 ## 2026-11-26: Диагностика входа MAX по телефону (`START_AUTH` / VK Captcha) и переход на QR
 - **Контекст и root cause (скриншот `yandex-eda.getvoxly.ru` + тест `wss://api.oneme.ru/websocket`):**

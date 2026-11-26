@@ -34,7 +34,7 @@ import {
   useDeleteTransaction,
 } from "@/lib/api/use-invoices";
 import { EditTransactionModal } from "./EditTransactionModal";
-import { cn } from "@/lib/utils";
+import { cn, toLocalDateKey } from "@/lib/utils";
 
 interface TransactionsTableProps {
   transactions: Transaction[];
@@ -133,7 +133,7 @@ function exportToCsv(items: Transaction[]) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `transactions_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `transactions_${toLocalDateKey(new Date())}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
