@@ -1887,3 +1887,27 @@
   2. `backend/src/modules/finance/invoices.service.ts`: в `syncToElba` передаётся `withNDS = inv.vatMode !== "none" && inv.vatRate > 0`, `sumsWithNDS: withNDS ? true : null`, `ndsRate: withNDS ? mapVatModeToElbaNds(...) : null`; в `create` и `fromRepairs` автосинхронизация ожидается (с мягким `catch`, не роняющим создание счёта) для возврата актуального `elbaBillId` / `elbaSyncError`.
   3. `frontend/src/components/repairs/detail/GenerateInvoiceModal.tsx` и `FinancialSummary.tsx`: добавлен показ реального статуса/ошибки синхронизации с Эльбой в toast и подсветка кнопки «Повторить Эльбу» при наличии `elbaSyncError`.
   4. `backend/src/tests/elba-client.test.ts`: добавлены unit-тесты на формирование payload и разбор ошибок Эльбы.
+
+## 2026-11-26 — Стабилизация MAX-интеграции и нативный TypeScript-клиент `web.max.ru` (Wave 1 + Wave 2)
+- **Контекст и root cause:**
+  1. `max-bridge` жил только на VPS в `/opt/voxly/apps/max-bridge` и не деплоился из git; временный `WebClient` на `pending-*` не закрывался после переноса в `{bot_id}/`, `relogin=True` молча удалял `web.db`, а статус в Postgres разъезжался с реальностью (`021eb35f` в `error`, пустой `aff6c92c` в `connected`).
+  2. `PyMax 2.4.1` WebClient использовал устаревший JSON v11 и не поддерживал нативное управление сессиями / бинарный протокол `ver=10`.
+- **Что изменено (Wave 1):**
+  - Код `apps/max-bridge` перенесён в репозиторий, подключён к `docker-compose.yml`, `scripts/deploy.sh`, `scripts/remote-build.sh` и `docs/05_OPERATIONS/05_02_DEPLOY.md`.
+  - В `apps/max-bridge/src/main.py` добавлены `VoxlyWebClient(relogin=False)` (сброс токена только при фатальных ответах), переоткрытие рабочего клиента в `/data/max-sessions/{bot_id}`, фиксированный `device_id`/`user_agent`, `AutoRefreshQrAuthFlow` и `BridgePasswordProvider`.
+  - В `backend` добавлен зашифрованный бэкап `encrypted_session` (`credentials-cipher.ts`), восстановление из него, синк статусов `POST /bots/status`, фильтр исключения `native-ts` аккаунтов в `GET /bots/active`, `botId` в QR-переподключении без плодящихся лейблов и `POST /accounts/:id/check`.
+- **Что изменено (Wave 2):**
+  - `backend/src/modules/messaging/adapters/max/max-protocol.ts`: бинарный протокол `ver=10`, MessagePack c `ext type 1` (`BigInt`), LZ4 с соблюдением `MFLIMIT=12` / `LASTLITERALS=5`.
+  - `backend/src/modules/messaging/adapters/max/MaxTsAdapter.ts`: полнофункциональный WS-клиент (`SessionInit 6`, `LOGIN 19`, `AUTH_CONFIRM 23`, `cmd=1` ACK на `1`/`128`/`137`, `lastInSeq`, 35s read-timeout, jittered backoff reconnect, `cmd=2` retry queue, media upload/download, `getPrivateDialogs`, `lookupProfileByPhone 46`, сессии `96`/`97`, `resolveTargetChatId` с фоллбэком `userId -> XOR chatId`).
+  - `backend/src/modules/channels/max-native-auth.service.ts` и `max-integration.routes.ts`: нативная QR-авторизация (`288`/`289`/`291`), запасной вход по телефону + SMS/звонок (`17`/`18`/`294`) + 2FA (`115`), `POST /accounts/:id/provider` (переключение `native-ts` ↔ `max-bridge` без потери токена).
+  - `messaging-registry.ts` + `server.ts`: запуск `MaxTsAdapter.startAllNativeSessions()` при старте API, обработка входящих/нативных исходящих и AI-автоответа, типизированная отправка фото/видео/аудио/документов.
+  - UI (`ConnectMaxModal.tsx`, `ChannelAccountsTable.tsx`, `use-max-auth.ts`, `use-channels.ts`): выбор провайдера, вкладка входа по телефону, просмотр и завершение других сессий (`opcode 96`/`97`).
+- **Проверка локально и на проде (`150.241.98.135`):**
+  - Локально: `tsc --noEmit` (`backend` и `frontend`) — 0 ошибок; Vitest (`max-protocol`, `max-internal-auth`, `chat-write-first`, `channel-history-sync`) — 24/24 passed; `messaging-adapters.test.ts` — 8/8 passed; `scripts/test-deploy-safety.py` — 6/6 passed.
+  - На проде: аккаунт `021eb35f-2fd8-488c-bd64-6e14abfba252` переведён на `provider: 'native-ts'`, `status: 'connected'`; `GET /bots/active` исключил `021eb35f` (`max-bridge /health`: `sessions: 0`); `POST /accounts/021eb35f/check` → `alive: true`; `GET /accounts/021eb35f/sessions` (`opcode 96`) вернул 4 живые сессии; `getPrivateDialogs` + `downloadMedia` загрузили файл (`0032.pdf`, `1114344` байт) и фото (`70954` байт, `image/webp`); после `docker-compose restart backend` сессия `021eb35f` автоматически восстановилась из `encrypted_session`. Мёртвые аккаунты `aff6c92c...` и `98074187...` честно остаются в `status: 'error'` до сканирования QR.
+  - **Дополнительно устранены ошибки со страницы `/integrations/max`:**
+    - `channel-history-sync.service.ts`: в `findOrCreateDealForContactSync` запрос к `pipelines` ошибочно фильтровал `AND deleted_at IS NULL` (в `pipelines` нет `deleted_at`), из-за чего оба подключённых MAX-аккаунта падали в «Ошибка синка истории»; фильтр удалён, добавлен `try/catch` на отдельный контакт (например, контакты-поставщики).
+    - `ChannelAccountLinksCard.tsx`: на странице MAX в карточке Direct Link вместо ошибочной подписи `MTProto` выводится `MAX Web` и «Переход в профиль MAX».
+    - `ChannelAccountsTable.tsx` / `use-max-auth.ts`: в статусе показывается конкретная причина ошибки синка, повторное включение аккаунта с `hasCredentials` переводит его в `connected`, polling QR-статуса останавливается при `error`.
+  - Замечание по охвату живой проверки: реальная отправка нового исходящего сообщения клиенту через UI с `021eb35f` намеренно не выполнялась, чтобы не беспокоить реальных клиентов `remtoua`; исходящий/входящий пайплайн покрыт unit-тестами (`24/24`, `8/8`) и проверкой маршрутизации (`getSendFromOptions`).
+

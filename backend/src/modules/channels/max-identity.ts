@@ -1,5 +1,5 @@
-import { isBannedName } from "../crm/channel-identity.js";
-import { isFakeOrDummyPhone } from "../crm/channel-identity.js";
+import { withTenant } from "../../db/client.js";
+import { isBannedName, isFakeOrDummyPhone } from "../crm/channel-identity.js";
 import { isPlaceholderName } from "../crm/identity-resolution.js";
 
 export interface MaxRawName {
@@ -231,4 +231,131 @@ export function extractMaxIdentity(input: {
     senderName,
     phone,
   };
+}
+
+/**
+ * Привязывает MAX-идентификаторы контакта (max_chat_id, max_user_id) и безопасно
+ * дозаполняет только пустые телефон/ФИО из профиля MAX, не затрагивая уже заполненные поля.
+ */
+export async function syncMaxContactIdentityFromDialog(opts: {
+  tenantId: string;
+  contactId: string;
+  existingContact?: {
+    first_name: string | null;
+    last_name: string | null;
+    phone: string | null;
+  };
+  dialog: {
+    chatId: string;
+    userId?: string | null;
+    username?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    names?: MaxRawName[] | null;
+    phone?: string | null;
+  };
+  selfPhone?: string | null;
+}): Promise<void> {
+  const identity = extractMaxIdentity({
+    names: opts.dialog.names,
+    firstName: opts.dialog.firstName,
+    lastName: opts.dialog.lastName,
+    username: opts.dialog.username,
+    phone: opts.dialog.phone,
+    selfPhone: opts.selfPhone,
+  });
+
+  await withTenant(opts.tenantId, async (tx) => {
+    const contact =
+      opts.existingContact ??
+      (await tx.queryOne<{
+        first_name: string | null;
+        last_name: string | null;
+        phone: string | null;
+      }>(
+        `SELECT first_name, last_name, phone
+         FROM contacts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         LIMIT 1`,
+        [opts.tenantId, opts.contactId],
+      ));
+    if (!contact) return;
+
+    const currentPhone = contact.phone?.trim() ?? "";
+    const backfillPhone = currentPhone === "" && identity.phone ? identity.phone : null;
+
+    const currentFirst = contact.first_name?.trim() ?? "";
+    const currentLast = contact.last_name?.trim() ?? "";
+    const isPlaceholder = isPlaceholderName(currentFirst, currentLast);
+
+    let nextFirst: string | null = null;
+    let nextLast: string | null = null;
+    if (isPlaceholder && identity.firstName) {
+      nextFirst = identity.firstName;
+      nextLast = identity.lastName ?? "";
+    } else if (
+      currentLast === "" &&
+      identity.lastName &&
+      (!identity.firstName || !currentFirst || identity.firstName.toLowerCase() === currentFirst.toLowerCase())
+    ) {
+      nextLast = identity.lastName;
+    }
+
+    const params: Array<string | null> = [
+      opts.dialog.chatId,
+      opts.tenantId,
+      opts.contactId,
+      opts.dialog.userId ?? null,
+    ];
+    const extraSets: string[] = [];
+
+    if (backfillPhone !== null) {
+      params.push(backfillPhone);
+      const idx = params.length;
+      extraSets.push(
+        `phone = CASE WHEN (phone IS NULL OR BTRIM(phone) = '') THEN $${idx} ELSE phone END`,
+        `phone_calling_code = CASE WHEN (phone IS NULL OR BTRIM(phone) = '') THEN COALESCE(NULLIF(phone_calling_code, ''), '+7') ELSE phone_calling_code END`,
+        `phone_country_code = CASE WHEN (phone IS NULL OR BTRIM(phone) = '') THEN COALESCE(NULLIF(phone_country_code, ''), 'RU') ELSE phone_country_code END`,
+      );
+    }
+    if (nextFirst !== null) {
+      params.push(nextFirst);
+      extraSets.push(`first_name = $${params.length}`);
+    }
+    if (nextLast !== null) {
+      params.push(nextLast);
+      extraSets.push(`last_name = $${params.length}`);
+    }
+
+    const extraSql = extraSets.length > 0 ? `,\n           ${extraSets.join(",\n           ")}` : "";
+
+    await tx.query(
+      `UPDATE contacts
+       SET messenger_id = COALESCE(messenger_id, $1),
+           messenger_name = COALESCE(messenger_name, 'Макс'),
+           custom_fields = jsonb_set(
+             jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
+             '{max_user_id}',
+             CASE WHEN $4::text IS NOT NULL THEN to_jsonb($4::text) ELSE COALESCE(custom_fields->'max_user_id', 'null'::jsonb) END,
+             true
+           )${extraSql},
+           updated_at = now()
+       WHERE tenant_id = $2 AND id = $3`,
+      params,
+    );
+
+    if (nextFirst !== null || nextLast !== null) {
+      const resolvedFull = `${nextFirst ?? currentFirst} ${nextLast ?? currentLast}`.trim();
+      if (resolvedFull && !isPlaceholderName(resolvedFull, "")) {
+        await tx.query(
+          `UPDATE deals
+           SET title = 'Заявка от ' || $1 || ' (MAX)',
+               updated_at = now()
+           WHERE contact_id = $2 AND tenant_id = $3
+             AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Без имени%')`,
+          [resolvedFull, opts.contactId, opts.tenantId],
+        );
+      }
+    }
+  });
 }

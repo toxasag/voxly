@@ -154,6 +154,46 @@ describe("внутренние маршруты MAX требуют VOXLY_SERVICE
     await app.close();
   });
 
+  it("GET /bots/active исключает native-ts аккаунты чтобы max-bridge не конкурировал", async () => {
+    const encryptedBridge = encryptSecret(
+      JSON.stringify({ token: "tok-bridge", deviceId: "dev-bridge" }),
+    );
+    const encryptedNative = encryptSecret(
+      JSON.stringify({ token: "tok-native", deviceId: "dev-native" }),
+    );
+    mockQuery.mockResolvedValueOnce([
+      {
+        id: "021eb35f-2fd8-488c-bd64-6e14abfba252",
+        tenant_id: "00000000-0000-0000-0000-000000000001",
+        label: "Bridge Acc",
+        external_id: "111",
+        remote_user_id: "111",
+        status: "connected",
+        credentials: { provider: "max-bridge", encrypted_session: encryptedBridge },
+      },
+      {
+        id: "11111111-2222-3333-4444-555555555555",
+        tenant_id: "00000000-0000-0000-0000-000000000001",
+        label: "Native Acc",
+        external_id: "222",
+        remote_user_id: "222",
+        status: "connected",
+        credentials: { provider: "native-ts", encrypted_session: encryptedNative },
+      },
+    ]);
+    const app = await build();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/internal/max/bots/active",
+      headers: { authorization: "Bearer service-token-for-tests" },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.bots).toHaveLength(1);
+    expect(body.bots[0].botId).toBe("021eb35f-2fd8-488c-bd64-6e14abfba252");
+    await app.close();
+  });
+
   it("POST /bots/upsert по botId обновляет существующую запись и шифрует sessionBackup", async () => {
     mockTxQueryOne.mockResolvedValueOnce({
       id: "021eb35f-2fd8-488c-bd64-6e14abfba252",

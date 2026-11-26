@@ -35,6 +35,8 @@ export interface ChannelAccountDTO {
   isEnabled?: boolean;
   /** Признак заполненности авторизации: сами токены сервер не отдаёт. */
   hasCredentials: boolean;
+  /** Провайдер транспорта (например, 'native-ts' | 'max-bridge' для MAX). */
+  provider?: string | null;
   credentials?: Record<string, unknown>;
   /** Числовой id аккаунта на стороне канала; у Telegram — id пользователя. */
   remoteUserId: string | null;

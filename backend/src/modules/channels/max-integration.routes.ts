@@ -6,7 +6,7 @@ import QRCode from "qrcode";
 import { getEnv } from "../../config/env.js";
 import { guessMimeType } from "../../lib/mime.utils.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
-import { NotFoundError } from "../../plugins/errorHandler.js";
+import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { decryptSecret, encryptSecret, isEncryptionConfigured } from "../../services/credentials-cipher.js";
 import {
   MaxBridgeService,
@@ -14,7 +14,9 @@ import {
   type MaxPrivateDialogsResponse,
   type MaxSessionBackup,
 } from "./max-bridge.service.js";
-import { extractMaxIdentity, normalizeMaxPhone } from "./max-identity.js";
+import { maxNativeAuthService } from "./max-native-auth.service.js";
+import { extractMaxIdentity, normalizeMaxPhone, syncMaxContactIdentityFromDialog } from "./max-identity.js";
+import { messagingRegistry } from "../messaging/messaging-registry.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
 import { isBannedName } from "../crm/channel-identity.js";
@@ -43,21 +45,55 @@ export function stripOwnerPhone(phone?: string | null, selfPhone?: string | null
   return digits;
 }
 
+const maxProviderSchema = z.enum(["max-bridge", "native-ts"]);
+
 const qrStartSchema = z.object({
   name: z.string().min(1).default("Основной"),
   botId: z.string().uuid().optional(),
+  provider: maxProviderSchema.optional(),
 });
 
 const qrStatusSchema = z.object({
   name: z.string().min(1).default("Основной"),
   botId: z.string().uuid().optional(),
+  provider: maxProviderSchema.optional(),
 });
 
 const qrPasswordSchema = z.object({
   name: z.string().min(1).default("Основной"),
   password: z.string().min(1),
   botId: z.string().uuid().optional(),
+  provider: maxProviderSchema.optional(),
 });
+
+const phoneStartSchema = z.object({
+  phone: z.string().min(6),
+  name: z.string().min(1).default("Основной"),
+  botId: z.string().uuid().optional(),
+});
+
+const phoneVerifySchema = z.object({
+  authSessionId: z.string().uuid(),
+  code: z.string().min(2).max(16),
+});
+
+const phoneCallCheckSchema = z.object({
+  authSessionId: z.string().uuid(),
+});
+
+const phonePasswordSchema = z.object({
+  authSessionId: z.string().uuid(),
+  password: z.string().min(1),
+});
+
+const providerSwitchSchema = z.object({
+  provider: maxProviderSchema,
+});
+
+function isNativeMaxAccount(credentials: Record<string, unknown> | null | undefined): boolean {
+  const provider = credentials?.provider ?? credentials?.adapter;
+  return provider === "native-ts" || provider === "ts";
+}
 
 const sessionBackupSchema = z.object({
   token: z.string().min(1),
@@ -183,14 +219,28 @@ async function resolveAndStoreMaxAttachment(opts: {
   fileId: string;
   fileName?: string;
   mimeType?: string;
+  isNativeTs?: boolean;
   log?: FastifyBaseLogger;
 }): Promise<{ url: string; mimeType: string } | null> {
-  const bridge = new MaxBridgeService();
   try {
-    const downloaded = await bridge.downloadMedia({
-      botId: opts.botId,
-      fileId: opts.fileId,
-    });
+    let useNative = opts.isNativeTs;
+    if (useNative === undefined) {
+      const acc = await runWithTenantContext(opts.tenantId, () =>
+        queryOne<{ credentials: Record<string, unknown> | null }>(
+          `SELECT credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [opts.tenantId, opts.botId],
+        ),
+      ).catch(() => null);
+      useNative = isNativeMaxAccount(acc?.credentials);
+    }
+
+    const downloaded = useNative
+      ? await messagingRegistry.getMaxTsAdapter().downloadMedia(opts.tenantId, opts.botId, opts.fileId)
+      : await new MaxBridgeService().downloadMedia({
+          botId: opts.botId,
+          fileId: opts.fileId,
+        });
     if (!downloaded.ok || !downloaded.buffer) {
       opts.log?.warn({ fileId: opts.fileId, error: downloaded.error }, "Failed to download MAX media");
       return null;
@@ -226,11 +276,24 @@ export async function syncMaxDialogHistory(opts: {
   preloadedDialogs?: MaxPrivateDialogsResponse;
   log?: FastifyBaseLogger;
 }): Promise<number> {
-  const resp = opts.preloadedDialogs ?? (await new MaxBridgeService().getPrivateDialogs({
-    botId: opts.channelAccountId,
-    dialogLimit: 80,
-    messageLimit: 50,
-  }));
+  const acc = await runWithTenantContext(opts.tenantId, () =>
+    queryOne<{ credentials: Record<string, unknown> | null }>(
+      `SELECT credentials FROM channel_accounts
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [opts.tenantId, opts.channelAccountId],
+    ),
+  ).catch(() => null);
+  const useNative = isNativeMaxAccount(acc?.credentials);
+
+  const resp =
+    opts.preloadedDialogs ??
+    (useNative
+      ? await messagingRegistry.getMaxTsAdapter().getPrivateDialogs(opts.tenantId, opts.channelAccountId, 80, 50)
+      : await new MaxBridgeService().getPrivateDialogs({
+          botId: opts.channelAccountId,
+          dialogLimit: 80,
+          messageLimit: 50,
+        }));
 
   if (!resp.ok || !Array.isArray(resp.dialogs)) return 0;
 
@@ -245,6 +308,23 @@ export async function syncMaxDialogHistory(opts: {
   });
 
   if (!target || !Array.isArray(target.messages) || target.messages.length === 0) return 0;
+
+  if (!opts.preloadedDialogs) {
+    const dealRow = await runWithTenantContext(opts.tenantId, () =>
+      queryOne<{ contact_id: string | null }>(
+        `SELECT contact_id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [opts.tenantId, opts.dealId],
+      ),
+    ).catch(() => null);
+    if (dealRow?.contact_id) {
+      await syncMaxContactIdentityFromDialog({
+        tenantId: opts.tenantId,
+        contactId: dealRow.contact_id,
+        dialog: target,
+        selfPhone: resp.selfPhone,
+      }).catch(() => {});
+    }
+  }
 
   let insertedCount = 0;
   await runWithTenantContext(opts.tenantId, async () => {
@@ -279,6 +359,7 @@ export async function syncMaxDialogHistory(opts: {
           fileId: firstAtt.fileId,
           fileName: firstAtt.fileName,
           mimeType: firstAtt.mimeType,
+          isNativeTs: useNative,
           log: opts.log,
         });
         if (stored) {
@@ -519,46 +600,71 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     attachments: body.attachments,
   });
 
-  // Если телефон или фамилия не пришли в PUSH_MESSAGE — дозапрашиваем приватные диалоги из max-bridge (best-effort)
+  // Если телефон или фамилия не пришли в PUSH_MESSAGE — дозапрашиваем профиль из нативного MaxTsAdapter или max-bridge
   if (!extracted.phone || !extracted.lastName || !extracted.firstName) {
     try {
-      const bridge = new MaxBridgeService();
-      const dialogsResp = await bridge.getPrivateDialogs({
-        botId: channelAccountId,
-        dialogLimit: 30,
-        messageLimit: 5,
-      });
-      if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
-        selfPhone = selfPhone ?? dialogsResp.selfPhone ?? null;
-        const foundDialog = dialogsResp.dialogs.find(
-          (d) =>
-            d.chatId === peerId ||
-            (peerUser && (d.userId === peerUser || d.chatId === peerUser)),
-        );
-        if (foundDialog) {
-          const dialogIdentity = extractMaxIdentity({
-            names: foundDialog.names,
-            firstName: foundDialog.firstName,
-            lastName: foundDialog.lastName,
-            username: foundDialog.username,
-            phone: foundDialog.phone,
-            selfPhone,
-          });
+      const accountRow = await runWithTenantContext(tenantId, () =>
+        queryOne<{ credentials: Record<string, unknown> | null }>(
+          `SELECT credentials FROM channel_accounts WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, channelAccountId],
+        ),
+      ).catch(() => null);
+      if (isNativeMaxAccount(accountRow?.credentials)) {
+        const nativeProfile = await messagingRegistry
+          .getMaxTsAdapter()
+          .lookupProfileByUserId(tenantId, channelAccountId, body.maxUserId, peerId);
+        if (nativeProfile.exists) {
           extracted = {
-            firstName: extracted.firstName ?? dialogIdentity.firstName,
-            lastName: extracted.lastName ?? dialogIdentity.lastName,
+            firstName: extracted.firstName ?? nativeProfile.firstName,
+            lastName: extracted.lastName ?? nativeProfile.lastName,
             phone:
               normalizeMaxPhone(extracted.phone, selfPhone) ??
-              dialogIdentity.phone,
+              nativeProfile.phone,
             senderName:
               extracted.firstName || extracted.lastName
                 ? [extracted.firstName, extracted.lastName].filter(Boolean).join(" ")
-                : dialogIdentity.senderName,
+                : ([nativeProfile.firstName, nativeProfile.lastName].filter(Boolean).join(" ") || extracted.senderName),
           };
+        }
+      } else {
+        const bridge = new MaxBridgeService();
+        const dialogsResp = await bridge.getPrivateDialogs({
+          botId: channelAccountId,
+          dialogLimit: 30,
+          messageLimit: 5,
+        });
+        if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
+          selfPhone = selfPhone ?? dialogsResp.selfPhone ?? null;
+          const foundDialog = dialogsResp.dialogs.find(
+            (d) =>
+              d.chatId === peerId ||
+              (peerUser && (d.userId === peerUser || d.chatId === peerUser)),
+          );
+          if (foundDialog) {
+            const dialogIdentity = extractMaxIdentity({
+              names: foundDialog.names,
+              firstName: foundDialog.firstName,
+              lastName: foundDialog.lastName,
+              username: foundDialog.username,
+              phone: foundDialog.phone,
+              selfPhone,
+            });
+            extracted = {
+              firstName: extracted.firstName ?? dialogIdentity.firstName,
+              lastName: extracted.lastName ?? dialogIdentity.lastName,
+              phone:
+                normalizeMaxPhone(extracted.phone, selfPhone) ??
+                dialogIdentity.phone,
+              senderName:
+                extracted.firstName || extracted.lastName
+                  ? [extracted.firstName, extracted.lastName].filter(Boolean).join(" ")
+                  : dialogIdentity.senderName,
+            };
+          }
         }
       }
     } catch {
-      // Игнорируем временный сбой max-bridge, чтобы не блокировать приём сообщения
+      // Игнорируем временный сбой адаптера/бриджа, чтобы не блокировать приём сообщения
     }
   }
 
@@ -972,22 +1078,27 @@ async function listActiveMaxBotsPayload() {
     }>(
       `SELECT id, tenant_id, label, external_id, remote_user_id, status, credentials
        FROM channel_accounts
-       WHERE channel = 'max' AND status <> 'disabled' AND deleted_at IS NULL
+       WHERE channel = 'max'
+         AND status <> 'disabled'
+         AND deleted_at IS NULL
+         AND COALESCE(credentials->>'provider', credentials->>'adapter', 'max-bridge') NOT IN ('native-ts', 'ts')
        ORDER BY created_at ASC`,
     ),
   );
 
   return {
     ok: true,
-    bots: bots.map((b) => ({
-      id: b.id,
-      botId: b.id,
-      tenantId: b.tenant_id,
-      name: b.label,
-      status: b.status,
-      maxUserId: b.remote_user_id || b.external_id,
-      sessionBackup: decryptMaxSessionBackup(b.credentials),
-    })),
+    bots: bots
+      .filter((b) => !isNativeMaxAccount(b.credentials))
+      .map((b) => ({
+        id: b.id,
+        botId: b.id,
+        tenantId: b.tenant_id,
+        name: b.label,
+        status: b.status,
+        maxUserId: b.remote_user_id || b.external_id,
+        sessionBackup: decryptMaxSessionBackup(b.credentials),
+      })),
   };
 }
 
@@ -1220,8 +1331,15 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
 
     const resolveOwnedMaxAccount = async (tenantId: string, botId?: string) => {
       if (!botId) return null;
-      const acc = await queryOne<{ id: string; label: string; credentials: Record<string, unknown> | null }>(
-        `SELECT id, label, credentials FROM channel_accounts
+      const acc = await queryOne<{
+        id: string;
+        label: string;
+        status: string;
+        credentials: Record<string, unknown> | null;
+        remote_user_id: string | null;
+        external_id: string;
+      }>(
+        `SELECT id, label, status, credentials, remote_user_id, external_id FROM channel_accounts
          WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
         [tenantId, botId],
       );
@@ -1231,11 +1349,27 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       return acc;
     };
 
+    const resolveQrProvider = (
+      explicit?: "max-bridge" | "native-ts",
+      creds?: Record<string, unknown> | null,
+    ): "max-bridge" | "native-ts" => {
+      if (explicit) return explicit;
+      return isNativeMaxAccount(creds) ? "native-ts" : "max-bridge";
+    };
+
     subApp.post("/auth/qr/start", { onRequest: guards }, async (request, reply) => {
       const body = qrStartSchema.parse(request.body ?? {});
       const owned = await resolveOwnedMaxAccount(request.tenant_id, body.botId);
       const effectiveName = owned?.label || body.name;
-      const result = await service.startQr(request.tenant_id, effectiveName, owned?.id);
+      const provider = resolveQrProvider(body.provider, owned?.credentials);
+      const result: { ok: boolean; status: string; name: string; botId?: string | null; qr?: string | null } =
+        provider === "native-ts"
+          ? await maxNativeAuthService.startQr({
+              tenantId: request.tenant_id,
+              name: effectiveName,
+              botId: owned?.id,
+            })
+          : await service.startQr(request.tenant_id, effectiveName, owned?.id);
       if (result && typeof result.qr === "string" && result.qr.length > 0 && !result.qr.startsWith("data:image/")) {
         try {
           result.qr = await QRCode.toDataURL(result.qr, { margin: 1, width: 300 });
@@ -1250,7 +1384,15 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       const queryParam = qrStatusSchema.parse(request.query);
       const owned = await resolveOwnedMaxAccount(request.tenant_id, queryParam.botId);
       const effectiveName = owned?.label || queryParam.name;
-      const result = await service.checkStatus(request.tenant_id, effectiveName, owned?.id);
+      const provider = resolveQrProvider(queryParam.provider, owned?.credentials);
+      const result =
+        provider === "native-ts"
+          ? maxNativeAuthService.getQrStatus({
+              tenantId: request.tenant_id,
+              name: effectiveName,
+              botId: owned?.id,
+            })
+          : await service.checkStatus(request.tenant_id, effectiveName, owned?.id);
 
       if (result && result.status === "qr_ready" && typeof result.qr === "string" && result.qr.length > 0) {
         if (!result.qr.startsWith("data:image/")) {
@@ -1260,7 +1402,7 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
             request.log.error(err, "Failed to convert MAX QR to data URL on status check");
           }
         }
-      } else if (result && result.status === "qr_ready" && !result.qr) {
+      } else if (result && result.status === "qr_ready" && !result.qr && provider !== "native-ts") {
         try {
           const buffer = await service.getQrPng(request.tenant_id, effectiveName, owned?.id);
           if (buffer) {
@@ -1280,6 +1422,20 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       const queryParam = qrStatusSchema.parse(request.query);
       const owned = await resolveOwnedMaxAccount(request.tenant_id, queryParam.botId);
       const effectiveName = owned?.label || queryParam.name;
+      const provider = resolveQrProvider(queryParam.provider, owned?.credentials);
+      if (provider === "native-ts") {
+        const st = maxNativeAuthService.getQrStatus({
+          tenantId: request.tenant_id,
+          name: effectiveName,
+          botId: owned?.id,
+        });
+        if (st.status !== "qr_ready" || !st.qr) {
+          return reply.status(404).send({ error: "QR not ready" });
+        }
+        const dataUrl = await QRCode.toDataURL(st.qr, { margin: 1, width: 300 });
+        const b64 = dataUrl.split(",")[1] ?? "";
+        return reply.type("image/png").send(Buffer.from(b64, "base64"));
+      }
       const buffer = await service.getQrPng(request.tenant_id, effectiveName, owned?.id);
       if (!buffer) {
         return reply.status(404).send({ error: "QR not ready" });
@@ -1291,8 +1447,59 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       const body = qrPasswordSchema.parse(request.body);
       const owned = await resolveOwnedMaxAccount(request.tenant_id, body.botId);
       const effectiveName = owned?.label || body.name;
-      const result = await service.submitPassword(request.tenant_id, effectiveName, body.password, owned?.id);
+      const provider = resolveQrProvider(body.provider, owned?.credentials);
+      const result =
+        provider === "native-ts"
+          ? await maxNativeAuthService.submitQrPassword({
+              tenantId: request.tenant_id,
+              name: effectiveName,
+              password: body.password,
+              botId: owned?.id,
+            })
+          : await service.submitPassword(request.tenant_id, effectiveName, body.password, owned?.id);
       return reply.send({ data: result });
+    });
+
+    // Запасной нативный вход по телефону + SMS / звонок + облачный пароль 2FA
+    subApp.post("/auth/phone/start", { onRequest: guards }, async (request, reply) => {
+      const body = phoneStartSchema.parse(request.body);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, body.botId);
+      const data = await maxNativeAuthService.startPhoneAuth({
+        tenantId: request.tenant_id,
+        phone: body.phone,
+        name: owned?.label || body.name,
+        botId: owned?.id,
+      });
+      return reply.send({ data });
+    });
+
+    subApp.post("/auth/phone/verify", { onRequest: guards }, async (request, reply) => {
+      const body = phoneVerifySchema.parse(request.body);
+      const data = await maxNativeAuthService.verifyPhoneCode({
+        tenantId: request.tenant_id,
+        authSessionId: body.authSessionId,
+        code: body.code,
+      });
+      return reply.send({ data });
+    });
+
+    subApp.post("/auth/phone/call-check", { onRequest: guards }, async (request, reply) => {
+      const body = phoneCallCheckSchema.parse(request.body);
+      const data = await maxNativeAuthService.checkPhoneCallTrack({
+        tenantId: request.tenant_id,
+        authSessionId: body.authSessionId,
+      });
+      return reply.send({ data });
+    });
+
+    subApp.post("/auth/phone/password", { onRequest: guards }, async (request, reply) => {
+      const body = phonePasswordSchema.parse(request.body);
+      const data = await maxNativeAuthService.submitPhonePassword({
+        tenantId: request.tenant_id,
+        authSessionId: body.authSessionId,
+        password: body.password,
+      });
+      return reply.send({ data });
     });
 
     subApp.post("/accounts/:id/check", { onRequest: guards }, async (request, reply) => {
@@ -1300,6 +1507,32 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       const owned = await resolveOwnedMaxAccount(request.tenant_id, id);
       if (!owned) {
         throw new NotFoundError("Подключение MAX не найдено");
+      }
+
+      if (isNativeMaxAccount(owned.credentials)) {
+        const tsAdapter = messagingRegistry.getMaxTsAdapter();
+        let alive = false;
+        let reason: string | undefined;
+        try {
+          alive = await tsAdapter.connectAccount(request.tenant_id, id);
+          if (!alive) {
+            const refreshed = await queryOne<{ status_message: string }>(
+              `SELECT status_message FROM channel_accounts
+               WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+              [request.tenant_id, id],
+            );
+            reason = refreshed?.status_message || "Сессия MAX не подключена";
+          }
+        } catch (err) {
+          alive = false;
+          reason = err instanceof Error ? err.message : "Ошибка проверки сессии MAX";
+        }
+        return reply.send({
+          data: {
+            alive,
+            ...(reason ? { reason } : {}),
+          },
+        });
       }
 
       const backup = decryptMaxSessionBackup(owned.credentials);
@@ -1318,6 +1551,134 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
         data: {
           alive: checkRes.alive,
           reason: checkRes.reason,
+        },
+      });
+    });
+
+    subApp.get("/accounts/:id/sessions", { onRequest: guards }, async (request, reply) => {
+      const { id } = maxAccountParamsSchema.parse(request.params);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, id);
+      if (!owned) {
+        throw new NotFoundError("Подключение MAX не найдено");
+      }
+      if (!isNativeMaxAccount(owned.credentials)) {
+        return reply.send({
+          data: {
+            provider: "max-bridge",
+            sessions: [],
+            unsupportedReason:
+              "Просмотр активных сессий MAX (opcode 96) доступен после переключения аккаунта на нативный TypeScript-клиент.",
+          },
+        });
+      }
+      const sessions = await messagingRegistry.getMaxTsAdapter().getActiveSessions(request.tenant_id, id);
+      return reply.send({
+        data: {
+          provider: "native-ts",
+          sessions,
+        },
+      });
+    });
+
+    subApp.post("/accounts/:id/sessions/close-others", { onRequest: guards }, async (request, reply) => {
+      const { id } = maxAccountParamsSchema.parse(request.params);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, id);
+      if (!owned) {
+        throw new NotFoundError("Подключение MAX не найдено");
+      }
+      if (!isNativeMaxAccount(owned.credentials)) {
+        throw new AppError(
+          400,
+          "MAX_NATIVE_REQUIRED",
+          "Завершение других сессий MAX (opcode 97) поддерживается только на нативном провайдере native-ts",
+        );
+      }
+      const closed = await messagingRegistry.getMaxTsAdapter().closeOtherSessions(request.tenant_id, id);
+      return reply.send({
+        data: {
+          ok: true,
+          closed,
+        },
+      });
+    });
+
+    subApp.post("/accounts/:id/provider", { onRequest: guards }, async (request, reply) => {
+      const { id } = maxAccountParamsSchema.parse(request.params);
+      const body = providerSwitchSchema.parse(request.body);
+      const owned = await resolveOwnedMaxAccount(request.tenant_id, id);
+      if (!owned) {
+        throw new NotFoundError("Подключение MAX не найдено");
+      }
+
+      if (body.provider === "native-ts") {
+        let encryptedSession =
+          typeof owned.credentials?.encrypted_session === "string"
+            ? owned.credentials.encrypted_session
+            : null;
+        const hasToken =
+          Boolean(decryptMaxSessionBackup(owned.credentials)) ||
+          typeof owned.credentials?.encrypted_token === "string";
+
+        if (!hasToken && owned.status !== "error") {
+          const snap = await service.checkSession(id, null).catch(() => null);
+          if (snap?.sessionBackup) {
+            encryptedSession = encryptMaxSessionBackup(snap.sessionBackup);
+          }
+        }
+
+        await service.disconnectSession(id);
+        await withTenant(request.tenant_id, async (tx) => {
+          await tx.query(
+            `UPDATE channel_accounts
+             SET credentials = COALESCE(credentials, '{}'::jsonb) ||
+               jsonb_strip_nulls(
+                 jsonb_build_object(
+                   'provider', 'native-ts',
+                   'encrypted_session', $3::text
+                 )
+               )
+             WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+            [request.tenant_id, id, encryptedSession],
+          );
+        });
+        invalidateMaxBridgeLiveBotsCache();
+
+        let connected = false;
+        if (owned.status !== "disabled") {
+          connected = await messagingRegistry.getMaxTsAdapter().connectAccount(request.tenant_id, id);
+        }
+        return reply.send({
+          data: {
+            ok: true,
+            provider: "native-ts",
+            connected,
+          },
+        });
+      }
+
+      messagingRegistry.getMaxTsAdapter().disconnectAccount(id);
+      await withTenant(request.tenant_id, async (tx) => {
+        await tx.query(
+          `UPDATE channel_accounts
+           SET credentials = COALESCE(credentials, '{}'::jsonb) || jsonb_build_object('provider', 'max-bridge')
+           WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+          [request.tenant_id, id],
+        );
+      });
+      invalidateMaxBridgeLiveBotsCache();
+
+      const fresh = await resolveOwnedMaxAccount(request.tenant_id, id);
+      const backup = decryptMaxSessionBackup(fresh?.credentials);
+      let connected = false;
+      if (fresh && fresh.status !== "disabled" && backup) {
+        const check = await service.checkSession(id, backup).catch(() => null);
+        connected = Boolean(check?.alive);
+      }
+      return reply.send({
+        data: {
+          ok: true,
+          provider: "max-bridge",
+          connected,
         },
       });
     });

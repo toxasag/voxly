@@ -31,6 +31,7 @@ export interface MaxProfileResolved {
   username?: string;
   firstName?: string;
   lastName?: string;
+  phone?: string;
   link?: string;
   error?: string;
 }
@@ -46,6 +47,11 @@ export interface WhatsAppProfileResolved {
 export interface CrossChannelProviders {
   checkTelegram: (phone: string, tenantId: string) => Promise<TelegramProfileResolved>;
   checkMax: (phone: string, tenantId: string) => Promise<MaxProfileResolved>;
+  checkMaxByContact?: (params: {
+    tenantId: string;
+    maxUserId?: string;
+    maxChatId?: string;
+  }) => Promise<MaxProfileResolved>;
   checkWhatsApp: (phone: string, tenantId: string) => Promise<WhatsAppProfileResolved>;
 }
 
@@ -103,6 +109,7 @@ export class CrmEnrichmentService {
     this.providers = {
       checkTelegram: customProviders?.checkTelegram ?? this.defaultTelegramProvider.bind(this),
       checkMax: customProviders?.checkMax ?? this.defaultMaxProvider.bind(this),
+      checkMaxByContact: customProviders?.checkMaxByContact ?? this.defaultMaxByContactProvider.bind(this),
       checkWhatsApp: customProviders?.checkWhatsApp ?? this.defaultWhatsAppProvider.bind(this),
     };
   }
@@ -145,10 +152,11 @@ export class CrmEnrichmentService {
       telegram_chat_id: string | null;
       whatsapp: string | null;
       socials: ContactSocialJson[];
+      messenger_id?: string | null;
       custom_fields?: Record<string, unknown> | null;
     }>(
       `SELECT id, first_name, last_name, phone, telegram_username,
-              telegram_chat_id::text, whatsapp, socials, custom_fields
+              telegram_chat_id::text, whatsapp, socials, messenger_id, custom_fields
        FROM contacts
        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
       [contactId, tenantId],
@@ -175,23 +183,64 @@ export class CrmEnrichmentService {
       };
     }
 
-    const rawPhone = options?.phoneOverride ?? contact.phone;
-    const phoneDigits = normalizePhoneDigits(rawPhone);
+    const cf = contact.custom_fields && typeof contact.custom_fields === "object" ? contact.custom_fields : {};
+    const maxUserId = typeof cf.max_user_id === "string" ? cf.max_user_id.trim() || undefined : undefined;
+    const numericMaxSocial = Array.isArray(contact.socials)
+      ? contact.socials.find((s) => s.kind === "max" && /^\d+$/.test(s.value.trim()))?.value.trim()
+      : undefined;
+    const maxChatId =
+      (typeof cf.max_chat_id === "string" && cf.max_chat_id.trim()) ||
+      contact.messenger_id?.trim() ||
+      numericMaxSocial ||
+      undefined;
 
-    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+    const selectedChannels = options?.channels ?? ["telegram", "max", "whatsapp"];
+    const enrichedFields: string[] = [];
+    const channelsChecked: string[] = [];
+
+    let rawPhone = options?.phoneOverride ?? contact.phone ?? "";
+    let phoneDigits = normalizePhoneDigits(rawPhone);
+    let resolvedMaxPhone: string | null = null;
+    let maxByContactRes: MaxProfileResolved | null = null;
+
+    // Если телефон ещё не заполнен, но у контакта есть MAX ID — сначала получаем реальный номер из MAX CONTACT_INFO
+    if (
+      (phoneDigits.length < 10 || phoneDigits.length > 15) &&
+      !options?.phoneOverride &&
+      selectedChannels.includes("max") &&
+      (maxUserId || maxChatId) &&
+      this.providers.checkMaxByContact
+    ) {
+      channelsChecked.push("max");
+      try {
+        maxByContactRes = await this.providers.checkMaxByContact({ tenantId, maxUserId, maxChatId });
+        if (maxByContactRes.exists && maxByContactRes.phone) {
+          const fromMaxDigits = normalizePhoneDigits(maxByContactRes.phone);
+          if (fromMaxDigits.length >= 10 && fromMaxDigits.length <= 15) {
+            phoneDigits = fromMaxDigits;
+            rawPhone = `+${fromMaxDigits}`;
+            if (!contact.phone || !contact.phone.trim()) {
+              resolvedMaxPhone = rawPhone;
+              enrichedFields.push("phone");
+            }
+          }
+        }
+      } catch {
+        // Ошибка MAX lookup не должна ломать дальнейшую обработку
+      }
+    }
+
+    const hasValidPhone = phoneDigits.length >= 10 && phoneDigits.length <= 15;
+    if (!hasValidPhone && !maxByContactRes?.exists) {
       return {
         contactId,
         phone: rawPhone,
         ok: false,
         enrichedFields: [],
-        channelsChecked: [],
+        channelsChecked,
         error: "Invalid phone number length",
       };
     }
-
-    const selectedChannels = options?.channels ?? ["telegram", "max", "whatsapp"];
-    const enrichedFields: string[] = [];
-    const channelsChecked: string[] = [];
 
     const existingSocials = Array.isArray(contact.socials) ? [...contact.socials] : [];
     let updatedFirstName = contact.first_name;
@@ -203,11 +252,11 @@ export class CrmEnrichmentService {
     const shouldUpdateName = isPlaceholderName(contact.first_name, contact.last_name);
 
     let tgRes: TelegramProfileResolved | null = null;
-    let maxRes: MaxProfileResolved | null = null;
+    let maxRes: MaxProfileResolved | null = maxByContactRes;
     let waRes: WhatsAppProfileResolved | null = null;
 
     // 1. Проверка Telegram (через GramJS bridge/MTProto)
-    if (selectedChannels.includes("telegram")) {
+    if (hasValidPhone && selectedChannels.includes("telegram")) {
       channelsChecked.push("telegram");
       try {
         tgRes = await this.providers.checkTelegram(phoneDigits, tenantId);
@@ -234,12 +283,36 @@ export class CrmEnrichmentService {
       }
     }
 
-    // 2. Проверка MAX
+    // 2. Проверка MAX (сначала по телефону, затем при privacy-скрытии fallback по max_user_id / max_chat_id)
     if (selectedChannels.includes("max")) {
-      channelsChecked.push("max");
+      if (!channelsChecked.includes("max")) {
+        channelsChecked.push("max");
+      }
       try {
-        maxRes = await this.providers.checkMax(phoneDigits, tenantId);
-        if (maxRes.exists) {
+        if (hasValidPhone) {
+          maxRes = await this.providers.checkMax(phoneDigits, tenantId);
+        }
+        if ((!maxRes || !maxRes.exists || !maxRes.userId) && (maxUserId || maxChatId) && this.providers.checkMaxByContact) {
+          if (!maxByContactRes) {
+            maxByContactRes = await this.providers.checkMaxByContact({ tenantId, maxUserId, maxChatId });
+          }
+          if (maxByContactRes?.exists) {
+            maxRes = {
+              ...maxByContactRes,
+              link: maxRes?.link ?? maxByContactRes.link,
+            };
+          }
+        }
+        if (maxRes?.exists) {
+          if (maxRes.phone && (!contact.phone || !contact.phone.trim()) && !options?.phoneOverride && !resolvedMaxPhone) {
+            const fromMaxDigits = normalizePhoneDigits(maxRes.phone);
+            if (fromMaxDigits.length >= 10 && fromMaxDigits.length <= 15) {
+              resolvedMaxPhone = `+${fromMaxDigits}`;
+              if (!enrichedFields.includes("phone")) {
+                enrichedFields.push("phone");
+              }
+            }
+          }
           const maxVal = maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : (phoneDigits ? `+${phoneDigits}` : ""));
           if (maxVal) {
             const existingMax = existingSocials.find((s) => s.kind === "max");
@@ -263,7 +336,7 @@ export class CrmEnrichmentService {
     }
 
     // 3. Проверка WhatsApp
-    if (selectedChannels.includes("whatsapp")) {
+    if (hasValidPhone && selectedChannels.includes("whatsapp")) {
       channelsChecked.push("whatsapp");
       try {
         waRes = await this.providers.checkWhatsApp(phoneDigits, tenantId);
@@ -326,6 +399,15 @@ export class CrmEnrichmentService {
         updatedLastName = candidateName.lastName ?? null;
         enrichedFields.push("name");
       }
+    } else if ((!updatedLastName || !updatedLastName.trim()) && maxRes?.exists && maxRes.lastName) {
+      const cleanedMax = cleanContactDisplayName(`${maxRes.firstName || ""} ${maxRes.lastName}`.trim());
+      if (
+        cleanedMax?.lastName &&
+        (!cleanedMax.firstName || !updatedFirstName || cleanedMax.firstName.toLowerCase() === updatedFirstName.trim().toLowerCase())
+      ) {
+        updatedLastName = cleanedMax.lastName;
+        enrichedFields.push("name");
+      }
     }
 
     // 3.5. Нормализация legacy socials (если ранее туда попал служебный max://user?id=...)
@@ -351,6 +433,9 @@ export class CrmEnrichmentService {
                telegram_chat_id = $4,
                whatsapp = $5,
                socials = $6,
+               phone = COALESCE($9, phone),
+               phone_calling_code = CASE WHEN $9::text IS NOT NULL THEN COALESCE(NULLIF(phone_calling_code, ''), '+7') ELSE phone_calling_code END,
+               phone_country_code = CASE WHEN $9::text IS NOT NULL THEN COALESCE(NULLIF(phone_country_code, ''), 'RU') ELSE phone_country_code END,
                updated_at = now()
            WHERE id = $7 AND tenant_id = $8`,
           [
@@ -362,6 +447,7 @@ export class CrmEnrichmentService {
             JSON.stringify(existingSocials),
             contactId,
             tenantId,
+            resolvedMaxPhone,
           ],
         );
 
@@ -403,6 +489,7 @@ export class CrmEnrichmentService {
           exists: maxRes?.exists ?? false,
           username: maxRes?.username ?? null,
           userId: maxRes?.userId ?? null,
+          phone: maxRes?.phone ?? null,
           error: maxRes?.error ?? null,
         },
         whatsapp: {
@@ -440,19 +527,23 @@ export class CrmEnrichmentService {
       }
 
       if (targetDealId) {
-        const isDummy = isFakeOrDummyPhone(phoneDigits);
+        const displayTarget = hasValidPhone ? `+${phoneDigits}` : `MAX ID ${maxUserId || maxChatId || contactId}`;
+        const isDummy = hasValidPhone ? isFakeOrDummyPhone(phoneDigits) : false;
         const tgLabel = tgRes?.exists
           ? `Telegram: найден (${tgRes.username ? `@${tgRes.username}` : `ID: ${tgRes.userId}`})`
           : "Telegram: не найден";
-        const waLabel = waRes?.exists ? `WhatsApp: активен (+${phoneDigits})` : "WhatsApp: не найден";
-        const maxLabel = maxRes?.exists ? `MAX: найден (${maxRes.username || maxRes.userId || "активен"})` : "MAX: не найден";
+        const waLabel = waRes?.exists && hasValidPhone ? `WhatsApp: активен (+${phoneDigits})` : "WhatsApp: не найден";
+        const maxLabel = maxRes?.exists
+          ? `MAX: найден (${maxRes.username ? `@${maxRes.username}` : maxRes.phone || maxRes.userId || "активен"})`
+          : "MAX: не найден";
 
         const dummyHeader = isDummy ? "⚠️ Внимание: номер определен как фиктивный/тестовый!\n" : "";
-        const auditMessage = `${dummyHeader}Результат проверки мессенджеров для +${phoneDigits}:\n• ${tgLabel}\n• ${waLabel}\n• ${maxLabel}`;
+        const auditMessage = `${dummyHeader}Результат проверки мессенджеров для ${displayTarget}:\n• ${tgLabel}\n• ${waLabel}\n• ${maxLabel}`;
 
+        const auditMetaPhone = hasValidPhone ? `+${phoneDigits}` : displayTarget;
         const auditMeta = JSON.stringify({
           event: "messenger_verification",
-          phone: `+${phoneDigits}`,
+          phone: auditMetaPhone,
           isFake: isDummy,
           telegram: tgRes?.exists ?? false,
           whatsapp: waRes?.exists ?? false,
@@ -467,7 +558,7 @@ export class CrmEnrichmentService {
              AND metadata->>'phone' = $3
              AND created_at >= now() - interval '24 hours'
            LIMIT 1`,
-          [tenantId, targetDealId, `+${phoneDigits}`],
+          [tenantId, targetDealId, auditMetaPhone],
         );
 
         if (existingAudit) {
@@ -814,33 +905,103 @@ export class CrmEnrichmentService {
     }
   }
 
-  private async defaultMaxProvider(phone: string, tenantId: string): Promise<MaxProfileResolved> {
-    const bridgeUrl = process.env.MAX_BRIDGE_URL ?? "http://max-bridge:3010";
-    const token = process.env.VOXLY_SERVICE_TOKEN;
-    if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
+  private async getActiveMaxAccounts(
+    tenantId: string,
+  ): Promise<Array<{ id: string; credentials?: Record<string, unknown> | null }>> {
+    const accounts = await runWithPlatformScope(() =>
+      query<{ id: string; credentials?: Record<string, unknown> | null }>(
+        `SELECT id, credentials FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+         ORDER BY connected_at DESC NULLS LAST`,
+        [tenantId],
+      ),
+    );
+    if (accounts.length <= 1) return accounts;
 
+    const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+    const nativeLiveIds = messagingRegistry.getMaxTsAdapter().getLiveBotIds();
+    const bridgeLiveIds = await new MaxBridgeService().getLiveBotIds().catch(() => null);
+    const isLive = (id: string) => nativeLiveIds.has(id) || Boolean(bridgeLiveIds?.has(id));
+    return [...accounts].sort((a, b) => Number(isLive(b.id)) - Number(isLive(a.id)));
+  }
+
+  private async defaultMaxByContactProvider(params: {
+    tenantId: string;
+    maxUserId?: string;
+    maxChatId?: string;
+  }): Promise<MaxProfileResolved> {
+    if (!params.maxUserId && !params.maxChatId) {
+      return { exists: false };
+    }
     try {
-      const accountsRaw = await runWithPlatformScope(() =>
-        query<{ id: string }>(
-          `SELECT id FROM channel_accounts
-           WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-           ORDER BY connected_at DESC NULLS LAST`,
-          [tenantId],
-        ),
-      );
-      let accounts = accountsRaw;
+      const accounts = await this.getActiveMaxAccounts(params.tenantId);
       if (accounts.length === 0) return { exists: false, error: "No active MAX account" };
 
-      // При нескольких MAX-аккаунтах сначала пробуем те, у которых реально живая сессия в max-bridge.
-      if (accounts.length > 1) {
-        const liveIds = await new MaxBridgeService().getLiveBotIds().catch(() => null);
-        if (liveIds && liveIds.size > 0) {
-          accounts = [...accounts].sort((a, b) => Number(liveIds.has(b.id)) - Number(liveIds.has(a.id)));
+      const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+      let fallbackMatch: MaxProfileResolved | null = null;
+      let lastError: string | undefined;
+
+      for (const account of accounts) {
+        const provider = account.credentials?.provider ?? account.credentials?.adapter;
+        if (provider !== "native-ts" && provider !== "ts") continue;
+
+        const res = await messagingRegistry
+          .getMaxTsAdapter()
+          .lookupProfileByUserId(params.tenantId, account.id, params.maxUserId, params.maxChatId);
+        if (res.exists) {
+          if (res.phone) {
+            return {
+              ...fallbackMatch,
+              ...res,
+            };
+          }
+          if (!fallbackMatch) {
+            fallbackMatch = res;
+          }
+        }
+        if (res.error) {
+          lastError = res.error;
         }
       }
 
+      return fallbackMatch ?? { exists: false, error: lastError };
+    } catch (err) {
+      return { exists: false, error: String(err) };
+    }
+  }
+
+  private async defaultMaxProvider(phone: string, tenantId: string): Promise<MaxProfileResolved> {
+    const bridgeUrl = process.env.MAX_BRIDGE_URL ?? "http://max-bridge:3010";
+    const token = process.env.VOXLY_SERVICE_TOKEN;
+
+    try {
+      const accounts = await this.getActiveMaxAccounts(tenantId);
+      if (accounts.length === 0) return { exists: false, error: "No active MAX account" };
+
       let lastError = "No active MAX account";
       for (const account of accounts) {
+        const provider = account.credentials?.provider ?? account.credentials?.adapter;
+        if (provider === "native-ts" || provider === "ts") {
+          try {
+            const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+            const nativeRes = await messagingRegistry
+              .getMaxTsAdapter()
+              .lookupProfileByPhone(tenantId, account.id, `+${phone}`);
+            if (nativeRes.error) {
+              lastError = nativeRes.error;
+              continue;
+            }
+            return nativeRes;
+          } catch (err) {
+            lastError = String(err);
+            continue;
+          }
+        }
+
+        if (!token) {
+          lastError = "VOXLY_SERVICE_TOKEN unset";
+          continue;
+        }
         try {
           const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
             signal: AbortSignal.timeout(10_000),

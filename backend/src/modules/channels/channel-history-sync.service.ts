@@ -2,7 +2,7 @@ import { query, queryOne, runWithTenantContext, transaction, withTenant } from "
 import { queueManager } from "../../infrastructure/queue.js";
 import { DealsService } from "../crm/deals/deals.service.js";
 import { MaxBridgeService, type MaxBridgeDialog, type MaxPrivateDialogsResponse } from "./max-bridge.service.js";
-import { normalizeMaxPhone } from "./max-identity.js";
+import { normalizeMaxPhone, syncMaxContactIdentityFromDialog } from "./max-identity.js";
 import { syncMaxDialogHistory } from "./max-integration.routes.js";
 import { resolveTelegramHistorySyncer } from "./outbound-registry.js";
 import { WhatsappEvolutionService } from "./whatsapp-evolution.service.js";
@@ -163,7 +163,7 @@ async function findOrCreateDealForContactSync(opts: {
 
     // 3. Создаём новую сделку в первом этапе первой воронки
     const pipeline = await tx.queryOne<{ id: string }>(
-      `SELECT id FROM pipelines WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+      `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
       [tenantId],
     );
     if (!pipeline) return null;
@@ -274,7 +274,11 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
   }
 
   const account = await runWithTenantContext(tenantId, () =>
-    queryOne<{ id: string; status: string; credentials: { instanceName?: string } | null }>(
+    queryOne<{
+      id: string;
+      status: string;
+      credentials: { instanceName?: string; provider?: string; adapter?: string } | null;
+    }>(
       `SELECT id, status, credentials FROM channel_accounts
        WHERE tenant_id = $1 AND id = $2 AND channel = $3 AND deleted_at IS NULL`,
       [tenantId, channelAccountId, channel],
@@ -320,12 +324,22 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
 
   try {
     if (channel === "max") {
-      const bridge = new MaxBridgeService();
-      const dialogsResp: MaxPrivateDialogsResponse = await bridge.getPrivateDialogs({
-        botId: channelAccountId,
-        dialogLimit: 100,
-        messageLimit: 50,
-      });
+      const provider = account.credentials?.provider || account.credentials?.adapter;
+      const isNative = provider === "native-ts" || provider === "ts";
+      let dialogsResp: MaxPrivateDialogsResponse;
+      if (isNative) {
+        const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+        dialogsResp = await messagingRegistry
+          .getMaxTsAdapter()
+          .getPrivateDialogs(tenantId, channelAccountId, 100, 50);
+      } else {
+        const bridge = new MaxBridgeService();
+        dialogsResp = await bridge.getPrivateDialogs({
+          botId: channelAccountId,
+          dialogLimit: 100,
+          messageLimit: 50,
+        });
+      }
 
       if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
         const byChatOrUser = new Map<string, MaxBridgeDialog>();
@@ -354,44 +368,39 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
             (p10 ? byPhone10.get(p10) : undefined);
 
           if (dialog && Array.isArray(dialog.messages) && dialog.messages.length > 0) {
-            const dealId = await findOrCreateDealForContactSync({
-              tenantId,
-              contact,
-              channel: "max",
-              chatThreadId: dialog.chatId,
-              lastMessagePreview: dialog.messages[dialog.messages.length - 1]?.text,
-            });
-
-            if (dealId) {
-              const inserted = await syncMaxDialogHistory({
+            try {
+              // Независимо от создания сделки безопасно дозаполняем пустые телефон/ФИО из MAX.
+              await syncMaxContactIdentityFromDialog({
                 tenantId,
-                dealId,
-                channelAccountId,
-                peerId: dialog.chatId,
-                peerPhone: contact.phone,
-                peerUserId: dialog.userId ?? (maxUserId || null),
-                senderName: contactDisplayName(contact),
-                preloadedDialogs: dialogsResp,
+                contactId: contact.id,
+                existingContact: contact,
+                dialog,
+                selfPhone: dialogsResp.selfPhone,
               });
-              totalMessages += inserted;
 
-              // Привязываем max_chat_id к контакту, не перезаписывая существующие ФИО и телефон
-              await withTenant(tenantId, (tx) =>
-                tx.query(
-                  `UPDATE contacts
-                   SET messenger_id = COALESCE(messenger_id, $1),
-                       messenger_name = COALESCE(messenger_name, 'Макс'),
-                       custom_fields = jsonb_set(
-                         jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
-                         '{max_user_id}',
-                         CASE WHEN $4::text IS NOT NULL THEN to_jsonb($4::text) ELSE COALESCE(custom_fields->'max_user_id', 'null'::jsonb) END,
-                         true
-                       ),
-                       updated_at = now()
-                   WHERE tenant_id = $2 AND id = $3`,
-                  [dialog.chatId, tenantId, contact.id, dialog.userId ?? null],
-                ),
-              );
+              const dealId = await findOrCreateDealForContactSync({
+                tenantId,
+                contact,
+                channel: "max",
+                chatThreadId: dialog.chatId,
+                lastMessagePreview: dialog.messages[dialog.messages.length - 1]?.text,
+              });
+
+              if (dealId) {
+                const inserted = await syncMaxDialogHistory({
+                  tenantId,
+                  dealId,
+                  channelAccountId,
+                  peerId: dialog.chatId,
+                  peerPhone: contact.phone,
+                  peerUserId: dialog.userId ?? (maxUserId || null),
+                  senderName: contactDisplayName(contact),
+                  preloadedDialogs: dialogsResp,
+                });
+                totalMessages += inserted;
+              }
+            } catch {
+              // Игнорируем ошибку отдельного контакта (например, контакт в статусе поставщика), не прерывая общий синк
             }
           }
 
