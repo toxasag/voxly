@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { useDeal, useDeleteDeal, useMarkDealPersonal, useUnmarkDealPersonal, useUpdateDeal } from "@/lib/api/use-deals";
+import { useMarkEntityNotificationsRead } from "@/lib/notifications/use-inapp-notifications";
 import { dealTabContents, type DealStageInfo, type DealTabsContext } from "@/components/crm/deals/deal-tabs";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 import { chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
@@ -63,7 +64,18 @@ function TabIcon({ id }: { id: string }) {
 export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false, usersById, pipelines, stagesById }: DealDrawerProps) {
   const router = useRouter();
   const deal = useDeal(dealId);
+  const { markEntityRead: markDealLeadRead } = useMarkEntityNotificationsRead();
   const [tab, setTab] = useState("home");
+
+  // При открытии карточки сделки снимаем уведомления «Новая заявка» по этой сделке
+  useEffect(() => {
+    if (!open || !dealId) return;
+    markDealLeadRead({
+      entity_type: "deal",
+      entity_id: dealId,
+      categories: ["lead"],
+    });
+  }, [open, dealId, markDealLeadRead]);
   const [isMaximized, setIsMaximized] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleVal, setTitleVal] = useState("");

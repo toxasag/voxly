@@ -334,20 +334,17 @@ export class RepairsService {
   async list(
     tenantId: string,
     options: ListRepairsOptions,
-  ): Promise<{ items: RepairOrderDTO[]; total: number; inProgressCount: number; readyCount: number }> {
+  ): Promise<{
+    items: RepairOrderDTO[];
+    total: number;
+    inProgressCount: number;
+    readyCount: number;
+    paidAmount: number;
+    paidCount: number;
+    unpaidAmount: number;
+    unpaidCount: number;
+  }> {
     const { where, params } = this.buildRepairsWhereClause(tenantId, options);
-
-    const countRow = await queryOne<{ total: string; in_progress_cnt: string; ready_cnt: string }>(
-      `SELECT
-         COUNT(*)::text AS total,
-         COUNT(*) FILTER (WHERE ro.status IN ('intake', 'waiting_parts', 'diagnostics', 'approval', 'in_progress'))::text AS in_progress_cnt,
-         COUNT(*) FILTER (WHERE ro.status = 'ready')::text AS ready_cnt
-       FROM repair_orders ro
-       WHERE ${where}`,
-      params,
-    );
-
-    params.push(options.limit, options.offset);
 
     const effectiveCostExpr = `COALESCE(
       ro.final_cost,
@@ -359,6 +356,30 @@ export class RepairsService {
       ro.estimated_cost,
       0
     )`;
+
+    const countRow = await queryOne<{
+      total: string;
+      in_progress_cnt: string;
+      ready_cnt: string;
+      paid_cnt: string;
+      paid_amount: string;
+      unpaid_cnt: string;
+      unpaid_amount: string;
+    }>(
+      `SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE ro.status IN ('intake', 'waiting_parts', 'diagnostics', 'approval', 'in_progress'))::text AS in_progress_cnt,
+         COUNT(*) FILTER (WHERE ro.status = 'ready')::text AS ready_cnt,
+         COUNT(*) FILTER (WHERE ro.payment_status = 'paid')::text AS paid_cnt,
+         COALESCE(SUM(${effectiveCostExpr}) FILTER (WHERE ro.payment_status = 'paid'), 0)::text AS paid_amount,
+         COUNT(*) FILTER (WHERE ro.payment_status <> 'paid' AND ro.status <> 'rejected')::text AS unpaid_cnt,
+         COALESCE(SUM(${effectiveCostExpr}) FILTER (WHERE ro.payment_status <> 'paid' AND ro.status <> 'rejected'), 0)::text AS unpaid_amount
+       FROM repair_orders ro
+       WHERE ${where}`,
+      params,
+    );
+
+    params.push(options.limit, options.offset);
 
     const orderBy = buildSortOrderBy({
       sortBy: options.sortBy,
@@ -449,6 +470,10 @@ export class RepairsService {
       total: Number(countRow?.total ?? 0),
       inProgressCount: Number(countRow?.in_progress_cnt ?? 0),
       readyCount: Number(countRow?.ready_cnt ?? 0),
+      paidAmount: Math.round(Number(countRow?.paid_amount ?? 0) * 100) / 100,
+      paidCount: Number(countRow?.paid_cnt ?? 0),
+      unpaidAmount: Math.round(Number(countRow?.unpaid_amount ?? 0) * 100) / 100,
+      unpaidCount: Number(countRow?.unpaid_cnt ?? 0),
     };
   }
 
@@ -1832,6 +1857,71 @@ export class RepairsService {
   // Works
   // -------------------------------------------------------------------------
 
+  private async upsertWorkInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    orderId: string,
+    payload: CreateWorkPayload,
+  ): Promise<{ work: RepairWorkDTO; merged: boolean }> {
+    const quantity = payload.quantity ?? 1;
+    const unitPrice =
+      payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
+    const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
+    const normalizedDescription = payload.description.trim();
+
+    // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
+    // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
+    const existing = await tx.queryOne<RepairWorkRow>(
+      `SELECT ${WORK_COLUMNS}
+       FROM repair_works
+       WHERE tenant_id = $1
+         AND repair_order_id = $2
+         AND lower(btrim(description)) = lower(btrim($3))
+         AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [tenantId, orderId, normalizedDescription, unitPrice],
+    );
+
+    let row: RepairWorkRow;
+    let merged = false;
+    if (existing) {
+      merged = true;
+      const prevQty = Number(existing.quantity ?? 1);
+      const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
+      const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
+      const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+
+      row = await tx.queryOneOrThrow<RepairWorkRow>(
+        `UPDATE repair_works
+         SET quantity = $3, unit_price = $4, cost = $5
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING ${WORK_COLUMNS}`,
+        [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
+      );
+    } else {
+      row = await tx.queryOneOrThrow<RepairWorkRow>(
+        `INSERT INTO repair_works
+           (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING ${WORK_COLUMNS}`,
+        [
+          tenantId,
+          orderId,
+          normalizedDescription,
+          payload.master_id,
+          payload.master_name,
+          quantity,
+          unitPrice,
+          cost,
+        ],
+      );
+    }
+
+    return { work: toRepairWorkDTO(row), merged };
+  }
+
   async addWork(
     tenantId: string,
     orderId: string,
@@ -1839,69 +1929,54 @@ export class RepairsService {
   ): Promise<RepairWorkDTO> {
     await this.assertEditable(tenantId, orderId);
 
-    const quantity = payload.quantity ?? 1;
-    const unitPrice =
-      payload.unit_price ?? (payload.cost != null ? payload.cost / quantity : 0);
-    const cost = payload.cost ?? Math.round(quantity * unitPrice * 100) / 100;
-    const normalizedDescription = payload.description.trim();
+    const { work } = await withTenant(tenantId, async (tx) =>
+      this.upsertWorkInTx(tx, tenantId, orderId, payload),
+    );
 
-    return withTenant(tenantId, async (tx) => {
-      // Дедупликация: если в наряде уже есть услуга с таким же названием (без учёта
-      // регистра/пробелов) и ценой за единицу (независимо от мастера) — увеличиваем количество.
-      const existing = await tx.queryOne<RepairWorkRow>(
-        `SELECT ${WORK_COLUMNS}
-         FROM repair_works
-         WHERE tenant_id = $1
-           AND repair_order_id = $2
-           AND lower(btrim(description)) = lower(btrim($3))
-           AND ABS(COALESCE(unit_price, cost) - $4) < 0.01
-         ORDER BY created_at ASC
-         LIMIT 1
-         FOR UPDATE`,
-        [tenantId, orderId, normalizedDescription, unitPrice],
-      );
+    void this.recalculateOrderCost(tenantId, orderId).then(() => {
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+    });
 
-      let row: RepairWorkRow;
-      if (existing) {
-        const prevQty = Number(existing.quantity ?? 1);
-        const newQty = Math.round((prevQty + quantity) * 1000) / 1000;
-        const resolvedUnitPrice = Number(existing.unit_price ?? unitPrice);
-        const newCost = Math.round(newQty * resolvedUnitPrice * 100) / 100;
+    return work;
+  }
 
-        row = await tx.queryOneOrThrow<RepairWorkRow>(
-          `UPDATE repair_works
-           SET quantity = $3, unit_price = $4, cost = $5
-           WHERE tenant_id = $1 AND id = $2
-           RETURNING ${WORK_COLUMNS}`,
-          [tenantId, existing.id, newQty, resolvedUnitPrice, newCost],
-        );
-      } else {
-        row = await tx.queryOneOrThrow<RepairWorkRow>(
-          `INSERT INTO repair_works
-             (tenant_id, repair_order_id, description, master_id, master_name, quantity, unit_price, cost)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           RETURNING ${WORK_COLUMNS}`,
-          [
-            tenantId,
-            orderId,
-            normalizedDescription,
-            payload.master_id,
-            payload.master_name,
-            quantity,
-            unitPrice,
-            cost,
-          ],
-        );
+  async addWorksBatch(
+    tenantId: string,
+    orderId: string,
+    items: CreateWorkPayload[],
+  ): Promise<{ items: RepairWorkDTO[]; addedCount: number; mergedCount: number }> {
+    await this.assertEditable(tenantId, orderId);
+
+    const batchResult = await withTenant(tenantId, async (tx) => {
+      const resultById = new Map<string, RepairWorkDTO>();
+      let addedCount = 0;
+      let mergedCount = 0;
+
+      for (const payload of items) {
+        const { work, merged } = await this.upsertWorkInTx(tx, tenantId, orderId, payload);
+        resultById.set(work.id, work);
+        if (merged) {
+          mergedCount += 1;
+        } else {
+          addedCount += 1;
+        }
       }
 
-      const result = toRepairWorkDTO(row);
-      void this.recalculateOrderCost(tenantId, orderId).then(() => {
-        void this.getOrderDealId(tenantId, orderId).then((dealId) => {
-          if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
-        });
-      });
-      return result;
+      return {
+        items: Array.from(resultById.values()),
+        addedCount,
+        mergedCount,
+      };
     });
+
+    await this.recalculateOrderCost(tenantId, orderId);
+    void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+      if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+    });
+
+    return batchResult;
   }
 
   async updateWork(
@@ -1989,6 +2064,24 @@ export class RepairsService {
   // Parts
   // -------------------------------------------------------------------------
 
+  private async syncWarehouseRetailPriceInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    warehouseItemId: string,
+    retailPrice: number,
+  ): Promise<void> {
+    if (!(retailPrice > 0)) return;
+    await tx.query(
+      `UPDATE warehouse_items
+       SET retail_price = $1, updated_at = now()
+       WHERE tenant_id = $2
+         AND id = $3
+         AND deleted_at IS NULL
+         AND retail_price IS DISTINCT FROM $1`,
+      [retailPrice, tenantId, warehouseItemId],
+    );
+  }
+
   async addPart(
     tenantId: string,
     orderId: string,
@@ -1996,7 +2089,7 @@ export class RepairsService {
   ): Promise<RepairPartDTO> {
     await this.assertEditable(tenantId, orderId);
 
-    return withTenant(tenantId, async (tx) => {
+    const { part, shouldRecalculate } = await withTenant(tenantId, async (tx) => {
       // 0. Idempotency / Duplicate check:
       // If a part with identical name, article, quantity, retail_price was created within last 15 seconds, return it
       const recentDuplicate = await tx.queryOne<RepairPartRow>(
@@ -2013,12 +2106,12 @@ export class RepairsService {
         [tenantId, orderId, payload.name, payload.article ?? "", payload.quantity, payload.retail_price],
       );
       if (recentDuplicate) {
-        return toRepairPartDTO(recentDuplicate);
+        return { part: toRepairPartDTO(recentDuplicate), shouldRecalculate: false };
       }
 
       let resolvedWarehouseItemId = payload.warehouse_item_id ?? null;
 
-      // 1. If not explicitly linked to warehouse, check if an item with this SKU already exists
+      // 1. If not explicitly linked to warehouse, match existing item by SKU or exact name
       const articleClean = (payload.article ?? "").trim();
       if (!resolvedWarehouseItemId && articleClean && articleClean !== "Б/А") {
         const existingItem = await tx.queryOne<{ id: string }>(
@@ -2032,7 +2125,21 @@ export class RepairsService {
         }
       }
 
+      if (!resolvedWarehouseItemId && payload.name.trim()) {
+        const existingByName = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM warehouse_items
+           WHERE tenant_id = $1 AND lower(btrim(name)) = lower(btrim($2)) AND deleted_at IS NULL
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [tenantId, payload.name.trim()],
+        );
+        if (existingByName) {
+          resolvedWarehouseItemId = existingByName.id;
+        }
+      }
+
       // 2. If save_to_catalog is requested and still not in warehouse, create catalog item
+      let createdWarehouseItem = false;
       if (payload.save_to_catalog && !resolvedWarehouseItemId) {
         const newWarehouseRow = await tx.queryOne<{ id: string }>(
           `INSERT INTO warehouse_items
@@ -2041,7 +2148,7 @@ export class RepairsService {
            RETURNING id`,
           [
             tenantId,
-            articleClean || "",
+            articleClean === "Б/А" ? "" : articleClean,
             payload.name.trim(),
             payload.retail_price,
             payload.cost_price,
@@ -2049,7 +2156,18 @@ export class RepairsService {
         );
         if (newWarehouseRow) {
           resolvedWarehouseItemId = newWarehouseRow.id;
+          createdWarehouseItem = true;
         }
+      }
+
+      // 2.5. Сохраняем установленную в наряде розничную цену в карточке товара на складе
+      if (resolvedWarehouseItemId && !createdWarehouseItem && payload.retail_price > 0) {
+        await this.syncWarehouseRetailPriceInTx(
+          tx,
+          tenantId,
+          resolvedWarehouseItemId,
+          payload.retail_price,
+        );
       }
 
       // 3. Проверка остатка на складе, если отключена продажа в минус
@@ -2155,14 +2273,18 @@ export class RepairsService {
         });
       }
 
-      const result = toRepairPartDTO(row);
+      return { part: toRepairPartDTO(row), shouldRecalculate: true };
+    });
+
+    if (shouldRecalculate) {
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
         void this.getOrderDealId(tenantId, orderId).then((dealId) => {
           if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
         });
       });
-      return result;
-    });
+    }
+
+    return part;
   }
 
   async updatePart(
@@ -2171,6 +2293,8 @@ export class RepairsService {
     partId: string,
     payload: UpdatePartPayload,
   ): Promise<RepairPartDTO | null> {
+    await this.assertEditable(tenantId, orderId);
+
     const assignments: string[] = [];
     const params: SqlParam[] = [tenantId, orderId, partId];
 
@@ -2185,23 +2309,41 @@ export class RepairsService {
     if (payload.retail_price !== undefined) push("retail_price", payload.retail_price);
     if (payload.cost_price !== undefined) push("cost_price", payload.cost_price);
 
-    if (assignments.length === 0) {
-      const existing = await queryOne<RepairPartRow>(
-        `SELECT ${PART_COLUMNS} FROM repair_parts
-         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
-        [tenantId, orderId, partId],
+    const updated = await withTenant(tenantId, async (tx) => {
+      if (assignments.length === 0) {
+        const existing = await tx.queryOne<RepairPartRow>(
+          `SELECT ${PART_COLUMNS} FROM repair_parts
+           WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3`,
+          [tenantId, orderId, partId],
+        );
+        return existing === null ? null : toRepairPartDTO(existing);
+      }
+
+      const row = await tx.queryOne<RepairPartRow>(
+        `UPDATE repair_parts SET ${assignments.join(", ")}
+         WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
+         RETURNING ${PART_COLUMNS}`,
+        params,
       );
-      return existing === null ? null : toRepairPartDTO(existing);
-    }
 
-    const row = await queryOne<RepairPartRow>(
-      `UPDATE repair_parts SET ${assignments.join(", ")}
-       WHERE tenant_id = $1 AND repair_order_id = $2 AND id = $3
-       RETURNING ${PART_COLUMNS}`,
-      params,
-    );
+      if (
+        row !== null &&
+        row.warehouse_item_id &&
+        payload.retail_price !== undefined &&
+        payload.retail_price > 0
+      ) {
+        await this.syncWarehouseRetailPriceInTx(
+          tx,
+          tenantId,
+          row.warehouse_item_id,
+          payload.retail_price,
+        );
+      }
 
-    if (row !== null) {
+      return row === null ? null : toRepairPartDTO(row);
+    });
+
+    if (updated !== null && assignments.length > 0) {
       void this.recalculateOrderCost(tenantId, orderId).then(() => {
         void this.getOrderDealId(tenantId, orderId).then((dealId) => {
           if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
@@ -2209,7 +2351,7 @@ export class RepairsService {
       });
     }
 
-    return row === null ? null : toRepairPartDTO(row);
+    return updated;
   }
 
   async deletePart(tenantId: string, orderId: string, partId: string): Promise<boolean> {

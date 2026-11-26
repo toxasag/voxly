@@ -13,6 +13,7 @@ import {
   createRepairSchema,
   createRepairServiceCatalogSchema,
   createWorkSchema,
+  createWorksBatchSchema,
   renameDictionaryItemSchema,
   repairPaymentStatusSchema,
   repairPrioritySchema,
@@ -94,7 +95,16 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
   app.get("", { onRequest: canRead }, async (request, reply) => {
     const params = listQuerySchema.parse(request.query);
 
-    const { items, total, inProgressCount, readyCount } = await service.list(request.tenant_id, {
+    const {
+      items,
+      total,
+      inProgressCount,
+      readyCount,
+      paidAmount,
+      paidCount,
+      unpaidAmount,
+      unpaidCount,
+    } = await service.list(request.tenant_id, {
       dealId: params.deal_id,
       status: params.status,
       paymentStatus: params.payment_status,
@@ -110,7 +120,17 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
 
     return reply.send({
       data: items,
-      meta: { limit: params.limit, offset: params.offset, total, inProgressCount, readyCount },
+      meta: {
+        limit: params.limit,
+        offset: params.offset,
+        total,
+        inProgressCount,
+        readyCount,
+        paidAmount,
+        paidCount,
+        unpaidAmount,
+        unpaidCount,
+      },
     });
   });
 
@@ -453,6 +473,21 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.status(201).send({
       data: work,
       meta: { totals: await service.totals(request.tenant_id, id) },
+    });
+  });
+
+  app.post("/:id/works/batch", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = createWorksBatchSchema.parse(request.body);
+    const result = await service.addWorksBatch(request.tenant_id, id, body.items);
+
+    return reply.status(201).send({
+      data: result.items,
+      meta: {
+        totals: await service.totals(request.tenant_id, id),
+        addedCount: result.addedCount,
+        mergedCount: result.mergedCount,
+      },
     });
   });
 

@@ -1953,3 +1953,77 @@
   3. `backend/src/modules/channels/max-attachments.ts`, `backend/src/modules/messaging/messaging-registry.ts`, `backend/src/modules/channels/max-integration.routes.ts`, `backend/src/modules/crm/crm-pipeline.service.ts`: единый хелпер сохранения всех вложений сообщения (`storeMaxMessageAttachments`, `maxAttachmentExternalId`, `buildMaxAttachmentMetadata`), поддержка множественных вложений в `MessagingRegistry`, `syncMaxDialogHistory` (с предварительной проверкой `deal_messages` до скачивания с CDN MAX), `processMaxInbound` и `processMaxOutbound`, защита `content`-дедупликации при разных `external_message_id`.
   4. `frontend/src/components/crm/shared/CrmChatView.tsx`: исправлен `getAuthTokenForUrl()` на `readAccessToken()`, добавлен `ChatImageAttachment` с fallback-ссылкой при ошибке загрузки изображения.
   5. `backend/src/tests/max-forwarded-multi-media.test.ts`: добавлены unit-тесты на magic bytes MIME, сохранение `.webp` вместо `file.bin`, извлечение пересланных множественных фото и генерацию уникальных `external_message_id`.
+
+## 2026-11-26 — Мультивыбор услуг в блоке «Выполненные работы» карточки наряда
+- **Контекст:** На странице карточки заказ-наряда (`/repairs/[id]`, вкладка «Работы и запчасти» → «Выполненные работы») выбор из выпадающего «Каталога типовых услуг» и диалога «Справочник услуг» работал строго по одной услуге с закрытием списка после каждого клика, что делало массовое добавление типовых работ медленным.
+- **Что изменено:**
+  1. **Backend (`backend/src/modules/repairs/repairs.types.ts`, `repairs.service.ts`, `repairs.routes.ts`):**
+     - Вынесена общая транзакционная логика дедупликации/вставки в `upsertWorkInTx`, добавлен метод `addWorksBatch` и роут `POST /api/v1/repairs/:id/works/batch` (`createWorksBatchSchema`, 1–100 позиций, с проверками `assertEditable`, `withTenant`, RLS и однократным пересчётом `recalculateOrderCost` + `syncDealBudgetFromRepairs`).
+  2. **Frontend (`frontend/src/lib/api/use-repairs.ts`, `WorkItemsTable.tsx`, `ServiceCatalogDialog.tsx`):**
+     - Добавлен хук `useCreateWorksBatch()` с однократной инвалидацией `works`, `detail`, `totals`, `lists` и `deals`.
+     - В выпадающем списке «Каталог типовых услуг» (`WorkItemsTable.tsx`) добавлены чекбоксы мультивыбора (список остаётся открытым после клика), кнопки «Выбрать все» / «Снять все», встроенный степпер количества `− / +` для выбранных строк, закреплённый футер «Выбрано: N · сумма · Добавить (N)» и панель предпросмотра выбранных услуг над строкой добавления (с редактированием кол-ва/цены, защитой от потери черновика через `onDraftStateChange` и сохранением ручного ввода одной произвольной работы).
+     - В `ServiceCatalogDialog.tsx` добавлен мультивыбор чекбоксами, «Выбрать все» / «Снять все» и кнопка «Добавить выбранные (N)» (с обратной совместимостью по `onSelectService`).
+  3. **Где используется:** `WorkItemsTable.tsx` используется только в `frontend/src/app/(dashboard)/repairs/[id]/page.tsx`; `ServiceCatalogDialog.tsx` — только в `WorkItemsTable.tsx`.
+  4. **Тесты и документация:** добавлены `backend/src/tests/repair-works-batch.test.ts` и `frontend/src/components/repairs/detail/WorkItemsTable.test.tsx`; обновлён `docs/03_API_CONTRACTS/03_03_REPAIRS_AND_FINANCE_API.md`.
+
+## 2026-11-26 — Синхронизация розничных цен запчастей из нарядов в карточки товаров на складе (`/warehouse`)
+- **Контекст и root cause (наряд `cdfec2bc-7e31-443a-96ae-75615967e3a8` / `№0036`):**
+  1. `RepairsService.addPart` записывал `retail_price` только в `repair_parts` и никогда не обновлял `warehouse_items.retail_price` у существующих карточек товара (обновлялось только при `save_to_catalog` для новой позиции); кроме того, при `article = "Б/А"` (537 из 540 позиций `remtoua` без SKU) автопоиск склада шёл только по `sku`, без фоллбэка по точному `name`.
+  2. `RepairsService.updatePart` не синхронизировал `warehouse_items.retail_price` и работал вне `withTenant`.
+  3. На фронтенде `useCreatePart` / `useUpdatePart` / `useDeletePart` не инвалидировали кэш `["warehouse"]`, поэтому `/warehouse` и выпадающий список склада показывали устаревшие цены.
+  4. В `WarehouseIntakeDialog.tsx` при загрузке строк из заказа поставщику `retailPrice` всегда пересчитывался как `purchasePrice * 1.4` вместо сохранения уже установленной розничной цены товара на складе.
+- **Что изменено:**
+  1. `backend/src/modules/repairs/repairs.service.ts`: добавлен helper `syncWarehouseRetailPriceInTx` (обновляет `warehouse_items.retail_price` и `updated_at`, когда `retail_price > 0` и значение изменилось); подключён в `addPart` (плюс сопоставление по точному `lower(btrim(name))` при пустом SKU) и в `updatePart` (переведён в `withTenant` с `assertEditable`).
+  2. `frontend/src/lib/api/use-repairs.ts`: добавлена инвалидация `["warehouse"]` в `useCreatePart`, `useUpdatePart`, `useDeletePart`.
+  3. `frontend/src/components/repairs/detail/PartsTable.tsx`: добавлено инлайн-редактирование ячейки «Розница» (через `useUpdatePart`) с обновлением цены в наряде и на складе.
+  4. `frontend/src/components/warehouse/WarehouseIntakeDialog.tsx`: при подстановке позиций из заказа поставщику приоритетно берётся сохранённая `retailPrice` карточки товара со склада (`> 0`).
+  5. Тесты: добавлены `backend/src/tests/repair-part-retail-sync.test.ts` и `frontend/src/components/repairs/detail/PartsTable.test.tsx`.
+
+## 2026-11-26 — Карточки «Оплачено» и «К оплате» в строке статистики `/repairs`
+- **Контекст:** В верхней строке статистики `/repairs` (включая `/repairs?status=active`) отображались только 3 счётчика: «Всего наряд-заказов», «В работе», «Готовы к выдаче»; не хватало сводных финансовых показателей «Оплачено» и «К оплате» в ту же строку.
+- **Что изменено:**
+  1. `backend/src/modules/repairs/repairs.service.ts`, `repairs.routes.ts`: в `RepairsService.list` и `meta` ответа `GET /api/v1/repairs` добавлены `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount` на основе того же `effectiveCostExpr` (`final_cost` → сумма работ+запчастей → `estimated_cost`) по всей отфильтрованной выборке (в «К оплате» исключены заказы со статусом `rejected`).
+  2. `frontend/src/lib/api/use-repairs.ts`: расширен `RepairsListResult` полями `paidAmount`, `paidCount`, `unpaidAmount`, `unpaidCount`.
+  3. `frontend/src/app/(dashboard)/repairs/page.tsx`: строка статистики переведена на `md:grid-cols-5`, добавлены карточки «Оплачено» и «К оплате» (сумма в ₽ и количество заказов).
+  4. Обновлён `docs/03_API_CONTRACTS/03_03_REPAIRS_AND_FINANCE_API.md` и добавлен тест в `frontend/src/app/(dashboard)/repairs/repairs-filters-persistence.test.tsx`.
+
+## 2026-11-26 — Скрытие прочитанных уведомлений и сквозная синхронизация прочтения
+- **Контекст и root cause:**
+  1. `pushNotificationService.listInAppNotifications` не фильтровал по `is_read = false` — в колокольчике навсегда оставались висеть прочитанные уведомления; на фронтенде `markOneRead` и `markAllRead` также лишь проставляли `read: true`, не удаляя элементы из списка.
+  2. При чтении сообщений в чате (`POST /api/v1/crm/chat/read`), отправке ответа менеджером (`POST /crm/deals/:id/messages`, `POST /crm/contacts/:id/messages`), открытии карточки сделки и обновлении задачи `inapp_notifications` никак не помечались прочитанными (на проде у `remtoua` накопилось 80 непрочитанных уведомлений, включая все уже прочитанные и отвеченные сообщения в MAX).
+  3. В `NotificationEventBus` отсутствовало SSE-событие `read`, а `emitNotification` дублировал личные уведомления (`userId != null`) на канал всего тенанта.
+- **Что изменено:**
+  1. **Миграция `backend/src/db/migrations/0142_reconcile_read_inapp_notifications.sql`:** идемпотентно помечает прочитанными уже накопившиеся уведомления по прочитанным/отвеченным чатам, закрытым задачам и удалённым сущностям.
+  2. **Backend (`push-notification.service.ts`, `push-notification.routes.ts`):** `GET /api/v1/notifications` возвращает только `is_read = false` (с опцией `?include_read=true`); добавлены `markEntityNotificationsRead`, `markContactNotificationsRead`, эндпоинт `POST /api/v1/notifications/read-by-entity`, SSE-событие `event: read` и фикс маршрутизации `emitNotification`.
+  3. **Backend-триггеры прочтения:** подключены в `chat-stream.routes.ts` (`POST /crm/chat/read`), `deals.routes.ts` (`POST /:id/messages`), `contacts.routes.ts` (`POST /:id/messages`) и `tasks.routes.ts` (`PATCH /:id`).
+  4. **Frontend (`use-inapp-notifications.ts`, `NotificationDropdown.tsx`, `use-crm-chat.ts`, `CrmChatView.tsx`, `DealDrawer.tsx`, `crm/deals/[id]/page.tsx`):** прочитанные уведомления сразу убираются из кеша и списка (в том числе по SSE `event: read` и при клике на toast «Открыть»); добавлен лёгкий хук `useMarkEntityNotificationsRead` для синхронизации при открытии чата/сделки и клике по уведомлению.
+  5. **Тесты:** добавлен `frontend/src/components/layout/NotificationDropdown.test.tsx`.
+
+## 2026-11-26 — Сквозная аналитика: исправление нулевых посетителей в воронке виджета и офлайн-конверсий Google Ads
+- **Контекст и root cause:**
+  1. **Статистика посетителей сайта (воронка онлайн-чата):**
+     - В `getWidgetFunnelStats` (`widget-analytics.service.ts`) верхние карточки воронки применяли монотонное сглаживание (`rawVisitors >= rawOpens >= rawChats >= rawLeads`), тогда как разбивка по дням (`dailyRows`) брала `e.visitors` напрямую из `widget_analytics_events`. Для дней, когда диалоги/лиды создавались в CRM/чате, а отдельное событие `VISIT` не успело записаться или было отфильтровано, таблица динамики показывала `Посетители: 0` и `Запуски: 0` при наличии заявок, что визуально противоречило верхним карточкам.
+     - В `widget.js` событие `VISIT` отправлялось только через `navigator.sendBeacon`, который часто молча блокируется или прерывается блокировщиками рекламы; кроме того, при старте чата без предварительного вызова `VISIT` событие первого этапа не фиксировалось в БД.
+  2. **Офлайн-конверсии в Google Ads (0,00 в кабинете рекламы):**
+     - `GoogleAdsConversionProvider` выполнял браузерный GET-запрос 1x1 пикселя на `https://www.googleadservices.com/pagead/conversion/...`, который не является серверным API и игнорируется Google Ads для офлайн-атрибуции. Сервер возвращал 200/302, провайдер фиксировал `[200] Status: 200`, а в Google Ads отображалось `0,00` конверсий.
+     - В форме настроек интеграции не были предусмотрены поля для передачи через Google Ads API (Developer Token, OAuth) либо через связанный поток Google Analytics 4 (Measurement Protocol) с GCLID/GBRAID/WBRAID.
+- **Что изменено:**
+  1. **Backend (`widget-analytics.service.ts`, `widgets.routes.ts`):**
+     - В `getWidgetFunnelStats` в SQL-запросе `dailyRows` и маппинге добавлено строгое монотонное сглаживание: `visitors >= opens >= chats >= leads`, что гарантирует полное соответствие ежедневной таблицы верхним KPI-карточкам.
+     - В `trackPublicEvent` при фиксации любого события воронки (`CHAT_START`, `WIDGET_OPEN`, `LEAD_CAPTURED`) автоматически гарантируется регистрация базового события `VISIT` для сессии, если оно отсутствовало.
+     - Выполнен SQL-бэкфилл 231 исторического события `VISIT` для существующих сессий с чатами/лидами.
+  2. **Google Ads Provider (`google-ads-conversion.provider.ts`, `conversion-dispatcher.service.ts`, `analytics.types.ts`):**
+     - Полный рефакторинг провайдера с поддержкой:
+       1) Прямой загрузки в Google Ads API v17 (`uploadClickConversions`) с форматированием даты `yyyy-mm-dd hh:mm:ss+00:00`, передачей `gclid`, `gbraid`, `wbraid`, Enhanced Conversions (хэшированные SHA-256 email и телефон) и проверкой `partialFailureError`.
+       2) Моста через Google Analytics 4 (Measurement Protocol) с передачей `gclid` (рекомендуемый способ импорта конверсий в Google Ads).
+       3) Автоматического обнаружения связанного активного потока GA4 в рамках тенанта, если в карточке Google Ads не заданы собственные API-ключи.
+       4) Честного возврата ошибки `400` / `422` с понятными диагностическими инструкциями вместо ложного статуса `200`.
+     - Скорректированы 12 ложных записей `Status: 200` в `conversion_delivery_attempts` на реальный диагностический статус.
+  3. **Виджет (`frontend/public/widget.js`, `backend/src/modules/channels/widget-script.ts`):**
+     - Надежная отправка событий через `fetch` с `keepalive: true` и `cors` в приоритете перед `sendBeacon`.
+     - Захват и передача меток `gbraid` и `wbraid` наряду с `gclid` при создании лидов и посещениях.
+     - Синхронизирован `WIDGET_SCRIPT` в backend.
+  4. **Frontend (`ServerConversionIntegrationsView.tsx`):**
+     - В шторке настройки Google Ads добавлены подсказки и поля для ввода параметров потока GA4 (`Measurement ID`, `API Secret`) или `Developer Token`.
+     - Обновлены бейджи и описания в каталоге провайдеров.
+  5. **Тесты:** добавлен `backend/src/tests/google-ads-conversion-provider.test.ts`.

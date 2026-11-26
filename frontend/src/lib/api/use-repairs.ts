@@ -281,6 +281,10 @@ export interface RepairsListResult {
   offset: number;
   inProgressCount?: number;
   readyCount?: number;
+  paidAmount?: number;
+  paidCount?: number;
+  unpaidAmount?: number;
+  unpaidCount?: number;
 }
 
 export interface RepairsQueryParams {
@@ -425,6 +429,16 @@ export interface CreateWorkPayload {
   cost?: number;
 }
 
+export interface CreateWorksBatchPayload {
+  items: CreateWorkPayload[];
+}
+
+export interface CreateWorksBatchResult {
+  items: RepairWorkDTO[];
+  addedCount: number;
+  mergedCount: number;
+}
+
 export interface UpdateWorkPayload {
   description?: string;
   master_id?: string;
@@ -529,6 +543,10 @@ export function useRepairs(
         offset: typeof meta.offset === "number" ? meta.offset : offset,
         inProgressCount: typeof meta.inProgressCount === "number" ? meta.inProgressCount : undefined,
         readyCount: typeof meta.readyCount === "number" ? meta.readyCount : undefined,
+        paidAmount: typeof meta.paidAmount === "number" ? meta.paidAmount : undefined,
+        paidCount: typeof meta.paidCount === "number" ? meta.paidCount : undefined,
+        unpaidAmount: typeof meta.unpaidAmount === "number" ? meta.unpaidAmount : undefined,
+        unpaidCount: typeof meta.unpaidCount === "number" ? meta.unpaidCount : undefined,
       };
     },
     enabled: options?.enabled ?? true,
@@ -1009,6 +1027,39 @@ export function useCreateWork(): UseMutationResult<RepairWorkDTO, ApiClientError
   });
 }
 
+export function useCreateWorksBatch(): UseMutationResult<
+  CreateWorksBatchResult,
+  ApiClientError,
+  { orderId: string; payload: CreateWorksBatchPayload }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    CreateWorksBatchResult,
+    ApiClientError,
+    { orderId: string; payload: CreateWorksBatchPayload }
+  >({
+    mutationFn: async ({ orderId, payload }) => {
+      const res = await apiClient.post<RepairWorkDTO[]>(`${BASE_PATH}/${orderId}/works/batch`, payload);
+      const meta = (res.meta ?? {}) as Record<string, unknown>;
+      const addedCount = typeof meta.addedCount === "number" ? meta.addedCount : res.data.length;
+      const mergedCount = typeof meta.mergedCount === "number" ? meta.mergedCount : 0;
+      return {
+        items: res.data,
+        addedCount,
+        mergedCount,
+      };
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
+    },
+  });
+}
+
 export function useUpdateWork(): UseMutationResult<RepairWorkDTO, ApiClientError, { orderId: string; workId: string; payload: UpdateWorkPayload }> {
   const queryClient = useQueryClient();
 
@@ -1057,7 +1108,7 @@ export function useCreatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
-      void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1076,6 +1127,7 @@ export function useUpdatePart(): UseMutationResult<RepairPartDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
@@ -1094,6 +1146,7 @@ export function useDeletePart(): UseMutationResult<{ id: string; deleted: boolea
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse"] });
       void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });

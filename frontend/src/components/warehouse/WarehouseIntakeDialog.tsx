@@ -223,22 +223,36 @@ export function WarehouseIntakeDialog({
       }
 
       if (selectedOrder.items && selectedOrder.items.length > 0) {
-        const orderRows: IntakeTableRow[] = selectedOrder.items.map((it, idx) => ({
-          id: `${selectedOrder.id}-${idx}`,
-          itemId: it.itemId || undefined,
-          name: it.itemName,
-          sku: it.sku || "",
-          category: "Запчасти",
-          unit: it.unit || "шт",
-          quantity: String(it.quantity || 1),
-          purchasePrice: String(it.price || 0),
-          retailPrice: it.price ? String(Math.round(Number(it.price) * 1.4)) : "",
-          batchNumber: selectedOrder.orderNumber,
-        }));
+        const orderRows: IntakeTableRow[] = selectedOrder.items.map((it, idx) => {
+          const matchedWh = allWarehouseItems.find(
+            (w) =>
+              (it.itemId && w.id === it.itemId) ||
+              (it.sku && w.sku && w.sku.trim().toLowerCase() === it.sku.trim().toLowerCase()) ||
+              w.name.trim().toLowerCase() === it.itemName.trim().toLowerCase(),
+          );
+          const resolvedRetail =
+            matchedWh && matchedWh.retailPrice > 0
+              ? String(matchedWh.retailPrice)
+              : it.price
+                ? String(Math.round(Number(it.price) * 1.4))
+                : "";
+          return {
+            id: `${selectedOrder.id}-${idx}`,
+            itemId: it.itemId || matchedWh?.id || undefined,
+            name: it.itemName,
+            sku: it.sku || "",
+            category: "Запчасти",
+            unit: it.unit || "шт",
+            quantity: String(it.quantity || 1),
+            purchasePrice: String(it.price || 0),
+            retailPrice: resolvedRetail,
+            batchNumber: selectedOrder.orderNumber,
+          };
+        });
         setRows(orderRows);
       }
     }
-  }, [basis, selectedOrder]);
+  }, [basis, selectedOrder, allWarehouseItems]);
 
   // Закрытие дропдауна компании при клике вне
   useEffect(() => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Handshake } from "lucide-react";
@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useDeal, useKanban, usePipelines } from "@/lib/api/use-deals";
+import { useMarkEntityNotificationsRead } from "@/lib/notifications/use-inapp-notifications";
 import { useTenantUsers, indexTenantUsers } from "@/lib/api/use-tenant-users";
 import { dealTabContents, type DealStageInfo, type DealTabsContext } from "@/components/crm/deals/deal-tabs";
 import { PinnedPageTabs } from "@/components/crm/shared/PinnedPageTabs";
@@ -28,7 +29,17 @@ import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 function DealDetailContent() {
   const { id } = useParams<{ id: string }>();
   const deal = useDeal(id);
+  const { markEntityRead: markDealLeadRead } = useMarkEntityNotificationsRead();
   const pipelines = usePipelines();
+
+  useEffect(() => {
+    if (!id) return;
+    markDealLeadRead({
+      entity_type: "deal",
+      entity_id: id,
+      categories: ["lead"],
+    });
+  }, [id, markDealLeadRead]);
   const tenantUsers = useTenantUsers();
   const kanban = useKanban(deal.data?.pipelineId ?? null);
 
