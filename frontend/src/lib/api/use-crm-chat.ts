@@ -496,6 +496,7 @@ export function useMarkMessagesRead(): UseMutationResult<
         void qc.invalidateQueries({ queryKey: crmChatKeys.contact.messages(vars.contactId) });
       }
       void qc.invalidateQueries({ queryKey: ["inbox"] });
+      void qc.invalidateQueries({ queryKey: ["inapp-notifications"] });
     },
   });
 }

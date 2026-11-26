@@ -14,6 +14,7 @@ import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { queueManager } from "../../../infrastructure/queue.js";
 import type { TaskAssignmentNotificationJob } from "./task-notification.service.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
+import { pushNotificationService } from "../../notifications/push-notification.service.js";
 import { bulkActionSchema } from "../shared/bulk-action.types.js";
 import { sortDirSchema } from "../../../lib/table-query.js";
 
@@ -132,6 +133,13 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const task = await service.update(request.tenant_id, id, body);
 
     if (task === null) throw new NotFoundError("Task not found");
+
+    void pushNotificationService
+      .markEntityNotificationsRead(request.tenant_id, request.authUser.id, {
+        entityTypes: ["task"],
+        entityIds: [task.id],
+      })
+      .catch(() => {});
 
     if (body.status) {
       void notificationQueue.dispatchTaskStatusChanged({

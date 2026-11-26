@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { DealsService } from "./deals.service.js";
 import { DealMessagingService } from "./deal-messaging.service.js";
+import { pushNotificationService } from "../../notifications/push-notification.service.js";
 import { mediaEnrichmentService } from "../media/media-enrichment.service.js";
 import { messageTranslationService } from "../translation/message-translation.service.js";
 import { ContactsIOService } from "../contacts/contacts-io.service.js";
@@ -362,6 +363,16 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
       senderName: request.authUser.name,
       payload: body,
     });
+
+    // Ответ менеджера означает прочтение входящих сообщений и уведомлений по сделке
+    void service.markMessagesRead(request.tenant_id, { dealId: id }).catch(() => {});
+    void pushNotificationService
+      .markEntityNotificationsRead(request.tenant_id, request.authUser.id, {
+        entityTypes: ["deal", "chat", "lead"],
+        entityIds: [id],
+        categories: ["message", "lead"],
+      })
+      .catch(() => {});
 
     return reply.status(201).send({ data: message });
   });

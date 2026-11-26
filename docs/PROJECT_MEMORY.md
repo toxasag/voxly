@@ -1987,6 +1987,18 @@
   3. `frontend/src/app/(dashboard)/repairs/page.tsx`: строка статистики переведена на `md:grid-cols-5`, добавлены карточки «Оплачено» и «К оплате» (сумма в ₽ и количество заказов).
   4. Обновлён `docs/03_API_CONTRACTS/03_03_REPAIRS_AND_FINANCE_API.md` и добавлен тест в `frontend/src/app/(dashboard)/repairs/repairs-filters-persistence.test.tsx`.
 
+## 2026-11-26 — Скрытие прочитанных уведомлений и сквозная синхронизация прочтения
+- **Контекст и root cause:**
+  1. `pushNotificationService.listInAppNotifications` не фильтровал по `is_read = false` — в колокольчике навсегда оставались висеть прочитанные уведомления; на фронтенде `markOneRead` и `markAllRead` также лишь проставляли `read: true`, не удаляя элементы из списка.
+  2. При чтении сообщений в чате (`POST /api/v1/crm/chat/read`), отправке ответа менеджером (`POST /crm/deals/:id/messages`, `POST /crm/contacts/:id/messages`), открытии карточки сделки и обновлении задачи `inapp_notifications` никак не помечались прочитанными (на проде у `remtoua` накопилось 80 непрочитанных уведомлений, включая все уже прочитанные и отвеченные сообщения в MAX).
+  3. В `NotificationEventBus` отсутствовало SSE-событие `read`, а `emitNotification` дублировал личные уведомления (`userId != null`) на канал всего тенанта.
+- **Что изменено:**
+  1. **Миграция `backend/src/db/migrations/0142_reconcile_read_inapp_notifications.sql`:** идемпотентно помечает прочитанными уже накопившиеся уведомления по прочитанным/отвеченным чатам, закрытым задачам и удалённым сущностям.
+  2. **Backend (`push-notification.service.ts`, `push-notification.routes.ts`):** `GET /api/v1/notifications` возвращает только `is_read = false` (с опцией `?include_read=true`); добавлены `markEntityNotificationsRead`, `markContactNotificationsRead`, эндпоинт `POST /api/v1/notifications/read-by-entity`, SSE-событие `event: read` и фикс маршрутизации `emitNotification`.
+  3. **Backend-триггеры прочтения:** подключены в `chat-stream.routes.ts` (`POST /crm/chat/read`), `deals.routes.ts` (`POST /:id/messages`), `contacts.routes.ts` (`POST /:id/messages`) и `tasks.routes.ts` (`PATCH /:id`).
+  4. **Frontend (`use-inapp-notifications.ts`, `NotificationDropdown.tsx`, `use-crm-chat.ts`, `CrmChatView.tsx`, `DealDrawer.tsx`, `crm/deals/[id]/page.tsx`):** прочитанные уведомления сразу убираются из кеша и списка (в том числе по SSE `event: read` и при клике на toast «Открыть»); добавлен лёгкий хук `useMarkEntityNotificationsRead` для синхронизации при открытии чата/сделки и клике по уведомлению.
+  5. **Тесты:** добавлен `frontend/src/components/layout/NotificationDropdown.test.tsx`.
+
 ## 2026-11-26 — Сквозная аналитика: исправление нулевых посетителей в воронке виджета и офлайн-конверсий Google Ads
 - **Контекст и root cause:**
   1. **Статистика посетителей сайта (воронка онлайн-чата):**

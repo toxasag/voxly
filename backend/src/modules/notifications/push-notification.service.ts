@@ -105,6 +105,11 @@ export interface CreateInAppNotificationParams {
   url?: string;
 }
 
+export interface NotificationReadEvent {
+  ids?: string[];
+  all?: boolean;
+}
+
 class NotificationEventBus extends EventEmitter {
   constructor() {
     super();
@@ -112,10 +117,19 @@ class NotificationEventBus extends EventEmitter {
   }
 
   emitNotification(tenantId: string, userId: string | null, notification: InAppNotificationDTO): void {
-    this.emit(`tenant:${tenantId}`, notification);
     if (userId) {
       this.emit(`user:${tenantId}:${userId}`, notification);
+      return;
     }
+    this.emit(`tenant:${tenantId}`, notification);
+  }
+
+  emitRead(tenantId: string, userId: string | null, payload: NotificationReadEvent): void {
+    if (userId) {
+      this.emit(`read:user:${tenantId}:${userId}`, payload);
+      return;
+    }
+    this.emit(`read:tenant:${tenantId}`, payload);
   }
 
   subscribeTenant(tenantId: string, listener: (notification: InAppNotificationDTO) => void): () => void {
@@ -131,6 +145,21 @@ class NotificationEventBus extends EventEmitter {
     this.on(channel, listener);
     return () => {
       this.off(channel, listener);
+    };
+  }
+
+  subscribeRead(
+    tenantId: string,
+    userId: string,
+    listener: (payload: NotificationReadEvent) => void,
+  ): () => void {
+    const tenantChannel = `read:tenant:${tenantId}`;
+    const userChannel = `read:user:${tenantId}:${userId}`;
+    this.on(tenantChannel, listener);
+    this.on(userChannel, listener);
+    return () => {
+      this.off(tenantChannel, listener);
+      this.off(userChannel, listener);
     };
   }
 }
@@ -432,12 +461,15 @@ export class PushNotificationService {
 
   /**
    * Получает список уведомлений для пользователя и счётчик непрочитанных.
+   * По умолчанию возвращает только непрочитанные уведомления (is_read = false).
    */
   async listInAppNotifications(
     tenantId: string,
     userId: string,
     limit: number = 30,
+    options?: { includeRead?: boolean },
   ): Promise<{ items: InAppNotificationDTO[]; unreadCount: number }> {
+    const includeRead = Boolean(options?.includeRead);
     return runWithTenantContext(tenantId, async () => {
       const result = await query<InAppNotificationRow>(
         `SELECT id, tenant_id, user_id, category, entity_type, entity_id,
@@ -445,6 +477,7 @@ export class PushNotificationService {
          FROM inapp_notifications
          WHERE tenant_id = $1
            AND (user_id = $2 OR user_id IS NULL)
+           ${includeRead ? "" : "AND is_read = false"}
          ORDER BY created_at DESC
          LIMIT $3`,
         [tenantId, userId, limit],
@@ -486,15 +519,22 @@ export class PushNotificationService {
     id: string,
   ): Promise<boolean> {
     return runWithTenantContext(tenantId, async () => {
-      const updated = await query<{ id: string }>(
+      const updated = await query<{ id: string; user_id: string | null }>(
         `UPDATE inapp_notifications
          SET is_read = true, read_at = now()
          WHERE tenant_id = $1
            AND id = $2
            AND (user_id = $3 OR user_id IS NULL)
-         RETURNING id`,
+           AND is_read = false
+         RETURNING id, user_id`,
         [tenantId, id, userId],
       );
+      if (updated.length > 0) {
+        const isTenantWide = updated.some((r) => r.user_id === null);
+        notificationEventBus.emitRead(tenantId, isTenantWide ? null : userId, {
+          ids: updated.map((r) => r.id),
+        });
+      }
       return updated.length > 0;
     });
   }
@@ -504,16 +544,103 @@ export class PushNotificationService {
    */
   async markAllRead(tenantId: string, userId: string): Promise<number> {
     return runWithTenantContext(tenantId, async () => {
-      const updated = await query<{ id: string }>(
+      const updated = await query<{ id: string; user_id: string | null }>(
         `UPDATE inapp_notifications
          SET is_read = true, read_at = now()
          WHERE tenant_id = $1
            AND (user_id = $2 OR user_id IS NULL)
            AND is_read = false
-         RETURNING id`,
+         RETURNING id, user_id`,
         [tenantId, userId],
       );
+      if (updated.length > 0) {
+        const isTenantWide = updated.some((r) => r.user_id === null);
+        notificationEventBus.emitRead(tenantId, isTenantWide ? null : userId, {
+          all: true,
+        });
+      }
       return updated.length;
+    });
+  }
+
+  /**
+   * Помечает все непрочитанные уведомления по указанным сущностям как прочитанные
+   * (например, когда менеджер открыл чат сделки, ответил клиенту или обновил задачу).
+   */
+  async markEntityNotificationsRead(
+    tenantId: string,
+    userId: string | null,
+    params: {
+      entityTypes: string[];
+      entityIds: string[];
+      categories?: string[];
+    },
+  ): Promise<string[]> {
+    const entityTypes = Array.from(new Set(params.entityTypes.filter(Boolean)));
+    const entityIds = Array.from(new Set(params.entityIds.filter(Boolean)));
+    if (entityTypes.length === 0 || entityIds.length === 0) return [];
+
+    const categories = params.categories?.filter(Boolean) ?? [];
+
+    return runWithTenantContext(tenantId, async () => {
+      const updated =
+        categories.length > 0
+          ? await query<{ id: string; user_id: string | null }>(
+              `UPDATE inapp_notifications
+               SET is_read = true, read_at = now()
+               WHERE tenant_id = $1
+                 AND ($2::uuid IS NULL OR user_id = $2 OR user_id IS NULL)
+                 AND is_read = false
+                 AND entity_type = ANY($3::text[])
+                 AND entity_id = ANY($4::text[])
+                 AND category = ANY($5::text[])
+               RETURNING id, user_id`,
+              [tenantId, userId, entityTypes, entityIds, categories],
+            )
+          : await query<{ id: string; user_id: string | null }>(
+              `UPDATE inapp_notifications
+               SET is_read = true, read_at = now()
+               WHERE tenant_id = $1
+                 AND ($2::uuid IS NULL OR user_id = $2 OR user_id IS NULL)
+                 AND is_read = false
+                 AND entity_type = ANY($3::text[])
+                 AND entity_id = ANY($4::text[])
+               RETURNING id, user_id`,
+              [tenantId, userId, entityTypes, entityIds],
+            );
+
+      const ids = updated.map((r) => r.id);
+      if (ids.length > 0) {
+        const isTenantWide = updated.some((r) => r.user_id === null);
+        notificationEventBus.emitRead(tenantId, isTenantWide ? null : userId, { ids });
+      }
+      return ids;
+    });
+  }
+
+  /**
+   * Помечает прочитанными уведомления по контакту и всем его активным сделкам.
+   */
+  async markContactNotificationsRead(
+    tenantId: string,
+    userId: string | null,
+    contactId: string,
+    categories?: string[],
+  ): Promise<string[]> {
+    if (!contactId) return [];
+    return runWithTenantContext(tenantId, async () => {
+      const dealRows = await query<{ id: string }>(
+        `SELECT id::text AS id
+         FROM deals
+         WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`,
+        [tenantId, contactId],
+      );
+      const entityIds = [contactId, ...dealRows.map((d) => d.id)];
+      return this.markEntityNotificationsRead(tenantId, userId, {
+        entityTypes: ["contact", "deal", "chat", "lead"],
+        entityIds,
+        categories,
+      });
     });
   }
 }
