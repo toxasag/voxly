@@ -12,6 +12,8 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 
 # Локальный изолированный Browser/audit-стенд: runtime.json содержит временные
 # DB credentials, а база имеет одноразовое имя getvoxly_audit_<timestamp>.

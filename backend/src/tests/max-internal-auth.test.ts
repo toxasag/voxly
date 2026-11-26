@@ -185,6 +185,9 @@ describe("внутренние маршруты MAX требуют VOXLY_SERVICE
   });
 
   it("POST /bots/status переводит статус и очищает бэкап только при clearSession=true", async () => {
+    mockQueryOne.mockResolvedValueOnce({
+      tenant_id: "00000000-0000-0000-0000-000000000001",
+    });
     const app = await build();
     const res = await app.inject({
       method: "POST",
@@ -198,9 +201,9 @@ describe("внутренние маршруты MAX требуют VOXLY_SERVICE
       },
     });
     expect(res.statusCode).toBe(200);
-    const params = mockQuery.mock.calls[0]?.[1] as unknown[];
-    expect(params[1]).toBe("error");
-    expect(params[4]).toBe(true);
+    const params = mockTxQuery.mock.calls[0]?.[1] as unknown[];
+    expect(params[2]).toBe("error");
+    expect(params[5]).toBe(true);
     await app.close();
   });
 
@@ -222,8 +225,8 @@ describe("внутренние маршруты MAX требуют VOXLY_SERVICE
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ data: { alive: true } });
-    const updateParams = mockQuery.mock.calls[0]?.[1] as unknown[];
-    expect(updateParams[1]).toBe("connected");
+    const updateParams = mockTxQuery.mock.calls[0]?.[1] as unknown[];
+    expect(updateParams[2]).toBe("connected");
     await app.close();
   });
 });

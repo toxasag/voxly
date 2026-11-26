@@ -1,5 +1,5 @@
 import { MaxBridgeService } from "../../../channels/max-bridge.service.js";
-import { query, queryOne } from "../../../../db/client.js";
+import { queryOne, withTenant } from "../../../../db/client.js";
 import type {
   IMessagingAdapter,
   SendMessageParams,
@@ -70,12 +70,14 @@ export class MaxBridgeAdapter implements IMessagingAdapter {
       if (!res.ok) {
         if (res.sessionExpired) {
           const accountTitle = account?.label ? ` «${account.label}»` : "";
-          await query(
-            `UPDATE channel_accounts
-             SET status = 'error',
-                 status_message = 'Сессия истекла — требуется повторная авторизация по QR-коду'
-             WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
-            [params.tenantId, params.channelAccountId],
+          await withTenant(params.tenantId, (tx) =>
+            tx.query(
+              `UPDATE channel_accounts
+               SET status = 'error',
+                   status_message = 'Сессия истекла — требуется повторная авторизация по QR-коду'
+               WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+              [params.tenantId, params.channelAccountId],
+            ),
           ).catch(() => {});
 
           return {
@@ -90,13 +92,15 @@ export class MaxBridgeAdapter implements IMessagingAdapter {
         };
       }
 
-      await query(
-        `UPDATE channel_accounts
-         SET status = 'connected',
-             status_message = '',
-             last_sync_at = now()
-         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND status = 'error' AND deleted_at IS NULL`,
-        [params.tenantId, params.channelAccountId],
+      await withTenant(params.tenantId, (tx) =>
+        tx.query(
+          `UPDATE channel_accounts
+           SET status = 'connected',
+               status_message = '',
+               last_sync_at = now()
+           WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND status = 'error' AND deleted_at IS NULL`,
+          [params.tenantId, params.channelAccountId],
+        ),
       ).catch(() => {});
 
       return {

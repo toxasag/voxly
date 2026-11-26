@@ -486,14 +486,14 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   const tenantId = account.tenant_id;
 
   // Если сессия в max-bridge жива и прислала событие, восстанавливаем статус из 'error'
-  await runWithPlatformScope(() =>
-    query(
+  await withTenant(tenantId, async (tx) => {
+    await tx.query(
       `UPDATE channel_accounts
        SET status = 'connected', status_message = '', last_sync_at = now()
-       WHERE id = $1 AND status = 'error' AND deleted_at IS NULL`,
-      [account.id],
-    ),
-  ).catch(() => {});
+       WHERE tenant_id = $1 AND id = $2 AND status = 'error' AND deleted_at IS NULL`,
+      [tenantId, account.id],
+    );
+  }).catch(() => {});
   const channelAccountId = account.id;
 
   // Игнорируем сообщения от самого себя
@@ -1082,44 +1082,59 @@ async function upsertMaxBotRecord(
 }
 
 async function updateMaxBotStatusRecord(
-  body: z.infer<typeof internalBotStatusSchema>,
+  body: z.infer<typeof internalBotStatusSchema> & { tenantId?: string },
 ): Promise<void> {
   const encryptedSession = encryptMaxSessionBackup(body.sessionBackup);
   const clearSession = Boolean(body.clearSession && body.status === "error");
 
-  await runWithPlatformScope(() =>
-    query(
-      `UPDATE channel_accounts
-       SET status = $2,
-           status_message = $3,
-           remote_user_id = COALESCE($4, remote_user_id),
-           connected_at = CASE WHEN $2 = 'connected' AND connected_at IS NULL THEN now() ELSE connected_at END,
-           last_sync_at = CASE WHEN $2 = 'connected' THEN now() ELSE last_sync_at END,
-           credentials = CASE
-             WHEN $5::boolean THEN COALESCE(credentials, '{}'::jsonb) - 'encrypted_session' - 'session_backed_up_at'
-             WHEN $6::text IS NOT NULL THEN
-               COALESCE(credentials, '{}'::jsonb) || jsonb_build_object(
-                 'encrypted_session', $6::text,
-                 'session_backed_up_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-               )
-             ELSE credentials
-           END,
-           credentials_encrypted = CASE
-             WHEN $5::boolean THEN false
-             WHEN $6::text IS NOT NULL THEN true
-             ELSE credentials_encrypted
-           END
-       WHERE id = $1 AND channel = 'max' AND deleted_at IS NULL AND status <> 'disabled'`,
-      [
-        body.botId,
-        body.status,
-        body.status === "connected" ? "" : body.statusMessage,
-        body.maxUserId || null,
-        clearSession,
-        encryptedSession,
-      ],
-    ),
-  );
+  let tenantId = body.tenantId;
+  if (!tenantId) {
+    const found = await runWithPlatformScope(() =>
+      queryOne<{ tenant_id: string }>(
+        `SELECT tenant_id FROM channel_accounts
+         WHERE id = $1 AND channel = 'max' AND deleted_at IS NULL`,
+        [body.botId],
+      ),
+    );
+    tenantId = found?.tenant_id;
+  }
+
+  if (tenantId) {
+    await withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `UPDATE channel_accounts
+         SET status = $3,
+             status_message = $4,
+             remote_user_id = COALESCE($5, remote_user_id),
+             connected_at = CASE WHEN $3 = 'connected' AND connected_at IS NULL THEN now() ELSE connected_at END,
+             last_sync_at = CASE WHEN $3 = 'connected' THEN now() ELSE last_sync_at END,
+             credentials = CASE
+               WHEN $6::boolean THEN COALESCE(credentials, '{}'::jsonb) - 'encrypted_session' - 'session_backed_up_at'
+               WHEN $7::text IS NOT NULL THEN
+                 COALESCE(credentials, '{}'::jsonb) || jsonb_build_object(
+                   'encrypted_session', $7::text,
+                   'session_backed_up_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                 )
+               ELSE credentials
+             END,
+             credentials_encrypted = CASE
+               WHEN $6::boolean THEN false
+               WHEN $7::text IS NOT NULL THEN true
+               ELSE credentials_encrypted
+             END
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL AND status <> 'disabled'`,
+        [
+          tenantId,
+          body.botId,
+          body.status,
+          body.status === "connected" ? "" : body.statusMessage,
+          body.maxUserId || null,
+          clearSession,
+          encryptedSession,
+        ],
+      );
+    });
+  }
 
   invalidateMaxBridgeLiveBotsCache();
 }
@@ -1291,6 +1306,7 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       const checkRes = await service.checkSession(id, backup);
 
       await updateMaxBotStatusRecord({
+        tenantId: request.tenant_id,
         botId: id,
         status: checkRes.alive ? "connected" : "error",
         statusMessage: checkRes.alive ? "" : (checkRes.reason ?? "Сессия MAX недействительна"),
