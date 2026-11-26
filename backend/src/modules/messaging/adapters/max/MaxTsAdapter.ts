@@ -1,74 +1,217 @@
-import { queryOne } from "../../../../db/client.js";
-import { decryptSecret } from "../../../../services/credentials-cipher.js";
-import { extractMaxIdentity, type MaxRawName } from "../../../channels/max-identity.js";
+import { query, runWithPlatformScope, withTenant } from "../../../../db/client.js";
+import { decryptSecret, encryptSecret } from "../../../../services/credentials-cipher.js";
+import { extractMaxIdentity, normalizeMaxPhone, type MaxRawName } from "../../../channels/max-identity.js";
+import type { MaxBridgeDialog, MaxBridgeDialogMessage, MaxPrivateDialogsResponse } from "../../../channels/max-bridge.service.js";
+import {
+  buildMaxUserAgent,
+  isFatalMaxAuthError,
+  MAX_WS_ENDPOINT,
+  MaxCommand,
+  MaxOpcode,
+  normalizeUuidDeviceId,
+  openMaxWebSocket,
+  packMaxFrame,
+  toMaxIdValue,
+  unpackMaxFrame,
+} from "./max-protocol.js";
 import type {
+  AdapterHealthStatus,
   IMessagingAdapter,
-  SendMessageParams,
-  SentMessageResult,
+  InboundAttachment,
+  IncomingEvent,
   MessageHistoryParams,
   MessagePage,
-  ResolvedContact,
-  IncomingEvent,
-  Unsubscribe,
-  AdapterHealthStatus,
   NormalizedMessage,
+  OutboundAttachment,
+  ResolvedContact,
+  SendMessageParams,
+  SentMessageResult,
+  Unsubscribe,
 } from "../IMessagingAdapter.js";
 
 // ---------------------------------------------------------------------------
-// MaxTsAdapter — Нативный TypeScript-клиент протокола MAX Messenger (Option C).
+// MaxTsAdapter — нативный TypeScript-клиент протокола web.max.ru (ver = 10).
 //
-// Спроектирован на основе реверс-инжиниринга pr0bel1230/max-api-docs:
-//   - Транспорт: WebSocket (wss://ws-api.oneme.ru/websocket, ver=11)
-//   - Пакеты: { ver: 11, cmd: 0|1|3, seq, opcode, payload }
-//   - Опкоды:
-//       6   = INIT (deviceId, client ver)
-//       19  = LOGIN (token из __oneme_auth)
-//       49  = GET_HISTORY (chatId, limit)
-//       53  = GET_CHATS (список диалогов)
-//       64  = MSG_SEND (отправка сообщения)
-//       128 = INCOMING_EVENT (входящее сообщение)
-//
-// Изоляция:
-//   - Каждое подключение привязано к конкретному channelAccountId и tenant_id.
-//   - Секреты (token) хранятся в БД в зашифрованном виде (AES-256-GCM v1).
+// Работает напрямую с wss://api.oneme.ru/websocket:
+//   - Binary framing ver=10 (10-байтовый BE header + MessagePack + ext 1 + LZ4)
+//   - SessionInit (opcode 6) с userAgent web.max.ru 26.11.10, UUID v4 deviceId
+//     и clientSessionId = BigInt(Date.now())
+//   - Обязательные ACK (cmd=1) на server-initiated cmd=0:
+//       1 (ping), 128 ({ chatId, messageId }), 137 (call), и прочие push
+//   - Дедупликация входящих по lastInSeq, read-timeout 35s, jittered backoff
+//     реконнект и переотправка очереди с cmd=2 после повторного LOGIN
+//   - Обновление токена из opcode 19 (LOGIN) и opcode 23 (AUTH_CONFIRM)
+//   - Сброс сессии строго при ['login.token','login.blocked','login.flood','user.not.found']
 // ---------------------------------------------------------------------------
 
-const MAX_WS_ENDPOINT = "wss://ws-api.oneme.ru/websocket";
-const PROTOCOL_VERSION = 11;
+const READ_TIMEOUT_MS = 35_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const PING_IDLE_THRESHOLD_MS = 20_000;
+const RPC_TIMEOUT_MS = 20_000;
+const UPLOAD_WAIT_TIMEOUT_MS = 60_000;
 
-enum MaxOpcode {
-  PING = 1,
-  INIT = 6,
-  LOGIN = 19,
-  CONTACT_INFO = 32,
-  CONTACT_INFO_BY_PHONE = 46,
-  GET_HISTORY = 49,
-  MARK_READ = 50,
-  GET_CHATS = 53,
-  MSG_SEND = 64,
-  INCOMING_EVENT = 128,
+export interface MaxSessionRecord {
+  id: number | string;
+  deviceId?: string;
+  current?: boolean;
+  userAgent?: string;
+  appVersion?: string;
+  deviceName?: string;
+  deviceType?: string;
+  platform?: string;
+  ip?: string;
+  location?: string;
+  created?: number;
+  updated?: number;
+  lastActivity?: number;
 }
 
-interface MaxPacket<T = Record<string, unknown>> {
-  ver: number;
-  cmd: number; // 0 = req, 1 = ack, 3 = error
-  seq: number;
+interface StoredMaxSession {
+  token: string;
+  deviceId: string;
+  phone?: string;
+  chatsSync?: number;
+  contactsSync?: number;
+  draftsSync?: number;
+  presenceSync?: number;
+  configHash?: string;
+  userAgent?: Record<string, unknown> | null;
+}
+
+interface RawMaxAttach {
+  _type?: string;
+  type?: string;
+  photoToken?: string;
+  photoId?: number | string | bigint;
+  baseUrl?: string;
+  fileId?: number | string | bigint;
+  videoId?: number | string | bigint;
+  audioId?: number | string | bigint;
+  name?: string;
+  fileName?: string;
+  size?: number;
+  fileSize?: number;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+  phone?: string | number;
+  firstName?: string;
+  lastName?: string;
+  vcfBody?: string;
+  contactId?: number | string | bigint;
+}
+
+interface RawMaxMessage {
+  id?: number | string | bigint;
+  sender?: number | string | bigint;
+  senderId?: number | string | bigint;
+  from?: number | string | bigint;
+  chatId?: number | string | bigint;
+  time?: number | bigint;
+  date?: number | bigint;
+  text?: string;
+  out?: boolean;
+  attaches?: RawMaxAttach[];
+  link?: {
+    type?: string;
+    message?: RawMaxMessage;
+    chatId?: number | string | bigint;
+    sender?: number | string | bigint;
+  };
+}
+
+interface RawMaxChat {
+  id: number | string | bigint;
+  type?: string;
+  lastEventTime?: number;
+  modified?: number;
+  owner?: number | string | bigint;
+  participants?: Record<string, unknown>;
+}
+
+interface RawMaxContact {
+  id?: number | string | bigint;
+  names?: MaxRawName[];
+  phone?: string | number;
+  phones?: Array<{ number?: string }>;
+  accountStatus?: number;
+  link?: string;
+  username?: string;
+  options?: Array<string | { value?: string }>;
+  isBot?: boolean;
+}
+
+interface PendingRpc {
   opcode: number;
-  payload: T;
+  payload: unknown;
+  retryable: boolean;
+  resolve: (val: Record<string, unknown>) => void;
+  reject: (err: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+interface QueuedRetryItem {
+  opcode: number;
+  payload: unknown;
+  resolve: (val: Record<string, unknown>) => void;
+  reject: (err: Error) => void;
 }
 
 interface ActiveSession {
   ws: WebSocket;
   channelAccountId: string;
   tenantId: string;
+  token: string;
+  deviceId: string;
+  userAgent: Record<string, unknown> | null;
+  chatsSync: number;
+  contactsSync: number;
+  draftsSync: number;
+  presenceSync: number;
+  configHash?: string;
   seq: number;
-  pendingRequests: Map<
-    number,
-    { resolve: (val: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }
-  >;
+  lastInSeq: number;
+  lastRecvAt: number;
+  selfUserId: string | null;
+  selfPhone: string | null;
+  chats: Map<string, RawMaxChat>;
+  contacts: Map<string, RawMaxContact>;
+  pendingRequests: Map<number, PendingRpc>;
+  retryQueue: QueuedRetryItem[];
+  attachWaiters: Map<string, { resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
+  photoUrlCache: Map<string, string>;
   heartbeatTimer?: NodeJS.Timeout;
+  reconnectTimer?: NodeJS.Timeout;
+  reconnectAttempts: number;
   connected: boolean;
   authorized: boolean;
+  manuallyClosed: boolean;
+  fatalError: boolean;
+}
+
+export class MaxProtocolError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly opcode: number,
+  ) {
+    super(message);
+    this.name = "MaxProtocolError";
+  }
+}
+
+function asStrId(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  return String(v);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function computeDialogChatId(meId: string, peerUserId: string): bigint {
+  return BigInt(meId) ^ BigInt(peerUserId);
 }
 
 export class MaxTsAdapter implements IMessagingAdapter {
@@ -76,284 +219,735 @@ export class MaxTsAdapter implements IMessagingAdapter {
   readonly providerName = "max-native-ts";
 
   private readonly sessions = new Map<string, ActiveSession>();
+  private readonly connectingPromises = new Map<string, Promise<ActiveSession>>();
   private readonly eventSubscribers = new Set<(event: IncomingEvent) => void>();
   private readonly contactCache = new Map<
     string,
-    { firstName?: string; lastName?: string; senderName: string; phone?: string; expiresAt: number }
+    { firstName?: string; lastName?: string; senderName: string; phone?: string; username?: string; isBot?: boolean; expiresAt: number }
   >();
+  private readonly dedupInbound = new Map<string, number>();
 
   private sessionKey(tenantId: string, channelAccountId: string): string {
     return `${tenantId}:${channelAccountId}`;
   }
 
-  /**
-   * Подключение к сессии аккаунта или получение существующего активного сокета.
-   */
+  private findSessionByAccountId(channelAccountId: string): ActiveSession | undefined {
+    for (const sess of this.sessions.values()) {
+      if (sess.channelAccountId === channelAccountId) return sess;
+    }
+    return undefined;
+  }
+
+  isSessionLive(channelAccountId: string): boolean {
+    const sess = this.findSessionByAccountId(channelAccountId);
+    return Boolean(sess && sess.connected && sess.authorized && !sess.fatalError);
+  }
+
+  getLiveBotIds(): Set<string> {
+    const out = new Set<string>();
+    for (const sess of this.sessions.values()) {
+      if (sess.connected && sess.authorized && !sess.fatalError) {
+        out.add(sess.channelAccountId);
+      }
+    }
+    return out;
+  }
+
+  private loadStoredCredentials(
+    accountId: string,
+    creds: Record<string, unknown> | null | undefined,
+  ): StoredMaxSession {
+    const c = creds ?? {};
+    let token = typeof c.token === "string" ? c.token : "";
+    let deviceId = typeof c.deviceId === "string" ? c.deviceId : "";
+    let phone = typeof c.phone === "string" ? c.phone : undefined;
+    let chatsSync = -1;
+    let contactsSync = -1;
+    let draftsSync = -1;
+    let presenceSync = -1;
+    let configHash: string | undefined;
+    let userAgent: Record<string, unknown> | null = null;
+
+    if (typeof c.encrypted_session === "string" && c.encrypted_session.trim()) {
+      try {
+        const parsed = JSON.parse(decryptSecret(c.encrypted_session)) as Record<string, unknown>;
+        if (typeof parsed.token === "string" && parsed.token) token = parsed.token;
+        if (typeof parsed.deviceId === "string" && parsed.deviceId) deviceId = parsed.deviceId;
+        if (typeof parsed.phone === "string" && parsed.phone) phone = parsed.phone;
+        if (typeof parsed.chatsSync === "number") chatsSync = parsed.chatsSync;
+        if (typeof parsed.contactsSync === "number") contactsSync = parsed.contactsSync;
+        if (typeof parsed.draftsSync === "number") draftsSync = parsed.draftsSync;
+        if (typeof parsed.presenceSync === "number") presenceSync = parsed.presenceSync;
+        if (typeof parsed.configHash === "string") configHash = parsed.configHash;
+        if (parsed.userAgent && typeof parsed.userAgent === "object") {
+          userAgent = parsed.userAgent as Record<string, unknown>;
+        }
+      } catch {
+        // Fallback to encrypted_token below
+      }
+    }
+
+    if (!token && typeof c.encrypted_token === "string" && c.encrypted_token.trim()) {
+      token = decryptSecret(c.encrypted_token);
+    }
+
+    if (!token) {
+      throw new Error(`No auth token configured for MAX account ${accountId}`);
+    }
+
+    return {
+      token,
+      deviceId: deviceId.trim() || normalizeUuidDeviceId(null),
+      phone,
+      chatsSync,
+      contactsSync,
+      draftsSync,
+      presenceSync,
+      configHash,
+      userAgent,
+    };
+  }
+
+  private async persistSessionUpdate(
+    session: ActiveSession,
+    updates: {
+      token?: string;
+      status?: "connected" | "error";
+      statusMessage?: string;
+      clearSession?: boolean;
+      maxUserId?: string | null;
+    },
+  ): Promise<void> {
+    if (updates.token) {
+      session.token = updates.token;
+    }
+
+    const backupPayload = {
+      token: session.token,
+      deviceId: session.deviceId,
+      phone: session.selfPhone ?? "",
+      chatsSync: session.chatsSync,
+      contactsSync: session.contactsSync,
+      draftsSync: session.draftsSync,
+      presenceSync: session.presenceSync,
+      configHash: session.configHash ?? "",
+      userAgent: session.userAgent ?? buildMaxUserAgent(null),
+    };
+
+    const encryptedSession = updates.clearSession ? null : encryptSecret(JSON.stringify(backupPayload));
+    const encryptedToken = updates.clearSession ? null : encryptSecret(session.token);
+
+    await withTenant(session.tenantId, async (tx) => {
+      await tx.query(
+        `UPDATE channel_accounts
+         SET status = COALESCE($3, status),
+             status_message = COALESCE($4, status_message),
+             remote_user_id = COALESCE($5, remote_user_id),
+             connected_at = CASE WHEN $3 = 'connected' AND connected_at IS NULL THEN now() ELSE connected_at END,
+             last_sync_at = CASE WHEN $3 = 'connected' THEN now() ELSE last_sync_at END,
+             credentials = CASE
+               WHEN $6::boolean THEN COALESCE(credentials, '{}'::jsonb) - 'encrypted_session' - 'encrypted_token' - 'token' - 'session_backed_up_at'
+               ELSE COALESCE(credentials, '{}'::jsonb) || jsonb_build_object(
+                 'deviceId', $7::text,
+                 'encrypted_session', $8::text,
+                 'encrypted_token', $9::text,
+                 'session_backed_up_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+               )
+             END,
+             credentials_encrypted = CASE WHEN $6::boolean THEN false ELSE true END
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+        [
+          session.tenantId,
+          session.channelAccountId,
+          updates.status ?? null,
+          updates.statusMessage ?? null,
+          updates.maxUserId ?? null,
+          Boolean(updates.clearSession),
+          session.deviceId,
+          encryptedSession,
+          encryptedToken,
+        ],
+      );
+    }).catch(() => {});
+  }
+
   private async getOrCreateSession(
     tenantId: string,
     channelAccountId: string,
   ): Promise<ActiveSession> {
     const key = this.sessionKey(tenantId, channelAccountId);
     const existing = this.sessions.get(key);
-    if (existing && existing.tenantId === tenantId && existing.connected && existing.authorized) {
+    if (existing && existing.connected && existing.authorized && !existing.fatalError) {
       return existing;
     }
 
-    // Загрузка зашифрованных креденшелов из БД с изоляцией по tenant_id
-    const account = await queryOne<{
-      id: string;
-      tenant_id: string;
-      credentials: {
-        token?: string;
-        encrypted_token?: string;
-        deviceId?: string;
-      };
-    }>(
-      `SELECT id, tenant_id, credentials FROM channel_accounts
-       WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
-      [tenantId, channelAccountId],
+    const inflight = this.connectingPromises.get(key);
+    if (inflight) {
+      return inflight;
+    }
+
+    const connectPromise = this.openAndLoginSession(tenantId, channelAccountId).finally(() => {
+      this.connectingPromises.delete(key);
+    });
+    this.connectingPromises.set(key, connectPromise);
+    return connectPromise;
+  }
+
+  private async openAndLoginSession(
+    tenantId: string,
+    channelAccountId: string,
+    reuseSession?: ActiveSession,
+  ): Promise<ActiveSession> {
+    const account = await withTenant(tenantId, (tx) =>
+      tx.queryOne<{
+        id: string;
+        tenant_id: string;
+        remote_user_id: string | null;
+        credentials: Record<string, unknown> | null;
+      }>(
+        `SELECT id, tenant_id, remote_user_id, credentials FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+        [tenantId, channelAccountId],
+      ),
     );
 
     if (!account) {
       throw new Error(`Channel account ${channelAccountId} not found for tenant ${tenantId}`);
     }
 
-    let authToken = account.credentials?.token;
-    if (account.credentials?.encrypted_token) {
-      authToken = decryptSecret(account.credentials.encrypted_token);
-    }
+    const stored = this.loadStoredCredentials(channelAccountId, account.credentials);
+    const key = this.sessionKey(tenantId, channelAccountId);
 
-    if (!authToken) {
-      throw new Error(`No auth token configured for MAX account ${channelAccountId}`);
-    }
+    const ws = openMaxWebSocket(MAX_WS_ENDPOINT);
+    const session: ActiveSession = reuseSession ?? {
+      ws,
+      channelAccountId,
+      tenantId,
+      token: stored.token,
+      deviceId: stored.deviceId,
+      userAgent: stored.userAgent ?? null,
+      chatsSync: stored.chatsSync ?? -1,
+      contactsSync: stored.contactsSync ?? -1,
+      draftsSync: stored.draftsSync ?? -1,
+      presenceSync: stored.presenceSync ?? -1,
+      configHash: stored.configHash,
+      seq: 0,
+      lastInSeq: 0,
+      lastRecvAt: Date.now(),
+      selfUserId: account.remote_user_id ?? null,
+      selfPhone: stored.phone ?? null,
+      chats: new Map(),
+      contacts: new Map(),
+      pendingRequests: new Map(),
+      retryQueue: [],
+      attachWaiters: new Map(),
+      photoUrlCache: new Map(),
+      reconnectAttempts: 0,
+      connected: false,
+      authorized: false,
+      manuallyClosed: false,
+      fatalError: false,
+    };
 
-    const deviceId = account.credentials?.deviceId || `getvoxly-web-${channelAccountId.slice(0, 8)}`;
+    session.ws = ws;
+    session.seq = 0;
+    session.lastInSeq = 0;
+    session.lastRecvAt = Date.now();
+    session.connected = false;
+    session.authorized = false;
 
-    return new Promise<ActiveSession>((resolve, reject) => {
-      try {
-        const ws = new WebSocket(MAX_WS_ENDPOINT);
-        const session: ActiveSession = {
-          ws,
-          channelAccountId,
-          tenantId,
-          seq: 1,
-          pendingRequests: new Map(),
-          connected: false,
-          authorized: false,
-        };
-
-        const timeout = setTimeout(() => {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        try {
           ws.close();
-          reject(new Error("Timeout connecting to MAX WebSocket"));
-        }, 15_000);
+        } catch {}
+        reject(new Error("Timeout connecting to MAX WebSocket"));
+      }, 15_000);
 
-        ws.onopen = async () => {
-          session.connected = true;
+      ws.addEventListener("open", async () => {
+        session.connected = true;
+        session.lastRecvAt = Date.now();
+        try {
+          // 1. SessionInit (opcode 6)
+          await this.sendRpc(session, MaxOpcode.SESSION_INIT, {
+            userAgent: buildMaxUserAgent(session.userAgent),
+            deviceId: session.deviceId,
+            clientSessionId: BigInt(Date.now()),
+          });
 
-          try {
-            // Шаг 1: INIT (opcode 6)
-            await this.sendPacket(session, MaxOpcode.INIT, {
-              deviceId,
-              clientVer: "web-2.0.0",
-              platform: "web",
-            });
+          // 2. LOGIN (opcode 19)
+          const loginResp = await this.sendRpc(session, MaxOpcode.LOGIN, {
+            token: session.token,
+            chatsCount: 40,
+            interactive: true,
+            chatsSync: session.chatsSync,
+            contactsSync: session.contactsSync,
+            presenceSync: session.presenceSync,
+            draftsSync: session.draftsSync,
+          });
 
-            // Шаг 2: LOGIN (opcode 19)
-            await this.sendPacket(session, MaxOpcode.LOGIN, {
-              token: authToken,
-              deviceId,
-            });
-
-            session.authorized = true;
-            clearTimeout(timeout);
-
-            // Настройка Keep-Alive (heartbeat) каждые 30 секунд через PING (opcode 1)
-            session.heartbeatTimer = setInterval(() => {
-              if (session.connected && session.ws.readyState === WebSocket.OPEN) {
-                this.sendPacket(session, MaxOpcode.PING, { interactive: false }).catch(() => {});
-              }
-            }, 30_000);
-            session.heartbeatTimer.unref?.();
-
-            this.sessions.set(key, session);
-            resolve(session);
-          } catch (err) {
-            clearTimeout(timeout);
-            ws.close();
-            reject(err instanceof Error ? err : new Error(String(err)));
-          }
-        };
-
-        ws.onmessage = (event: MessageEvent) => {
-          this.handleIncomingMessage(session, event.data);
-        };
-
-        ws.onerror = (_err: Event) => {
+          this.applyLoginState(session, loginResp);
+          session.authorized = true;
+          session.reconnectAttempts = 0;
           clearTimeout(timeout);
-          session.connected = false;
-        };
 
-        ws.onclose = () => {
-          session.connected = false;
-          session.authorized = false;
-          if (session.heartbeatTimer) clearInterval(session.heartbeatTimer);
-          this.sessions.delete(key);
-        };
-      } catch (err) {
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
+          this.startHeartbeat(session);
+          this.sessions.set(key, session);
+          await this.persistSessionUpdate(session, {
+            token: typeof loginResp.token === "string" && loginResp.token ? loginResp.token : undefined,
+            status: "connected",
+            statusMessage: "",
+            maxUserId: session.selfUserId,
+          });
+
+          // Переотправка очереди ожидающих запросов с cmd = 2 (RETRY) после логина
+          void this.flushRetryQueue(session);
+          resolve();
+        } catch (err) {
+          clearTimeout(timeout);
+          const errCode = err instanceof MaxProtocolError ? err.code : "";
+          if (isFatalMaxAuthError(errCode || (err instanceof Error ? err.message : ""))) {
+            session.fatalError = true;
+            await this.persistSessionUpdate(session, {
+              status: "error",
+              statusMessage: `Сессия MAX истекла (${errCode || "auth"}) — требуется повторная авторизация`,
+              clearSession: true,
+            });
+          }
+          try {
+            ws.close();
+          } catch {}
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      });
+
+      ws.addEventListener("message", (event) => {
+        this.handleRawFrame(session, event.data);
+      });
+
+      ws.addEventListener("error", () => {
+        session.connected = false;
+      });
+
+      ws.addEventListener("close", () => {
+        clearTimeout(timeout);
+        session.connected = false;
+        session.authorized = false;
+        if (session.heartbeatTimer) {
+          clearInterval(session.heartbeatTimer);
+          session.heartbeatTimer = undefined;
+        }
+        this.movePendingToRetryQueueOrReject(session);
+
+        if (!session.manuallyClosed && !session.fatalError && this.sessions.get(key) === session) {
+          this.scheduleReconnect(session);
+        }
+      });
     });
+
+    return session;
   }
 
-  /**
-   * Отправка запроса с seq-номером и ожидание соответствующего ACK.
-   */
-  private sendPacket<T = Record<string, unknown>>(
-    session: ActiveSession,
-    opcode: MaxOpcode,
-    payload: Record<string, unknown>,
-  ): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const seq = session.seq++;
-      const packet: MaxPacket = {
-        ver: PROTOCOL_VERSION,
-        cmd: 0,
-        seq,
-        opcode,
-        payload,
-      };
+  private applyLoginState(session: ActiveSession, resp: Record<string, unknown>): void {
+    const profile = resp.profile as { contact?: RawMaxContact } | RawMaxContact | undefined;
+    const meContact =
+      profile && typeof profile === "object" && "contact" in profile && profile.contact
+        ? profile.contact
+        : (profile as RawMaxContact | undefined);
 
+    if (meContact?.id !== undefined) {
+      session.selfUserId = asStrId(meContact.id);
+    }
+    if (meContact?.phone !== undefined) {
+      session.selfPhone = normalizeMaxPhone(String(meContact.phone), null) ?? session.selfPhone;
+    }
+
+    if (typeof resp.chatsSync === "number") session.chatsSync = resp.chatsSync;
+    if (typeof resp.contactsSync === "number") session.contactsSync = resp.contactsSync;
+    if (typeof resp.draftsSync === "number") session.draftsSync = resp.draftsSync;
+    if (typeof resp.presenceSync === "number") session.presenceSync = resp.presenceSync;
+    if (typeof resp.configHash === "string") session.configHash = resp.configHash;
+
+    const chats = Array.isArray(resp.chats) ? (resp.chats as RawMaxChat[]) : [];
+    for (const chat of chats) {
+      if (chat?.id !== undefined) {
+        session.chats.set(asStrId(chat.id), chat);
+      }
+    }
+
+    const contacts = Array.isArray(resp.contacts) ? (resp.contacts as RawMaxContact[]) : [];
+    for (const c of contacts) {
+      if (c?.id !== undefined) {
+        session.contacts.set(asStrId(c.id), c);
+      }
+    }
+  }
+
+  private startHeartbeat(session: ActiveSession): void {
+    if (session.heartbeatTimer) clearInterval(session.heartbeatTimer);
+    session.heartbeatTimer = setInterval(() => {
+      if (!session.connected || session.ws.readyState !== WebSocket.OPEN) return;
+
+      const idleMs = Date.now() - session.lastRecvAt;
+      if (idleMs > READ_TIMEOUT_MS) {
+        try {
+          session.ws.close();
+        } catch {}
+        return;
+      }
+
+      if (idleMs >= PING_IDLE_THRESHOLD_MS) {
+        this.sendRpc(session, MaxOpcode.PING, { interactive: false }).catch(() => {});
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+    session.heartbeatTimer.unref?.();
+  }
+
+  private scheduleReconnect(session: ActiveSession): void {
+    if (session.reconnectTimer || session.manuallyClosed || session.fatalError) return;
+    const base = Math.min(60_000, 1_500 * Math.pow(2, session.reconnectAttempts));
+    const jittered = Math.round(base * (0.8 + Math.random() * 0.4));
+    session.reconnectAttempts++;
+
+    session.reconnectTimer = setTimeout(() => {
+      session.reconnectTimer = undefined;
+      if (session.manuallyClosed || session.fatalError) return;
+      this.openAndLoginSession(session.tenantId, session.channelAccountId, session).catch(() => {
+        if (!session.manuallyClosed && !session.fatalError) {
+          this.scheduleReconnect(session);
+        }
+      });
+    }, jittered);
+    session.reconnectTimer.unref?.();
+  }
+
+  private movePendingToRetryQueueOrReject(session: ActiveSession): void {
+    for (const [seq, pending] of session.pendingRequests.entries()) {
+      clearTimeout(pending.timer);
+      session.pendingRequests.delete(seq);
+      if (pending.retryable && !session.manuallyClosed && !session.fatalError) {
+        session.retryQueue.push({
+          opcode: pending.opcode,
+          payload: pending.payload,
+          resolve: pending.resolve,
+          reject: pending.reject,
+        });
+      } else {
+        pending.reject(new Error("MAX WebSocket connection closed"));
+      }
+    }
+  }
+
+  private async flushRetryQueue(session: ActiveSession): Promise<void> {
+    if (!session.connected || !session.authorized) return;
+    const items = session.retryQueue.splice(0, session.retryQueue.length);
+    for (const item of items) {
+      try {
+        const res = await this.sendRpc(session, item.opcode, item.payload, {
+          cmd: MaxCommand.RETRY,
+          retryable: false,
+        });
+        item.resolve(res);
+      } catch (err) {
+        item.reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  }
+
+  private sendAck(session: ActiveSession, seq: number, opcode: number, payload: Record<string, unknown> = {}): void {
+    if (!session.connected || session.ws.readyState !== WebSocket.OPEN) return;
+    const frame = packMaxFrame({
+      cmd: MaxCommand.ACK,
+      seq,
+      opcode,
+      payload,
+    });
+    session.ws.send(frame);
+  }
+
+  private sendRpc(
+    session: ActiveSession,
+    opcode: number,
+    payload: unknown,
+    opts?: { cmd?: number; retryable?: boolean; timeoutMs?: number },
+  ): Promise<Record<string, unknown>> {
+    if (!session.connected || session.ws.readyState !== WebSocket.OPEN) {
+      if (opts?.retryable && !session.manuallyClosed && !session.fatalError) {
+        return new Promise<Record<string, unknown>>((resolve, reject) => {
+          session.retryQueue.push({ opcode, payload, resolve, reject });
+        });
+      }
+      return Promise.reject(new Error("MAX WebSocket is not connected"));
+    }
+
+    const seq = ++session.seq & 0xffff || (++session.seq & 0xffff);
+    const frame = packMaxFrame({
+      cmd: opts?.cmd ?? MaxCommand.REQUEST,
+      seq,
+      opcode,
+      payload,
+    });
+
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         session.pendingRequests.delete(seq);
-        reject(new Error(`MAX request timed out (opcode: ${opcode}, seq: ${seq})`));
-      }, 10_000);
+        reject(new Error(`MAX RPC timeout opcode=${opcode} seq=${seq}`));
+      }, opts?.timeoutMs ?? RPC_TIMEOUT_MS);
 
       session.pendingRequests.set(seq, {
-        resolve: resolve as (val: unknown) => void,
+        opcode,
+        payload,
+        retryable: Boolean(opts?.retryable),
+        resolve,
         reject,
         timer,
       });
-
-      if (session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send(JSON.stringify(packet));
-      } else {
-        clearTimeout(timer);
-        session.pendingRequests.delete(seq);
-        reject(new Error("WebSocket is not open"));
-      }
+      session.ws.send(frame);
     });
   }
 
-  /**
-   * Обработка входящего пакета от сервера MAX.
-   */
-  private handleIncomingMessage(session: ActiveSession, rawData: unknown) {
-    let packet: MaxPacket;
+  private handleRawFrame(session: ActiveSession, rawData: unknown): void {
+    session.lastRecvAt = Date.now();
     try {
-      const text = typeof rawData === "string" ? rawData : String(rawData);
-      packet = JSON.parse(text);
-    } catch {
-      return;
-    }
+      const buf =
+        rawData instanceof ArrayBuffer
+          ? Buffer.from(new Uint8Array(rawData))
+          : typeof rawData === "string"
+            ? Buffer.from(rawData, "utf8")
+            : Buffer.from(rawData as Uint8Array);
 
-    // 1. Проверяем seq-матчинг для ожидающих промисов
-    if (packet.seq && session.pendingRequests.has(packet.seq)) {
-      const req = session.pendingRequests.get(packet.seq)!;
-      clearTimeout(req.timer);
-      session.pendingRequests.delete(packet.seq);
+      const frame = unpackMaxFrame<Record<string, unknown>>(buf);
 
-      if (packet.cmd === 3) {
-        req.reject(
-          new Error((packet.payload as { error?: string })?.error || "MAX command error"),
-        );
-      } else {
-        req.resolve(packet.payload);
+      // Ответ на наш запрос (ACK / ERROR)
+      if (frame.cmd === MaxCommand.ACK || frame.cmd === MaxCommand.ERROR) {
+        // Обновление токена из LOGIN (19) или AUTH_CONFIRM (23)
+        if (
+          frame.cmd === MaxCommand.ACK &&
+          (frame.opcode === MaxOpcode.LOGIN || frame.opcode === MaxOpcode.AUTH_CONFIRM) &&
+          typeof frame.payload?.token === "string" &&
+          frame.payload.token &&
+          frame.payload.token !== session.token
+        ) {
+          void this.persistSessionUpdate(session, { token: frame.payload.token });
+        }
+
+        const pending = session.pendingRequests.get(frame.seq);
+        if (pending) {
+          clearTimeout(pending.timer);
+          session.pendingRequests.delete(frame.seq);
+
+          if (frame.cmd === MaxCommand.ERROR) {
+            const errCode = String(frame.payload?.error ?? "max.error");
+            const errMsg = String(
+              frame.payload?.localizedMessage ?? frame.payload?.message ?? errCode,
+            );
+            if (isFatalMaxAuthError(errCode)) {
+              session.fatalError = true;
+              void this.persistSessionUpdate(session, {
+                status: "error",
+                statusMessage: `Сессия MAX отозвана (${errCode}) — переподключите аккаунт`,
+                clearSession: true,
+              });
+              try {
+                session.ws.close();
+              } catch {}
+            }
+            pending.reject(new MaxProtocolError(errCode, errMsg, frame.opcode));
+          } else {
+            pending.resolve(frame.payload ?? {});
+          }
+        }
+        return;
       }
-      return;
-    }
 
-    // 2. Обрабатываем асинхронные события (opcode 128 = новое входящее сообщение)
-    if (packet.opcode === MaxOpcode.INCOMING_EVENT) {
-      const pl = packet.payload as Record<string, unknown>;
-      const rawMsg = (pl.message as Record<string, unknown>) || pl;
-      const chatId = String(rawMsg.chatId || pl.chatId || "");
-      const senderId = String(rawMsg.sender ?? rawMsg.senderId ?? rawMsg.from ?? "");
-      const isOutbound = Boolean(rawMsg.out || rawMsg.fromMe);
+      // Server-initiated REQUEST (cmd === 0) или EVENT (cmd === 2)
+      if (frame.cmd === MaxCommand.REQUEST || frame.cmd === MaxCommand.RETRY) {
+        // Обязательный ACK cmd=1 на входящие cmd=0
+        if (frame.cmd === MaxCommand.REQUEST) {
+          if (frame.opcode === MaxOpcode.PING) {
+            this.sendAck(session, frame.seq, MaxOpcode.PING, {});
+          } else if (frame.opcode === MaxOpcode.NOTIF_MESSAGE) {
+            const msg = frame.payload?.message as RawMaxMessage | undefined;
+            const ackPayload: Record<string, unknown> = {};
+            if (frame.payload?.chatId !== undefined) {
+              ackPayload.chatId = frame.payload.chatId;
+            }
+            if (msg?.id !== undefined) {
+              ackPayload.messageId = msg.id;
+            }
+            this.sendAck(session, frame.seq, MaxOpcode.NOTIF_MESSAGE, ackPayload);
+          } else if (frame.opcode === MaxOpcode.NOTIF_CALL_START) {
+            this.sendAck(session, frame.seq, MaxOpcode.NOTIF_CALL_START, {});
+          } else {
+            this.sendAck(session, frame.seq, frame.opcode, {});
+          }
+        }
 
-      void this.dispatchIncomingWithContact(session, chatId, senderId, isOutbound, rawMsg, pl);
+        // Дедупликация по lastInSeq для входящих cmd=0
+        if (frame.cmd === MaxCommand.REQUEST && frame.seq > 0) {
+          if (frame.seq <= session.lastInSeq && session.lastInSeq - frame.seq < 0x8000) {
+            return;
+          }
+          session.lastInSeq = frame.seq;
+        }
+
+        // Обновление токена, если пришло push AUTH_CONFIRM (23)
+        if (
+          frame.opcode === MaxOpcode.AUTH_CONFIRM &&
+          typeof frame.payload?.token === "string" &&
+          frame.payload.token &&
+          frame.payload.token !== session.token
+        ) {
+          void this.persistSessionUpdate(session, { token: frame.payload.token });
+        }
+
+        // Завершение загрузки файла/видео (NOTIF_ATTACH = 136)
+        if (frame.opcode === MaxOpcode.NOTIF_ATTACH) {
+          const fid = asStrId(frame.payload?.fileId ?? frame.payload?.videoId ?? frame.payload?.audioId);
+          if (fid) {
+            const waiter = session.attachWaiters.get(fid);
+            if (waiter) {
+              clearTimeout(waiter.timer);
+              session.attachWaiters.delete(fid);
+              waiter.resolve();
+            }
+          }
+          return;
+        }
+
+        if (frame.opcode === MaxOpcode.NOTIF_MESSAGE) {
+          void this.handleInboundNotifMessage(session, frame.payload);
+        }
+      }
+    } catch {
+      // Игнорируем повреждённый фрейм, чтобы не обрывать живой сокет
     }
   }
 
-  /**
-   * Загружает профиль контакта через `CONTACT_INFO (op 32)` с кэшированием (10 мин),
-   * извлекает `firstName`, `lastName` и `phone` и отправляет нормализованное событие подписчикам.
-   */
-  private async dispatchIncomingWithContact(
+  private extractMessageAttachments(
     session: ActiveSession,
+    rawMsg: RawMaxMessage,
     chatId: string,
-    senderId: string,
-    isOutbound: boolean,
-    rawMsg: Record<string, unknown>,
-    pl: Record<string, unknown>,
-  ): Promise<void> {
-    let profile: { firstName?: string; lastName?: string; senderName: string; phone?: string } | undefined;
+  ): { text: string; attachments: InboundAttachment[] } {
+    const forwarded = rawMsg.link?.type === "FORWARD" ? rawMsg.link.message : undefined;
+    const rawAtts = [
+      ...(Array.isArray(rawMsg.attaches) ? rawMsg.attaches : []),
+      ...(Array.isArray(forwarded?.attaches) ? forwarded.attaches : []),
+    ];
 
-    if (!isOutbound && senderId && /^\d+$/.test(senderId)) {
-      const cacheKey = `${session.channelAccountId}:${senderId}`;
-      const cached = this.contactCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        profile = cached;
-      } else {
-        try {
-          const contactRes = await this.sendPacket<{
-            contacts?: Array<{
-              id?: number | string;
-              names?: MaxRawName[];
-              phone?: number | string;
-              phones?: Array<{ number?: string }>;
-            }>;
-          }>(session, MaxOpcode.CONTACT_INFO, { contactIds: [Number(senderId)] });
-          const c = contactRes.contacts?.[0];
-          if (c) {
-            const extracted = extractMaxIdentity({
-              names: c.names,
-              phone: c.phone ?? c.phones?.[0]?.number,
-            });
-            profile = extracted;
-            this.contactCache.set(cacheKey, {
-              ...extracted,
-              expiresAt: Date.now() + 10 * 60_000,
-            });
-          }
-        } catch {
-          // Если CONTACT_INFO временно недоступен, используем данные из самого сообщения
+    const attachments: InboundAttachment[] = [];
+    const msgId = asStrId(rawMsg.id ?? "0");
+
+    for (const att of rawAtts) {
+      const kind = String(att._type ?? att.type ?? "").toUpperCase();
+      if (kind === "PHOTO") {
+        const photoId = asStrId(att.photoId ?? att.photoToken ?? Date.now());
+        const fileId = `max:${chatId}:${msgId}:photo:${photoId}`;
+        if (att.baseUrl) {
+          session.photoUrlCache.set(fileId, att.baseUrl);
+        }
+        attachments.push({
+          type: "photo",
+          fileId,
+          url: att.baseUrl,
+          mimeType: "image/jpeg",
+        });
+      } else if (kind === "VIDEO") {
+        const videoId = asStrId(att.videoId ?? Date.now());
+        attachments.push({
+          type: "video",
+          fileId: `max:${chatId}:${msgId}:video:${videoId}`,
+          mimeType: "video/mp4",
+        });
+      } else if (kind === "AUDIO") {
+        const audioId = asStrId(att.audioId ?? Date.now());
+        attachments.push({
+          type: "voice",
+          fileId: `max:${chatId}:${msgId}:audio:${audioId}`,
+          mimeType: "audio/ogg",
+        });
+      } else if (kind === "FILE") {
+        const fileId = asStrId(att.fileId ?? Date.now());
+        attachments.push({
+          type: "document",
+          fileId: `max:${chatId}:${msgId}:file:${fileId}`,
+          fileName: att.name ?? att.fileName ?? "file.bin",
+          mimeType: att.mimeType ?? "application/octet-stream",
+          fileSize: att.size ?? att.fileSize,
+        });
+      }
+    }
+
+    const baseText = (rawMsg.text ?? "").trim() || (forwarded?.text ?? "").trim();
+    const fallbackLabel =
+      attachments[0]?.type === "photo"
+        ? "[фото]"
+        : attachments[0]?.type === "video"
+          ? "[видео]"
+          : attachments[0]?.type === "voice"
+            ? "[голосовое]"
+            : attachments[0]?.fileName
+              ? `[файл: ${attachments[0].fileName}]`
+              : "";
+
+    return {
+      text: baseText || fallbackLabel,
+      attachments,
+    };
+  }
+
+  private async handleInboundNotifMessage(
+    session: ActiveSession,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const rawMsg = (payload.message ?? payload) as RawMaxMessage | undefined;
+    if (!rawMsg || typeof rawMsg !== "object") return;
+
+    const chatId = asStrId(payload.chatId ?? rawMsg.chatId);
+    if (!chatId || chatId.startsWith("-")) return;
+
+    const chatObj = session.chats.get(chatId);
+    if (chatObj?.type && String(chatObj.type).toUpperCase() !== "DIALOG") return;
+
+    const msgId = asStrId(rawMsg.id);
+    if (msgId) {
+      const dedupKey = `${session.channelAccountId}:${msgId}`;
+      const now = Date.now();
+      if (this.dedupInbound.has(dedupKey)) return;
+      this.dedupInbound.set(dedupKey, now);
+      if (this.dedupInbound.size > 2000) {
+        for (const [k, ts] of this.dedupInbound.entries()) {
+          if (now - ts > 10 * 60_000) this.dedupInbound.delete(k);
         }
       }
     }
 
-    const fallbackIdentity = extractMaxIdentity({
-      senderName: (rawMsg.senderName as string) || undefined,
-    });
-    const finalIdentity = profile ?? fallbackIdentity;
-    const rawTime = Number(rawMsg.time || rawMsg.date || Date.now());
+    const senderId = asStrId(rawMsg.sender ?? rawMsg.senderId ?? rawMsg.from);
+    const isOut = Boolean(rawMsg.out) || Boolean(session.selfUserId && senderId === session.selfUserId);
 
-    const normalized: NormalizedMessage = {
-      id: String(rawMsg.id || rawMsg.messageId || Date.now()),
-      chatId,
-      senderId,
-      senderName: finalIdentity.senderName,
-      senderPhone: finalIdentity.phone,
-      text: String(rawMsg.text || ""),
-      direction: isOutbound ? "outbound" : "inbound",
-      fromMe: isOutbound,
-      timestamp: rawTime > 1e11 ? rawTime : rawTime * 1000,
-      rawPayload: {
-        ...pl,
-        firstName: finalIdentity.firstName,
-        lastName: finalIdentity.lastName,
-        phone: finalIdentity.phone,
-      },
-    };
+    // Для исходящих сообщений определяем peerUserId из chat.participants или XOR
+    let peerUserId = senderId;
+    if (isOut && session.selfUserId) {
+      if (chatObj?.participants) {
+        const other = Object.keys(chatObj.participants).find((k) => k !== session.selfUserId && k !== "0");
+        if (other) peerUserId = other;
+      } else if (/^\d+$/.test(chatId) && /^\d+$/.test(session.selfUserId)) {
+        peerUserId = (BigInt(chatId) ^ BigInt(session.selfUserId)).toString();
+      }
+    }
+
+    if (session.selfUserId && peerUserId === session.selfUserId && chatId === session.selfUserId) {
+      return;
+    }
+
+    const { text, attachments } = this.extractMessageAttachments(session, rawMsg, chatId);
+    if (!text && attachments.length === 0) return;
+
+    const profile = await this.lookupContactInfo(session, peerUserId);
+    if (profile?.isBot) return;
+
+    const rawTime = Number(rawMsg.time ?? rawMsg.date ?? Date.now());
+    const timestamp = rawTime > 1e11 ? rawTime : rawTime * 1000;
 
     const event: IncomingEvent = {
       tenantId: session.tenantId,
@@ -361,54 +955,290 @@ export class MaxTsAdapter implements IMessagingAdapter {
       channel: "max",
       eventType: "message",
       chatId,
-      message: normalized,
-      timestamp: Date.now(),
+      timestamp,
+      message: {
+        id: msgId || String(timestamp),
+        chatId,
+        senderId: peerUserId || chatId,
+        senderName: profile?.senderName,
+        senderPhone: profile?.phone,
+        senderUsername: profile?.username,
+        text,
+        direction: isOut ? "outbound" : "inbound",
+        fromMe: isOut,
+        timestamp,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        rawPayload: {
+          ...payload,
+          peerUserId,
+          selfPhone: session.selfPhone,
+        },
+      },
     };
 
-    for (const subscriber of this.eventSubscribers) {
+    for (const sub of this.eventSubscribers) {
       try {
-        subscriber(event);
+        sub(event);
       } catch {}
     }
   }
 
-  // --- IMessagingAdapter Implementation ---
+  private async lookupContactInfo(
+    session: ActiveSession,
+    userId: string,
+  ): Promise<{ senderName: string; phone?: string; username?: string; isBot?: boolean } | null> {
+    if (!userId || !/^\d+$/.test(userId)) return null;
+    const cached = this.contactCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached;
+    }
+
+    let rawContact = session.contacts.get(userId);
+    if (!rawContact) {
+      try {
+        const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO, {
+          contactIds: [toMaxIdValue(userId)],
+        });
+        const list = Array.isArray(res.contacts) ? (res.contacts as RawMaxContact[]) : [];
+        rawContact = list[0];
+        if (rawContact) session.contacts.set(userId, rawContact);
+      } catch {
+        return null;
+      }
+    }
+
+    if (!rawContact) return null;
+    const rawPhone = rawContact.phone ?? rawContact.phones?.[0]?.number;
+    const identity = extractMaxIdentity({
+      names: rawContact.names,
+      username: rawContact.username,
+      phone: rawPhone !== undefined ? String(rawPhone) : undefined,
+      selfPhone: session.selfPhone,
+    });
+    const isBot =
+      rawContact.isBot === true ||
+      Boolean(
+        rawContact.options?.some((o) => {
+          const v = typeof o === "string" ? o : (o?.value ?? "");
+          return v.toUpperCase().includes("BOT") && !v.toUpperCase().includes("ONEME");
+        }),
+      );
+
+    const result = {
+      senderName: identity.senderName,
+      phone: identity.phone,
+      username: rawContact.username,
+      isBot,
+      expiresAt: Date.now() + 10 * 60_000,
+    };
+    this.contactCache.set(userId, result);
+    return result;
+  }
+
+  private async resolveTargetChatId(session: ActiveSession, recipient: string): Promise<number | bigint> {
+    const clean = recipient.trim();
+
+    // 1. Ссылка max.ru?...id=123
+    const urlMatch = clean.match(/id=(\d+)/);
+    if (urlMatch?.[1]) {
+      const uid = urlMatch[1];
+      if (session.selfUserId && uid === session.selfUserId) {
+        throw new Error("Отправка самому себе заблокирована");
+      }
+      await this.sendRpc(session, MaxOpcode.CONTACT_ADD, {
+        contactId: toMaxIdValue(uid),
+        action: "ADD",
+      }).catch(() => {});
+      if (session.selfUserId) {
+        return computeDialogChatId(session.selfUserId, uid);
+      }
+      return toMaxIdValue(uid);
+    }
+
+    // 2. Телефон (+7... или 10-11 цифр)
+    const digits = clean.replace(/\D/g, "");
+    if (clean.startsWith("+") || (/^[78]\d{10}$/.test(digits) && !session.chats.has(clean))) {
+      const phoneE164 =
+        clean.startsWith("+") ? `+${digits}` : digits.startsWith("8") ? `+7${digits.slice(1)}` : `+${digits}`;
+      const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO_BY_PHONE, { phone: phoneE164 });
+      const contact = res.contact as RawMaxContact | undefined;
+      if (!contact?.id) {
+        throw new Error("Контакт не найден в MAX по номеру телефона");
+      }
+      const uid = asStrId(contact.id);
+      if (session.selfUserId && uid === session.selfUserId) {
+        throw new Error("Телефон совпадает с номером подключённого MAX-аккаунта");
+      }
+      await this.sendRpc(session, MaxOpcode.CONTACT_ADD, {
+        contactId: toMaxIdValue(uid),
+        action: "ADD",
+      }).catch(() => {});
+      if (session.selfUserId) {
+        return computeDialogChatId(session.selfUserId, uid);
+      }
+      return toMaxIdValue(uid);
+    }
+
+    // 3. Уже известный chatId
+    if (session.chats.has(clean)) {
+      return toMaxIdValue(clean);
+    }
+
+    return toMaxIdValue(clean);
+  }
+
+  private async uploadAttachment(
+    session: ActiveSession,
+    att: OutboundAttachment,
+  ): Promise<Record<string, unknown>> {
+    const rawBuffer = att.buffer
+      ? att.buffer
+      : att.base64
+        ? Buffer.from(att.base64, "base64")
+        : att.url
+          ? Buffer.from(await (await fetch(att.url)).arrayBuffer())
+          : null;
+
+    if (!rawBuffer || rawBuffer.length === 0) {
+      throw new Error("Пустое вложение для отправки в MAX");
+    }
+
+    const mime = (att.mimeType ?? "application/octet-stream").toLowerCase();
+    const isPhoto = att.type === "image" || mime.startsWith("image/");
+
+    if (isPhoto) {
+      const res = await this.sendRpc(session, MaxOpcode.PHOTO_UPLOAD, {
+        count: 1,
+        type: 0,
+        uploaderType: 0,
+        profile: false,
+      });
+      const uploadUrl = typeof res.url === "string" ? res.url : "";
+      if (!uploadUrl) {
+        throw new Error("MAX не вернул URL для загрузки фото");
+      }
+      const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+      const form = new FormData();
+      form.append("file", new Blob([new Uint8Array(rawBuffer)], { type: mime }), att.fileName || `image.${ext}`);
+
+      const uploadResp = await fetch(uploadUrl, {
+        method: "POST",
+        body: form,
+        signal: AbortSignal.timeout(UPLOAD_WAIT_TIMEOUT_MS),
+      });
+      if (!uploadResp.ok) {
+        throw new Error(`Ошибка загрузки фото в MAX: HTTP ${uploadResp.status}`);
+      }
+      const uploadJson = (await uploadResp.json()) as {
+        photos?: Record<string, { token?: string }>;
+      };
+      const firstPhoto = uploadJson.photos ? Object.values(uploadJson.photos)[0] : undefined;
+      if (!firstPhoto?.token) {
+        throw new Error("MAX не вернул photoToken после загрузки фото");
+      }
+      return {
+        _type: "PHOTO",
+        photoToken: firstPhoto.token,
+      };
+    }
+
+    // Файл / документ / видео / аудио → FILE_UPLOAD (87) + ожидание NOTIF_ATTACH (136)
+    const fileRes = await this.sendRpc(session, MaxOpcode.FILE_UPLOAD, {
+      count: 1,
+      type: 0,
+      uploaderType: 0,
+      profile: false,
+    });
+    const infoList = Array.isArray(fileRes.info)
+      ? (fileRes.info as Array<{ fileId?: number | string | bigint; url?: string }>)
+      : [];
+    const info = infoList[0];
+    if (!info?.url || info.fileId === undefined) {
+      throw new Error("MAX не вернул fileId/url для загрузки файла");
+    }
+
+    const fileIdKey = asStrId(info.fileId);
+    const fileName = (att.fileName || "file.bin").trim();
+
+    const waitAttachPromise = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        session.attachWaiters.delete(fileIdKey);
+        reject(new Error(`Таймаут обработки файла MAX (${fileIdKey})`));
+      }, UPLOAD_WAIT_TIMEOUT_MS);
+      session.attachWaiters.set(fileIdKey, { resolve, reject, timer });
+    });
+
+    const uploadResp = await fetch(info.url, {
+      method: "POST",
+      headers: {
+        "Content-Disposition": `attachment; filename=${encodeURIComponent(fileName)}`,
+        "Content-Length": String(rawBuffer.length),
+        "Content-Range": `0-${rawBuffer.length - 1}/${rawBuffer.length}`,
+      },
+      body: new Uint8Array(rawBuffer),
+      signal: AbortSignal.timeout(UPLOAD_WAIT_TIMEOUT_MS),
+    });
+
+    if (!uploadResp.ok) {
+      const w = session.attachWaiters.get(fileIdKey);
+      if (w) {
+        clearTimeout(w.timer);
+        session.attachWaiters.delete(fileIdKey);
+      }
+      throw new Error(`Ошибка загрузки файла в MAX: HTTP ${uploadResp.status}`);
+    }
+
+    await waitAttachPromise;
+    return {
+      _type: "FILE",
+      fileId: toMaxIdValue(fileIdKey),
+    };
+  }
 
   async sendMessage(params: SendMessageParams): Promise<SentMessageResult> {
     try {
       const session = await this.getOrCreateSession(params.tenantId, params.channelAccountId);
+      const chatId = await this.resolveTargetChatId(session, params.recipient);
 
-      const numericChatId = /^\d+$/.test(params.recipient) ? Number(params.recipient) : params.recipient;
-      const messageBody: Record<string, unknown> = {
-        text: params.text,
-        cid: Date.now(),
-        elements: [],
-        attaches: [],
-      };
-
-      if (params.replyToMessageId && /^\d+$/.test(params.replyToMessageId)) {
-        messageBody.link = {
-          type: "REPLY",
-          messageId: Number(params.replyToMessageId),
-        };
+      const attaches: Array<Record<string, unknown>> = [];
+      if (params.attachments && params.attachments.length > 0) {
+        for (const att of params.attachments) {
+          attaches.push(await this.uploadAttachment(session, att));
+        }
       }
 
-      const payload: Record<string, unknown> = {
-        chatId: numericChatId,
-        message: messageBody,
+      const cid = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
+      const payload = {
+        chatId,
+        message: {
+          text: params.text || null,
+          cid,
+          elements: [],
+          attaches,
+          ...(params.replyToMessageId
+            ? { link: { type: "REPLY", messageId: toMaxIdValue(params.replyToMessageId) } }
+            : {}),
+        },
         notify: true,
       };
 
-      const res = await this.sendPacket<{ message?: { id?: string | number }; messageId?: string }>(
-        session,
-        MaxOpcode.MSG_SEND,
-        payload,
-      );
+      let res: Record<string, unknown>;
+      try {
+        res = await this.sendRpc(session, MaxOpcode.MSG_SEND, payload, { retryable: true });
+      } catch (err) {
+        if (err instanceof MaxProtocolError && err.code === "attachment.not.ready") {
+          await sleep(1500);
+          res = await this.sendRpc(session, MaxOpcode.MSG_SEND, payload, { retryable: true });
+        } else {
+          throw err;
+        }
+      }
 
+      const sentMsg = res.message as { id?: number | string | bigint; time?: number } | undefined;
       return {
         ok: true,
-        messageId: String(res.message?.id ?? res.messageId ?? Date.now()),
-        timestamp: Date.now(),
+        messageId: sentMsg?.id !== undefined ? String(sentMsg.id) : String(Date.now()),
+        timestamp: sentMsg?.time ?? Date.now(),
       };
     } catch (err) {
       return {
@@ -421,33 +1251,35 @@ export class MaxTsAdapter implements IMessagingAdapter {
   async getHistory(params: MessageHistoryParams): Promise<MessagePage> {
     try {
       const session = await this.getOrCreateSession(params.tenantId, params.channelAccountId);
+      const res = await this.sendRpc(session, MaxOpcode.CHAT_HISTORY, {
+        chatId: toMaxIdValue(params.chatId),
+        from: params.cursor ? toMaxIdValue(params.cursor) : Date.now(),
+        forward: 0,
+        backward: params.limit || 50,
+        backwardTime: 0,
+        forwardTime: 0,
+        getChat: false,
+        itemType: "REGULAR",
+        getMessages: true,
+        interactive: false,
+      });
 
-      const numericChatId = /^\d+$/.test(params.chatId) ? Number(params.chatId) : params.chatId;
-      const res = await this.sendPacket<{ messages?: Record<string, unknown>[] }>(
-        session,
-        MaxOpcode.GET_HISTORY,
-        {
-          chatId: numericChatId,
-          from: Date.now(),
-          forward: 0,
-          backward: params.limit || 50,
-          getMessages: true,
-        },
-      );
-
-      const rawMessages = res.messages || [];
+      const rawMessages = Array.isArray(res.messages) ? (res.messages as RawMaxMessage[]) : [];
       const messages: NormalizedMessage[] = rawMessages.map((m) => {
-        const rawTime = Number(m.time || m.date || Date.now());
+        const rawTime = Number(m.time ?? m.date ?? Date.now());
+        const senderId = asStrId(m.sender ?? m.senderId ?? m.from);
+        const fromMe = Boolean(m.out) || Boolean(session.selfUserId && senderId === session.selfUserId);
+        const { text, attachments } = this.extractMessageAttachments(session, m, params.chatId);
         return {
-          id: String(m.id || m.messageId),
+          id: asStrId(m.id ?? rawTime),
           chatId: params.chatId,
-          senderId: String(m.sender ?? m.senderId ?? m.from ?? ""),
-          senderName: (m.senderName as string) || undefined,
-          text: String(m.text || ""),
-          direction: m.out ? "outbound" : "inbound",
-          fromMe: Boolean(m.out),
+          senderId,
+          text,
+          direction: fromMe ? "outbound" : "inbound",
+          fromMe,
           timestamp: rawTime > 1e11 ? rawTime : rawTime * 1000,
-          rawPayload: m,
+          attachments: attachments.length > 0 ? attachments : undefined,
+          rawPayload: m as unknown as Record<string, unknown>,
         };
       });
 
@@ -463,6 +1295,214 @@ export class MaxTsAdapter implements IMessagingAdapter {
     }
   }
 
+  async getPrivateDialogs(
+    tenantId: string,
+    channelAccountId: string,
+    dialogLimit = 80,
+    messageLimit = 50,
+  ): Promise<MaxPrivateDialogsResponse> {
+    try {
+      const session = await this.getOrCreateSession(tenantId, channelAccountId);
+      const chatsResp = await this.sendRpc(session, MaxOpcode.CHATS_LIST, { marker: Date.now() });
+      const rawChats = Array.isArray(chatsResp.chats) ? (chatsResp.chats as RawMaxChat[]) : [];
+      for (const c of rawChats) {
+        if (c?.id !== undefined) session.chats.set(asStrId(c.id), c);
+      }
+
+      const privateChats = Array.from(session.chats.values())
+        .filter((c) => {
+          const idNum = Number(c.id);
+          if (!Number.isNaN(idNum) && idNum <= 0) return false;
+          const t = String(c.type ?? "").toUpperCase();
+          return !t || t === "DIALOG";
+        })
+        .sort((a, b) => Number(b.lastEventTime ?? b.modified ?? 0) - Number(a.lastEventTime ?? a.modified ?? 0));
+
+      const dialogs: MaxBridgeDialog[] = [];
+      for (const chat of privateChats) {
+        if (dialogLimit > 0 && dialogs.length >= dialogLimit) break;
+        const chatId = asStrId(chat.id);
+        let peerUserId = "";
+        if (chat.participants) {
+          peerUserId = Object.keys(chat.participants).find((k) => k !== session.selfUserId && k !== "0") ?? "";
+        }
+        if (!peerUserId && session.selfUserId && /^\d+$/.test(chatId) && /^\d+$/.test(session.selfUserId)) {
+          peerUserId = (BigInt(chatId) ^ BigInt(session.selfUserId)).toString();
+        }
+        if (!peerUserId || peerUserId === session.selfUserId) continue;
+
+        const profile = await this.lookupContactInfo(session, peerUserId);
+        if (profile?.isBot) continue;
+
+        const hist = await this.getHistory({
+          tenantId,
+          channelAccountId,
+          chatId,
+          limit: messageLimit,
+        });
+
+        const msgs: MaxBridgeDialogMessage[] = hist.messages
+          .slice()
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .map((m) => ({
+            id: m.id,
+            out: m.fromMe,
+            text: m.text,
+            date: Math.floor(m.timestamp / 1000),
+            attachments: m.attachments?.map((a) => ({
+              type: a.type,
+              fileId: a.fileId,
+              fileName: a.fileName,
+              mimeType: a.mimeType,
+              fileSize: a.fileSize,
+            })),
+          }));
+
+        dialogs.push({
+          chatId,
+          userId: peerUserId,
+          username: profile?.username ?? null,
+          firstName: profile?.senderName ?? null,
+          phone: profile?.phone ?? null,
+          messages: msgs,
+        });
+      }
+
+      return {
+        ok: true,
+        dialogs,
+        selfPhone: session.selfPhone ?? undefined,
+        selfMaxUserId: session.selfUserId ?? undefined,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        dialogs: [],
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async downloadMedia(
+    tenantId: string,
+    channelAccountId: string,
+    fileId: string,
+  ): Promise<{ ok: boolean; buffer?: Buffer; mimeType?: string; error?: string }> {
+    try {
+      const session = await this.getOrCreateSession(tenantId, channelAccountId);
+
+      // max:<chatId>:<msgId>:<kind>:<nativeId>
+      const parts = fileId.split(":");
+      if (parts.length < 5 || parts[0] !== "max") {
+        return { ok: false, error: `Unsupported MAX fileId format: ${fileId}` };
+      }
+
+      const chatId = parts[1]!;
+      const msgId = parts[2]!;
+      const kind = parts[3]!;
+      const nativeId = parts.slice(4).join(":");
+
+      let mediaUrl = session.photoUrlCache.get(fileId);
+      let fallbackMime = kind === "photo" ? "image/jpeg" : kind === "video" ? "video/mp4" : "application/octet-stream";
+
+      if (!mediaUrl && kind === "file") {
+        const res = await this.sendRpc(session, MaxOpcode.FILE_DOWNLOAD, {
+          chatId: toMaxIdValue(chatId),
+          messageId: toMaxIdValue(msgId),
+          fileId: toMaxIdValue(nativeId),
+        });
+        if (typeof res.url === "string") mediaUrl = res.url;
+      } else if (!mediaUrl && kind === "video") {
+        const res = await this.sendRpc(session, MaxOpcode.VIDEO_PLAY, {
+          chatId: toMaxIdValue(chatId),
+          messageId: toMaxIdValue(msgId),
+          videoId: toMaxIdValue(nativeId),
+        });
+        const videoUrl = Object.entries(res).find(([k, v]) => k.startsWith("MP4") && typeof v === "string")?.[1];
+        if (typeof videoUrl === "string") mediaUrl = videoUrl;
+      }
+
+      if (!mediaUrl) {
+        const msgRes = await this.sendRpc(session, MaxOpcode.MSG_GET, {
+          chatId: toMaxIdValue(chatId),
+          messageIds: [toMaxIdValue(msgId)],
+        });
+        const list = Array.isArray(msgRes.messages) ? (msgRes.messages as RawMaxMessage[]) : [];
+        if (list[0]) {
+          const { attachments } = this.extractMessageAttachments(session, list[0], chatId);
+          const matched = attachments.find((a) => a.fileId === fileId) ?? attachments[0];
+          if (matched?.url) mediaUrl = matched.url;
+          if (matched?.mimeType) fallbackMime = matched.mimeType;
+        }
+      }
+
+      if (!mediaUrl) {
+        return { ok: false, error: "URL вложения MAX не найден" };
+      }
+
+      const resp = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000) });
+      if (!resp.ok) {
+        return { ok: false, error: `HTTP ${resp.status} при скачивании медиа из MAX` };
+      }
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      const mimeType = resp.headers.get("content-type")?.split(";")[0]?.trim() || fallbackMime;
+      return { ok: true, buffer, mimeType };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async lookupProfileByPhone(
+    tenantId: string,
+    channelAccountId: string,
+    phone: string,
+  ): Promise<{
+    exists: boolean;
+    userId?: string;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    link?: string;
+    error?: string;
+  }> {
+    try {
+      const session = await this.getOrCreateSession(tenantId, channelAccountId);
+      const digits = phone.replace(/\D/g, "");
+      if (digits.length < 10) {
+        return { exists: false, error: "Invalid phone number" };
+      }
+      const phoneE164 =
+        digits.length === 11 && digits.startsWith("8") ? `+7${digits.slice(1)}` : `+${digits}`;
+      const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO_BY_PHONE, { phone: phoneE164 });
+      const contact = res.contact as RawMaxContact | undefined;
+      if (!contact?.id) {
+        return { exists: false };
+      }
+      const identity = extractMaxIdentity({
+        names: contact.names,
+        username: contact.username,
+        phone: contact.phone !== undefined ? String(contact.phone) : phoneE164,
+        selfPhone: session.selfPhone,
+      });
+      return {
+        exists: true,
+        userId: asStrId(contact.id),
+        username: contact.username,
+        firstName: identity.firstName,
+        lastName: identity.lastName,
+        link: contact.link,
+      };
+    } catch (err) {
+      if (err instanceof MaxProtocolError && err.code.includes("not.found")) {
+        return { exists: false };
+      }
+      return {
+        exists: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   async resolveContact(
     tenantId: string,
     channelAccountId: string,
@@ -472,50 +1512,46 @@ export class MaxTsAdapter implements IMessagingAdapter {
       const session = await this.getOrCreateSession(tenantId, channelAccountId);
       const clean = identifier.trim();
 
-      // Поиск по userId через CONTACT_INFO (opcode 32)
       if (/^\d+$/.test(clean) && clean.length < 11) {
-        const res = await this.sendPacket<{
-          contacts?: Array<{
-            id?: number | string;
-            names?: MaxRawName[];
-            phone?: number | string;
-            phones?: Array<{ number?: string }>;
-          }>;
-        }>(session, MaxOpcode.CONTACT_INFO, { contactIds: [Number(clean)] });
-        const contact = res.contacts?.[0];
+        const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO, {
+          contactIds: [toMaxIdValue(clean)],
+        });
+        const contacts = Array.isArray(res.contacts) ? (res.contacts as RawMaxContact[]) : [];
+        const contact = contacts[0];
         if (!contact) return null;
         const identity = extractMaxIdentity({
           names: contact.names,
-          phone: contact.phone ?? contact.phones?.[0]?.number,
+          username: contact.username,
+          phone: contact.phone !== undefined ? String(contact.phone) : contact.phones?.[0]?.number,
+          selfPhone: session.selfPhone,
         });
         return {
-          id: String(contact.id ?? clean),
+          id: asStrId(contact.id ?? clean),
           name: identity.senderName,
           phone: identity.phone,
+          username: contact.username,
           isRegistered: true,
         };
       }
 
-      // Поиск по номеру телефона через CONTACT_INFO_BY_PHONE (opcode 46)
       const digits = clean.replace(/\D/g, "");
       if (digits.length >= 10) {
-        const phoneE164 = digits.length === 11 && digits.startsWith("8") ? `+7${digits.slice(1)}` : `+${digits}`;
-        const res = await this.sendPacket<{
-          contact?: {
-            id?: number | string;
-            names?: MaxRawName[];
-            phone?: number | string;
-          };
-        }>(session, MaxOpcode.CONTACT_INFO_BY_PHONE, { phone: phoneE164 });
-        if (!res.contact?.id) return null;
+        const phoneE164 =
+          digits.length === 11 && digits.startsWith("8") ? `+7${digits.slice(1)}` : `+${digits}`;
+        const res = await this.sendRpc(session, MaxOpcode.CONTACT_INFO_BY_PHONE, { phone: phoneE164 });
+        const contact = res.contact as RawMaxContact | undefined;
+        if (!contact?.id) return null;
         const identity = extractMaxIdentity({
-          names: res.contact.names,
-          phone: res.contact.phone ?? phoneE164,
+          names: contact.names,
+          username: contact.username,
+          phone: contact.phone !== undefined ? String(contact.phone) : phoneE164,
+          selfPhone: session.selfPhone,
         });
         return {
-          id: String(res.contact.id),
+          id: asStrId(contact.id),
           name: identity.senderName,
           phone: identity.phone ?? phoneE164,
+          username: contact.username,
           isRegistered: true,
         };
       }
@@ -530,6 +1566,88 @@ export class MaxTsAdapter implements IMessagingAdapter {
     }
   }
 
+  async getActiveSessions(tenantId: string, channelAccountId: string): Promise<MaxSessionRecord[]> {
+    const session = await this.getOrCreateSession(tenantId, channelAccountId);
+    const res = await this.sendRpc(session, MaxOpcode.SESSIONS_INFO, {});
+    const list = Array.isArray(res.sessions) ? (res.sessions as Record<string, unknown>[]) : [];
+    return list.map((s) => ({
+      id: typeof s.id === "bigint" ? s.id.toString() : ((s.id as string | number) ?? ""),
+      deviceId: typeof s.deviceId === "string" ? s.deviceId : undefined,
+      current: Boolean(s.current),
+      userAgent: typeof s.userAgent === "string" ? s.userAgent : undefined,
+      appVersion: typeof s.appVersion === "string" ? s.appVersion : undefined,
+      deviceName: typeof s.deviceName === "string" ? s.deviceName : undefined,
+      deviceType: typeof s.deviceType === "string" ? s.deviceType : undefined,
+      platform: typeof s.platform === "string" ? s.platform : undefined,
+      ip: typeof s.ip === "string" ? s.ip : undefined,
+      location: typeof s.location === "string" ? s.location : undefined,
+      created: typeof s.created === "number" ? s.created : undefined,
+      updated: typeof s.updated === "number" ? s.updated : undefined,
+      lastActivity: typeof s.lastActivity === "number" ? s.lastActivity : undefined,
+    }));
+  }
+
+  async closeOtherSessions(tenantId: string, channelAccountId: string): Promise<boolean> {
+    const session = await this.getOrCreateSession(tenantId, channelAccountId);
+    const res = await this.sendRpc(session, MaxOpcode.SESSIONS_CLOSE, {});
+    const newToken = typeof res.token === "string" ? res.token : "";
+    if (newToken) {
+      await this.persistSessionUpdate(session, { token: newToken });
+      return true;
+    }
+    return false;
+  }
+
+  async connectAccount(tenantId: string, channelAccountId: string): Promise<boolean> {
+    try {
+      const sess = await this.getOrCreateSession(tenantId, channelAccountId);
+      return sess.authorized && sess.connected;
+    } catch {
+      return false;
+    }
+  }
+
+  disconnectAccount(channelAccountId: string): void {
+    const sess = this.findSessionByAccountId(channelAccountId);
+    if (!sess) return;
+    sess.manuallyClosed = true;
+    if (sess.reconnectTimer) clearTimeout(sess.reconnectTimer);
+    if (sess.heartbeatTimer) clearInterval(sess.heartbeatTimer);
+    try {
+      sess.ws.close();
+    } catch {}
+    this.sessions.delete(this.sessionKey(sess.tenantId, sess.channelAccountId));
+  }
+
+  async startAllNativeSessions(): Promise<void> {
+    const accounts = await runWithPlatformScope(() =>
+      query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM channel_accounts
+         WHERE channel = 'max'
+           AND deleted_at IS NULL
+           AND status <> 'disabled'
+           AND (credentials->>'provider' = 'native-ts' OR credentials->>'adapter' = 'native-ts')
+         ORDER BY created_at ASC`,
+      ),
+    ).catch(() => []);
+
+    for (const acc of accounts) {
+      void this.getOrCreateSession(acc.tenant_id, acc.id).catch(() => {});
+    }
+  }
+
+  destroyAll(): void {
+    for (const sess of this.sessions.values()) {
+      sess.manuallyClosed = true;
+      if (sess.reconnectTimer) clearTimeout(sess.reconnectTimer);
+      if (sess.heartbeatTimer) clearInterval(sess.heartbeatTimer);
+      try {
+        sess.ws.close();
+      } catch {}
+    }
+    this.sessions.clear();
+  }
+
   subscribeToEvents(handler: (event: IncomingEvent) => void): Unsubscribe {
     this.eventSubscribers.add(handler);
     return () => {
@@ -540,7 +1658,7 @@ export class MaxTsAdapter implements IMessagingAdapter {
   async healthCheck(tenantId: string, channelAccountId: string): Promise<AdapterHealthStatus> {
     try {
       const session = this.sessions.get(this.sessionKey(tenantId, channelAccountId));
-      if (session && session.tenantId === tenantId && session.connected && session.authorized) {
+      if (session && session.connected && session.authorized && !session.fatalError) {
         return {
           ok: true,
           status: "connected",
@@ -548,11 +1666,11 @@ export class MaxTsAdapter implements IMessagingAdapter {
         };
       }
 
-      // Пробуем инициализировать сессию
       const newSession = await this.getOrCreateSession(tenantId, channelAccountId);
       return {
         ok: newSession.authorized,
         status: newSession.authorized ? "connected" : "error",
+        lastSyncAt: new Date().toISOString(),
       };
     } catch (err) {
       return {

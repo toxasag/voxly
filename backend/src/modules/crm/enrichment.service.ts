@@ -817,12 +817,11 @@ export class CrmEnrichmentService {
   private async defaultMaxProvider(phone: string, tenantId: string): Promise<MaxProfileResolved> {
     const bridgeUrl = process.env.MAX_BRIDGE_URL ?? "http://max-bridge:3010";
     const token = process.env.VOXLY_SERVICE_TOKEN;
-    if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
 
     try {
       const accountsRaw = await runWithPlatformScope(() =>
-        query<{ id: string }>(
-          `SELECT id FROM channel_accounts
+        query<{ id: string; credentials?: Record<string, unknown> | null }>(
+          `SELECT id, credentials FROM channel_accounts
            WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
            ORDER BY connected_at DESC NULLS LAST`,
           [tenantId],
@@ -841,6 +840,28 @@ export class CrmEnrichmentService {
 
       let lastError = "No active MAX account";
       for (const account of accounts) {
+        const provider = account.credentials?.provider ?? account.credentials?.adapter;
+        if (provider === "native-ts" || provider === "ts") {
+          try {
+            const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+            const nativeRes = await messagingRegistry
+              .getMaxTsAdapter()
+              .lookupProfileByPhone(tenantId, account.id, `+${phone}`);
+            if (nativeRes.error) {
+              lastError = nativeRes.error;
+              continue;
+            }
+            return nativeRes;
+          } catch (err) {
+            lastError = String(err);
+            continue;
+          }
+        }
+
+        if (!token) {
+          lastError = "VOXLY_SERVICE_TOKEN unset";
+          continue;
+        }
         try {
           const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
             signal: AbortSignal.timeout(10_000),

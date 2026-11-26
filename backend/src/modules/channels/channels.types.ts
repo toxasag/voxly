@@ -176,6 +176,8 @@ export interface ChannelAccountDTO {
   is_enabled?: boolean;
   isEnabled?: boolean;
   hasCredentials: boolean;
+  /** Провайдер транспорта (например, 'native-ts' | 'max-bridge' для MAX). */
+  provider?: string | null;
   credentials?: Record<string, unknown>;
   /** Числовой id пользователя на стороне канала; у Telegram — tgUserId. */
   remoteUserId: string | null;

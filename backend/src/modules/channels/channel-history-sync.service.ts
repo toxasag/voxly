@@ -274,7 +274,11 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
   }
 
   const account = await runWithTenantContext(tenantId, () =>
-    queryOne<{ id: string; status: string; credentials: { instanceName?: string } | null }>(
+    queryOne<{
+      id: string;
+      status: string;
+      credentials: { instanceName?: string; provider?: string; adapter?: string } | null;
+    }>(
       `SELECT id, status, credentials FROM channel_accounts
        WHERE tenant_id = $1 AND id = $2 AND channel = $3 AND deleted_at IS NULL`,
       [tenantId, channelAccountId, channel],
@@ -320,12 +324,22 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
 
   try {
     if (channel === "max") {
-      const bridge = new MaxBridgeService();
-      const dialogsResp: MaxPrivateDialogsResponse = await bridge.getPrivateDialogs({
-        botId: channelAccountId,
-        dialogLimit: 100,
-        messageLimit: 50,
-      });
+      const provider = account.credentials?.provider || account.credentials?.adapter;
+      const isNative = provider === "native-ts" || provider === "ts";
+      let dialogsResp: MaxPrivateDialogsResponse;
+      if (isNative) {
+        const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+        dialogsResp = await messagingRegistry
+          .getMaxTsAdapter()
+          .getPrivateDialogs(tenantId, channelAccountId, 100, 50);
+      } else {
+        const bridge = new MaxBridgeService();
+        dialogsResp = await bridge.getPrivateDialogs({
+          botId: channelAccountId,
+          dialogLimit: 100,
+          messageLimit: 50,
+        });
+      }
 
       if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
         const byChatOrUser = new Map<string, MaxBridgeDialog>();
