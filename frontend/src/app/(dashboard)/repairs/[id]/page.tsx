@@ -596,7 +596,7 @@ export default function RepairDetailPage() {
               Назад
             </Link>
             <div className="h-4 w-px bg-[#e5e5e5]" />
-            <span className="text-[13px] font-mono tabular-nums font-semibold text-[#111111]">
+            <span className="text-[13px] font-sans tabular-nums font-semibold text-[#111111]">
               {formatOrderNumber(ticket.ticket_number)}
             </span>
             <span

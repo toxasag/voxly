@@ -81,8 +81,18 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
   // Локальные состояния инпутов для гладкого ввода
   const [phoneInput, setPhoneInput] = useState(customerPhone ? formatPhone(customerPhone) : "");
-  const [debouncedPhone, setDebouncedPhone] = useState(customerPhone);
+  const [debouncedPhone, setDebouncedPhone] = useState(customerPhone ? formatPhone(customerPhone) : "");
   const [debouncedName, setDebouncedName] = useState(customerName);
+  const lastLocalPhoneRef = useRef<string>(customerPhone);
+
+  // Синхронизация локального инпута телефона при внешнем изменении формы (например, подстановка из сделки или reset)
+  useEffect(() => {
+    if (customerPhone === lastLocalPhoneRef.current) return;
+    const formatted = customerPhone ? formatPhone(customerPhone) : "";
+    lastLocalPhoneRef.current = customerPhone;
+    setPhoneInput(formatted);
+    setDebouncedPhone(formatted);
+  }, [customerPhone]);
 
   // Организация и реквизиты
   const isCompanyFormVal = form.watch("is_company");
@@ -195,6 +205,15 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
         }
       }
 
+      // Если телефон еще не заполнен, подставляем из базы
+      if ((!customerPhone || customerPhone.trim() === "") && client.phone) {
+        const formatted = formatPhone(client.phone);
+        lastLocalPhoneRef.current = formatted;
+        setPhoneInput(formatted);
+        setDebouncedPhone(formatted);
+        form.setValue("customer_phone", formatted, { shouldValidate: true, shouldDirty: true });
+      }
+
       // Если email еще не заполнен
       if ((!customerEmail || customerEmail.trim() === "") && client.email) {
         form.setValue("customer_email", client.email, { shouldDirty: true });
@@ -228,8 +247,11 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
         form.setValue("customer_name", ec.fullName, { shouldValidate: true, shouldDirty: true });
       }
       if ((!customerPhone || customerPhone.trim() === "") && ec.phone) {
-        setPhoneInput(ec.phone);
-        form.setValue("customer_phone", ec.phone, { shouldValidate: true, shouldDirty: true });
+        const formatted = formatPhone(ec.phone);
+        lastLocalPhoneRef.current = formatted;
+        setPhoneInput(formatted);
+        setDebouncedPhone(formatted);
+        form.setValue("customer_phone", formatted, { shouldValidate: true, shouldDirty: true });
       }
       if ((!customerEmail || customerEmail.trim() === "") && ec.email) {
         form.setValue("customer_email", ec.email, { shouldDirty: true });
@@ -260,6 +282,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawVal = e.target.value;
     const formatted = formatAsYouType(rawVal, "RU");
+    lastLocalPhoneRef.current = formatted;
     setPhoneInput(formatted);
     form.setValue("customer_phone", formatted, { shouldValidate: true, shouldDirty: true });
     if (isManuallyDetached) {
@@ -269,9 +292,11 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
   const handleClearCustomer = () => {
     setIsManuallyDetached(true);
+    lastLocalPhoneRef.current = "";
     form.setValue("customer_id", "");
     form.setValue("deal_id", "");
     form.setValue("customer_name", "");
+    form.setValue("customer_phone", "");
     form.setValue("customer_email", "");
     form.setValue("is_company", false);
     form.setValue("company_id", "");
@@ -283,6 +308,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     form.setValue("company_legal_address", "");
     form.setValue("additional_contacts", []);
     setPhoneInput("");
+    setDebouncedPhone("");
     setIsCompanyChecked(false);
     setIsRequisitesOpen(false);
     form.clearErrors("company_name");
@@ -300,8 +326,11 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
       form.setValue("customer_name", ec.fullName, { shouldValidate: true, shouldDirty: true });
     }
     if (ec.phone) {
-      setPhoneInput(ec.phone);
-      form.setValue("customer_phone", ec.phone, { shouldValidate: true, shouldDirty: true });
+      const formatted = formatPhone(ec.phone);
+      lastLocalPhoneRef.current = formatted;
+      setPhoneInput(formatted);
+      setDebouncedPhone(formatted);
+      form.setValue("customer_phone", formatted, { shouldValidate: true, shouldDirty: true });
     }
     const emailToSet = ec.email || client?.email;
     if (emailToSet) {
