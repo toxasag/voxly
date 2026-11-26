@@ -2346,24 +2346,27 @@
         var jsonStr = JSON.stringify(payloadObj);
         var targetUrl = apiUrl + '/api/v1/widgets/' + channelAccountId + '/events';
 
-        var beaconSent = false;
-        if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        var sent = false;
+        if (typeof fetch === 'function') {
           try {
-            var blob = new Blob([jsonStr], { type: 'application/json' });
-            beaconSent = navigator.sendBeacon(targetUrl, blob);
+            fetch(targetUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: jsonStr,
+              keepalive: true,
+              mode: 'cors'
+            }).catch(function () {});
+            sent = true;
           } catch (e) {
-            beaconSent = false;
+            sent = false;
           }
         }
 
-        if (!beaconSent && typeof fetch === 'function') {
-          fetch(targetUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: jsonStr,
-            keepalive: true,
-            mode: 'cors'
-          }).catch(function () {});
+        if (!sent && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+          try {
+            var blob = new Blob([jsonStr], { type: 'application/json' });
+            navigator.sendBeacon(targetUrl, blob);
+          } catch (e) {}
         }
       } catch (err) {}
     }
@@ -3598,6 +3601,8 @@
             ymClientId: typeof ymUid !== 'undefined' ? ymUid : null,
             yandexuid: typeof yandexuid !== 'undefined' ? yandexuid : null,
             gclid: (clickIds && clickIds.gclid) || null,
+            gbraid: (clickIds && clickIds.gbraid) || null,
+            wbraid: (clickIds && clickIds.wbraid) || null,
             yclid: (clickIds && clickIds.yclid) || null,
             fbclid: (clickIds && clickIds.fbclid) || null,
             vkclid: (clickIds && clickIds.vkclid) || null,
@@ -3735,6 +3740,8 @@
               referrer: typeof document !== 'undefined' ? (document.referrer || undefined) : undefined,
               screen: dfp ? dfp.screen : undefined,
               visitCount: visitCount,
+              clickIds: clickIds || undefined,
+              utm: utmTags || undefined,
             });
           }
 
