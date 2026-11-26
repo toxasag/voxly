@@ -646,7 +646,7 @@ export const RepairsTable = memo(function RepairsTable({
         render: (ticket) => (
           <RecordCellShell isLabelIdentifier>
             <div className="flex flex-col py-1 min-w-0" title={`Исходный номер: ${ticket.ticket_number}`}>
-              <span className="font-mono text-xs font-bold text-[#111111] tracking-tight">
+              <span className="font-sans text-[13px] font-semibold tabular-nums text-[#111111]">
                 {formatTicketNumber(
                   ticket.ticket_number,
                   printSettings?.numberingFormat,
@@ -819,7 +819,7 @@ export const RepairsTable = memo(function RepairsTable({
         render: (ticket) => (
           <RecordCellShell align="right">
             <div className="flex flex-col items-end py-0.5 gap-0.5">
-              <span className="font-mono text-xs font-bold text-[#111111]">
+              <span className="font-sans text-xs font-semibold tabular-nums text-[#111111]">
                 {formatCost(ticket.final_cost ?? ticket.estimated_cost)}
               </span>
               <PaymentStatusBadge
