@@ -1,4 +1,10 @@
 import { nullIfBlank } from "../../../lib/string.utils.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  nullableTextExpr,
+  type SortDirection,
+} from "../../../lib/table-query.js";
 import type {
   CreateDealItemPayload,
   CreateDealMessagePayload,
@@ -99,6 +105,10 @@ const DEAL_LABEL_JOINS = `
     ON ca.id = d.source_widget_id AND ca.tenant_id = d.tenant_id AND ca.deleted_at IS NULL
   LEFT JOIN users ow
     ON ow.id = d.owner_id AND ow.tenant_id = d.tenant_id AND ow.deleted_at IS NULL
+  LEFT JOIN users cr
+    ON cr.id = d.created_by AND cr.tenant_id = d.tenant_id AND cr.deleted_at IS NULL
+  LEFT JOIN stages st
+    ON st.id = d.stage_id
   LEFT JOIN LATERAL (
     SELECT n.body
     FROM notes n
@@ -183,10 +193,13 @@ export function notifyDealWon(payload: { tenantId: string; dealId: string }): vo
 }
 
 /** Treats "" from form payloads as "no value". */
+export type DealPresetFilter = "all" | "active" | "high_value" | "won";
+
 export interface ListDealsOptions {
   pipelineId?: string;
   stageId?: string;
   status?: "active" | "won" | "lost" | "all";
+  preset?: DealPresetFilter;
   search?: string;
   /** Секция «Сделки» на карточке контакта. */
   contactId?: string;
@@ -194,30 +207,37 @@ export interface ListDealsOptions {
   companyId?: string;
   limit: number;
   offset: number;
+  sortBy?: string;
+  sortDir?: SortDirection;
 }
 
 export class DealsService {
-  // -------------------------------------------------------------------------
-  // Reads
-  // -------------------------------------------------------------------------
-
-  async list(
+  private buildDealsWhereClause(
     tenantId: string,
-    options: ListDealsOptions,
-  ): Promise<{ items: DealDTO[]; total: number }> {
+    options: {
+      pipelineId?: string;
+      stageId?: string;
+      status?: "active" | "won" | "lost" | "all";
+      preset?: DealPresetFilter;
+      search?: string;
+      contactId?: string;
+      companyId?: string;
+      excludedIds?: string[];
+    },
+  ): { where: string; params: SqlParam[] } {
     const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
     if (options.status !== "all") {
       conditions.push("(d.status IS NULL OR d.status != 'duplicate')");
     }
     const params: SqlParam[] = [tenantId];
 
-    if (options.pipelineId !== undefined) {
-      params.push(options.pipelineId);
+    if (options.pipelineId !== undefined && options.pipelineId.trim().length > 0) {
+      params.push(options.pipelineId.trim());
       conditions.push(`d.pipeline_id = $${params.length}`);
     }
 
-    if (options.stageId !== undefined) {
-      params.push(options.stageId);
+    if (options.stageId !== undefined && options.stageId.trim().length > 0) {
+      params.push(options.stageId.trim());
       conditions.push(`d.stage_id = $${params.length}`);
     }
 
@@ -227,8 +247,16 @@ export class DealsService {
       conditions.push("d.closed_at IS NOT NULL");
     }
 
-    if (options.search !== undefined && options.search.length > 0) {
-      params.push(`%${options.search}%`);
+    if (options.preset === "active") {
+      conditions.push(`NOT (COALESCE(st.is_won, false) OR COALESCE(st.is_lost, false))`);
+    } else if (options.preset === "high_value") {
+      conditions.push(`d.budget >= 100000`);
+    } else if (options.preset === "won") {
+      conditions.push(`COALESCE(st.is_won, false) = true`);
+    }
+
+    if (options.search !== undefined && options.search.trim().length > 0) {
+      params.push(`%${options.search.trim()}%`);
       const placeholder = `$${params.length}`;
       conditions.push(
         `(d.title ILIKE ${placeholder}
@@ -260,21 +288,69 @@ export class DealsService {
       conditions.push(`d.company_id = $${params.length}`);
     }
 
-    const where = conditions.join(" AND ");
+    appendExcludedIdsCondition(conditions, params, "d.id", options.excludedIds);
+    return { where: conditions.join(" AND "), params };
+  }
+
+  // -------------------------------------------------------------------------
+  // Reads
+  // -------------------------------------------------------------------------
+
+  async list(
+    tenantId: string,
+    options: ListDealsOptions,
+  ): Promise<{ items: DealDTO[]; total: number }> {
+    const { where, params } = this.buildDealsWhereClause(tenantId, options);
 
     const countRow = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM deals d WHERE ${where}`,
+      `SELECT COUNT(*)::text AS total
+       FROM deals d
+       LEFT JOIN stages st ON st.id = d.stage_id
+       WHERE ${where}`,
       params,
     );
 
     params.push(options.limit, options.offset);
+
+    const orderBy = buildSortOrderBy({
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+      columns: {
+        title: nullableTextExpr("d.title"),
+        budget: "d.budget",
+        created: "d.created_at",
+        created_at: "d.created_at",
+        closeDate: { expr: "d.close_date", nullable: true },
+        close_date: { expr: "d.close_date", nullable: true },
+        company: { expr: nullableTextExpr("co.name"), nullable: true },
+        contact: {
+          expr: nullableTextExpr("ct.first_name"),
+          secondaryExpr: nullableTextExpr("ct.last_name"),
+          nullable: true,
+        },
+        stage: { expr: "st.sort_order", nullable: true },
+        owner: { expr: nullableTextExpr("ow.name"), nullable: true },
+        updatedAt: "d.updated_at",
+        updated_at: "d.updated_at",
+        last_message: "d.updated_at",
+        last_event: "d.updated_at",
+        closedAt: { expr: "d.closed_at", nullable: true },
+        closed_at: { expr: "d.closed_at", nullable: true },
+        createdBy: { expr: nullableTextExpr("cr.name"), nullable: true },
+        created_by: { expr: nullableTextExpr("cr.name"), nullable: true },
+        description: { expr: nullableTextExpr("d.description"), nullable: true },
+        currency: "d.currency",
+      },
+      defaultOrderBy: "d.created_at DESC",
+      tieBreaker: "d.id DESC",
+    });
 
     const rows = await query<DealRow>(
       `SELECT ${DEAL_COLUMNS_WITH_LABELS}
        FROM deals d
        ${DEAL_LABEL_JOINS}
        WHERE ${where}
-       ORDER BY d.created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -1057,39 +1133,30 @@ export class DealsService {
       return { count: rows.length };
     }
 
-    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
-    const params: SqlParam[] = [tenantId];
-
     const filters = payload.filters ?? {};
-    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
-      params.push(filters.pipeline_id.trim());
-      conditions.push(`d.pipeline_id = $${params.length}`);
-    }
+    const validStatus =
+      typeof filters.status === "string" && ["active", "won", "lost", "all"].includes(filters.status)
+        ? (filters.status as "active" | "won" | "lost" | "all")
+        : undefined;
+    const validPreset =
+      typeof filters.preset === "string" && ["all", "active", "high_value", "won"].includes(filters.preset)
+        ? (filters.preset as DealPresetFilter)
+        : undefined;
 
-    if (typeof filters.stage_id === "string" && filters.stage_id.trim().length > 0) {
-      params.push(filters.stage_id.trim());
-      conditions.push(`d.stage_id = $${params.length}`);
-    }
+    const { where, params } = this.buildDealsWhereClause(tenantId, {
+      pipelineId: typeof filters.pipeline_id === "string" ? filters.pipeline_id : undefined,
+      stageId: typeof filters.stage_id === "string" ? filters.stage_id : undefined,
+      status: validStatus,
+      preset: validPreset,
+      search: typeof filters.search === "string" ? filters.search : undefined,
+      excludedIds: payload.excluded_ids,
+    });
 
-    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
-      params.push(`%${filters.search.trim()}%`);
-      const placeholder = `$${params.length}`;
-      conditions.push(
-        `(d.title ILIKE ${placeholder}
-          OR d.description ILIKE ${placeholder})`,
-      );
-    }
-
-    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
-      params.push(payload.excluded_ids);
-      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
-    }
-
-    const where = conditions.join(" AND ");
     const rows = await query<{ id: string }>(
       `UPDATE deals d
        SET deleted_at = now()
-       WHERE ${where}
+       FROM stages st
+       WHERE d.stage_id = st.id AND ${where}
        RETURNING d.id`,
       params,
     );
@@ -1122,34 +1189,33 @@ export class DealsService {
       return { count: rows.length };
     }
 
-    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
-    const params: SqlParam[] = [tenantId, payload.stage_id];
-
     const filters = payload.filters ?? {};
-    if (typeof filters.pipeline_id === "string" && filters.pipeline_id.trim().length > 0) {
-      params.push(filters.pipeline_id.trim());
-      conditions.push(`d.pipeline_id = $${params.length}`);
-    }
+    const validStatus =
+      typeof filters.status === "string" && ["active", "won", "lost", "all"].includes(filters.status)
+        ? (filters.status as "active" | "won" | "lost" | "all")
+        : undefined;
+    const validPreset =
+      typeof filters.preset === "string" && ["all", "active", "high_value", "won"].includes(filters.preset)
+        ? (filters.preset as DealPresetFilter)
+        : undefined;
 
-    if (typeof filters.search === "string" && filters.search.trim().length > 0) {
-      params.push(`%${filters.search.trim()}%`);
-      const placeholder = `$${params.length}`;
-      conditions.push(
-        `(d.title ILIKE ${placeholder}
-          OR d.description ILIKE ${placeholder})`,
-      );
-    }
+    const { where, params } = this.buildDealsWhereClause(tenantId, {
+      pipelineId: typeof filters.pipeline_id === "string" ? filters.pipeline_id : undefined,
+      stageId: typeof filters.stage_id === "string" ? filters.stage_id : undefined,
+      status: validStatus,
+      preset: validPreset,
+      search: typeof filters.search === "string" ? filters.search : undefined,
+      excludedIds: payload.excluded_ids,
+    });
 
-    if (Array.isArray(payload.excluded_ids) && payload.excluded_ids.length > 0) {
-      params.push(payload.excluded_ids);
-      conditions.push(`NOT (d.id = ANY($${params.length}::uuid[]))`);
-    }
+    params.push(payload.stage_id);
+    const stageParamIdx = params.length;
 
-    const where = conditions.join(" AND ");
     const rows = await query<{ id: string }>(
       `UPDATE deals d
-       SET stage_id = $2, updated_at = now()
-       WHERE ${where}
+       SET stage_id = $${stageParamIdx}, updated_at = now()
+       FROM stages st
+       WHERE d.stage_id = st.id AND ${where}
        RETURNING d.id`,
       params,
     );

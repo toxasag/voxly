@@ -22,6 +22,10 @@ import { cn } from "@/lib/utils";
 interface ProductBulkEditDialogProps {
   open: boolean;
   selectedIds: string[];
+  selectionMode?: "ids" | "all";
+  excludedIds?: string[];
+  scopeFilters?: Record<string, unknown>;
+  effectiveCount?: number;
   onClose: () => void;
   onSuccess?: () => void;
 }
@@ -29,9 +33,15 @@ interface ProductBulkEditDialogProps {
 export function ProductBulkEditDialog({
   open,
   selectedIds,
+  selectionMode = "ids",
+  excludedIds,
+  scopeFilters,
+  effectiveCount,
   onClose,
   onSuccess,
 }: ProductBulkEditDialogProps) {
+  const isAllMode = selectionMode === "all";
+  const targetCount = effectiveCount ?? selectedIds.length;
   // Field enable toggles
   const [enableCategory, setEnableCategory] = useState(false);
   const [category, setCategory] = useState("");
@@ -59,7 +69,7 @@ export function ProductBulkEditDialog({
 
   const bulkUpdateMutation = useBulkUpdateWarehouseItems();
   const singleItemQuery = useWarehouseItem(
-    open && selectedIds.length === 1 ? selectedIds[0] : null,
+    open && !isAllMode && selectedIds.length === 1 ? selectedIds[0] : null,
   );
   const categoriesQuery = useWarehouseCategories();
   const createCategoryMutation = useCreateWarehouseCategory();
@@ -83,7 +93,7 @@ export function ProductBulkEditDialog({
   }, [dictionariesQuery.data?.models, warehouseModelsQuery.data]);
 
   useEffect(() => {
-    if (open && selectedIds.length === 1 && singleItemQuery.data) {
+    if (open && !isAllMode && selectedIds.length === 1 && singleItemQuery.data) {
       const it = singleItemQuery.data;
       if (it.category) {
         setEnableCategory(true);
@@ -157,9 +167,16 @@ export function ProductBulkEditDialog({
       return;
     }
 
-    const payload: BulkUpdateWarehouseItemsPayload = {
-      ids: selectedIds,
-    };
+    const payload: BulkUpdateWarehouseItemsPayload = isAllMode
+      ? {
+          mode: "all",
+          filters: scopeFilters,
+          excluded_ids: excludedIds && excludedIds.length > 0 ? excludedIds : undefined,
+        }
+      : {
+          mode: "ids",
+          ids: selectedIds,
+        };
 
     if (enableCategory) {
       payload.category = category.trim();
@@ -219,7 +236,7 @@ export function ProductBulkEditDialog({
             </div>
             <div>
               <h2 className="text-[14px] font-bold text-[#111111]">
-                Массовое редактирование ({selectedIds.length} позиций)
+                Массовое редактирование ({targetCount} позиций)
               </h2>
               <p className="text-xs text-[#666666]">
                 Отметьте галочками поля, которые необходимо изменить у выбранных товаров
@@ -579,7 +596,7 @@ export function ProductBulkEditDialog({
               className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-xs hover:bg-[#3d2ee0] disabled:opacity-50 transition-colors"
             >
               {bulkUpdateMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Применить ({selectedIds.length} поз.)
+              Применить ({targetCount} поз.)
             </button>
           </div>
         </form>

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Plus, ListChecks, LayoutGrid, List, Check, Circle,
   AlertCircle, RefreshCw, Pencil, Trash2, Search, X, Calendar,
@@ -18,6 +19,11 @@ import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
 import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
+import {
+  WarehousePagination,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
 import {
   useTask,
   useTasks,
@@ -85,17 +91,54 @@ function toTaskFormValues(task: TaskDTO): CreateTaskPayload {
 
 function TasksContent() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const sortColumn = searchParams.get("sort") || null;
+  const sortAsc = searchParams.get("order") === "asc";
+
   const [view, setView] = useState<View>("table");
   const [presetView, setPresetView] = useState<TaskPresetView>("all");
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WarehouseLimit>(25);
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TaskDTO | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TaskDTO | null>(null);
   const [quickTitle, setQuickTitle] = useState("");
   const [quickStatus, setQuickStatus] = useState<TaskStatus | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [isAllSelected, setIsAllSelected] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+
+  const handleSortChange = useCallback(
+    (columnId: string | null, asc: boolean) => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (columnId) {
+        next.set("sort", columnId);
+        next.set("order", asc ? "asc" : "desc");
+      } else {
+        next.delete("sort");
+        next.delete("order");
+      }
+      setPage(1);
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const nextSearch = searchInput.trim();
+      setSearch((prev) => {
+        if (prev !== nextSearch) {
+          setPage(1);
+        }
+        return nextSearch;
+      });
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
 
   /**
    * У задачи нет отдельной страницы: карточка выражается параметром `?record=`,
@@ -109,7 +152,14 @@ function TasksContent() {
   } = useRecordParam();
   const taskRecord = useTask(taskRecordId);
 
-  const query = useTasks({ limit: 200 });
+  const query = useTasks({
+    preset: presetView,
+    search: search || undefined,
+    limit: view === "table" ? limit : 200,
+    offset: view === "table" ? (page - 1) * limit : 0,
+    sort: sortColumn ?? undefined,
+    order: sortColumn ? (sortAsc ? "asc" : "desc") : undefined,
+  });
   const tenantUsers = useTenantUsers();
   const toggle = useToggleTaskStatus();
   const create = useCreateTask();
@@ -117,33 +167,40 @@ function TasksContent() {
   const remove = useDeleteTask();
   const bulkDelete = useBulkDeleteTasks();
 
+  const tasks = query.data?.items ?? [];
+  const total = query.data?.total ?? tasks.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const usersById = useMemo(() => indexTenantUsers(tenantUsers.data), [tenantUsers.data]);
+
+  const tasksFiltersPayload = useMemo(
+    () => ({
+      preset: presetView,
+      search: search || undefined,
+    }),
+    [presetView, search],
+  );
+  const selection = useTableSelection({
+    filterKey: JSON.stringify(tasksFiltersPayload),
+    totalCount: total,
+  });
+  const pageTaskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
+
   const handleBulkDelete = useCallback(async () => {
     setBulkDeleteConfirmOpen(false);
     try {
-      if (isAllSelected) {
-        const res = await bulkDelete.mutateAsync({
-          mode: "all",
-        });
-        toast.success(`Удалено задач: ${res.count}`);
-      } else {
-        const ids = Array.from(selected);
-        const res = await bulkDelete.mutateAsync({
-          mode: "ids",
-          ids,
-        });
-        toast.success(`Удалено задач: ${res.count}`);
-      }
-      setSelected(new Set());
-      setIsAllSelected(false);
+      const payload = selection.buildBulkPayload(tasksFiltersPayload);
+      const res = await bulkDelete.mutateAsync(payload);
+      toast.success(`Удалено задач: ${res.count}`);
+      selection.clear();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось удалить задачи");
     }
-  }, [isAllSelected, selected, bulkDelete]);
-
-  const tasks = query.data?.items ?? [];
-  const usersById = useMemo(() => indexTenantUsers(tenantUsers.data), [tenantUsers.data]);
+  }, [selection, tasksFiltersPayload, bulkDelete]);
 
   const presetCounts = useMemo(() => {
+    if (query.data?.presetCounts) {
+      return query.data.presetCounts;
+    }
     return {
       all: tasks.length,
       todo: tasks.filter((t) => t.status === "todo").length,
@@ -153,45 +210,9 @@ function TasksContent() {
       high_priority: tasks.filter((t) => t.priority === "high" && t.status !== "done").length,
       done: tasks.filter((t) => t.status === "done").length,
     };
-  }, [tasks, user?.id]);
+  }, [query.data?.presetCounts, tasks, user?.id]);
 
-  const filteredTasks = useMemo(() => {
-    let result = tasks;
-    switch (presetView) {
-      case "todo":
-        result = result.filter((t) => t.status === "todo");
-        break;
-      case "in_progress":
-        result = result.filter((t) => t.status === "in_progress");
-        break;
-      case "my":
-        result = result.filter((t) => t.assigneeId === user?.id && t.status !== "done");
-        break;
-      case "overdue":
-        result = result.filter((t) => t.isOverdue && t.status !== "done");
-        break;
-      case "high_priority":
-        result = result.filter((t) => t.priority === "high" && t.status !== "done");
-        break;
-      case "done":
-        result = result.filter((t) => t.status === "done");
-        break;
-      case "all":
-      default:
-        break;
-    }
-
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      result = result.filter(
-        (t) =>
-          t.title.toLowerCase().includes(q) ||
-          t.description.toLowerCase().includes(q),
-      );
-    }
-
-    return result;
-  }, [tasks, presetView, user?.id, search]);
+  const filteredTasks = tasks;
 
   const handleQuickCreate = useCallback(async (status: TaskStatus) => {
     const trimmed = quickTitle.trim();
@@ -475,7 +496,7 @@ function TasksContent() {
         <div>
           <h1 className="text-xl font-bold text-[#111111]">Задачи</h1>
           <p className="mt-1 text-sm text-[#666666]">
-            Открытых: {tasks.filter((task) => task.status !== "done").length} · в текущем виде: {filteredTasks.length}
+            Открытых: {presetCounts.todo + presetCounts.in_progress} · всего в срезе: {total}
           </p>
         </div>
         <Guard requiredPermission="tasks:write">
@@ -497,15 +518,19 @@ function TasksContent() {
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
           <input
             type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Поиск по названию или описанию..."
             className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white pl-8 pr-7 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors"
           />
-          {search && (
+          {searchInput && (
             <button
               type="button"
-              onClick={() => setSearch("")}
+              onClick={() => {
+                setSearchInput("");
+                setSearch("");
+                setPage(1);
+              }}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#111111]"
             >
               <X className="h-3 w-3" />
@@ -579,7 +604,10 @@ function TasksContent() {
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setPresetView(tab.id)}
+                onClick={() => {
+                  setPresetView(tab.id);
+                  setPage(1);
+                }}
                 className={cn(
                   "shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 min-h-[32px] rounded-[6px] px-3 text-xs font-medium transition-colors cursor-pointer select-none border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#4a38f5]",
                   active
@@ -626,27 +654,41 @@ function TasksContent() {
           columns={taskColumns}
           getRowId={(task) => task.id}
           tableId="tasks"
+          serverSort={true}
+          sortColumn={sortColumn}
+          sortAsc={sortAsc}
+          onSortChange={handleSortChange}
           onRowClick={(task) => openTaskRecord(task.id)}
           selectable={true}
-          selectedIds={selected}
-          onSelectionChange={(next) => {
-            setSelected(next);
-            if (next.size === 0) setIsAllSelected(false);
-          }}
+          selectedIds={selection.getPageSelectedIds(pageTaskIds)}
+          onSelectionChange={(next) => selection.onPageSelectionChange(next, pageTaskIds)}
           bulkBar={
             <TableBulkBar
-              selectedCount={isAllSelected ? filteredTasks.length : selected.size}
-              totalCount={filteredTasks.length}
-              isAllSelected={isAllSelected}
+              selectedCount={selection.effectiveSelectedCount}
+              totalCount={total}
+              isAllSelected={selection.isAllSelected}
+              excludedCount={selection.excludedCount}
               entityNamePlural="задач"
               pageItemCount={filteredTasks.length}
-              onSelectAll={() => setIsAllSelected(true)}
-              onClearSelection={() => {
-                setSelected(new Set());
-                setIsAllSelected(false);
-              }}
+              onSelectAll={selection.selectAllAcrossPages}
+              onClearSelection={selection.clear}
               onDelete={() => setBulkDeleteConfirmOpen(true)}
               isDeleting={bulkDelete.isPending}
+            />
+          }
+          pagination={
+            <WarehousePagination
+              total={total}
+              page={page}
+              pages={totalPages}
+              limit={limit}
+              entityLabel="задач"
+              onPageChange={setPage}
+              onLimitChange={(newLimit) => {
+                setLimit(newLimit as WarehouseLimit);
+                setPage(1);
+              }}
+              disabled={query.isLoading}
             />
           }
         />
@@ -789,7 +831,11 @@ function TasksContent() {
         open={bulkDeleteConfirmOpen}
         onClose={() => setBulkDeleteConfirmOpen(false)}
         onConfirm={handleBulkDelete}
-        title={isAllSelected ? `Удалить все задачи (${filteredTasks.length})?` : `Удалить задачи: ${selected.size}?`}
+        title={
+          selection.isAllSelected
+            ? `Удалить задачи (${selection.effectiveSelectedCount})?`
+            : `Удалить задачи: ${selection.effectiveSelectedCount}?`
+        }
         description="Задачи будут безвозвратно удалены. Действие необратимо через интерфейс."
         confirmLabel="Удалить"
         variant="destructive"
@@ -800,5 +846,11 @@ function TasksContent() {
 }
 
 export default function TasksPage() {
-  return <Guard requiredPermission="tasks:read" fallback={<EmptyState icon={ListChecks} title="Нет доступа к задачам" description="Запросите право tasks:read у администратора." />}><TasksContent /></Guard>;
+  return (
+    <Guard requiredPermission="tasks:read" fallback={<EmptyState icon={ListChecks} title="Нет доступа к задачам" description="Запросите право tasks:read у администратора." />}>
+      <Suspense fallback={<SkeletonTable rows={7} columns={6} />}>
+        <TasksContent />
+      </Suspense>
+    </Guard>
+  );
 }

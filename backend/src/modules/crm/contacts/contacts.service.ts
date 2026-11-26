@@ -1,4 +1,5 @@
 import { nullIfBlank } from "../../../lib/string.utils.js";
+import { buildSortOrderBy, nullableTextExpr } from "../../../lib/table-query.js";
 import type {
   CallerIdLookupDTO,
   ContactDTO,
@@ -245,39 +246,34 @@ export class ContactsService {
 
     params.push(options.limit, options.offset);
 
-    let orderBy = "c.created_at DESC";
-    if (options.sortBy) {
-      const direction = options.sortOrder === "asc" ? "ASC" : "DESC";
-      switch (options.sortBy) {
-        case "name":
-          orderBy = `c.first_name ${direction}, c.last_name ${direction}`;
-          break;
-        case "company":
-        case "company_name":
-          orderBy = `COALESCE(comp.name, c.company_name) ${direction}`;
-          break;
-        case "email":
-          orderBy = `c.email ${direction} NULLS LAST`;
-          break;
-        case "phone":
-          orderBy = `c.phone ${direction} NULLS LAST`;
-          break;
-        case "jobTitle":
-        case "job_title":
-          orderBy = `c.job_title ${direction} NULLS LAST`;
-          break;
-        case "contact_type":
-          orderBy = `c.contact_type ${direction}`;
-          break;
-        case "created":
-        case "created_at":
-          orderBy = `c.created_at ${direction}`;
-          break;
-        default:
-          orderBy = "c.created_at DESC";
-          break;
-      }
-    }
+    const orderBy = buildSortOrderBy({
+      sortBy: options.sortBy,
+      sortDir: options.sortOrder,
+      columns: {
+        name: {
+          expr: nullableTextExpr("c.first_name"),
+          secondaryExpr: nullableTextExpr("c.last_name"),
+          nullable: true,
+        },
+        company: { expr: nullableTextExpr("COALESCE(comp.name, c.company_name)"), nullable: true },
+        company_name: { expr: nullableTextExpr("COALESCE(comp.name, c.company_name)"), nullable: true },
+        email: { expr: nullableTextExpr("c.email"), nullable: true },
+        created_by: { expr: nullableTextExpr("u.name"), nullable: true },
+        phone: { expr: nullableTextExpr("c.phone"), nullable: true },
+        jobTitle: { expr: nullableTextExpr("c.job_title"), nullable: true },
+        job_title: { expr: nullableTextExpr("c.job_title"), nullable: true },
+        contact_type: "c.contact_type",
+        linkedin: { expr: nullableTextExpr("c.linkedin_link"), nullable: true },
+        city: { expr: nullableTextExpr("c.city"), nullable: true },
+        address: { expr: nullableTextExpr("c.address"), nullable: true },
+        channel: { expr: nullableTextExpr("c.channel"), nullable: true },
+        deals: "COALESCE(d.deals_count, 0)",
+        created: "c.created_at",
+        created_at: "c.created_at",
+      },
+      defaultOrderBy: "c.created_at DESC",
+      tieBreaker: "c.id DESC",
+    });
 
     const rows = await query<ContactRow>(
       `SELECT ${CONTACT_COLUMNS_WITH_COUNTS}

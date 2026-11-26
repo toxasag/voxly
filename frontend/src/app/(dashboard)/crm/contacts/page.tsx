@@ -50,6 +50,11 @@ import {
 import { TagPill } from "@/components/ui/tag";
 import { CompanyCard } from "@/components/crm/companies/CompanyCard";
 import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
+import {
+  WarehousePagination,
+  type WarehouseLimit,
+} from "@/components/warehouse/WarehousePagination";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
 import { useCompany, useCompanyStats } from "@/lib/api/use-companies";
 import { formatPhone } from "@/lib/utils/phone";
 import { formatDateTime, timeAgo } from "@/lib/utils";
@@ -119,6 +124,13 @@ function ContactsPageContent() {
   const sortColumn = sortParam || null;
   const sortAsc = orderParam === "asc";
 
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [channelFilter, setChannelFilter] = useState<ContactChannel | "all">("all");
+  const [contactTypeFilter, setContactTypeFilter] = useState<"all" | "customer" | "vendor">("all");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState<WarehouseLimit>(25);
+
   const handleSortChange = useCallback(
     (columnId: string | null, asc: boolean) => {
       const next = new URLSearchParams(searchParams.toString());
@@ -129,16 +141,11 @@ function ContactsPageContent() {
         next.delete("sort");
         next.delete("order");
       }
+      setPage(1);
       router.replace(`${pathname}?${next.toString()}`, { scroll: false });
     },
     [pathname, router, searchParams],
   );
-
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [channelFilter, setChannelFilter] = useState<ContactChannel | "all">("all");
-  const [contactTypeFilter, setContactTypeFilter] = useState<"all" | "customer" | "vendor">("all");
-  const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ContactDTO | null>(null);
@@ -190,8 +197,6 @@ function ContactsPageContent() {
     openRecord: setCompanyDetailId,
     closeRecord: closeCompanyDetail,
   } = useRecordParam("company");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [isAllSelected, setIsAllSelected] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ContactDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
@@ -201,10 +206,13 @@ function ContactsPageContent() {
   // Debounced so typing does not fire a request per keystroke.
   useEffect(() => {
     const handle = setTimeout(() => {
-      setSearch(searchInput.trim());
-      setPage(1);
-      setSelected(new Set());
-      setIsAllSelected(false);
+      const nextSearch = searchInput.trim();
+      setSearch((prev) => {
+        if (prev !== nextSearch) {
+          setPage(1);
+        }
+        return nextSearch;
+      });
     }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
@@ -214,8 +222,8 @@ function ContactsPageContent() {
     search: search.length > 0 ? search : undefined,
     channel: channelFilter === "all" ? undefined : channelFilter,
     contactType: contactTypeFilter === "all" ? undefined : contactTypeFilter,
-    limit: PAGE_SIZE,
-    offset: (page - 1) * PAGE_SIZE,
+    limit,
+    offset: (page - 1) * limit,
     sort: sortColumn ?? undefined,
     order: sortColumn ? (sortAsc ? "asc" : "desc") : undefined,
   });
@@ -233,8 +241,22 @@ function ContactsPageContent() {
     ? null
     : contacts.find((contact) => contact.id === detailId) ?? null;
   const total = query.data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / limit));
   const hasFilters = search.length > 0 || channelFilter !== "all" || contactTypeFilter !== "all";
+
+  const pageContactIds = useMemo(() => contacts.map((c) => c.id), [contacts]);
+  const contactsFiltersPayload = useMemo(
+    () => ({
+      search: search.length > 0 ? search : undefined,
+      channel: channelFilter !== "all" ? channelFilter : undefined,
+      contact_type: contactTypeFilter !== "all" ? contactTypeFilter : undefined,
+    }),
+    [search, channelFilter, contactTypeFilter],
+  );
+  const selection = useTableSelection({
+    filterKey: JSON.stringify(contactsFiltersPayload),
+    totalCount: total,
+  });
 
   // Deleting the last row of the last page would otherwise leave the user on an
   // empty page with no way back.
@@ -287,29 +309,13 @@ function ContactsPageContent() {
     setBulkDeleteConfirmOpen(false);
     setIsBulkDeleting(true);
     try {
-      if (isAllSelected) {
-        const res = await bulkDeleteContacts.mutateAsync({
-          mode: "all",
-          filters: {
-            search: search.length > 0 ? search : undefined,
-            channel: channelFilter !== "all" ? channelFilter : undefined,
-            contact_type: contactTypeFilter !== "all" ? contactTypeFilter : undefined,
-          },
-        });
-        toast.success(`Удалено контактов: ${res.count}`);
-      } else {
-        const ids = Array.from(selected);
-        const res = await bulkDeleteContacts.mutateAsync({
-          mode: "ids",
-          ids,
-        });
-        toast.success(`Удалено контактов: ${res.count}`);
-      }
-      setSelected(new Set());
-      setIsAllSelected(false);
-      if (detailId !== null && selected.has(detailId)) {
+      const payload = selection.buildBulkPayload(contactsFiltersPayload);
+      const res = await bulkDeleteContacts.mutateAsync(payload);
+      toast.success(`Удалено контактов: ${res.count}`);
+      if (detailId !== null && selection.isRowSelected(detailId)) {
         closeDetail();
       }
+      selection.clear();
       void query.refetch();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось удалить контакты");
@@ -317,12 +323,9 @@ function ContactsPageContent() {
       setIsBulkDeleting(false);
     }
   }, [
-    isAllSelected,
-    selected,
+    selection,
+    contactsFiltersPayload,
     bulkDeleteContacts,
-    search,
-    channelFilter,
-    contactTypeFilter,
     detailId,
     closeDetail,
     query,
@@ -723,7 +726,6 @@ function ContactsPageContent() {
               onClick={() => {
                 setContactTypeFilter(filter.value);
                 setPage(1);
-                setSelected(new Set());
               }}
               aria-pressed={contactTypeFilter === filter.value}
               className={cn(
@@ -746,7 +748,7 @@ function ContactsPageContent() {
         <div className="-mx-4 flex items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
           {CHANNEL_FILTERS.map((filter) => (
             <button key={filter.value} type="button"
-              onClick={() => { setChannelFilter(filter.value === "all" ? "all" : filter.value); setPage(1); setSelected(new Set()); }}
+              onClick={() => { setChannelFilter(filter.value === "all" ? "all" : filter.value); setPage(1); }}
               aria-pressed={channelFilter === filter.value}
               className={cn("shrink-0 whitespace-nowrap rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors",
                 channelFilter === filter.value
@@ -781,7 +783,7 @@ function ContactsPageContent() {
             ? "Измените поисковый запрос или фильтр по каналу."
             : "Создайте первый контакт, чтобы начать работу."}
           action={hasFilters ? (
-            <button type="button" onClick={() => { setSearchInput(""); setChannelFilter("all"); setSelected(new Set()); }}
+            <button type="button" onClick={() => { setSearchInput(""); setChannelFilter("all"); setContactTypeFilter("all"); setPage(1); selection.clear(); }}
               className="rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa]">
               Сбросить фильтры
             </button>
@@ -800,49 +802,45 @@ function ContactsPageContent() {
             getRowId={(contact) => contact.id}
             columns={contactColumns}
             tableId="contacts"
+            serverSort={true}
             selectable={true}
-            selectedIds={selected}
+            selectedIds={selection.getPageSelectedIds(pageContactIds)}
             sortColumn={sortColumn}
             sortAsc={sortAsc}
             onSortChange={handleSortChange}
-            onSelectionChange={(next) => {
-              setSelected(next);
-              if (next.size === 0) setIsAllSelected(false);
-            }}
+            onSelectionChange={(next) => selection.onPageSelectionChange(next, pageContactIds)}
             onRowClick={editing === null ? (contact) => setDetailId(contact.id) : undefined}
             // Enter на ячейке в фокусе открывает тот же редактор, что и клик:
             // состояние правки уже описано парой {rowId, columnId}.
             onCellEdit={(contact, columnId) => setEditing({ rowId: contact.id, columnId })}
             bulkBar={
               <TableBulkBar
-                selectedCount={isAllSelected ? total : selected.size}
+                selectedCount={selection.effectiveSelectedCount}
                 totalCount={total}
-                isAllSelected={isAllSelected}
+                isAllSelected={selection.isAllSelected}
+                excludedCount={selection.excludedCount}
                 entityNamePlural="контактов"
                 pageItemCount={contacts.length}
-                onSelectAll={() => setIsAllSelected(true)}
-                onClearSelection={() => {
-                  setSelected(new Set());
-                  setIsAllSelected(false);
-                }}
+                onSelectAll={selection.selectAllAcrossPages}
+                onClearSelection={selection.clear}
                 onDelete={() => setBulkDeleteConfirmOpen(true)}
                 isDeleting={isBulkDeleting}
               />
             }
             pagination={
-              totalPages > 1 ? (
-                <div className="flex items-center justify-between border-t border-[#e5e5e5] px-4 py-3">
-                  <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}
-                    className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40">
-                    Назад
-                  </button>
-                  <span className="text-xs text-[#888888]">Страница {page} из {totalPages}</span>
-                  <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
-                    className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40">
-                    Вперёд
-                  </button>
-                </div>
-              ) : undefined
+              <WarehousePagination
+                total={total}
+                page={page}
+                pages={totalPages}
+                limit={limit}
+                entityLabel="контактов"
+                onPageChange={setPage}
+                onLimitChange={(newLimit) => {
+                  setLimit(newLimit as WarehouseLimit);
+                  setPage(1);
+                }}
+                disabled={query.isLoading}
+              />
             }
           />
         </div>
@@ -908,10 +906,14 @@ function ContactsPageContent() {
         open={bulkDeleteConfirmOpen}
         onClose={() => setBulkDeleteConfirmOpen(false)}
         onConfirm={bulkDelete}
-        title={isAllSelected ? `Удалить все контакты (${total})?` : `Удалить контакты: ${selected.size}?`}
+        title={
+          selection.isAllSelected
+            ? `Удалить контакты (${selection.effectiveSelectedCount})?`
+            : `Удалить контакты: ${selection.effectiveSelectedCount}?`
+        }
         description={
-          isAllSelected
-            ? `Все контакты (${total}), соответствующие текущим фильтрам, будут перемещены в корзину.`
+          selection.isAllSelected
+            ? `Выбранные контакты (${selection.effectiveSelectedCount} шт.), соответствующие текущим фильтрам, будут перемещены в корзину.`
             : "Контакты будут перемещены в корзину (мягкое удаление). В связанных сделках останется ссылка на удалённый контакт."
         }
         confirmLabel="Удалить"

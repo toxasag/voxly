@@ -426,8 +426,23 @@ export const financeKeys = {
   all: ["finance"] as const,
   accounts: ["finance", "accounts"] as const,
   categories: (type?: "income" | "expense") => ["finance", "categories", type] as const,
-  transactions: (params: { limit?: number; offset?: number; type?: string; search?: string }) => ["finance", "transactions", params] as const,
-  invoices: (params: { limit?: number; offset?: number; status?: string; search?: string; companyId?: string }) => ["finance", "invoices", params] as const,
+  transactions: (params: {
+    limit?: number;
+    offset?: number;
+    type?: string;
+    search?: string;
+    sortBy?: string;
+    sortDir?: "asc" | "desc";
+  }) => ["finance", "transactions", params] as const,
+  invoices: (params: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+    search?: string;
+    companyId?: string;
+    sortBy?: string;
+    sortDir?: "asc" | "desc";
+  }) => ["finance", "invoices", params] as const,
   invoiceDetail: (id: string) => ["finance", "invoices", id] as const,
   pnl: (from?: string, to?: string) => ["finance", "pnl", from, to],
 };
@@ -455,7 +470,14 @@ export function useFinanceCategories(type?: "income" | "expense"): UseQueryResul
   });
 }
 
-export function useTransactions(params: { limit?: number; offset?: number; type?: string; search?: string } = {}): UseQueryResult<TransactionsListResult, ApiClientError> {
+export function useTransactions(params: {
+  limit?: number;
+  offset?: number;
+  type?: string;
+  search?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+} = {}): UseQueryResult<TransactionsListResult, ApiClientError> {
   const limit = params.limit ?? 25;
   const offset = params.offset ?? 0;
 
@@ -468,6 +490,8 @@ export function useTransactions(params: { limit?: number; offset?: number; type?
           offset,
           type: params.type,
           search: params.search,
+          sort_by: params.sortBy,
+          sort_dir: params.sortDir,
         },
       });
 
@@ -484,7 +508,15 @@ export function useTransactions(params: { limit?: number; offset?: number; type?
   });
 }
 
-export function useInvoices(params: { limit?: number; offset?: number; status?: string; search?: string; companyId?: string } = {}): UseQueryResult<InvoicesListResult, ApiClientError> {
+export function useInvoices(params: {
+  limit?: number;
+  offset?: number;
+  status?: string;
+  search?: string;
+  companyId?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+} = {}): UseQueryResult<InvoicesListResult, ApiClientError> {
   const limit = params.limit ?? 25;
   const offset = params.offset ?? 0;
 
@@ -498,6 +530,8 @@ export function useInvoices(params: { limit?: number; offset?: number; status?: 
           status: params.status,
           search: params.search,
           company_id: params.companyId,
+          sort_by: params.sortBy,
+          sort_dir: params.sortDir,
         },
       });
 
@@ -669,8 +703,14 @@ export function useDeleteInvoice(): UseMutationResult<{ success: boolean; id: st
   });
 }
 
-export interface BulkUpdateInvoicesPayload {
-  ids: string[];
+export type FinanceBulkScopePayload = {
+  mode?: "ids" | "all";
+  ids?: string[];
+  excluded_ids?: string[];
+  filters?: Record<string, unknown>;
+};
+
+export interface BulkUpdateInvoicesPayload extends FinanceBulkScopePayload {
   status?: "draft" | "sent" | "overdue" | "cancelled";
   due_date?: string;
   notes?: string;
@@ -706,19 +746,20 @@ export function useBulkUpdateInvoices(): UseMutationResult<
 export function useBulkDeleteInvoices(): UseMutationResult<
   { deleted: number; skippedPaid: number; ids: string[] },
   ApiClientError,
-  string[]
+  string[] | FinanceBulkScopePayload
 > {
   const queryClient = useQueryClient();
 
   return useMutation<
     { deleted: number; skippedPaid: number; ids: string[] },
     ApiClientError,
-    string[]
+    string[] | FinanceBulkScopePayload
   >({
-    mutationFn: async (ids) => {
+    mutationFn: async (input) => {
+      const payload: FinanceBulkScopePayload = Array.isArray(input) ? { mode: "ids", ids: input } : input;
       const res = await apiClient.post<{ deleted: number; skippedPaid: number; ids: string[] }>(
         "/api/v1/invoices/bulk-delete",
-        { ids },
+        payload,
       );
       return res.data;
     },
@@ -940,12 +981,13 @@ export function useDeleteTransaction(): UseMutationResult<
 export function useBulkDeleteTransactions(): UseMutationResult<
   { success: boolean; count: number },
   ApiClientError,
-  string[]
+  string[] | FinanceBulkScopePayload
 > {
   const queryClient = useQueryClient();
-  return useMutation<{ success: boolean; count: number }, ApiClientError, string[]>({
-    mutationFn: async (ids) => {
-      const res = await apiClient.post<{ success: boolean; count: number }>("/api/v1/finance/transactions/bulk-delete", { ids });
+  return useMutation<{ success: boolean; count: number }, ApiClientError, string[] | FinanceBulkScopePayload>({
+    mutationFn: async (input) => {
+      const payload: FinanceBulkScopePayload = Array.isArray(input) ? { mode: "ids", ids: input } : input;
+      const res = await apiClient.post<{ success: boolean; count: number }>("/api/v1/finance/transactions/bulk-delete", payload);
       return res.data;
     },
     onSuccess: () => {
@@ -960,12 +1002,13 @@ export function useBulkDeleteTransactions(): UseMutationResult<
 export function useBulkDuplicateTransactions(): UseMutationResult<
   { data: TransactionDTO[]; count: number },
   ApiClientError,
-  string[]
+  string[] | FinanceBulkScopePayload
 > {
   const queryClient = useQueryClient();
-  return useMutation<{ data: TransactionDTO[]; count: number }, ApiClientError, string[]>({
-    mutationFn: async (ids) => {
-      const res = await apiClient.post<{ data: TransactionDTO[]; count: number }>("/api/v1/finance/transactions/bulk-duplicate", { ids });
+  return useMutation<{ data: TransactionDTO[]; count: number }, ApiClientError, string[] | FinanceBulkScopePayload>({
+    mutationFn: async (input) => {
+      const payload: FinanceBulkScopePayload = Array.isArray(input) ? { mode: "ids", ids: input } : input;
+      const res = await apiClient.post<{ data: TransactionDTO[]; count: number }>("/api/v1/finance/transactions/bulk-duplicate", payload);
       return res.data;
     },
     onSuccess: () => {

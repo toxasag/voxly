@@ -1,4 +1,6 @@
 import type {
+  BulkDeleteInvoicesPayload,
+  BulkUpdateInvoicesPayload,
   CreateInvoiceFromActsPayload,
   CreateInvoicePayload,
   InvoiceDTO,
@@ -6,9 +8,17 @@ import type {
   MarkInvoicePaidPayload,
   UpdateInvoicePayload,
 } from "./finance.types.js";
-import { query, queryOne, withTenant, type TransactionClient } from "../../db/client.js";
+import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
 import { dealsService } from "../crm/deals/deals.service.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  nullableTextExpr,
+  resolveBulkTargetIds,
+  type BulkActionPayload,
+  type SortDirection,
+} from "../../lib/table-query.js";
 import { generateInvoicePdfBuffer } from "./invoice-pdf.service.js";
 import { renderInvoiceRfHtml } from "./invoice-html.service.js";
 import {
@@ -249,26 +259,112 @@ export class InvoicesService {
     return this.dto(tenant, r);
   }
 
+  private buildInvoicesWhereClause(
+    tenant: string,
+    options?: {
+      companyId?: string;
+      status?: string;
+      search?: string;
+      excludedIds?: string[];
+    },
+  ): { where: string; params: SqlParam[] } {
+    const conditions: string[] = ["tenant_id = $1", "deleted_at IS NULL"];
+    const params: SqlParam[] = [tenant];
+
+    if (options?.companyId) {
+      params.push(options.companyId);
+      conditions.push(`company_id = $${params.length}`);
+    }
+
+    if (options?.status && options.status !== "all") {
+      params.push(options.status);
+      conditions.push(`status = $${params.length}`);
+    }
+
+    if (options?.search && options.search.trim().length > 0) {
+      params.push(`%${options.search.trim()}%`);
+      const ph = `$${params.length}`;
+      conditions.push(
+        `(invoice_number ILIKE ${ph} OR company_name ILIKE ${ph} OR COALESCE(contact_name, '') ILIKE ${ph} OR COALESCE(notes, '') ILIKE ${ph})`,
+      );
+    }
+
+    appendExcludedIdsCondition(conditions, params, "id", options?.excludedIds);
+    return { where: conditions.join(" AND "), params };
+  }
+
+  private async resolveInvoiceIdsInTx(
+    tx: TransactionClient,
+    tenant: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<string[]> {
+    if (Array.isArray(idsOrPayload)) {
+      return Array.from(new Set(idsOrPayload.filter(Boolean)));
+    }
+    return resolveBulkTargetIds({
+      executor: tx,
+      payload: idsOrPayload,
+      buildFilteredQuery: (excludedIds) => {
+        const filters = idsOrPayload.filters ?? {};
+        const { where, params } = this.buildInvoicesWhereClause(tenant, {
+          companyId: typeof filters.company_id === "string" && filters.company_id ? filters.company_id : undefined,
+          status: typeof filters.status === "string" ? filters.status : undefined,
+          search: typeof filters.search === "string" ? filters.search : undefined,
+          excludedIds,
+        });
+        return {
+          sql: `SELECT id FROM invoices WHERE ${where} ORDER BY id DESC`,
+          params,
+        };
+      },
+    });
+  }
+
   async list(
     tenant: string,
     limit: number,
     offset: number,
-    companyId?: string,
+    companyIdOrOptions?:
+      | string
+      | {
+          companyId?: string;
+          status?: string;
+          search?: string;
+          sortBy?: string;
+          sortDir?: SortDirection;
+        },
   ): Promise<{ items: InvoiceDTO[]; total: number }> {
-    const params: (string | number)[] = [tenant];
-    let where = `tenant_id=$1 AND deleted_at IS NULL`;
-    if (companyId !== undefined) {
-      params.push(companyId);
-      where += ` AND company_id=$${params.length}`;
-    }
+    const opts =
+      typeof companyIdOrOptions === "string"
+        ? { companyId: companyIdOrOptions }
+        : companyIdOrOptions ?? {};
+
+    const { where, params } = this.buildInvoicesWhereClause(tenant, opts);
     const countParams = [...params];
     params.push(limit, offset);
+
+    const orderBy = buildSortOrderBy({
+      sortBy: opts.sortBy,
+      sortDir: opts.sortDir,
+      columns: {
+        invoice_number: nullableTextExpr("invoice_number"),
+        company_name: nullableTextExpr("company_name"),
+        total: "total",
+        status: "status",
+        issue_date: "issue_date",
+        due_date: { expr: "due_date", nullable: true },
+        created_at: "created_at",
+      },
+      defaultOrderBy: "issue_date DESC",
+      tieBreaker: "id DESC",
+    });
+
     const c = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text total FROM invoices WHERE ${where}`,
       countParams,
     );
     const rows = await query<InvoiceRow>(
-      `SELECT ${INVOICE_COLS} FROM invoices WHERE ${where} ORDER BY issue_date DESC LIMIT $${
+      `SELECT ${INVOICE_COLS} FROM invoices WHERE ${where} ORDER BY ${orderBy} LIMIT $${
         params.length - 1
       } OFFSET $${params.length}`,
       params,
@@ -1280,12 +1376,7 @@ export class InvoicesService {
 
   async bulkUpdate(
     tenant: string,
-    p: {
-      ids: string[];
-      status?: "draft" | "sent" | "overdue" | "cancelled";
-      due_date?: string;
-      notes?: string;
-    },
+    p: BulkUpdateInvoicesPayload,
   ): Promise<{ updated: number; skippedPaid: number; ids: string[] }> {
     const sets: string[] = [];
     const baseParams: (string | string[])[] = [tenant];
@@ -1303,12 +1394,17 @@ export class InvoicesService {
     }
 
     return withTenant(tenant, async (tx) => {
+      const targetIds = await this.resolveInvoiceIdsInTx(tx, tenant, p);
+      if (targetIds.length === 0) {
+        throw new NotFoundError("Счета не найдены");
+      }
+
       const rows = await tx.query<{ id: string; status: string }>(
         `SELECT id, status
          FROM invoices
          WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
          FOR UPDATE`,
-        [tenant, p.ids],
+        [tenant, targetIds],
       );
 
       if (rows.length === 0) {
@@ -1340,15 +1436,20 @@ export class InvoicesService {
 
   async bulkRemove(
     tenant: string,
-    ids: string[],
+    idsOrPayload: string[] | BulkDeleteInvoicesPayload,
   ): Promise<{ deleted: number; skippedPaid: number; ids: string[] }> {
     return withTenant(tenant, async (tx) => {
+      const targetIds = await this.resolveInvoiceIdsInTx(tx, tenant, idsOrPayload);
+      if (targetIds.length === 0) {
+        throw new NotFoundError("Счета не найдены");
+      }
+
       const rows = await tx.query<{ id: string; status: string; repair_order_id: string | null }>(
         `SELECT id, status, repair_order_id
          FROM invoices
          WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
          FOR UPDATE`,
-        [tenant, ids],
+        [tenant, targetIds],
       );
 
       if (rows.length === 0) {

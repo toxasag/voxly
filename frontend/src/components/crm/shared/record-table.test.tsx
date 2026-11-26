@@ -266,4 +266,59 @@ describe("Сортировка", () => {
     const ascending = within(container).getAllByText(/Иван Петров|Анна Сидорова/);
     expect(ascending[0]?.textContent).toBe("Анна Сидорова");
   });
+
+  it("в режиме serverSort не сортирует строки на клиенте и пробрасывает 3-фазный цикл asc -> desc -> null", async () => {
+    const columns: RecordColumn<Row>[] = [
+      { id: "name", header: "Имя", sortValue: (row) => row.name, render: (row) => row.name },
+    ];
+    const onSortChange = vi.fn();
+
+    const { container, rerender } = render(
+      <RecordTable
+        rows={ROWS}
+        columns={columns}
+        getRowId={(row) => row.id}
+        serverSort={true}
+        sortColumn={null}
+        sortAsc={true}
+        onSortChange={onSortChange}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Имя"));
+    expect(onSortChange).toHaveBeenLastCalledWith("name", true);
+
+    rerender(
+      <RecordTable
+        rows={ROWS}
+        columns={columns}
+        getRowId={(row) => row.id}
+        serverSort={true}
+        sortColumn="name"
+        sortAsc={true}
+        onSortChange={onSortChange}
+      />,
+    );
+    // Порядок строк остаётся серверным (не пересортирован клиентским sort)
+    const renderedRows = within(container).getAllByText(/Иван Петров|Анна Сидорова/);
+    expect(renderedRows.map((n) => n.textContent)).toEqual(["Иван Петров", "Анна Сидорова"]);
+
+    await user.click(screen.getByText("Имя"));
+    expect(onSortChange).toHaveBeenLastCalledWith("name", false);
+
+    rerender(
+      <RecordTable
+        rows={ROWS}
+        columns={columns}
+        getRowId={(row) => row.id}
+        serverSort={true}
+        sortColumn="name"
+        sortAsc={false}
+        onSortChange={onSortChange}
+      />,
+    );
+    await user.click(screen.getByText("Имя"));
+    expect(onSortChange).toHaveBeenLastCalledWith(null, true);
+  });
 });

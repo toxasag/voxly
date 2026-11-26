@@ -40,19 +40,21 @@ import {
   ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
+import { apiClient } from "@/lib/api/apiClient";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
+import { useTableSelection } from "@/lib/hooks/use-table-selection";
+import { TableBulkBar } from "@/components/crm/shared/TableBulkBar";
 import { Guard } from "@/components/shared/Guard";
 import { useAuth } from "@/lib/auth/use-auth";
 import { useServices } from "@/lib/api/use-services";
 import { ServicesCatalogTab } from "@/components/warehouse/ServicesCatalogTab";
 import {
   useWarehouse,
-  useWarehouseItems,
-  useWarehouseBatches,
-  useWarehouseMovements,
+  useWarehouseBatchesPaginated,
+  useWarehouseMovementsPaginated,
   usePurchaseRequests,
-  useAggregatedPurchaseRequests,
-  useSupplierOrders,
+  useAggregatedPurchaseRequestsPaginated,
+  useSupplierOrdersPaginated,
   usePaySupplierOrder,
   useCreateReceiptFromSupplierOrder,
   useDeleteSupplierOrder,
@@ -102,6 +104,77 @@ import { WarehouseDictionariesModal } from "@/components/warehouse/WarehouseDict
 import { cn } from "@/lib/utils";
 
 type WarehouseTab = "items" | "batches" | "purchases" | "supplier_orders" | "movements";
+type SortDirection = "asc" | "desc";
+const ITEM_SORT_FIELDS = [
+  "sku",
+  "name",
+  "category",
+  "brand",
+  "totalStock",
+  "reservedStock",
+  "availableStock",
+  "minStock",
+  "costPrice",
+  "retailPrice",
+] as const;
+type ItemSortField = (typeof ITEM_SORT_FIELDS)[number];
+
+interface TabSortState<K extends string = string> {
+  sortBy: K | null;
+  sortDir: SortDirection;
+}
+
+function nextTabSort<K extends string>(prev: TabSortState<K>, field: K): TabSortState<K> {
+  if (prev.sortBy !== field) return { sortBy: field, sortDir: "asc" };
+  if (prev.sortDir === "asc") return { sortBy: field, sortDir: "desc" };
+  return { sortBy: null, sortDir: "asc" };
+}
+
+function SortableTh({
+  label,
+  active,
+  direction,
+  onClick,
+  align = "left",
+  title,
+  className,
+}: {
+  label: string;
+  active: boolean;
+  direction: SortDirection;
+  onClick: () => void;
+  align?: "left" | "center" | "right";
+  title?: string;
+  className?: string;
+}) {
+  const justify =
+    align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start";
+  return (
+    <th
+      onClick={onClick}
+      className={cn(
+        "px-4 py-2.5 text-[11px] font-semibold text-[#666666] uppercase tracking-wider select-none cursor-pointer hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors group",
+        align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left",
+        active && "text-[#4a38f5] bg-[#4a38f5]/5",
+        className,
+      )}
+      title={title ?? `Сортировать: ${label}`}
+    >
+      <div className={cn("inline-flex items-center gap-1", justify)}>
+        <span>{label}</span>
+        {active ? (
+          direction === "asc" ? (
+            <ArrowUp className="h-3 w-3 text-[#4a38f5] shrink-0" />
+          ) : (
+            <ArrowDown className="h-3 w-3 text-[#4a38f5] shrink-0" />
+          )
+        ) : (
+          <ArrowUpDown className="h-2.5 w-2.5 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+        )}
+      </div>
+    </th>
+  );
+}
 
 const TABS: { key: WarehouseTab; label: string; icon: typeof Boxes }[] = [
   { key: "items", label: "Остатки и номенклатура", icon: Boxes },
@@ -152,6 +225,38 @@ function WarehouseContent() {
   const limit: WarehouseLimit = WAREHOUSE_LIMITS.includes(rawLimit as WarehouseLimit)
     ? (rawLimit as WarehouseLimit)
     : 25;
+
+  const rawSortBy = searchParams.get("sort_by") ?? searchParams.get("sort") ?? "";
+  const rawSortDir = searchParams.get("sort_dir") ?? searchParams.get("order") ?? "";
+  const sortField: ItemSortField | null = ITEM_SORT_FIELDS.includes(rawSortBy as ItemSortField)
+    ? (rawSortBy as ItemSortField)
+    : null;
+  const sortDirection: SortDirection = rawSortDir === "desc" ? "desc" : "asc";
+
+  // Пагинация и серверная сортировка вторичных вкладок
+  const [batchesPage, setBatchesPage] = useState(1);
+  const [batchesLimit, setBatchesLimit] = useState<WarehouseLimit>(25);
+  const [batchesSort, setBatchesSort] = useState<
+    TabSortState<"receivedAt" | "batchNumber" | "itemName" | "supplierName" | "purchasePrice" | "initialQuantity" | "remainingQuantity">
+  >({ sortBy: null, sortDir: "desc" });
+
+  const [purchasesPage, setPurchasesPage] = useState(1);
+  const [purchasesLimit, setPurchasesLimit] = useState<WarehouseLimit>(25);
+  const [purchasesSort, setPurchasesSort] = useState<
+    TabSortState<"itemName" | "quantity" | "estimatedPrice" | "status">
+  >({ sortBy: null, sortDir: "asc" });
+
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [ordersLimit, setOrdersLimit] = useState<WarehouseLimit>(25);
+  const [ordersSort, setOrdersSort] = useState<
+    TabSortState<"orderNumber" | "supplierName" | "totalAmount" | "status" | "paidAt">
+  >({ sortBy: null, sortDir: "desc" });
+
+  const [movementsPage, setMovementsPage] = useState(1);
+  const [movementsLimit, setMovementsLimit] = useState<WarehouseLimit>(25);
+  const [movementsSort, setMovementsSort] = useState<
+    TabSortState<"createdAt" | "itemName" | "type" | "quantity" | "createdByName">
+  >({ sortBy: null, sortDir: "desc" });
 
   const categoryParam = searchParams.get("category") ?? "";
   const brandParam = searchParams.get("brand") ?? "";
@@ -223,6 +328,8 @@ function WarehouseContent() {
     category?: string;
     brand?: string;
     model_ids?: string[];
+    sort_by?: string | null;
+    sort_dir?: SortDirection | null;
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (updates.page !== undefined) {
@@ -251,6 +358,22 @@ function WarehouseContent() {
       } else {
         params.delete("model_ids");
         params.delete("models");
+      }
+    }
+    if (updates.sort_by !== undefined) {
+      if (updates.sort_by) {
+        params.set("sort_by", updates.sort_by);
+      } else {
+        params.delete("sort_by");
+        params.delete("sort");
+      }
+    }
+    if (updates.sort_dir !== undefined) {
+      if (updates.sort_dir && updates.sort_by !== null) {
+        params.set("sort_dir", updates.sort_dir);
+      } else {
+        params.delete("sort_dir");
+        params.delete("order");
       }
     }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
@@ -291,6 +414,10 @@ function WarehouseContent() {
 
   const handleSearchChange = (newVal: string) => {
     setSearchQuery(newVal);
+    setBatchesPage(1);
+    setPurchasesPage(1);
+    setOrdersPage(1);
+    setMovementsPage(1);
     if (page !== 1) {
       updateUrl({ page: 1 });
     }
@@ -304,7 +431,7 @@ function WarehouseContent() {
   const [intakeInitialItem, setIntakeInitialItem] = useState<WarehouseItemDTO | null>(null);
   const [intakePurchaseRequest, setIntakePurchaseRequest] = useState<PurchaseRequestDTO | null>(null);
   const [createSupplierOrderModalOpen, setCreateSupplierOrderModalOpen] = useState(false);
-  const [selectedAggregatedIds, setSelectedAggregatedIds] = useState<Set<string>>(new Set());
+  const [supplierOrderRowsOverride, setSupplierOrderRowsOverride] = useState<AggregatedPurchaseRequestDTO[] | null>(null);
   const [selectedPurchaseForEdit, setSelectedPurchaseForEdit] = useState<AggregatedPurchaseRequestDTO | null>(null);
 
   // Модальные окна заказов поставщикам, партий и движений
@@ -314,11 +441,6 @@ function WarehouseContent() {
   const [selectedBatchForEdit, setSelectedBatchForEdit] = useState<WarehouseBatchDTO | null>(null);
   const [selectedMovementForEdit, setSelectedMovementForEdit] = useState<WarehouseMovementDTO | null>(null);
 
-  // Выбор записей для массовых действий на всех вкладках
-  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
-  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
-  const [selectedSupplierOrderIds, setSelectedSupplierOrderIds] = useState<Set<string>>(new Set());
-  const [selectedMovementIds, setSelectedMovementIds] = useState<Set<string>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
   const [editItemModalOpen, setEditItemModalOpen] = useState(false);
@@ -332,7 +454,7 @@ function WarehouseContent() {
   const updateSettingsMutation = useUpdateWarehouseSettings();
   const allowNegativeStock = Boolean(warehouseSettings?.allowNegativeStock);
 
-  // Данные номенклатуры с серверной пагинацией
+  // Данные номенклатуры с серверной пагинацией и серверной сортировкой по всему каталогу
   const {
     data: warehouseData,
     isLoading: isItemsLoading,
@@ -344,92 +466,201 @@ function WarehouseContent() {
     category: selectedCategory || undefined,
     brand: selectedBrand || undefined,
     model_ids: selectedModelIds.length > 0 ? selectedModelIds : undefined,
+    sortBy: sortField ?? undefined,
+    sortDir: sortField ? sortDirection : undefined,
   });
 
   const items = warehouseData?.items ?? [];
   const meta = warehouseData?.meta ?? { total: 0, page: 1, limit: 25, pages: 0 };
   const filteredItems = items;
+  const sortedItems = items;
 
-  type ItemSortField =
-    | "sku"
-    | "name"
-    | "category"
-    | "brand"
-    | "totalStock"
-    | "reservedStock"
-    | "availableStock"
-    | "minStock"
-    | "costPrice"
-    | "retailPrice";
-  type SortDirection = "asc" | "desc";
+  const knownItemsRef = useRef<Map<string, WarehouseItemDTO>>(new Map());
+  useEffect(() => {
+    for (const item of items) {
+      knownItemsRef.current.set(item.id, item);
+    }
+  }, [items]);
 
-  const [sortField, setSortField] = useState<ItemSortField | null>(null);
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const itemsFiltersPayload = useMemo(
+    () => ({
+      search: searchQuery.trim() || undefined,
+      category: selectedCategory || undefined,
+      brand: selectedBrand || undefined,
+      model_ids: selectedModelIds.length > 0 ? selectedModelIds : undefined,
+    }),
+    [searchQuery, selectedCategory, selectedBrand, selectedModelIds],
+  );
+  const itemsFilterKey = useMemo(() => JSON.stringify(itemsFiltersPayload), [itemsFiltersPayload]);
+  const itemsSelection = useTableSelection({
+    filterKey: itemsFilterKey,
+    totalCount: meta.total,
+  });
 
   const handleSort = (field: ItemSortField) => {
+    let nextField: ItemSortField | null = field;
+    let nextDir: SortDirection | null = "asc";
     if (sortField === field) {
       if (sortDirection === "asc") {
-        setSortDirection("desc");
+        nextDir = "desc";
       } else {
-        setSortField(null);
-        setSortDirection("asc");
+        nextField = null;
+        nextDir = null;
       }
-    } else {
-      setSortField(field);
-      setSortDirection("asc");
     }
-  };
-
-  const sortedItems = useMemo(() => {
-    if (!sortField) return filteredItems;
-    return [...filteredItems].sort((a, b) => {
-      const aVal = a[sortField];
-      const bVal = b[sortField];
-
-      if (typeof aVal === "string" && typeof bVal === "string") {
-        const cmp = aVal.localeCompare(bVal, "ru", { sensitivity: "base" });
-        return sortDirection === "asc" ? cmp : -cmp;
-      }
-
-      const aNum = Number(aVal ?? 0);
-      const bNum = Number(bVal ?? 0);
-      return sortDirection === "asc" ? aNum - bNum : bNum - aNum;
+    updateUrl({
+      page: 1,
+      sort_by: nextField,
+      sort_dir: nextDir,
     });
-  }, [filteredItems, sortField, sortDirection]);
+  };
 
   const bulkCreatePurchasesMutation = useBulkCreatePurchaseRequests();
 
   const selectedItemsList = useMemo(() => {
-    return Array.from(selectedItemIds)
-      .map((id) => items.find((i) => i.id === id))
+    return Array.from(itemsSelection.selectedIds)
+      .map((id) => items.find((i) => i.id === id) ?? knownItemsRef.current.get(id))
       .filter((i): i is WarehouseItemDTO => Boolean(i));
-  }, [selectedItemIds, items]);
+  }, [itemsSelection.selectedIds, items]);
 
   const hasReservedOrDeficit = useMemo(() => {
+    if (itemsSelection.isAllSelected) return itemsSelection.effectiveSelectedCount > 0;
     return selectedItemsList.some(
       (item) => item.reservedStock > 0 || item.availableStock < 0 || item.status === "reserved",
     );
-  }, [selectedItemsList]);
+  }, [itemsSelection.isAllSelected, itemsSelection.effectiveSelectedCount, selectedItemsList]);
 
   const handleBulkCreatePurchaseRequest = async () => {
-    if (selectedItemIds.size === 0) return;
+    if (itemsSelection.effectiveSelectedCount === 0) return;
     try {
+      const scope = itemsSelection.buildBulkPayload(itemsFiltersPayload);
       const res = await bulkCreatePurchasesMutation.mutateAsync({
-        itemIds: Array.from(selectedItemIds),
+        ...(scope.mode === "all"
+          ? {
+              mode: "all",
+              filters: scope.filters,
+              excluded_ids: scope.excluded_ids,
+            }
+          : {
+              mode: "ids",
+              itemIds: scope.ids,
+              ids: scope.ids,
+            }),
         comment: "Сформировано из массовых действий склада",
       });
       toast.success(`Сформировано заявок на закупку: ${res.length}`);
-      setSelectedItemIds(new Set());
+      itemsSelection.clear();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось сформировать заявку на закупку");
     }
   };
 
-  const { data: batches = [], isLoading: isBatchesLoading } = useWarehouseBatches();
-  const { data: movements = [], isLoading: isMovementsLoading } = useWarehouseMovements();
-  const { data: purchaseRequests = [], isLoading: isPurchasesLoading } = usePurchaseRequests();
-  const { data: aggregatedPurchases = [], isLoading: isAggregatedLoading } = useAggregatedPurchaseRequests();
-  const { data: supplierOrders = [], isLoading: isSupplierOrdersLoading } = useSupplierOrders();
+  // Запросы вторичных вкладок (серверная пагинация + сортировка)
+  const batchesQuery = useWarehouseBatchesPaginated(
+    {
+      page: batchesPage,
+      limit: batchesLimit,
+      search: searchQuery,
+      sortBy: batchesSort.sortBy ?? undefined,
+      sortDir: batchesSort.sortBy ? batchesSort.sortDir : undefined,
+    },
+    { enabled: activeTab === "batches" },
+  );
+  const batches = batchesQuery.data?.items ?? [];
+  const batchesMeta = batchesQuery.data?.meta ?? {
+    total: 0,
+    page: batchesPage,
+    limit: batchesLimit,
+    pages: 0,
+  };
+  const isBatchesLoading = batchesQuery.isLoading;
+
+  const movementsQuery = useWarehouseMovementsPaginated(
+    {
+      page: movementsPage,
+      limit: movementsLimit,
+      search: searchQuery,
+      sortBy: movementsSort.sortBy ?? undefined,
+      sortDir: movementsSort.sortBy ? movementsSort.sortDir : undefined,
+    },
+    { enabled: activeTab === "movements" },
+  );
+  const movements = movementsQuery.data?.items ?? [];
+  const movementsMeta = movementsQuery.data?.meta ?? {
+    total: 0,
+    page: movementsPage,
+    limit: movementsLimit,
+    pages: 0,
+  };
+  const isMovementsLoading = movementsQuery.isLoading;
+
+  const { data: purchaseRequests = [] } = usePurchaseRequests();
+  const purchasesQuery = useAggregatedPurchaseRequestsPaginated(
+    {
+      page: purchasesPage,
+      limit: purchasesLimit,
+      search: searchQuery,
+      status: purchaseStatusFilter !== "all" ? purchaseStatusFilter : undefined,
+      sortBy: purchasesSort.sortBy ?? undefined,
+      sortDir: purchasesSort.sortBy ? purchasesSort.sortDir : undefined,
+    },
+    { enabled: activeTab === "purchases" },
+  );
+  const aggregatedPurchases = purchasesQuery.data?.items ?? [];
+  const purchasesMeta = purchasesQuery.data?.meta ?? {
+    total: 0,
+    page: purchasesPage,
+    limit: purchasesLimit,
+    pages: 0,
+  };
+  const isAggregatedLoading = purchasesQuery.isLoading;
+
+  const pendingBadgeQuery = useAggregatedPurchaseRequestsPaginated({ page: 1, limit: 1, status: "pending" });
+  const orderedBadgeQuery = useAggregatedPurchaseRequestsPaginated({ page: 1, limit: 1, status: "ordered" });
+
+  const supplierOrdersQuery = useSupplierOrdersPaginated(
+    {
+      page: ordersPage,
+      limit: ordersLimit,
+      search: searchQuery,
+      status: supplierOrderStatusFilter !== "all" ? supplierOrderStatusFilter : undefined,
+      sortBy: ordersSort.sortBy ?? undefined,
+      sortDir: ordersSort.sortBy ? ordersSort.sortDir : undefined,
+    },
+    { enabled: activeTab === "supplier_orders" },
+  );
+  const supplierOrders = supplierOrdersQuery.data?.items ?? [];
+  const supplierOrdersMeta = supplierOrdersQuery.data?.meta ?? {
+    total: 0,
+    page: ordersPage,
+    limit: ordersLimit,
+    pages: 0,
+  };
+  const isSupplierOrdersLoading = supplierOrdersQuery.isLoading;
+
+  const knownPurchasesRef = useRef<Map<string, AggregatedPurchaseRequestDTO>>(new Map());
+  useEffect(() => {
+    for (const row of aggregatedPurchases) {
+      knownPurchasesRef.current.set(row.id, row);
+    }
+  }, [aggregatedPurchases]);
+
+  const batchesSelection = useTableSelection({
+    filterKey: JSON.stringify({ search: searchQuery.trim() }),
+    totalCount: batchesMeta.total,
+  });
+  const purchasesSelection = useTableSelection({
+    filterKey: JSON.stringify({ search: searchQuery.trim(), status: purchaseStatusFilter }),
+    totalCount: purchasesMeta.total,
+  });
+  const ordersSelection = useTableSelection({
+    filterKey: JSON.stringify({ search: searchQuery.trim(), status: supplierOrderStatusFilter }),
+    totalCount: supplierOrdersMeta.total,
+  });
+  const movementsSelection = useTableSelection({
+    filterKey: JSON.stringify({ search: searchQuery.trim() }),
+    totalCount: movementsMeta.total,
+  });
 
   const deleteItemMutation = useDeleteWarehouseItem();
   const updatePurchaseMutation = useUpdatePurchaseRequest();
@@ -446,32 +677,42 @@ function WarehouseContent() {
   const exportMutation = useExportWarehouseItems();
   const bulkDeleteMutation = useBulkDeleteWarehouseItems();
 
+  const pageItemIds = useMemo(() => sortedItems.map((i) => i.id), [sortedItems]);
+
   const handleToggleSelectAll = () => {
-    if (selectedItemIds.size === sortedItems.length && sortedItems.length > 0) {
-      setSelectedItemIds(new Set());
-    } else {
-      setSelectedItemIds(new Set(sortedItems.map((i) => i.id)));
-    }
+    itemsSelection.togglePage(pageItemIds);
   };
 
   const handleToggleItem = (id: string) => {
-    const next = new Set(selectedItemIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setSelectedItemIds(next);
+    itemsSelection.toggleRow(id);
   };
 
   const handleExport = async (format: "xlsx" | "csv", onlySelected = false) => {
     setExportDropdownOpen(false);
     try {
-      await exportMutation.mutateAsync({
-        format,
-        ids: onlySelected && selectedItemIds.size > 0 ? Array.from(selectedItemIds) : undefined,
-        search: !onlySelected && searchQuery.trim() ? searchQuery.trim() : undefined,
-      });
+      const sortParams = {
+        sort_by: sortField ?? undefined,
+        sort_dir: sortField ? sortDirection : undefined,
+      };
+      if (onlySelected && itemsSelection.effectiveSelectedCount > 0) {
+        const scope = itemsSelection.buildBulkPayload(itemsFiltersPayload);
+        await exportMutation.mutateAsync({
+          format,
+          ...scope,
+          ...sortParams,
+        });
+      } else {
+        await exportMutation.mutateAsync({
+          format,
+          mode: "all",
+          filters: itemsFiltersPayload,
+          search: searchQuery.trim() || undefined,
+          category: selectedCategory || undefined,
+          brand: selectedBrand || undefined,
+          model_ids: selectedModelIds.length > 0 ? selectedModelIds : undefined,
+          ...sortParams,
+        });
+      }
       toast.success(format === "xlsx" ? "Файл Excel успешно скачан" : "Файл CSV успешно скачан");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось экспортировать");
@@ -479,83 +720,38 @@ function WarehouseContent() {
   };
 
   const handleBulkDelete = async () => {
-    if (selectedItemIds.size === 0) return;
-    const selectedItems = filteredItems.filter((i) => selectedItemIds.has(i.id));
-    const hasStockItems = selectedItems.some((i) => i.totalStock > 0 || i.reservedStock > 0);
-    const confirmText = hasStockItems
-      ? `Среди выбранных позиций (${selectedItemIds.size} шт.) есть товары с ненулевым остатком или резервом. При удалении все их партии, резервы и движения будут очищены, а остатки пересчитаны. Удалить принудительно?`
-      : `Удалить выбранные позиции (${selectedItemIds.size} шт.) из номенклатуры?`;
+    if (itemsSelection.effectiveSelectedCount === 0) return;
+    const hasStockItems = itemsSelection.isAllSelected
+      ? items.some((i) => i.totalStock > 0 || i.reservedStock > 0)
+      : selectedItemsList.some((i) => i.totalStock > 0 || i.reservedStock > 0);
+    const forceDelete = hasStockItems || itemsSelection.isAllSelected;
+    const count = itemsSelection.effectiveSelectedCount;
+    const confirmText = forceDelete
+      ? `Среди выбранных позиций (${count} шт.) могут быть товары с остатком или резервом. При удалении все их партии, резервы и движения будут очищены, а остатки пересчитаны. Удалить принудительно?`
+      : `Удалить выбранные позиции (${count} шт.) из номенклатуры?`;
     if (!confirm(confirmText)) return;
 
     try {
+      const scope = itemsSelection.buildBulkPayload(itemsFiltersPayload);
       const res = await bulkDeleteMutation.mutateAsync({
-        ids: Array.from(selectedItemIds),
-        force: hasStockItems,
+        ...scope,
+        force: forceDelete,
       });
       if (res.errors && res.errors.length > 0) {
         toast.warning(`Удалено ${res.deletedCount} позиций. Предупреждение: ${res.errors[0]}`);
       } else {
         toast.success(`Успешно удалено позиций: ${res.deletedCount}`);
       }
-      setSelectedItemIds(new Set());
+      itemsSelection.clear();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные позиции");
     }
   };
 
-  // Фильтрация агрегированных заявок на закупку
-  const filteredAggregatedPurchases = useMemo(() => {
-    return aggregatedPurchases.filter((pr) => {
-      if (purchaseStatusFilter !== "all" && pr.status !== purchaseStatusFilter) return false;
-      const q = searchQuery.trim().toLowerCase();
-      if (!q) return true;
-      return (
-        pr.itemName.toLowerCase().includes(q) ||
-        (pr.sku || "").toLowerCase().includes(q) ||
-        (pr.repairOrders || "").toLowerCase().includes(q)
-      );
-    });
-  }, [aggregatedPurchases, purchaseStatusFilter, searchQuery]);
-
-  // Фильтрация заказов поставщикам
-  const filteredSupplierOrders = useMemo(() => {
-    return supplierOrders.filter((order) => {
-      if (supplierOrderStatusFilter !== "all" && order.status !== supplierOrderStatusFilter) return false;
-      const q = searchQuery.trim().toLowerCase();
-      if (!q) return true;
-      return (
-        order.orderNumber.toLowerCase().includes(q) ||
-        order.supplierName.toLowerCase().includes(q) ||
-        order.items.some((it) => it.itemName.toLowerCase().includes(q) || it.sku.toLowerCase().includes(q))
-      );
-    });
-  }, [supplierOrders, supplierOrderStatusFilter, searchQuery]);
-
-  // Фильтрация партий
-  const filteredBatches = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return batches;
-    return batches.filter(
-      (b) =>
-        (b.itemName || "").toLowerCase().includes(q) ||
-        (b.batchNumber || "").toLowerCase().includes(q) ||
-        (b.supplierName || "").toLowerCase().includes(q),
-    );
-  }, [batches, searchQuery]);
-
-  // Фильтрация движений
-  const filteredMovements = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return movements;
-    return movements.filter(
-      (m) =>
-        (m.itemName || "").toLowerCase().includes(q) ||
-        (m.description || "").toLowerCase().includes(q) ||
-        (m.repairTicketNumber || "").toLowerCase().includes(q) ||
-        (m.dealTitle || "").toLowerCase().includes(q) ||
-        (m.createdByName || "").toLowerCase().includes(q),
-    );
-  }, [movements, searchQuery]);
+  const filteredAggregatedPurchases = aggregatedPurchases;
+  const filteredSupplierOrders = supplierOrders;
+  const filteredBatches = batches;
+  const filteredMovements = movements;
 
   // Статистика склада (приоритетно из серверного партионного агрегата по всему складу)
   const stats = useMemo(() => {
@@ -568,12 +764,11 @@ function WarehouseContent() {
       meta.totalValuation !== undefined
         ? meta.totalValuation
         : items.reduce((sum, i) => sum + (i.stockValuation ?? i.totalStock * i.costPrice), 0);
-    const pendingPurchasesCount = aggregatedPurchases.filter(
-      (p) => p.status === "pending" || p.status === "ordered",
-    ).length;
+    const pendingPurchasesCount =
+      (pendingBadgeQuery.data?.meta.total ?? 0) + (orderedBadgeQuery.data?.meta.total ?? 0);
 
     return { totalItemsCount, lowStockCount, totalValuation, pendingPurchasesCount };
-  }, [items, meta, aggregatedPurchases]);
+  }, [items, meta, pendingBadgeQuery.data?.meta.total, orderedBadgeQuery.data?.meta.total]);
 
   const handleToggleNegativeStock = async (checked: boolean) => {
     try {
@@ -588,27 +783,46 @@ function WarehouseContent() {
     }
   };
 
+  const pagePurchaseIds = useMemo(
+    () => filteredAggregatedPurchases.map((p) => p.id),
+    [filteredAggregatedPurchases],
+  );
   const toggleSelectAllPurchases = () => {
-    if (selectedAggregatedIds.size === filteredAggregatedPurchases.length) {
-      setSelectedAggregatedIds(new Set());
-    } else {
-      setSelectedAggregatedIds(new Set(filteredAggregatedPurchases.map((p) => p.id)));
-    }
+    purchasesSelection.togglePage(pagePurchaseIds);
   };
-
   const toggleSelectPurchase = (id: string) => {
-    const next = new Set(selectedAggregatedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setSelectedAggregatedIds(next);
+    purchasesSelection.toggleRow(id);
   };
 
   const selectedAggregatedRows = useMemo(() => {
-    return aggregatedPurchases.filter((p) => selectedAggregatedIds.has(p.id));
-  }, [aggregatedPurchases, selectedAggregatedIds]);
+    return Array.from(purchasesSelection.selectedIds)
+      .map((id) => filteredAggregatedPurchases.find((p) => p.id === id) ?? knownPurchasesRef.current.get(id))
+      .filter((p): p is AggregatedPurchaseRequestDTO => Boolean(p));
+  }, [purchasesSelection.selectedIds, filteredAggregatedPurchases]);
+
+  const handleOpenCreateSupplierOrderFromPurchases = async () => {
+    if (purchasesSelection.isAllSelected) {
+      try {
+        const q = new URLSearchParams();
+        q.set("all", "true");
+        if (searchQuery.trim()) q.set("search", searchQuery.trim());
+        if (purchaseStatusFilter !== "all") q.set("status", purchaseStatusFilter);
+        const res = await apiClient.get<AggregatedPurchaseRequestDTO[]>(
+          `/api/v1/warehouse/purchase-requests?${q.toString()}`,
+        );
+        const allRows = (res.data ?? []).filter(
+          (row) => !purchasesSelection.excludedIds.has(row.id),
+        );
+        setSupplierOrderRowsOverride(allRows);
+        setCreateSupplierOrderModalOpen(true);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось загрузить выбранные заявки");
+      }
+      return;
+    }
+    setSupplierOrderRowsOverride(null);
+    setCreateSupplierOrderModalOpen(true);
+  };
 
   const handlePayOrder = async (order: SupplierOrderDTO) => {
     if (
@@ -657,11 +871,9 @@ function WarehouseContent() {
           ? `Заказ №${order.orderNumber} и связанные партии удалены, остатки и касса пересчитаны`
           : `Заказ №${order.orderNumber} удален, заявки возвращены в очередь`,
       );
-      setSelectedSupplierOrderIds((prev) => {
-        const next = new Set(prev);
-        next.delete(order.id);
-        return next;
-      });
+      if (ordersSelection.isRowSelected(order.id)) {
+        ordersSelection.toggleRow(order.id);
+      }
       if (selectedOrderForDetail?.id === order.id) {
         setSelectedOrderForDetail(null);
       }
@@ -671,20 +883,25 @@ function WarehouseContent() {
   };
 
   const handleBulkDeleteSupplierOrders = async () => {
-    if (selectedSupplierOrderIds.size === 0) return;
+    const count = ordersSelection.effectiveSelectedCount;
+    if (count === 0) return;
     if (
       !confirm(
-        `Удалить выбранные заказы поставщикам (${selectedSupplierOrderIds.size} шт.)? Связанные партии, движения и кассовые проводки будут откачены, а заявки вернутся в «В ожидании».`,
+        `Удалить выбранные заказы поставщикам (${count} шт.)? Связанные партии, движения и кассовые проводки будут откачены, а заявки вернутся в «В ожидании».`,
       )
     ) {
       return;
     }
     try {
-      const res = await bulkDeleteSupplierOrdersMutation.mutateAsync(Array.from(selectedSupplierOrderIds));
+      const payload = ordersSelection.buildBulkPayload({
+        search: searchQuery.trim() || undefined,
+        status: supplierOrderStatusFilter !== "all" ? supplierOrderStatusFilter : undefined,
+      });
+      const res = await bulkDeleteSupplierOrdersMutation.mutateAsync(payload);
       toast.success(
         `Удалено заказов: ${res.deletedCount}${res.rolledBackBatchesCount > 0 ? ` (откачено партий: ${res.rolledBackBatchesCount})` : ""}`,
       );
-      setSelectedSupplierOrderIds(new Set());
+      ordersSelection.clear();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные заказы");
     }
@@ -701,29 +918,31 @@ function WarehouseContent() {
     try {
       await deleteBatchMutation.mutateAsync(batch.id);
       toast.success("Партия и связанные движения удалены, остатки пересчитаны");
-      setSelectedBatchIds((prev) => {
-        const next = new Set(prev);
-        next.delete(batch.id);
-        return next;
-      });
+      if (batchesSelection.isRowSelected(batch.id)) {
+        batchesSelection.toggleRow(batch.id);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить партию");
     }
   };
 
   const handleBulkDeleteBatches = async () => {
-    if (selectedBatchIds.size === 0) return;
+    const count = batchesSelection.effectiveSelectedCount;
+    if (count === 0) return;
     if (
       !confirm(
-        `Удалить выбранные партии (${selectedBatchIds.size} шт.)? Все связанные движения, резервы и аллокации этих партий будут очищены.`,
+        `Удалить выбранные партии (${count} шт.)? Все связанные движения, резервы и аллокации этих партий будут очищены.`,
       )
     ) {
       return;
     }
     try {
-      const res = await bulkDeleteBatchesMutation.mutateAsync(Array.from(selectedBatchIds));
+      const payload = batchesSelection.buildBulkPayload({
+        search: searchQuery.trim() || undefined,
+      });
+      const res = await bulkDeleteBatchesMutation.mutateAsync(payload);
       toast.success(`Удалено партий: ${res.deletedCount}`);
-      setSelectedBatchIds(new Set());
+      batchesSelection.clear();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные партии");
     }
@@ -740,45 +959,66 @@ function WarehouseContent() {
     try {
       await deleteMovementMutation.mutateAsync(movement.id);
       toast.success("Запись движения удалена, остатки пересчитаны");
-      setSelectedMovementIds((prev) => {
-        const next = new Set(prev);
-        next.delete(movement.id);
-        return next;
-      });
+      if (movementsSelection.isRowSelected(movement.id)) {
+        movementsSelection.toggleRow(movement.id);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить движение");
     }
   };
 
   const handleBulkDeleteMovements = async () => {
-    if (selectedMovementIds.size === 0) return;
+    const count = movementsSelection.effectiveSelectedCount;
+    if (count === 0) return;
     if (
       !confirm(
-        `Удалить выбранные записи движений (${selectedMovementIds.size} шт.)? Влияние операций на остатки и резервы будет откачено.`,
+        `Удалить выбранные записи движений (${count} шт.)? Влияние операций на остатки и резервы будет откачено.`,
       )
     ) {
       return;
     }
     try {
-      const res = await bulkDeleteMovementsMutation.mutateAsync(Array.from(selectedMovementIds));
+      const payload = movementsSelection.buildBulkPayload({
+        search: searchQuery.trim() || undefined,
+      });
+      const res = await bulkDeleteMovementsMutation.mutateAsync(payload);
       toast.success(`Удалено записей движений: ${res.deletedCount}`);
-      setSelectedMovementIds(new Set());
+      movementsSelection.clear();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить выбранные движения");
     }
   };
 
   const handleBulkDeletePurchases = async () => {
-    if (selectedAggregatedIds.size === 0) return;
-    const allIds = filteredAggregatedPurchases
-      .filter((pr) => selectedAggregatedIds.has(pr.id))
-      .flatMap((pr) => (pr.requestIds && pr.requestIds.length > 0 ? pr.requestIds : [pr.id]));
-    if (allIds.length === 0) return;
-    if (!confirm(`Удалить выбранные заявки на закупку (${allIds.length} шт.)?`)) return;
+    if (purchasesSelection.effectiveSelectedCount === 0) return;
+    const confirmCount = purchasesSelection.effectiveSelectedCount;
+    if (!confirm(`Удалить выбранные заявки (${confirmCount} шт.)?`)) return;
     try {
-      const res = await bulkDeletePurchasesMutation.mutateAsync(allIds);
-      toast.success(`Удалено заявок на закупку: ${res.deletedCount}`);
-      setSelectedAggregatedIds(new Set());
+      if (purchasesSelection.isAllSelected) {
+        const expandedExcluded = Array.from(purchasesSelection.excludedIds).flatMap(
+          (id) => knownPurchasesRef.current.get(id)?.requestIds ?? [id],
+        );
+        const res = await bulkDeletePurchasesMutation.mutateAsync({
+          mode: "all",
+          filters: {
+            search: searchQuery.trim() || undefined,
+            status: purchaseStatusFilter !== "all" ? purchaseStatusFilter : undefined,
+          },
+          excluded_ids: expandedExcluded.length > 0 ? expandedExcluded : undefined,
+        });
+        toast.success(`Удалено заявок на закупку: ${res.deletedCount}`);
+      } else {
+        const allIds = Array.from(purchasesSelection.selectedIds).flatMap(
+          (id) => knownPurchasesRef.current.get(id)?.requestIds ?? [id],
+        );
+        if (allIds.length === 0) return;
+        const res = await bulkDeletePurchasesMutation.mutateAsync({
+          mode: "ids",
+          ids: allIds,
+        });
+        toast.success(`Удалено заявок на закупку: ${res.deletedCount}`);
+      }
+      purchasesSelection.clear();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить заявки на закупку");
     }
@@ -798,11 +1038,9 @@ function WarehouseContent() {
           ? `Товар «${item.name}» и связанные партии/резервы удалены`
           : `Товар «${item.name}» удален`,
       );
-      setSelectedItemIds((prev) => {
-        const next = new Set(prev);
-        next.delete(item.id);
-        return next;
-      });
+      if (itemsSelection.isRowSelected(item.id)) {
+        itemsSelection.toggleRow(item.id);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Ошибка при удалении товара");
     }
@@ -826,13 +1064,18 @@ function WarehouseContent() {
   };
 
   const handleBulkEditClick = () => {
-    if (selectedItemIds.size === 1) {
-      const selectedId = Array.from(selectedItemIds)[0];
-      const item = items.find((i) => i.id === selectedId);
+    if (!itemsSelection.isAllSelected && itemsSelection.effectiveSelectedCount === 1) {
+      const selectedId = Array.from(itemsSelection.selectedIds)[0];
+      const item = items.find((i) => i.id === selectedId) ?? knownItemsRef.current.get(selectedId);
       if (item) {
         handleOpenEditItemModal(item);
         return;
       }
+      setEditItemModalOpen(true);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("edit", selectedId);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      return;
     }
     setBulkEditModalOpen(true);
   };
@@ -949,7 +1192,7 @@ function WarehouseContent() {
                   <FileSpreadsheet className="h-4 w-4 text-[#666666]" />
                   <span>Экспорт каталога в CSV (.csv)</span>
                 </button>
-                {selectedItemIds.size > 0 && (
+                {itemsSelection.effectiveSelectedCount > 0 && (
                   <>
                     <div className="my-1 border-t border-[#f0f0f0]" />
                     <button
@@ -958,7 +1201,7 @@ function WarehouseContent() {
                       className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[#4a38f5] font-medium hover:bg-[#4a38f5]/5 transition-colors"
                     >
                       <Download className="h-4 w-4" />
-                      <span>Выбранные в Excel ({selectedItemIds.size})</span>
+                      <span>Выбранные в Excel ({itemsSelection.effectiveSelectedCount})</span>
                     </button>
                     <button
                       type="button"
@@ -966,7 +1209,7 @@ function WarehouseContent() {
                       className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[#4a38f5] font-medium hover:bg-[#4a38f5]/5 transition-colors"
                     >
                       <Download className="h-4 w-4" />
-                      <span>Выбранные в CSV ({selectedItemIds.size})</span>
+                      <span>Выбранные в CSV ({itemsSelection.effectiveSelectedCount})</span>
                     </button>
                   </>
                 )}
@@ -1416,7 +1659,10 @@ function WarehouseContent() {
               <button
                 key={st}
                 type="button"
-                onClick={() => setPurchaseStatusFilter(st)}
+                onClick={() => {
+                  setPurchaseStatusFilter(st);
+                  setPurchasesPage(1);
+                }}
                 className={cn(
                   "rounded px-2 py-1 text-xs font-medium transition-colors",
                   purchaseStatusFilter === st
@@ -1443,7 +1689,7 @@ function WarehouseContent() {
             <button
               type="button"
               onClick={() => {
-                setSelectedAggregatedIds(new Set());
+                setSupplierOrderRowsOverride([]);
                 setCreateSupplierOrderModalOpen(true);
               }}
               className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
@@ -1526,6 +1772,63 @@ function WarehouseContent() {
       {/* Вкладка 1: Номенклатура и остатки */}
       {activeTab === "items" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+          {itemsSelection.effectiveSelectedCount > 0 && (
+            <div className="border-b border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2">
+              <TableBulkBar
+                selectedCount={itemsSelection.effectiveSelectedCount}
+                totalCount={meta.total}
+                isAllSelected={itemsSelection.isAllSelected}
+                excludedCount={itemsSelection.excludedCount}
+                entityNamePlural="позиций"
+                pageItemCount={sortedItems.length}
+                onSelectAll={itemsSelection.selectAllAcrossPages}
+                onClearSelection={itemsSelection.clear}
+                onDelete={handleBulkDelete}
+                isDeleting={bulkDeleteMutation.isPending}
+              >
+                <button
+                  type="button"
+                  onClick={handleBulkCreatePurchaseRequest}
+                  disabled={!hasReservedOrDeficit || bulkCreatePurchasesMutation.isPending}
+                  className={cn(
+                    "flex h-7 items-center gap-1.5 rounded-[6px] px-2.5 text-xs font-medium transition-colors",
+                    hasReservedOrDeficit && !bulkCreatePurchasesMutation.isPending
+                      ? "bg-amber-600 text-white hover:bg-amber-700 cursor-pointer"
+                      : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed",
+                  )}
+                >
+                  <ShoppingCart className="h-3.5 w-3.5" />
+                  Заявка
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkEditClick}
+                  className="flex h-7 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-2.5 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Изменить
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExport("xlsx", true)}
+                  disabled={exportMutation.isPending}
+                  className="flex h-7 items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExport("csv", true)}
+                  disabled={exportMutation.isPending}
+                  className="flex h-7 items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  CSV
+                </button>
+              </TableBulkBar>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table
               className={cn(
@@ -1538,7 +1841,13 @@ function WarehouseContent() {
                   <th className="w-[38px] px-3 py-2.5 text-center">
                     <input
                       type="checkbox"
-                      checked={sortedItems.length > 0 && selectedItemIds.size === sortedItems.length}
+                      aria-label="Выбрать все позиции на странице"
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate = itemsSelection.isPagePartiallySelected(pageItemIds);
+                        }
+                      }}
+                      checked={itemsSelection.isPageAllSelected(pageItemIds)}
                       onChange={handleToggleSelectAll}
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                     />
@@ -1720,7 +2029,7 @@ function WarehouseContent() {
                 {sortedItems.map((item) => {
                   const isOutOfStock = item.availableStock <= 0;
                   const isLowStock = item.availableStock > 0 && item.availableStock <= item.minStock;
-                  const isSelected = selectedItemIds.has(item.id);
+                  const isSelected = itemsSelection.isRowSelected(item.id);
 
                   return (
                     <tr
@@ -1878,82 +2187,119 @@ function WarehouseContent() {
       {/* Вкладка 2: Партии и приходные накладные */}
       {activeTab === "batches" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
-          {selectedBatchIds.size > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
-              <div className="flex items-center gap-2 text-[#111111] font-medium">
-                <Check className="h-4 w-4 text-[#4a38f5]" />
-                <span>
-                  Выбрано партий: <b className="font-mono">{selectedBatchIds.size}</b>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedBatchIds(new Set())}
-                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-                >
-                  Снять выбор
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBulkDeleteBatches}
-                  disabled={bulkDeleteBatchesMutation.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {bulkDeleteBatchesMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                  Удалить выбранные ({selectedBatchIds.size})
-                </button>
-              </div>
+          {batchesSelection.effectiveSelectedCount > 0 && (
+            <div className="border-b border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2">
+              <TableBulkBar
+                selectedCount={batchesSelection.effectiveSelectedCount}
+                totalCount={batchesMeta.total}
+                isAllSelected={batchesSelection.isAllSelected}
+                excludedCount={batchesSelection.excludedCount}
+                entityNamePlural="партий"
+                pageItemCount={filteredBatches.length}
+                onSelectAll={batchesSelection.selectAllAcrossPages}
+                onClearSelection={batchesSelection.clear}
+                onDelete={handleBulkDeleteBatches}
+                isDeleting={bulkDeleteBatchesMutation.isPending}
+              />
             </div>
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className={cn(
+                "w-full transition-opacity duration-150",
+                batchesQuery.isPlaceholderData && "opacity-50 pointer-events-none",
+              )}
+            >
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
                   <th className="px-3 py-2.5 text-center w-[40px]">
                     <input
                       type="checkbox"
-                      aria-label="Выбрать все партии"
-                      checked={
-                        filteredBatches.length > 0 &&
-                        selectedBatchIds.size === filteredBatches.length
-                      }
-                      onChange={() => {
-                        if (selectedBatchIds.size === filteredBatches.length && filteredBatches.length > 0) {
-                          setSelectedBatchIds(new Set());
-                        } else {
-                          setSelectedBatchIds(new Set(filteredBatches.map((b) => b.id)));
+                      aria-label="Выбрать все партии на странице"
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate = batchesSelection.isPagePartiallySelected(
+                            filteredBatches.map((b) => b.id),
+                          );
                         }
                       }}
+                      checked={batchesSelection.isPageAllSelected(filteredBatches.map((b) => b.id))}
+                      onChange={() => batchesSelection.togglePage(filteredBatches.map((b) => b.id))}
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                     />
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
-                    Дата прихода
-                  </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[140px]">
-                    Партия / Накладная
-                  </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Товар
-                  </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Поставщик
-                  </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Закупка/ед.
-                  </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[90px]">
-                    Принято
-                  </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[95px]">
-                    Остаток FIFO
-                  </th>
+                  <SortableTh
+                    label="Дата прихода"
+                    active={batchesSort.sortBy === "receivedAt"}
+                    direction={batchesSort.sortDir}
+                    onClick={() => {
+                      setBatchesSort((prev) => nextTabSort(prev, "receivedAt"));
+                      setBatchesPage(1);
+                    }}
+                    className="w-[150px]"
+                  />
+                  <SortableTh
+                    label="Партия / Накладная"
+                    active={batchesSort.sortBy === "batchNumber"}
+                    direction={batchesSort.sortDir}
+                    onClick={() => {
+                      setBatchesSort((prev) => nextTabSort(prev, "batchNumber"));
+                      setBatchesPage(1);
+                    }}
+                    className="w-[140px]"
+                  />
+                  <SortableTh
+                    label="Товар"
+                    active={batchesSort.sortBy === "itemName"}
+                    direction={batchesSort.sortDir}
+                    onClick={() => {
+                      setBatchesSort((prev) => nextTabSort(prev, "itemName"));
+                      setBatchesPage(1);
+                    }}
+                  />
+                  <SortableTh
+                    label="Поставщик"
+                    active={batchesSort.sortBy === "supplierName"}
+                    direction={batchesSort.sortDir}
+                    onClick={() => {
+                      setBatchesSort((prev) => nextTabSort(prev, "supplierName"));
+                      setBatchesPage(1);
+                    }}
+                  />
+                  <SortableTh
+                    label="Закупка/ед."
+                    align="right"
+                    active={batchesSort.sortBy === "purchasePrice"}
+                    direction={batchesSort.sortDir}
+                    onClick={() => {
+                      setBatchesSort((prev) => nextTabSort(prev, "purchasePrice"));
+                      setBatchesPage(1);
+                    }}
+                    className="w-[110px]"
+                  />
+                  <SortableTh
+                    label="Принято"
+                    align="center"
+                    active={batchesSort.sortBy === "initialQuantity"}
+                    direction={batchesSort.sortDir}
+                    onClick={() => {
+                      setBatchesSort((prev) => nextTabSort(prev, "initialQuantity"));
+                      setBatchesPage(1);
+                    }}
+                    className="w-[90px]"
+                  />
+                  <SortableTh
+                    label="Остаток FIFO"
+                    align="center"
+                    active={batchesSort.sortBy === "remainingQuantity"}
+                    direction={batchesSort.sortDir}
+                    onClick={() => {
+                      setBatchesSort((prev) => nextTabSort(prev, "remainingQuantity"));
+                      setBatchesPage(1);
+                    }}
+                    className="w-[95px]"
+                  />
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
                     Действия
                   </th>
@@ -1961,7 +2307,7 @@ function WarehouseContent() {
               </thead>
               <tbody className="divide-y divide-[#f0f0f0]">
                 {filteredBatches.map((b) => {
-                  const isSelected = selectedBatchIds.has(b.id);
+                  const isSelected = batchesSelection.isRowSelected(b.id);
                   return (
                     <tr
                       key={b.id}
@@ -1975,12 +2321,7 @@ function WarehouseContent() {
                           type="checkbox"
                           aria-label={`Выбрать партию ${b.batchNumber || b.id}`}
                           checked={isSelected}
-                          onChange={() => {
-                            const next = new Set(selectedBatchIds);
-                            if (next.has(b.id)) next.delete(b.id);
-                            else next.add(b.id);
-                            setSelectedBatchIds(next);
-                          }}
+                          onChange={() => batchesSelection.toggleRow(b.id)}
                           className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                         />
                       </td>
@@ -2058,88 +2399,123 @@ function WarehouseContent() {
               </tbody>
             </table>
           </div>
+          <WarehousePagination
+            total={batchesMeta.total}
+            page={batchesMeta.page}
+            pages={batchesMeta.pages}
+            limit={batchesMeta.limit}
+            entityLabel="партий"
+            onPageChange={(newPage) => setBatchesPage(newPage)}
+            onLimitChange={(newLimit) => {
+              setBatchesLimit(newLimit as WarehouseLimit);
+              setBatchesPage(1);
+            }}
+            disabled={isBatchesLoading}
+          />
         </div>
       )}
 
       {/* Вкладка 3: Заявки на закупку (Сводка с агрегацией по нарядам и мультиселектом) */}
       {activeTab === "purchases" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
-          {/* Тулбар мультиселекта */}
-          {selectedAggregatedIds.size > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-sky-50 border-b border-sky-200 px-4 py-2 text-xs">
-              <div className="flex items-center gap-2 text-sky-900 font-medium">
-                <Check className="h-4 w-4 text-sky-700" />
-                <span>
-                  Выбрано позиций: <b className="font-mono">{selectedAggregatedIds.size}</b>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
+          {purchasesSelection.effectiveSelectedCount > 0 && (
+            <div className="border-b border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2">
+              <TableBulkBar
+                selectedCount={purchasesSelection.effectiveSelectedCount}
+                totalCount={purchasesMeta.total}
+                isAllSelected={purchasesSelection.isAllSelected}
+                excludedCount={purchasesSelection.excludedCount}
+                entityNamePlural="заявок"
+                pageItemCount={filteredAggregatedPurchases.length}
+                onSelectAll={purchasesSelection.selectAllAcrossPages}
+                onClearSelection={purchasesSelection.clear}
+                onDelete={handleBulkDeletePurchases}
+                isDeleting={bulkDeletePurchasesMutation.isPending}
+              >
                 <button
                   type="button"
-                  onClick={() => setSelectedAggregatedIds(new Set())}
-                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-                >
-                  Снять выбор
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBulkDeletePurchases}
-                  disabled={bulkDeletePurchasesMutation.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {bulkDeletePurchasesMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                  Удалить выбранные ({selectedAggregatedIds.size})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCreateSupplierOrderModalOpen(true)}
-                  className="flex items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#3d2ee0] shadow-xs transition-colors cursor-pointer"
+                  onClick={() => void handleOpenCreateSupplierOrderFromPurchases()}
+                  className="flex h-7 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-semibold text-white shadow-xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
                 >
                   <Truck className="h-3.5 w-3.5" />
-                  Сформировать заказ поставщику ({selectedAggregatedIds.size})
+                  Сформировать заказ поставщику ({purchasesSelection.effectiveSelectedCount})
                 </button>
-              </div>
+              </TableBulkBar>
             </div>
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className={cn(
+                "w-full transition-opacity duration-150",
+                purchasesQuery.isPlaceholderData && "opacity-50 pointer-events-none",
+              )}
+            >
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
                   <th className="px-3 py-2.5 text-center w-[40px]">
                     <input
                       type="checkbox"
-                      checked={
-                        filteredAggregatedPurchases.length > 0 &&
-                        selectedAggregatedIds.size === filteredAggregatedPurchases.length
-                      }
+                      aria-label="Выбрать все заявки на странице"
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate = purchasesSelection.isPagePartiallySelected(pagePurchaseIds);
+                        }
+                      }}
+                      checked={purchasesSelection.isPageAllSelected(pagePurchaseIds)}
                       onChange={toggleSelectAllPurchases}
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                       title="Выбрать все"
                     />
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Запчасть / Товар
-                  </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
-                    Требуется
-                  </th>
+                  <SortableTh
+                    label="Запчасть / Товар"
+                    active={purchasesSort.sortBy === "itemName"}
+                    direction={purchasesSort.sortDir}
+                    onClick={() => {
+                      setPurchasesSort((prev) => nextTabSort(prev, "itemName"));
+                      setPurchasesPage(1);
+                    }}
+                  />
+                  <SortableTh
+                    label="Требуется"
+                    align="center"
+                    active={purchasesSort.sortBy === "quantity"}
+                    direction={purchasesSort.sortDir}
+                    onClick={() => {
+                      setPurchasesSort((prev) => nextTabSort(prev, "quantity"));
+                      setPurchasesPage(1);
+                    }}
+                    className="w-[100px]"
+                  />
                   <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
                     Остаток на складе
                   </th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Наряды / Сделки
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[110px]">
-                    Ориент. цена
-                  </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
-                    Статус
-                  </th>
+                  <SortableTh
+                    label="Ориент. цена"
+                    align="right"
+                    active={purchasesSort.sortBy === "estimatedPrice"}
+                    direction={purchasesSort.sortDir}
+                    onClick={() => {
+                      setPurchasesSort((prev) => nextTabSort(prev, "estimatedPrice"));
+                      setPurchasesPage(1);
+                    }}
+                    className="w-[110px]"
+                  />
+                  <SortableTh
+                    label="Статус"
+                    align="center"
+                    active={purchasesSort.sortBy === "status"}
+                    direction={purchasesSort.sortDir}
+                    onClick={() => {
+                      setPurchasesSort((prev) => nextTabSort(prev, "status"));
+                      setPurchasesPage(1);
+                    }}
+                    className="w-[120px]"
+                  />
                   <th className="px-4 py-2.5 w-[130px]" />
                 </tr>
               </thead>
@@ -2152,7 +2528,7 @@ function WarehouseContent() {
                     cancelled: { label: "Отменено", color: "bg-rose-50 text-rose-700 border-rose-200" },
                   }[pr.status];
 
-                  const isSelected = selectedAggregatedIds.has(pr.id);
+                  const isSelected = purchasesSelection.isRowSelected(pr.id);
 
                   return (
                     <tr
@@ -2221,7 +2597,7 @@ function WarehouseContent() {
                             <button
                               type="button"
                               onClick={() => {
-                                setSelectedAggregatedIds(new Set([pr.id]));
+                                setSupplierOrderRowsOverride([pr]);
                                 setCreateSupplierOrderModalOpen(true);
                               }}
                               className="inline-flex items-center gap-1 rounded bg-[#4a38f5] px-2 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer"
@@ -2254,11 +2630,9 @@ function WarehouseContent() {
                                 await Promise.all(
                                   pr.requestIds.map((reqId) => deletePurchaseMutation.mutateAsync(reqId)),
                                 );
-                                setSelectedAggregatedIds((prev) => {
-                                  const next = new Set(prev);
-                                  next.delete(pr.id);
-                                  return next;
-                                });
+                                if (purchasesSelection.isRowSelected(pr.id)) {
+                                  purchasesSelection.toggleRow(pr.id);
+                                }
                                 toast.success(
                                   count > 1
                                     ? `Удалено заявок: ${count}`
@@ -2293,88 +2667,126 @@ function WarehouseContent() {
               </tbody>
             </table>
           </div>
+          <WarehousePagination
+            total={purchasesMeta.total}
+            page={purchasesMeta.page}
+            pages={purchasesMeta.pages}
+            limit={purchasesMeta.limit}
+            entityLabel="заявок"
+            onPageChange={(newPage) => setPurchasesPage(newPage)}
+            onLimitChange={(newLimit) => {
+              setPurchasesLimit(newLimit as WarehouseLimit);
+              setPurchasesPage(1);
+            }}
+            disabled={isAggregatedLoading}
+          />
         </div>
       )}
 
       {/* Вкладка 4: Заказы поставщикам */}
       {activeTab === "supplier_orders" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
-          {selectedSupplierOrderIds.size > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
-              <div className="flex items-center gap-2 text-[#111111] font-medium">
-                <Check className="h-4 w-4 text-[#4a38f5]" />
-                <span>
-                  Выбрано заказов: <b className="font-mono">{selectedSupplierOrderIds.size}</b>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedSupplierOrderIds(new Set())}
-                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-                >
-                  Снять выбор
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBulkDeleteSupplierOrders}
-                  disabled={bulkDeleteSupplierOrdersMutation.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {bulkDeleteSupplierOrdersMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                  Удалить выбранные ({selectedSupplierOrderIds.size})
-                </button>
-              </div>
+          {ordersSelection.effectiveSelectedCount > 0 && (
+            <div className="border-b border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2">
+              <TableBulkBar
+                selectedCount={ordersSelection.effectiveSelectedCount}
+                totalCount={supplierOrdersMeta.total}
+                isAllSelected={ordersSelection.isAllSelected}
+                excludedCount={ordersSelection.excludedCount}
+                entityNamePlural="заказов"
+                pageItemCount={filteredSupplierOrders.length}
+                onSelectAll={ordersSelection.selectAllAcrossPages}
+                onClearSelection={ordersSelection.clear}
+                onDelete={handleBulkDeleteSupplierOrders}
+                isDeleting={bulkDeleteSupplierOrdersMutation.isPending}
+              />
             </div>
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className={cn(
+                "w-full transition-opacity duration-150",
+                supplierOrdersQuery.isPlaceholderData && "opacity-50 pointer-events-none",
+              )}
+            >
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
                   <th className="px-3 py-2.5 text-center w-[40px]">
                     <input
                       type="checkbox"
-                      aria-label="Выбрать все заказы поставщикам"
-                      checked={
-                        filteredSupplierOrders.length > 0 &&
-                        selectedSupplierOrderIds.size === filteredSupplierOrders.length
-                      }
-                      onChange={() => {
-                        if (
-                          selectedSupplierOrderIds.size === filteredSupplierOrders.length &&
-                          filteredSupplierOrders.length > 0
-                        ) {
-                          setSelectedSupplierOrderIds(new Set());
-                        } else {
-                          setSelectedSupplierOrderIds(new Set(filteredSupplierOrders.map((o) => o.id)));
+                      aria-label="Выбрать все заказы поставщикам на странице"
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate = ordersSelection.isPagePartiallySelected(
+                            filteredSupplierOrders.map((o) => o.id),
+                          );
                         }
                       }}
+                      checked={ordersSelection.isPageAllSelected(
+                        filteredSupplierOrders.map((o) => o.id),
+                      )}
+                      onChange={() =>
+                        ordersSelection.togglePage(filteredSupplierOrders.map((o) => o.id))
+                      }
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                     />
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
-                    Номер
-                  </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[180px]">
-                    Поставщик
-                  </th>
+                  <SortableTh
+                    label="Номер"
+                    active={ordersSort.sortBy === "orderNumber"}
+                    direction={ordersSort.sortDir}
+                    onClick={() => {
+                      setOrdersSort((prev) => nextTabSort(prev, "orderNumber"));
+                      setOrdersPage(1);
+                    }}
+                    className="w-[130px]"
+                  />
+                  <SortableTh
+                    label="Поставщик"
+                    active={ordersSort.sortBy === "supplierName"}
+                    direction={ordersSort.sortDir}
+                    onClick={() => {
+                      setOrdersSort((prev) => nextTabSort(prev, "supplierName"));
+                      setOrdersPage(1);
+                    }}
+                    className="w-[180px]"
+                  />
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Состав заказа
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
-                    Сумма
-                  </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[130px]">
-                    Статус
-                  </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
-                    Оплата / Приход
-                  </th>
+                  <SortableTh
+                    label="Сумма"
+                    align="right"
+                    active={ordersSort.sortBy === "totalAmount"}
+                    direction={ordersSort.sortDir}
+                    onClick={() => {
+                      setOrdersSort((prev) => nextTabSort(prev, "totalAmount"));
+                      setOrdersPage(1);
+                    }}
+                    className="w-[120px]"
+                  />
+                  <SortableTh
+                    label="Статус"
+                    align="center"
+                    active={ordersSort.sortBy === "status"}
+                    direction={ordersSort.sortDir}
+                    onClick={() => {
+                      setOrdersSort((prev) => nextTabSort(prev, "status"));
+                      setOrdersPage(1);
+                    }}
+                    className="w-[130px]"
+                  />
+                  <SortableTh
+                    label="Оплата / Приход"
+                    active={ordersSort.sortBy === "paidAt"}
+                    direction={ordersSort.sortDir}
+                    onClick={() => {
+                      setOrdersSort((prev) => nextTabSort(prev, "paidAt"));
+                      setOrdersPage(1);
+                    }}
+                    className="w-[150px]"
+                  />
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[280px]">
                     Действия
                   </th>
@@ -2402,7 +2814,7 @@ function WarehouseContent() {
                     order.receivedQuantityTotal ??
                     (order.items ?? []).reduce((s, it) => s + Number(it.receivedQuantity ?? 0), 0);
                   const extraCostsTotal = Number(order.extraCostsTotal ?? 0);
-                  const isSelected = selectedSupplierOrderIds.has(order.id);
+                  const isSelected = ordersSelection.isRowSelected(order.id);
 
                   return (
                     <tr
@@ -2421,12 +2833,7 @@ function WarehouseContent() {
                           type="checkbox"
                           aria-label={`Выбрать заказ ${order.orderNumber}`}
                           checked={isSelected}
-                          onChange={() => {
-                            const next = new Set(selectedSupplierOrderIds);
-                            if (next.has(order.id)) next.delete(order.id);
-                            else next.add(order.id);
-                            setSelectedSupplierOrderIds(next);
-                          }}
+                          onChange={() => ordersSelection.toggleRow(order.id)}
                           className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                         />
                       </td>
@@ -2600,7 +3007,7 @@ function WarehouseContent() {
                             <button
                               type="button"
                               onClick={() => {
-                                setSelectedAggregatedIds(new Set());
+                                setSupplierOrderRowsOverride([]);
                                 setCreateSupplierOrderModalOpen(true);
                               }}
                               className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
@@ -2617,88 +3024,124 @@ function WarehouseContent() {
               </tbody>
             </table>
           </div>
+          <WarehousePagination
+            total={supplierOrdersMeta.total}
+            page={supplierOrdersMeta.page}
+            pages={supplierOrdersMeta.pages}
+            limit={supplierOrdersMeta.limit}
+            entityLabel="заказов"
+            onPageChange={(newPage) => setOrdersPage(newPage)}
+            onLimitChange={(newLimit) => {
+              setOrdersLimit(newLimit as WarehouseLimit);
+              setOrdersPage(1);
+            }}
+            disabled={isSupplierOrdersLoading}
+          />
         </div>
       )}
 
       {/* Вкладка 5: Журнал движений */}
       {activeTab === "movements" && (
         <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
-          {selectedMovementIds.size > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border-b border-indigo-200 px-4 py-2 text-xs">
-              <div className="flex items-center gap-2 text-[#111111] font-medium">
-                <Check className="h-4 w-4 text-[#4a38f5]" />
-                <span>
-                  Выбрано движений: <b className="font-mono">{selectedMovementIds.size}</b>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedMovementIds(new Set())}
-                  className="rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-                >
-                  Снять выбор
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBulkDeleteMovements}
-                  disabled={bulkDeleteMovementsMutation.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-[6px] bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {bulkDeleteMovementsMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                  Удалить выбранные ({selectedMovementIds.size})
-                </button>
-              </div>
+          {movementsSelection.effectiveSelectedCount > 0 && (
+            <div className="border-b border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2">
+              <TableBulkBar
+                selectedCount={movementsSelection.effectiveSelectedCount}
+                totalCount={movementsMeta.total}
+                isAllSelected={movementsSelection.isAllSelected}
+                excludedCount={movementsSelection.excludedCount}
+                entityNamePlural="движений"
+                pageItemCount={filteredMovements.length}
+                onSelectAll={movementsSelection.selectAllAcrossPages}
+                onClearSelection={movementsSelection.clear}
+                onDelete={handleBulkDeleteMovements}
+                isDeleting={bulkDeleteMovementsMutation.isPending}
+              />
             </div>
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className={cn(
+                "w-full transition-opacity duration-150",
+                movementsQuery.isPlaceholderData && "opacity-50 pointer-events-none",
+              )}
+            >
               <thead>
                 <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
                   <th className="px-3 py-2.5 text-center w-[40px]">
                     <input
                       type="checkbox"
-                      aria-label="Выбрать все движения"
-                      checked={
-                        filteredMovements.length > 0 &&
-                        selectedMovementIds.size === filteredMovements.length
-                      }
-                      onChange={() => {
-                        if (
-                          selectedMovementIds.size === filteredMovements.length &&
-                          filteredMovements.length > 0
-                        ) {
-                          setSelectedMovementIds(new Set());
-                        } else {
-                          setSelectedMovementIds(new Set(filteredMovements.map((m) => m.id)));
+                      aria-label="Выбрать все движения на странице"
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate = movementsSelection.isPagePartiallySelected(
+                            filteredMovements.map((m) => m.id),
+                          );
                         }
                       }}
+                      checked={movementsSelection.isPageAllSelected(
+                        filteredMovements.map((m) => m.id),
+                      )}
+                      onChange={() =>
+                        movementsSelection.togglePage(filteredMovements.map((m) => m.id))
+                      }
                       className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                     />
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
-                    Дата и время
-                  </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
-                    Товар
-                  </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[150px]">
-                    Тип операции
-                  </th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[95px]">
-                    Кол-во
-                  </th>
+                  <SortableTh
+                    label="Дата и время"
+                    active={movementsSort.sortBy === "createdAt"}
+                    direction={movementsSort.sortDir}
+                    onClick={() => {
+                      setMovementsSort((prev) => nextTabSort(prev, "createdAt"));
+                      setMovementsPage(1);
+                    }}
+                    className="w-[150px]"
+                  />
+                  <SortableTh
+                    label="Товар"
+                    active={movementsSort.sortBy === "itemName"}
+                    direction={movementsSort.sortDir}
+                    onClick={() => {
+                      setMovementsSort((prev) => nextTabSort(prev, "itemName"));
+                      setMovementsPage(1);
+                    }}
+                  />
+                  <SortableTh
+                    label="Тип операции"
+                    active={movementsSort.sortBy === "type"}
+                    direction={movementsSort.sortDir}
+                    onClick={() => {
+                      setMovementsSort((prev) => nextTabSort(prev, "type"));
+                      setMovementsPage(1);
+                    }}
+                    className="w-[150px]"
+                  />
+                  <SortableTh
+                    label="Кол-во"
+                    align="center"
+                    active={movementsSort.sortBy === "quantity"}
+                    direction={movementsSort.sortDir}
+                    onClick={() => {
+                      setMovementsSort((prev) => nextTabSort(prev, "quantity"));
+                      setMovementsPage(1);
+                    }}
+                    className="w-[95px]"
+                  />
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                     Связь / Описание
                   </th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
-                    Инициатор
-                  </th>
+                  <SortableTh
+                    label="Инициатор"
+                    active={movementsSort.sortBy === "createdByName"}
+                    direction={movementsSort.sortDir}
+                    onClick={() => {
+                      setMovementsSort((prev) => nextTabSort(prev, "createdByName"));
+                      setMovementsPage(1);
+                    }}
+                    className="w-[120px]"
+                  />
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
                     Действия
                   </th>
@@ -2716,7 +3159,7 @@ function WarehouseContent() {
                     adjustment: { label: "Корректировка", color: "bg-neutral-100 text-neutral-700 border-neutral-300", sign: "±" },
                   };
                   const t = typeMap[m.type] ?? { label: m.type, color: "bg-gray-100 text-gray-700 border-gray-200", sign: "" };
-                  const isSelected = selectedMovementIds.has(m.id);
+                  const isSelected = movementsSelection.isRowSelected(m.id);
 
                   return (
                     <tr
@@ -2731,12 +3174,7 @@ function WarehouseContent() {
                           type="checkbox"
                           aria-label={`Выбрать движение ${m.itemName ?? m.id}`}
                           checked={isSelected}
-                          onChange={() => {
-                            const next = new Set(selectedMovementIds);
-                            if (next.has(m.id)) next.delete(m.id);
-                            else next.add(m.id);
-                            setSelectedMovementIds(next);
-                          }}
+                          onChange={() => movementsSelection.toggleRow(m.id)}
                           className="h-4 w-4 rounded-[4px] border-[#e5e5e5] text-[#4a38f5] focus:ring-[#4a38f5] cursor-pointer"
                         />
                       </td>
@@ -2828,6 +3266,19 @@ function WarehouseContent() {
               </tbody>
             </table>
           </div>
+          <WarehousePagination
+            total={movementsMeta.total}
+            page={movementsMeta.page}
+            pages={movementsMeta.pages}
+            limit={movementsMeta.limit}
+            entityLabel="движений"
+            onPageChange={(newPage) => setMovementsPage(newPage)}
+            onLimitChange={(newLimit) => {
+              setMovementsLimit(newLimit as WarehouseLimit);
+              setMovementsPage(1);
+            }}
+            disabled={isMovementsLoading}
+          />
         </div>
       )}
 
@@ -2861,10 +3312,14 @@ function WarehouseContent() {
 
       <CreateSupplierOrderModal
         open={createSupplierOrderModalOpen}
-        onClose={() => setCreateSupplierOrderModalOpen(false)}
-        selectedRequests={selectedAggregatedRows}
+        onClose={() => {
+          setCreateSupplierOrderModalOpen(false);
+          setSupplierOrderRowsOverride(null);
+        }}
+        selectedRequests={supplierOrderRowsOverride ?? selectedAggregatedRows}
         onSuccess={() => {
-          setSelectedAggregatedIds(new Set());
+          setSupplierOrderRowsOverride(null);
+          purchasesSelection.clear();
           setActiveTab("supplier_orders");
         }}
       />
@@ -2910,10 +3365,14 @@ function WarehouseContent() {
 
       <ProductBulkEditDialog
         open={bulkEditModalOpen}
-        selectedIds={Array.from(selectedItemIds)}
+        selectedIds={Array.from(itemsSelection.selectedIds)}
+        selectionMode={itemsSelection.isAllSelected ? "all" : "ids"}
+        excludedIds={Array.from(itemsSelection.excludedIds)}
+        scopeFilters={itemsFiltersPayload}
+        effectiveCount={itemsSelection.effectiveSelectedCount}
         onClose={() => setBulkEditModalOpen(false)}
         onSuccess={() => {
-          setSelectedItemIds(new Set());
+          itemsSelection.clear();
         }}
       />
 
@@ -2923,7 +3382,7 @@ function WarehouseContent() {
         initialItem={selectedItemForEdit}
         onClose={handleCloseEditItemModal}
         onSuccess={() => {
-          setSelectedItemIds(new Set());
+          itemsSelection.clear();
         }}
       />
 
@@ -2947,13 +3406,31 @@ function WarehouseContent() {
       />
 
       {/* Floating Action Bar при выборе позиций */}
-      {selectedItemIds.size > 0 && activeTab === "items" && (
+      {itemsSelection.effectiveSelectedCount > 0 && activeTab === "items" && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-2xl border border-[#e5e5e5] bg-white px-5 py-3 shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
           <div className="flex items-center gap-2 border-r border-[#e5e5e5] pr-3 text-xs">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#4a38f5] text-[11px] font-bold text-white">
-              {selectedItemIds.size}
+            <span className="flex h-5 min-w-5 px-1.5 items-center justify-center rounded-full bg-[#4a38f5] text-[11px] font-bold text-white tabular-nums">
+              {itemsSelection.effectiveSelectedCount}
             </span>
-            <span className="font-semibold text-[#111111]">Выбрано позиций</span>
+            <span className="font-semibold text-[#111111]">
+              {itemsSelection.isAllSelected && itemsSelection.excludedCount > 0
+                ? `из ${meta.total} выбрано`
+                : itemsSelection.isAllSelected
+                ? "Выбраны все"
+                : "Выбрано позиций"}
+            </span>
+            {!itemsSelection.isAllSelected &&
+              sortedItems.length > 0 &&
+              itemsSelection.effectiveSelectedCount >= sortedItems.length &&
+              meta.total > sortedItems.length && (
+                <button
+                  type="button"
+                  onClick={itemsSelection.selectAllAcrossPages}
+                  className="ml-1 font-medium text-[#4a38f5] hover:text-[#3d2ee0] underline underline-offset-2 cursor-pointer"
+                >
+                  Выбрать все {meta.total}
+                </button>
+              )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -3022,7 +3499,7 @@ function WarehouseContent() {
 
             <button
               type="button"
-              onClick={() => setSelectedItemIds(new Set())}
+              onClick={itemsSelection.clear}
               className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"
               title="Снять выделение"
             >

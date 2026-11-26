@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { warehouseService } from "./warehouse.service.js";
 import {
+  bulkCreatePurchaseRequestsSchema,
   bulkDeleteIdsSchema,
   bulkDeleteWarehouseItemsSchema,
   bulkUpdateWarehouseItemsSchema,
@@ -23,6 +24,7 @@ import {
   updateWarehouseMovementSchema,
   updateWarehouseSettingsSchema,
   warehousePaginationQuerySchema,
+  warehouseTabQuerySchema,
 } from "./warehouse.types.js";
 
 export async function warehouseRoutes(app: FastifyInstance) {
@@ -131,11 +133,17 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const { tenant_id } = request;
     const query = warehousePaginationQuerySchema.parse(request.query ?? {});
     const modelIds = query.model_ids ?? query.modelIds;
+    const sortBy = query.sort_by ?? query.sortBy ?? query.sort;
+    const sortDir = query.sort_dir ?? query.sortDir ?? query.order;
     const result = await warehouseService.listItems(tenant_id, query.search, {
       page: query.page,
       limit: query.limit,
       all: query.all,
+      category: query.category,
+      brand: query.brand,
       modelIds,
+      sortBy,
+      sortDir,
     });
     return reply.send(result);
   });
@@ -145,6 +153,8 @@ export async function warehouseRoutes(app: FastifyInstance) {
     const { tenant_id } = request;
     const query = warehousePaginationQuerySchema.parse(request.query ?? {});
     const modelIds = query.model_ids ?? query.modelIds;
+    const sortBy = query.sort_by ?? query.sortBy ?? query.sort;
+    const sortDir = query.sort_dir ?? query.sortDir ?? query.order;
     const result = await warehouseService.listItems(tenant_id, query.search, {
       page: query.page,
       limit: query.limit,
@@ -152,6 +162,8 @@ export async function warehouseRoutes(app: FastifyInstance) {
       category: query.category,
       brand: query.brand,
       modelIds,
+      sortBy,
+      sortDir,
     });
     return reply.send(result);
   });
@@ -339,8 +351,12 @@ export async function warehouseRoutes(app: FastifyInstance) {
   // Список партий
   app.get("/batches", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { item_id } = request.query as { item_id?: string };
-    const batches = await warehouseService.listBatches(tenant_id, item_id);
+    const query = warehouseTabQuerySchema.parse(request.query ?? {});
+    if (query.page !== undefined) {
+      const result = await warehouseService.listBatchesPaginated(tenant_id, query);
+      return reply.send(result);
+    }
+    const batches = await warehouseService.listBatches(tenant_id, query.item_id);
     return reply.send({ data: batches });
   });
 
@@ -371,15 +387,19 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.post("/batches/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = bulkDeleteIdsSchema.parse(request.body);
-    const result = await warehouseService.bulkDeleteBatches(tenant_id, body.ids);
+    const result = await warehouseService.bulkDeleteBatches(tenant_id, body);
     return reply.send({ data: result });
   });
 
   // Журнал движений
   app.get("/movements", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { limit } = request.query as { limit?: string };
-    const movements = await warehouseService.listMovements(tenant_id, limit ? parseInt(limit, 10) : 100);
+    const query = warehouseTabQuerySchema.parse(request.query ?? {});
+    if (query.page !== undefined) {
+      const result = await warehouseService.listMovementsPaginated(tenant_id, query);
+      return reply.send(result);
+    }
+    const movements = await warehouseService.listMovements(tenant_id, query.limit ?? 100);
     return reply.send({ data: movements });
   });
 
@@ -410,7 +430,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.post("/movements/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = bulkDeleteIdsSchema.parse(request.body);
-    const result = await warehouseService.bulkDeleteMovements(tenant_id, body.ids);
+    const result = await warehouseService.bulkDeleteMovements(tenant_id, body);
     return reply.send({ data: result });
   });
 
@@ -429,29 +449,34 @@ export async function warehouseRoutes(app: FastifyInstance) {
   // Агрегированные заявки на закупку (сводка по номенклатуре с перечнем номеров заказ-нарядов)
   app.get("/purchase-requests", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { status } = request.query as { status?: string };
-    const list = await warehouseService.listAggregatedPurchaseRequests(tenant_id, status);
+    const query = warehouseTabQuerySchema.parse(request.query ?? {});
+    if (query.page !== undefined) {
+      const result = await warehouseService.listAggregatedPurchaseRequestsPaginated(tenant_id, query);
+      return reply.send(result);
+    }
+    const list = await warehouseService.listAggregatedPurchaseRequests(tenant_id, query.status);
     return reply.send({ data: list });
   });
 
-  // Создание заявок на закупку (одиночное или массовое по массиву itemIds)
+  // Создание заявок на закупку (одиночное или массовое по массиву itemIds или mode="all")
   app.post("/purchase-requests", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const userId = request.authUser?.id ?? null;
     const body = request.body as Record<string, unknown>;
 
-    if (Array.isArray(body?.itemIds) && body.itemIds.length > 0) {
-      const created = await warehouseService.createBulkPurchaseRequests(
-        tenant_id,
-        userId,
-        {
-          itemIds: body.itemIds as string[],
-          status: typeof body.status === "string" ? body.status : undefined,
-          comment: typeof body.comment === "string" ? body.comment : undefined,
-          repair_order_id: typeof body.repair_order_id === "string" ? body.repair_order_id : undefined,
-          deal_id: typeof body.deal_id === "string" ? body.deal_id : undefined,
-        },
-      );
+    if (body?.mode === "all" || (Array.isArray(body?.itemIds) && body.itemIds.length > 0)) {
+      const parsedBulk = bulkCreatePurchaseRequestsSchema.parse(body);
+      const created = await warehouseService.createBulkPurchaseRequests(tenant_id, userId, {
+        mode: parsedBulk.mode,
+        ids: parsedBulk.ids,
+        itemIds: parsedBulk.itemIds ?? parsedBulk.ids ?? [],
+        excluded_ids: parsedBulk.excluded_ids,
+        filters: parsedBulk.filters,
+        status: parsedBulk.status,
+        comment: parsedBulk.comment,
+        repair_order_id: parsedBulk.repair_order_id,
+        deal_id: parsedBulk.deal_id,
+      });
       return reply.status(201).send({ data: created });
     }
 
@@ -496,7 +521,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.post("/purchases/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = bulkDeleteIdsSchema.parse(request.body);
-    const result = await warehouseService.bulkDeletePurchaseRequests(tenant_id, body.ids);
+    const result = await warehouseService.bulkDeletePurchaseRequests(tenant_id, body);
     return reply.send({ data: result });
   });
 
@@ -506,8 +531,12 @@ export async function warehouseRoutes(app: FastifyInstance) {
 
   app.get("/supplier-orders", { onRequest: canRead }, async (request, reply) => {
     const { tenant_id } = request;
-    const { status } = request.query as { status?: string };
-    const list = await warehouseService.listSupplierOrders(tenant_id, status);
+    const query = warehouseTabQuerySchema.parse(request.query ?? {});
+    if (query.page !== undefined) {
+      const result = await warehouseService.listSupplierOrdersPaginated(tenant_id, query);
+      return reply.send(result);
+    }
+    const list = await warehouseService.listSupplierOrders(tenant_id, query.status);
     return reply.send({ data: list });
   });
 
@@ -547,7 +576,7 @@ export async function warehouseRoutes(app: FastifyInstance) {
   app.post("/supplier-orders/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
     const { tenant_id } = request;
     const body = bulkDeleteIdsSchema.parse(request.body);
-    const result = await warehouseService.bulkDeleteSupplierOrders(tenant_id, body.ids);
+    const result = await warehouseService.bulkDeleteSupplierOrders(tenant_id, body);
     return reply.send({ data: result });
   });
 

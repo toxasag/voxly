@@ -1,4 +1,5 @@
 import { nullIfBlank } from "../../../lib/string.utils.js";
+import { buildSortOrderBy, nullableTextExpr, type SortDirection } from "../../../lib/table-query.js";
 import type {
   CompanyDTO,
   CompanyRow,
@@ -53,6 +54,8 @@ export interface ListCompaniesOptions {
   managerId?: string;
   limit: number;
   offset: number;
+  sortBy?: string;
+  sortDir?: SortDirection;
 }
 
 export class CompaniesService {
@@ -89,12 +92,36 @@ export class CompaniesService {
 
     params.push(options.limit, options.offset);
 
+    const orderBy = buildSortOrderBy({
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+      columns: {
+        name: nullableTextExpr("c.name"),
+        domain: { expr: nullableTextExpr("c.domain_name"), nullable: true },
+        domain_name: { expr: nullableTextExpr("c.domain_name"), nullable: true },
+        created_by: { expr: nullableTextExpr("u.name"), nullable: true },
+        manager: { expr: nullableTextExpr("c.manager_name"), nullable: true },
+        manager_name: { expr: nullableTextExpr("c.manager_name"), nullable: true },
+        created: "c.created_at",
+        created_at: "c.created_at",
+        linkedin: { expr: nullableTextExpr("c.linkedin_link"), nullable: true },
+        address: { expr: nullableTextExpr("c.address_city"), nullable: true },
+        reach: { expr: "c.annual_revenue", nullable: true },
+        inn: { expr: nullableTextExpr("c.inn"), nullable: true },
+        contacts: "COALESCE(ct.contacts_count, 0)",
+        deals: "COALESCE(d.deals_count, 0)",
+        budget: "COALESCE(d.deals_budget_total, 0)",
+      },
+      defaultOrderBy: "c.created_at DESC",
+      tieBreaker: "c.id DESC",
+    });
+
     const rows = await query<CompanyRow>(
       `SELECT ${COMPANY_COLUMNS_WITH_COUNTS}
        FROM companies c
        ${COMPANY_COUNT_JOINS}
        WHERE ${where}
-       ORDER BY c.created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );

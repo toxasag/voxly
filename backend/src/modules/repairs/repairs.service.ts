@@ -1,4 +1,12 @@
 import { nullIfBlank } from "../../lib/string.utils.js";
+import {
+  appendExcludedIdsCondition,
+  buildSortOrderBy,
+  nullableTextExpr,
+  resolveBulkTargetIds,
+  type BulkActionPayload,
+  type SortDirection,
+} from "../../lib/table-query.js";
 import type {
   ChangeStatusPayload,
   ClientLookupDealDTO,
@@ -96,9 +104,114 @@ export interface ListRepairsOptions {
   search?: string;
   limit: number;
   offset: number;
+  sortBy?: string;
+  sortDir?: SortDirection;
 }
 
 export class RepairsService {
+  private buildRepairsWhereClause(
+    tenantId: string,
+    options: {
+      dealId?: string;
+      status?: RepairStatus | "active";
+      paymentStatus?: RepairPaymentStatus;
+      priority?: RepairPriority;
+      masterId?: string;
+      customerId?: string;
+      search?: string;
+      excludedIds?: string[];
+    },
+  ): { where: string; params: SqlParam[] } {
+    const conditions: string[] = ["ro.tenant_id = $1", "ro.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    if (options.dealId !== undefined) {
+      params.push(options.dealId);
+      conditions.push(`ro.deal_id = $${params.length}`);
+    }
+
+    if (options.status === "active") {
+      conditions.push(`ro.status <> 'issued'`);
+    } else if (options.status !== undefined) {
+      params.push(options.status);
+      conditions.push(`ro.status = $${params.length}`);
+    }
+
+    if (options.paymentStatus !== undefined) {
+      params.push(options.paymentStatus);
+      conditions.push(`ro.payment_status = $${params.length}`);
+    }
+
+    if (options.priority !== undefined) {
+      params.push(options.priority);
+      conditions.push(`ro.priority = $${params.length}`);
+    }
+
+    if (options.masterId !== undefined) {
+      params.push(options.masterId);
+      conditions.push(`ro.master_id = $${params.length}`);
+    }
+
+    if (options.customerId !== undefined) {
+      params.push(options.customerId);
+      conditions.push(`ro.customer_id = $${params.length}`);
+    }
+
+    if (options.search !== undefined && options.search.trim().length > 0) {
+      params.push(`%${options.search.trim()}%`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(ro.ticket_number ILIKE ${placeholder}
+          OR ro.customer_name ILIKE ${placeholder}
+          OR ro.customer_phone ILIKE ${placeholder}
+          OR ro.equipment_brand ILIKE ${placeholder}
+          OR ro.equipment_model ILIKE ${placeholder}
+          OR ro.equipment_serial ILIKE ${placeholder})`,
+      );
+    }
+
+    appendExcludedIdsCondition(conditions, params, "ro.id", options.excludedIds);
+    return { where: conditions.join(" AND "), params };
+  }
+
+  private async resolveRepairTargetIds(
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<string[]> {
+    if (Array.isArray(idsOrPayload)) {
+      return Array.from(new Set(idsOrPayload.filter(Boolean)));
+    }
+    return resolveBulkTargetIds({
+      payload: idsOrPayload,
+      buildFilteredQuery: (excludedIds) => {
+        const filters = idsOrPayload.filters ?? {};
+        const { where, params } = this.buildRepairsWhereClause(tenantId, {
+          dealId: typeof filters.deal_id === "string" && filters.deal_id ? filters.deal_id : undefined,
+          status:
+            typeof filters.status === "string" && filters.status !== "all"
+              ? (filters.status as RepairStatus | "active")
+              : undefined,
+          paymentStatus:
+            typeof filters.payment_status === "string" && filters.payment_status !== "all"
+              ? (filters.payment_status as RepairPaymentStatus)
+              : undefined,
+          priority:
+            typeof filters.priority === "string" && filters.priority !== "all"
+              ? (filters.priority as RepairPriority)
+              : undefined,
+          masterId: typeof filters.master_id === "string" && filters.master_id ? filters.master_id : undefined,
+          customerId: typeof filters.customer_id === "string" && filters.customer_id ? filters.customer_id : undefined,
+          search: typeof filters.search === "string" ? filters.search : undefined,
+          excludedIds,
+        });
+        return {
+          sql: `SELECT ro.id FROM repair_orders ro WHERE ${where} ORDER BY ro.id DESC`,
+          params,
+        };
+      },
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Ticket numbering
   // -------------------------------------------------------------------------
@@ -221,63 +334,58 @@ export class RepairsService {
   async list(
     tenantId: string,
     options: ListRepairsOptions,
-  ): Promise<{ items: RepairOrderDTO[]; total: number }> {
-    const conditions: string[] = ["ro.tenant_id = $1", "ro.deleted_at IS NULL"];
-    const params: SqlParam[] = [tenantId];
+  ): Promise<{ items: RepairOrderDTO[]; total: number; inProgressCount: number; readyCount: number }> {
+    const { where, params } = this.buildRepairsWhereClause(tenantId, options);
 
-    if (options.dealId !== undefined) {
-      params.push(options.dealId);
-      conditions.push(`ro.deal_id = $${params.length}`);
-    }
-
-    if (options.status === "active") {
-      conditions.push(`ro.status <> 'issued'`);
-    } else if (options.status !== undefined) {
-      params.push(options.status);
-      conditions.push(`ro.status = $${params.length}`);
-    }
-
-    if (options.paymentStatus !== undefined) {
-      params.push(options.paymentStatus);
-      conditions.push(`ro.payment_status = $${params.length}`);
-    }
-
-    if (options.priority !== undefined) {
-      params.push(options.priority);
-      conditions.push(`ro.priority = $${params.length}`);
-    }
-
-    if (options.masterId !== undefined) {
-      params.push(options.masterId);
-      conditions.push(`ro.master_id = $${params.length}`);
-    }
-
-    if (options.customerId !== undefined) {
-      params.push(options.customerId);
-      conditions.push(`ro.customer_id = $${params.length}`);
-    }
-
-    if (options.search !== undefined && options.search.length > 0) {
-      params.push(`%${options.search}%`);
-      const placeholder = `$${params.length}`;
-      conditions.push(
-        `(ro.ticket_number ILIKE ${placeholder}
-          OR ro.customer_name ILIKE ${placeholder}
-          OR ro.customer_phone ILIKE ${placeholder}
-          OR ro.equipment_brand ILIKE ${placeholder}
-          OR ro.equipment_model ILIKE ${placeholder}
-          OR ro.equipment_serial ILIKE ${placeholder})`,
-      );
-    }
-
-    const where = conditions.join(" AND ");
-
-    const countRow = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM repair_orders ro WHERE ${where}`,
+    const countRow = await queryOne<{ total: string; in_progress_cnt: string; ready_cnt: string }>(
+      `SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE ro.status IN ('intake', 'waiting_parts', 'diagnostics', 'approval', 'in_progress'))::text AS in_progress_cnt,
+         COUNT(*) FILTER (WHERE ro.status = 'ready')::text AS ready_cnt
+       FROM repair_orders ro
+       WHERE ${where}`,
       params,
     );
 
     params.push(options.limit, options.offset);
+
+    const effectiveCostExpr = `COALESCE(
+      ro.final_cost,
+      NULLIF(
+        (SELECT COALESCE(SUM(rw.cost), 0) FROM repair_works rw WHERE rw.tenant_id = ro.tenant_id AND rw.repair_order_id = ro.id) +
+        (SELECT COALESCE(SUM(rp.retail_price * rp.quantity), 0) FROM repair_parts rp WHERE rp.tenant_id = ro.tenant_id AND rp.repair_order_id = ro.id),
+        0
+      ),
+      ro.estimated_cost,
+      0
+    )`;
+
+    const orderBy = buildSortOrderBy({
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+      columns: {
+        ticket_number: nullableTextExpr("ro.ticket_number"),
+        equipment: {
+          expr: nullableTextExpr("ro.equipment_brand"),
+          secondaryExpr: nullableTextExpr("ro.equipment_model"),
+          nullable: true,
+        },
+        customer_name: nullableTextExpr("ro.customer_name"),
+        deal: { expr: nullableTextExpr("d.title"), nullable: true },
+        deal_title: { expr: nullableTextExpr("d.title"), nullable: true },
+        status: "ro.status",
+        payment_status: "ro.payment_status",
+        priority: "CASE ro.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END",
+        team: { expr: nullableTextExpr("ro.master_name"), nullable: true },
+        master_name: { expr: nullableTextExpr("ro.master_name"), nullable: true },
+        cost: effectiveCostExpr,
+        final_cost: effectiveCostExpr,
+        received_at: "ro.received_at",
+        created_at: "ro.created_at",
+      },
+      defaultOrderBy: `CASE ro.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END ASC, ro.received_at DESC`,
+      tieBreaker: "ro.id DESC",
+    });
 
     const rows = await query<RepairOrderRow>(
       `SELECT
@@ -331,14 +439,17 @@ export class RepairsService {
        LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
        LEFT JOIN companies c ON c.id = COALESCE(d.company_id, ct.company_id) AND c.tenant_id = ro.tenant_id
        WHERE ${where}
-       ORDER BY
-         CASE ro.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END ASC,
-         ro.received_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
 
-    return { items: rows.map(toRepairOrderDTO), total: Number(countRow?.total ?? 0) };
+    return {
+      items: rows.map(toRepairOrderDTO),
+      total: Number(countRow?.total ?? 0),
+      inProgressCount: Number(countRow?.in_progress_cnt ?? 0),
+      readyCount: Number(countRow?.ready_cnt ?? 0),
+    };
   }
 
   async syncDealBudgetFromRepairs(tenantId: string, dealId: string | null | undefined): Promise<void> {
@@ -2286,7 +2397,11 @@ export class RepairsService {
   /**
    * Пакетное удаление наряд-заказов (soft-delete).
    */
-  async batchDelete(tenantId: string, ids: string[]): Promise<{ count: number; ids: string[] }> {
+  async batchDelete(
+    tenantId: string,
+    idsOrPayload: string[] | BulkActionPayload,
+  ): Promise<{ count: number; ids: string[] }> {
+    const ids = await this.resolveRepairTargetIds(tenantId, idsOrPayload);
     if (ids.length === 0) return { count: 0, ids: [] };
     const rows = await query<{ id: string; deal_id: string | null }>(
       `UPDATE repair_orders SET deleted_at = now()
@@ -2307,11 +2422,12 @@ export class RepairsService {
    */
   async batchUpdateStatus(
     tenantId: string,
-    ids: string[],
+    idsOrPayload: string[] | BulkActionPayload,
     status: RepairStatus,
     author: { id: string; name: string },
     comment?: string,
   ): Promise<{ updated: number; ids: string[]; errors: { id: string; error: string }[] }> {
+    const ids = await this.resolveRepairTargetIds(tenantId, idsOrPayload);
     const updatedIds: string[] = [];
     const errors: { id: string; error: string }[] = [];
 
@@ -2451,9 +2567,13 @@ export class RepairsService {
    */
   async batchUpdatePaymentStatus(
     tenantId: string,
-    ids: string[],
+    idsOrPayload: string[] | BulkActionPayload,
     paymentStatus: RepairPaymentStatus,
   ): Promise<{ updated: number; ids: string[] }> {
+    const ids = await this.resolveRepairTargetIds(tenantId, idsOrPayload);
+    if (ids.length === 0) {
+      return { updated: 0, ids: [] };
+    }
     await query(
       `UPDATE repair_orders
        SET payment_status = $1, updated_at = now()

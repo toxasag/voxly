@@ -15,10 +15,12 @@ import { queueManager } from "../../../infrastructure/queue.js";
 import type { TaskAssignmentNotificationJob } from "./task-notification.service.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
 import { bulkActionSchema } from "../shared/bulk-action.types.js";
+import { sortDirSchema } from "../../../lib/table-query.js";
 
 const listQuerySchema = z
   .object({
     filter: z.enum(["today", "overdue", "upcoming", "my", "unassigned"]).optional(),
+    preset: z.enum(["all", "todo", "in_progress", "my", "overdue", "high_priority", "done"]).optional(),
     search: z.string().trim().min(1).max(200).optional(),
     assignee_id: z.string().uuid().optional(),
     priority: taskPrioritySchema.optional(),
@@ -27,6 +29,10 @@ const listQuerySchema = z
     linked_entity_id: z.string().uuid().optional(),
     limit: z.coerce.number().int().positive().max(500).default(25),
     offset: z.coerce.number().int().nonnegative().default(0),
+    sort: z.string().max(64).optional(),
+    order: sortDirSchema.optional(),
+    sort_by: z.string().max(64).optional(),
+    sort_dir: sortDirSchema.optional(),
   })
   .refine(
     (value) =>
@@ -45,8 +51,9 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   app.get("", { onRequest: canRead }, async (request, reply) => {
     const params = listQuerySchema.parse(request.query);
 
-    const { items, total } = await service.list(request.tenant_id, {
+    const { items, total, presetCounts } = await service.list(request.tenant_id, {
       filter: params.filter,
+      preset: params.preset,
       search: params.search,
       assigneeId: params.assignee_id,
       priority: params.priority,
@@ -56,11 +63,13 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       currentUserId: request.authUser.id,
       limit: params.limit,
       offset: params.offset,
+      sortBy: params.sort_by ?? params.sort,
+      sortDir: params.sort_dir ?? params.order,
     });
 
     return reply.send({
       data: items,
-      meta: { limit: params.limit, offset: params.offset, total, filter: params.filter ?? null },
+      meta: { limit: params.limit, offset: params.offset, total, filter: params.filter ?? null, presetCounts },
     });
   });
 
@@ -153,7 +162,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/bulk-delete", { onRequest: canWrite }, async (request, reply) => {
     const payload = bulkActionSchema.parse(request.body);
-    const result = await service.bulkDelete(request.tenant_id, payload);
+    const result = await service.bulkDelete(request.tenant_id, payload, request.authUser.id);
     return reply.send({ data: result });
   });
 

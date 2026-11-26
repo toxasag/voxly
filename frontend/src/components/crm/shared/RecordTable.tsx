@@ -91,6 +91,8 @@ export interface RecordColumn<T> {
   width?: number;
   align?: "left" | "right" | "center";
   sortValue?: (row: T) => string | number;
+  /** Явный флаг сортируемости колонки (нужен при серверной сортировке без клиентского `sortValue`). */
+  sortable?: boolean;
   render: (row: T) => ReactNode;
   /**
    * Колонку можно скрыть. Первая колонка (идентификатор записи) не скрывается —
@@ -133,6 +135,8 @@ export interface RecordTableProps<T> {
   sortColumn?: string | null;
   sortAsc?: boolean;
   onSortChange?: (columnId: string | null, asc: boolean) => void;
+  /** Отключает локальную пересортировку страницы на клиенте — порядок строк приходит с сервера. */
+  serverSort?: boolean;
 }
 
 export function RecordTable<T>({
@@ -156,6 +160,7 @@ export function RecordTable<T>({
   sortColumn: externalSortColumn,
   sortAsc: externalSortAsc,
   onSortChange,
+  serverSort = false,
 }: RecordTableProps<T>) {
   const [internalSortColumn, setInternalSortColumn] = useState<string | null>(null);
   const [internalSortAsc, setInternalSortAsc] = useState(false);
@@ -167,9 +172,23 @@ export function RecordTable<T>({
   const handleSortClick = useCallback(
     (columnId: string) => {
       let nextColumn: string | null = columnId;
-      let nextAsc = false;
+      let nextAsc = serverSort;
       if (sortColumn === columnId) {
-        nextAsc = !sortAsc;
+        if (serverSort) {
+          if (sortAsc) {
+            nextAsc = false;
+          } else {
+            nextColumn = null;
+            nextAsc = true;
+          }
+        } else {
+          if (!sortAsc) {
+            nextAsc = true;
+          } else {
+            nextColumn = null;
+            nextAsc = false;
+          }
+        }
       }
       if (!isControlledSort) {
         setInternalSortColumn(nextColumn);
@@ -177,7 +196,7 @@ export function RecordTable<T>({
       }
       onSortChange?.(nextColumn, nextAsc);
     },
-    [isControlledSort, sortColumn, sortAsc, onSortChange],
+    [isControlledSort, serverSort, sortColumn, sortAsc, onSortChange],
   );
 
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
@@ -426,7 +445,7 @@ export function RecordTable<T>({
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
 
   const sortedRows = useMemo(() => {
-    if (sortColumn === null) return rows;
+    if (serverSort || sortColumn === null) return rows;
     const column = columns.find((entry) => entry.id === sortColumn);
     if (column?.sortValue === undefined) return rows;
 
@@ -437,7 +456,7 @@ export function RecordTable<T>({
       if (typeof a === "number" && typeof b === "number") return (a - b) * factor;
       return String(a).localeCompare(String(b), "ru") * factor;
     });
-  }, [rows, columns, sortColumn, sortAsc]);
+  }, [rows, columns, sortColumn, sortAsc, serverSort]);
 
   // -------------------------------------------------------------------------
   // Ресайз колонки
@@ -765,7 +784,7 @@ export function RecordTable<T>({
                     <GripVertical className="mr-1 h-3 w-3 shrink-0 text-[#cccccc] opacity-0 transition-opacity group-hover:opacity-100" />
                   )}
 
-                  {column.sortValue !== undefined ? (
+                  {(column.sortable ?? (column.sortValue !== undefined || (serverSort && onSortChange !== undefined))) ? (
                     <button
                       type="button"
                       onClick={() => handleSortClick(column.id)}

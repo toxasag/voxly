@@ -27,6 +27,7 @@ export interface RowsPerPageSelectProps {
   onChange: (limit: number) => void;
   disabled?: boolean;
   className?: string;
+  limitOptions?: readonly number[];
 }
 
 export function RowsPerPageSelect({
@@ -34,6 +35,7 @@ export function RowsPerPageSelect({
   onChange,
   disabled = false,
   className,
+  limitOptions = WAREHOUSE_LIMITS,
 }: RowsPerPageSelectProps) {
   return (
     <div className={cn("flex items-center gap-2", className)}>
@@ -44,7 +46,7 @@ export function RowsPerPageSelect({
           disabled={disabled}
           onValueChange={(val) => {
             const num = parseInt(val, 10);
-            if (WAREHOUSE_LIMITS.includes(num as WarehouseLimit)) {
+            if (limitOptions.includes(num)) {
               onChange(num);
             }
           }}
@@ -53,7 +55,7 @@ export function RowsPerPageSelect({
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="end">
-            {WAREHOUSE_LIMITS.map((limit) => (
+            {limitOptions.map((limit) => (
               <SelectItem key={limit} value={String(limit)} className="font-mono text-xs">
                 {limit}
               </SelectItem>
@@ -74,6 +76,10 @@ export interface WarehousePaginationProps {
   onLimitChange: (newLimit: number) => void;
   disabled?: boolean;
   className?: string;
+  /** Название сущности в родительном падеже множественного числа (по умолчанию «товаров»). */
+  entityLabel?: string;
+  /** Опциональный список лимитов строк (по умолчанию 25..250). */
+  limitOptions?: readonly number[];
 }
 
 export function WarehousePagination({
@@ -85,6 +91,8 @@ export function WarehousePagination({
   onLimitChange,
   disabled = false,
   className,
+  entityLabel = "товаров",
+  limitOptions,
 }: WarehousePaginationProps) {
   // Вычисление диапазона отображаемых номеров страниц с ellipsis при pages > 7
   const paginationRange = useMemo(() => {
@@ -126,11 +134,12 @@ export function WarehousePagination({
           <strong className="font-mono text-[#111111]">
             {startRow}–{endRow}
           </strong>{" "}
-          из <strong className="font-mono text-[#111111]">{total}</strong> товаров
+          из <strong className="font-mono text-[#111111]">{total}</strong> {entityLabel}
         </span>
         <RowsPerPageSelect
           value={limit}
           disabled={disabled}
+          limitOptions={limitOptions}
           onChange={(newLimit) => onLimitChange(newLimit)}
         />
       </div>

@@ -292,23 +292,31 @@ export async function buildApp(): Promise<FastifyInstance> {
       const userId = request.authUser?.id ?? null;
       const body = request.body as Record<string, unknown>;
       const { warehouseService } = await import("./modules/warehouse/warehouse.service.js");
+      const {
+        bulkCreatePurchaseRequestsSchema,
+        createPurchaseRequestSchema,
+      } = await import("./modules/warehouse/warehouse.types.js");
 
-      if (Array.isArray(body?.itemIds) && body.itemIds.length > 0) {
+      if (body?.mode === "all" || (Array.isArray(body?.itemIds) && body.itemIds.length > 0)) {
+        const parsedBulk = bulkCreatePurchaseRequestsSchema.parse(body);
         const created = await warehouseService.createBulkPurchaseRequests(
           tenant_id,
           userId,
           {
-            itemIds: body.itemIds as string[],
-            status: typeof body.status === "string" ? body.status : undefined,
-            comment: typeof body.comment === "string" ? body.comment : undefined,
-            repair_order_id: typeof body.repair_order_id === "string" ? body.repair_order_id : undefined,
-            deal_id: typeof body.deal_id === "string" ? body.deal_id : undefined,
+            mode: parsedBulk.mode,
+            ids: parsedBulk.ids,
+            itemIds: parsedBulk.itemIds ?? parsedBulk.ids ?? [],
+            excluded_ids: parsedBulk.excluded_ids,
+            filters: parsedBulk.filters,
+            status: parsedBulk.status,
+            comment: parsedBulk.comment,
+            repair_order_id: parsedBulk.repair_order_id,
+            deal_id: parsedBulk.deal_id,
           },
         );
         return reply.status(201).send({ data: created });
       }
 
-      const { createPurchaseRequestSchema } = await import("./modules/warehouse/warehouse.types.js");
       const parsed = createPurchaseRequestSchema.parse(request.body);
       const created = await warehouseService.createPurchaseRequest(tenant_id, userId, parsed);
       return reply.status(201).send({ data: created });
