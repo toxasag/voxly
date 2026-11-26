@@ -1187,7 +1187,8 @@ export class CrmPipelineService {
             ? input.messageTimestamp
             : null;
 
-      // Защита от дублирования сообщений: сначала точный ключ external_message_id, затем окно 60 сек по контенту/вложению
+      // Защита от дублирования сообщений: сначала точный ключ external_message_id или exact attachment URL,
+      // а текстовое окно 60 сек применяем только если у входящего или существующего сообщения нет external_message_id
       const existingMsg = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
@@ -1196,8 +1197,13 @@ export class CrmPipelineService {
            AND delivery_status <> 'failed'
            AND (
              ($6::text IS NOT NULL AND metadata->>'external_message_id' = $6)
+             OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
              OR (
-               (content = $3 OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4))
+               (
+                 $6::text IS NULL
+                 OR COALESCE(NULLIF(metadata->>'external_message_id', ''), '') = ''
+               )
+               AND content = $3
                AND (
                  ($7::timestamptz IS NOT NULL AND created_at >= $7::timestamptz - interval '60 seconds' AND created_at <= $7::timestamptz + interval '60 seconds')
                  OR ($7::timestamptz IS NULL AND created_at > now() - interval '60 seconds')
@@ -1504,6 +1510,7 @@ export class CrmPipelineService {
     attachmentType?: string | null;
     externalMessageId?: string;
     messageTimestamp?: Date | string;
+    sourceMetadata?: Record<string, unknown>;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
     // Fallback через bridge для MAX выполняется вне открытой транзакции БД:
     // внешний HTTP-запрос никогда не удерживает коннект пула PostgreSQL.
@@ -1652,7 +1659,7 @@ export class CrmPipelineService {
             ? input.messageTimestamp
             : null;
 
-      // Дедупликация исходящих сообщений: по external_message_id или в пределах 60 секунд (исключает дубли при отправке из веб-CRM)
+      // Дедупликация исходящих сообщений: по external_message_id / вложению или в пределах 60 секунд для строк без external_message_id
       const existingOutbound = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
@@ -1661,8 +1668,13 @@ export class CrmPipelineService {
            AND delivery_status <> 'failed'
            AND (
              ($6::text IS NOT NULL AND metadata->>'external_message_id' = $6)
+             OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4)
              OR (
-               (content = $3 OR ($4::text IS NOT NULL AND attachment IS NOT NULL AND attachment = $4))
+               (
+                 $6::text IS NULL
+                 OR COALESCE(NULLIF(metadata->>'external_message_id', ''), '') = ''
+               )
+               AND content = $3
                AND (
                  ($7::timestamptz IS NOT NULL AND created_at >= $7::timestamptz - interval '60 seconds' AND created_at <= $7::timestamptz + interval '60 seconds')
                  OR ($7::timestamptz IS NULL AND created_at >= now() - interval '60 seconds')
@@ -1724,6 +1736,11 @@ export class CrmPipelineService {
         [input.tenantId, activeDeal.id, "messenger_takeover", contact.id],
       );
 
+      const mergedOutboundMetadata: Record<string, unknown> = {
+        ...(input.sourceMetadata ?? {}),
+        ...(externalMsgId ? { external_message_id: externalMsgId } : {}),
+      };
+
       const msgRes = await tx.queryOne<{ id: string; created_at: Date | string }>(
         `INSERT INTO deal_messages
            (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, metadata, created_at)
@@ -1738,7 +1755,7 @@ export class CrmPipelineService {
           input.channel,
           input.attachment ?? null,
           input.attachmentType ?? null,
-          JSON.stringify(externalMsgId ? { external_message_id: externalMsgId } : {}),
+          JSON.stringify(mergedOutboundMetadata),
           messageCreatedAtIso,
         ],
       );

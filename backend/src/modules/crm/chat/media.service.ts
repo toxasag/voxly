@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { detectMimeFromBuffer, extensionToMime, mimeToExtension } from "../../../lib/mime.utils.js";
 
 // ---------------------------------------------------------------------------
 // Media Service (M5.3): прием и обработка вложений чата (аудио, фото, документы).
@@ -38,10 +39,35 @@ export class ChatMediaService {
   }): Promise<StoredMediaFile> {
     await this.ensureDir();
 
+    const detectedMime = detectMimeFromBuffer(input.buffer);
+    const normalizedInputMime = input.mimeType?.split(";")[0]?.trim().toLowerCase();
+    const resolvedMime =
+      !normalizedInputMime || normalizedInputMime === "application/octet-stream"
+        ? detectedMime ?? extensionToMime(input.originalName)
+        : detectedMime && detectedMime.startsWith("image/") && normalizedInputMime.startsWith("image/")
+          ? detectedMime
+          : input.mimeType;
+
     const id = crypto.randomUUID();
-    const ext = path.extname(input.originalName) || this.mimeToExtension(input.mimeType);
-    const rawBase = path.basename(input.originalName, ext);
-    const cleanBase = rawBase.replace(/[/\\?%*:|"<>]/g, "_").slice(0, 50);
+    const rawExt = path.extname(input.originalName);
+    const mimeExt = mimeToExtension(resolvedMime);
+    const ext =
+      !rawExt || (rawExt.toLowerCase() === ".bin" && mimeExt !== ".bin")
+        ? mimeExt
+        : rawExt;
+
+    const rawBase = path.basename(input.originalName, rawExt);
+    let cleanBase = rawBase.replace(/[/\\?%*:|"<>]/g, "_").slice(0, 50);
+    if (cleanBase === "file" && rawExt.toLowerCase() === ".bin" && ext !== ".bin") {
+      cleanBase = resolvedMime.startsWith("image/")
+        ? "photo"
+        : resolvedMime.startsWith("video/")
+          ? "video"
+          : resolvedMime.startsWith("audio/")
+            ? "audio"
+            : "media";
+    }
+
     const safeFilename = cleanBase
       ? `${input.tenantId}_${id}_${cleanBase}${ext}`
       : `${input.tenantId}_${id}${ext}`;
@@ -49,49 +75,17 @@ export class ChatMediaService {
 
     await fs.writeFile(filePath, input.buffer);
 
+    const outputName =
+      rawExt.toLowerCase() === ".bin" && ext !== ".bin"
+        ? `${cleanBase}${ext}`
+        : input.originalName;
+
     return {
       id,
       url: `${this.publicBaseUrl}/${safeFilename}`,
-      filename: input.originalName,
-      mimeType: input.mimeType,
+      filename: outputName,
+      mimeType: resolvedMime,
       sizeBytes: input.buffer.length,
     };
-  }
-
-  private mimeToExtension(mime: string): string {
-    switch (mime) {
-      case "image/jpeg":
-        return ".jpg";
-      case "image/png":
-        return ".png";
-      case "image/webp":
-        return ".webp";
-      case "audio/ogg":
-      case "audio/opus":
-        return ".ogg";
-      case "audio/mp3":
-      case "audio/mpeg":
-        return ".mp3";
-      case "audio/mp4":
-      case "audio/m4a":
-      case "audio/x-m4a":
-        return ".m4a";
-      case "video/mp4":
-        return ".mp4";
-      case "video/quicktime":
-        return ".mov";
-      case "text/plain":
-        return ".txt";
-      case "application/pdf":
-        return ".pdf";
-      case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-      case "application/msword":
-        return ".docx";
-      case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-      case "application/vnd.ms-excel":
-        return ".xlsx";
-      default:
-        return ".bin";
-    }
   }
 }

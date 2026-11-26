@@ -46,6 +46,8 @@ export interface MaxBridgeDialogMessage {
   out: boolean;
   text: string;
   date: number;
+  isForwarded?: boolean;
+  forwardFromUserId?: string;
   attachments?: Array<{
     type: string;
     fileId?: string;

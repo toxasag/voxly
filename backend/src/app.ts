@@ -61,7 +61,7 @@ import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import { getRedisHealth } from "./infrastructure/redis.js";
 import { getBullQueueMetrics } from "./infrastructure/queue-metrics.js";
-import { extensionToMime } from "./lib/mime.utils.js";
+import { detectMimeFromFileHeader, extensionToMime, mimeToExtension } from "./lib/mime.utils.js";
 import releaseManifest from "./release-manifest.json" with { type: "json" };
 import fastify from "fastify";
 
@@ -594,7 +594,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
     const { safeFilename, filePath } = resolvedUpload;
     const ext = path.extname(safeFilename).toLowerCase();
-    const contentType = extensionToMime(ext);
+    let contentType = extensionToMime(ext);
+    if (contentType === "application/octet-stream") {
+      contentType = (await detectMimeFromFileHeader(filePath).catch(() => null)) ?? contentType;
+    }
 
     const isPublicAsset =
       safeFilename.includes("_avatar_") ||
@@ -644,7 +647,13 @@ export async function buildApp(): Promise<FastifyInstance> {
         return reply.status(404).send({ error: "File not found" });
       }
 
-      const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+      let originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+      if (ext === ".bin") {
+        const inferredExt = mimeToExtension(contentType);
+        if (inferredExt !== ".bin") {
+          originalName = originalName.replace(/\.bin$/i, inferredExt);
+        }
+      }
       const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
       const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
       const disposition = isInline
@@ -704,7 +713,10 @@ export async function buildApp(): Promise<FastifyInstance> {
           const stat = await fs.stat(filePath);
           if (stat.isFile()) {
             const ext = path.extname(safeFilename).toLowerCase();
-            const contentType = message.attachment_type || extensionToMime(ext);
+            let contentType = message.attachment_type || extensionToMime(ext);
+            if (contentType === "application/octet-stream") {
+              contentType = (await detectMimeFromFileHeader(filePath).catch(() => null)) ?? contentType;
+            }
             const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
             const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
             const disposition = isInline

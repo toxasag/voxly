@@ -1,4 +1,5 @@
 import { query, runWithPlatformScope, withTenant } from "../../../../db/client.js";
+import { detectMimeFromBuffer } from "../../../../lib/mime.utils.js";
 import { decryptSecret, encryptSecret } from "../../../../services/credentials-cipher.js";
 import { extractMaxIdentity, normalizeMaxPhone, type MaxRawName } from "../../../channels/max-identity.js";
 import type { MaxBridgeDialog, MaxBridgeDialogMessage, MaxPrivateDialogsResponse } from "../../../channels/max-bridge.service.js";
@@ -841,20 +842,56 @@ export class MaxTsAdapter implements IMessagingAdapter {
     session: ActiveSession,
     rawMsg: RawMaxMessage,
     chatId: string,
-  ): { text: string; attachments: InboundAttachment[] } {
-    const forwarded = rawMsg.link?.type === "FORWARD" ? rawMsg.link.message : undefined;
-    const rawAtts = [
+  ): {
+    text: string;
+    attachments: InboundAttachment[];
+    isForwarded: boolean;
+    forwardFromUserId?: string;
+  } {
+    const rawAtts: RawMaxAttach[] = [
       ...(Array.isArray(rawMsg.attaches) ? rawMsg.attaches : []),
-      ...(Array.isArray(forwarded?.attaches) ? forwarded.attaches : []),
     ];
+    const forwardedTexts: string[] = [];
+    let isForwarded = false;
+    let forwardFromUserId: string | undefined;
+
+    // Обходим цепочку пересланных сообщений (link.type === "FORWARD"), включая вложенные
+    let currLink = rawMsg.link;
+    const seenLinks = new Set<object>();
+    let depth = 0;
+    while (currLink && String(currLink.type ?? "").toUpperCase() === "FORWARD" && depth < 5) {
+      if (seenLinks.has(currLink)) break;
+      seenLinks.add(currLink);
+      isForwarded = true;
+
+      const fwdMsg = currLink.message;
+      const fwdSender = asStrId(fwdMsg?.sender ?? fwdMsg?.senderId ?? fwdMsg?.from ?? currLink.sender);
+      if (!forwardFromUserId && fwdSender) {
+        forwardFromUserId = fwdSender;
+      }
+
+      if (fwdMsg) {
+        if (Array.isArray(fwdMsg.attaches)) {
+          rawAtts.push(...fwdMsg.attaches);
+        }
+        const fwdText = (fwdMsg.text ?? "").trim();
+        if (fwdText) {
+          forwardedTexts.push(fwdText);
+        }
+        currLink = fwdMsg.link;
+      } else {
+        break;
+      }
+      depth++;
+    }
 
     const attachments: InboundAttachment[] = [];
     const msgId = asStrId(rawMsg.id ?? "0");
 
-    for (const att of rawAtts) {
+    for (const [attIdx, att] of rawAtts.entries()) {
       const kind = String(att._type ?? att.type ?? "").toUpperCase();
       if (kind === "PHOTO") {
-        const photoId = asStrId(att.photoId ?? att.photoToken ?? Date.now());
+        const photoId = asStrId(att.photoId ?? att.photoToken ?? `${Date.now()}_${attIdx}`);
         const fileId = `max:${chatId}:${msgId}:photo:${photoId}`;
         if (att.baseUrl) {
           session.photoUrlCache.set(fileId, att.baseUrl);
@@ -866,21 +903,21 @@ export class MaxTsAdapter implements IMessagingAdapter {
           mimeType: "image/jpeg",
         });
       } else if (kind === "VIDEO") {
-        const videoId = asStrId(att.videoId ?? Date.now());
+        const videoId = asStrId(att.videoId ?? `${Date.now()}_${attIdx}`);
         attachments.push({
           type: "video",
           fileId: `max:${chatId}:${msgId}:video:${videoId}`,
           mimeType: "video/mp4",
         });
       } else if (kind === "AUDIO") {
-        const audioId = asStrId(att.audioId ?? Date.now());
+        const audioId = asStrId(att.audioId ?? `${Date.now()}_${attIdx}`);
         attachments.push({
           type: "voice",
           fileId: `max:${chatId}:${msgId}:audio:${audioId}`,
           mimeType: "audio/ogg",
         });
       } else if (kind === "FILE") {
-        const fileId = asStrId(att.fileId ?? Date.now());
+        const fileId = asStrId(att.fileId ?? `${Date.now()}_${attIdx}`);
         attachments.push({
           type: "document",
           fileId: `max:${chatId}:${msgId}:file:${fileId}`,
@@ -891,7 +928,7 @@ export class MaxTsAdapter implements IMessagingAdapter {
       }
     }
 
-    const baseText = (rawMsg.text ?? "").trim() || (forwarded?.text ?? "").trim();
+    const baseText = (rawMsg.text ?? "").trim() || forwardedTexts[0] || "";
     const fallbackLabel =
       attachments[0]?.type === "photo"
         ? "[фото]"
@@ -906,6 +943,8 @@ export class MaxTsAdapter implements IMessagingAdapter {
     return {
       text: baseText || fallbackLabel,
       attachments,
+      isForwarded,
+      forwardFromUserId,
     };
   }
 
@@ -953,7 +992,11 @@ export class MaxTsAdapter implements IMessagingAdapter {
       return;
     }
 
-    const { text, attachments } = this.extractMessageAttachments(session, rawMsg, chatId);
+    const { text, attachments, isForwarded, forwardFromUserId } = this.extractMessageAttachments(
+      session,
+      rawMsg,
+      chatId,
+    );
     if (!text && attachments.length === 0) return;
 
     const profile = await this.lookupContactInfo(session, peerUserId);
@@ -987,6 +1030,8 @@ export class MaxTsAdapter implements IMessagingAdapter {
           selfPhone: session.selfPhone,
           senderFirstName: profile?.firstName,
           senderLastName: profile?.lastName,
+          isForwarded,
+          ...(forwardFromUserId ? { forwardFromUserId } : {}),
         },
       },
     };
@@ -1352,7 +1397,11 @@ export class MaxTsAdapter implements IMessagingAdapter {
         const rawTime = Number(m.time ?? m.date ?? Date.now());
         const senderId = asStrId(m.sender ?? m.senderId ?? m.from);
         const fromMe = Boolean(m.out) || Boolean(session.selfUserId && senderId === session.selfUserId);
-        const { text, attachments } = this.extractMessageAttachments(session, m, params.chatId);
+        const { text, attachments, isForwarded, forwardFromUserId } = this.extractMessageAttachments(
+          session,
+          m,
+          params.chatId,
+        );
         return {
           id: asStrId(m.id ?? rawTime),
           chatId: params.chatId,
@@ -1362,7 +1411,11 @@ export class MaxTsAdapter implements IMessagingAdapter {
           fromMe,
           timestamp: rawTime > 1e11 ? rawTime : rawTime * 1000,
           attachments: attachments.length > 0 ? attachments : undefined,
-          rawPayload: m as unknown as Record<string, unknown>,
+          rawPayload: {
+            ...(m as unknown as Record<string, unknown>),
+            isForwarded,
+            ...(forwardFromUserId ? { forwardFromUserId } : {}),
+          },
         };
       });
 
@@ -1432,6 +1485,10 @@ export class MaxTsAdapter implements IMessagingAdapter {
             out: m.fromMe,
             text: m.text,
             date: Math.floor(m.timestamp / 1000),
+            ...(m.rawPayload?.isForwarded === true ? { isForwarded: true } : {}),
+            ...(typeof m.rawPayload?.forwardFromUserId === "string"
+              ? { forwardFromUserId: m.rawPayload.forwardFromUserId }
+              : {}),
             attachments: m.attachments?.map((a) => ({
               type: a.type,
               fileId: a.fileId,
@@ -1530,7 +1587,11 @@ export class MaxTsAdapter implements IMessagingAdapter {
         return { ok: false, error: `HTTP ${resp.status} при скачивании медиа из MAX` };
       }
       const buffer = Buffer.from(await resp.arrayBuffer());
-      const mimeType = resp.headers.get("content-type")?.split(";")[0]?.trim() || fallbackMime;
+      const headerMime = resp.headers.get("content-type")?.split(";")[0]?.trim();
+      const mimeType =
+        (headerMime && headerMime !== "application/octet-stream" ? headerMime : null) ||
+        detectMimeFromBuffer(buffer) ||
+        fallbackMime;
       return { ok: true, buffer, mimeType };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };

@@ -38,6 +38,7 @@ import {
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/apiClient";
+import { readAccessToken } from "@/lib/auth/session";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -222,7 +223,7 @@ function getChannelBadge(channel: string) {
 
 function getAuthTokenForUrl(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("getvoxly_access_token") || null;
+  return readAccessToken() || localStorage.getItem("getvoxly_access_token") || null;
 }
 
 function resolveAttachmentUrl(attachment: string, download = false): string {
@@ -473,6 +474,70 @@ function ChatAudioPlayer({
           className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[#e5e5e5] accent-[#4a38f5]"
         />
       </div>
+    </div>
+  );
+}
+
+function ChatImageAttachment({
+  url,
+  downloadUrl,
+  fileName,
+}: {
+  url: string;
+  downloadUrl?: string;
+  fileName: string;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  if (hasError) {
+    return (
+      <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3 py-2 shadow-2xs max-w-[320px]">
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-medium text-[#111111]" title={fileName}>
+            {fileName || "Изображение"}
+          </div>
+          <div className="text-[11px] text-[#666666]">Не удалось загрузить превью</div>
+        </div>
+        <a
+          href={downloadUrl || url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 text-[11px] font-medium text-[#4a38f5] transition-colors hover:bg-[#f0f0f0]"
+        >
+          <ExternalLink className="h-3 w-3" />
+          <span>Открыть</span>
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs group relative max-w-[320px]">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block overflow-hidden"
+        title="Открыть фото в полном размере"
+      >
+        <img
+          src={url}
+          alt={fileName || "Изображение"}
+          onError={() => setHasError(true)}
+          className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
+          loading="lazy"
+        />
+      </a>
+      <a
+        href={downloadUrl || url}
+        download={fileName}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80 shadow-xs"
+        title="Скачать изображение"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </a>
     </div>
   );
 }
@@ -2027,32 +2092,11 @@ export function CrmChatView({
 
                               if (info.isImage) {
                                 return (
-                                  <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs group relative max-w-[320px]">
-                                    <a
-                                      href={info.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="block overflow-hidden"
-                                      title="Открыть фото в полном размере"
-                                    >
-                                      <img
-                                        src={info.url}
-                                        alt={info.fileName || "Изображение"}
-                                        className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
-                                        loading="lazy"
-                                      />
-                                    </a>
-                                    <a
-                                      href={info.downloadUrl || info.url}
-                                      download={info.fileName}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80 shadow-xs"
-                                      title="Скачать изображение"
-                                    >
-                                      <Download className="h-3.5 w-3.5" />
-                                    </a>
-                                  </div>
+                                  <ChatImageAttachment
+                                    url={info.url}
+                                    downloadUrl={info.downloadUrl}
+                                    fileName={info.fileName}
+                                  />
                                 );
                               }
 
