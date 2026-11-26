@@ -938,6 +938,7 @@ export class CrmEnrichmentService {
       if (accounts.length === 0) return { exists: false, error: "No active MAX account" };
 
       const { messagingRegistry } = await import("../messaging/messaging-registry.js");
+      let fallbackMatch: MaxProfileResolved | null = null;
       let lastError: string | undefined;
 
       for (const account of accounts) {
@@ -948,14 +949,22 @@ export class CrmEnrichmentService {
           .getMaxTsAdapter()
           .lookupProfileByUserId(params.tenantId, account.id, params.maxUserId, params.maxChatId);
         if (res.exists) {
-          return res;
+          if (res.phone) {
+            return {
+              ...fallbackMatch,
+              ...res,
+            };
+          }
+          if (!fallbackMatch) {
+            fallbackMatch = res;
+          }
         }
         if (res.error) {
           lastError = res.error;
         }
       }
 
-      return { exists: false, error: lastError };
+      return fallbackMatch ?? { exists: false, error: lastError };
     } catch (err) {
       return { exists: false, error: String(err) };
     }

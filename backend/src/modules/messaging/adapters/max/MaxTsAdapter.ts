@@ -1012,8 +1012,9 @@ export class MaxTsAdapter implements IMessagingAdapter {
     isBot?: boolean;
   } | null> {
     if (!userId || !/^\d+$/.test(userId)) return null;
+    const cacheKey = `${session.channelAccountId}:${userId}`;
     if (!forceRefresh) {
-      const cached = this.contactCache.get(userId);
+      const cached = this.contactCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
         return cached;
       }
@@ -1065,7 +1066,7 @@ export class MaxTsAdapter implements IMessagingAdapter {
       isBot,
       expiresAt: Date.now() + 10 * 60_000,
     };
-    this.contactCache.set(userId, result);
+    this.contactCache.set(cacheKey, result);
     return result;
   }
 

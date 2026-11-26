@@ -369,6 +369,15 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
 
           if (dialog && Array.isArray(dialog.messages) && dialog.messages.length > 0) {
             try {
+              // Независимо от создания сделки безопасно дозаполняем пустые телефон/ФИО из MAX.
+              await syncMaxContactIdentityFromDialog({
+                tenantId,
+                contactId: contact.id,
+                existingContact: contact,
+                dialog,
+                selfPhone: dialogsResp.selfPhone,
+              });
+
               const dealId = await findOrCreateDealForContactSync({
                 tenantId,
                 contact,
@@ -389,15 +398,6 @@ export async function runChannelHistorySync(data: ChannelHistorySyncJobData): Pr
                   preloadedDialogs: dialogsResp,
                 });
                 totalMessages += inserted;
-
-                // Привязываем max_chat_id/max_user_id к контакту и безопасно дозаполняем пустые телефон/ФИО из MAX
-                await syncMaxContactIdentityFromDialog({
-                  tenantId,
-                  contactId: contact.id,
-                  existingContact: contact,
-                  dialog,
-                  selfPhone: dialogsResp.selfPhone,
-                });
               }
             } catch {
               // Игнорируем ошибку отдельного контакта (например, контакт в статусе поставщика), не прерывая общий синк
