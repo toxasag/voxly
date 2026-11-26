@@ -2027,3 +2027,13 @@
      - В шторке настройки Google Ads добавлены подсказки и поля для ввода параметров потока GA4 (`Measurement ID`, `API Secret`) или `Developer Token`.
      - Обновлены бейджи и описания в каталоге провайдеров.
   5. **Тесты:** добавлен `backend/src/tests/google-ads-conversion-provider.test.ts`.
+
+
+## 2026-11-26: Диагностика входа MAX по телефону (`START_AUTH` / VK Captcha) и переход на QR
+- **Контекст и root cause (скриншот `yandex-eda.getvoxly.ru` + тест `wss://api.oneme.ru/websocket`):**
+  1. На `MaxOpcode.AUTH_REQUEST (17)` (`START_AUTH`) сервер MAX возвращает `error: "captcha.validation-failed"` (`localizedMessage: "Проверка не пройдена, попробуйте ещё раз"`).
+  2. Проверка JS-клиента `web.max.ru` и живого WebSocket подтвердила, что перед `opcode 17` клиент вызывает `opcode 224` (`{ source: "auth", identifier: phone }`) и получает ссылку `https://id.vk.ru/not_robot_captcha?domain=web.max.ru&...`, которая отдаёт HTTP-заголовок `Content-Security-Policy: frame-ancestors web.max.ru web-test.oneme.ru *.web-test.oneme.ru web.messaging-service.ru`. Встраивание виджета капчи VK в `<iframe>` на стороннем домене (`*.getvoxly.ru`) запрещено политикой `id.vk.ru`.
+- **Что изменено:**
+  1. `backend/src/modules/channels/max-native-auth.service.ts` (`startPhoneAuth`): передача `language: "ru"` в `AUTH_REQUEST`, поддержка `res.callOutParams?.trackId` для `checkPhoneCallTrack` и преобразование `CAPTCHA_VALIDATION_FAILED` в явную ошибку `MAX_CAPTCHA_REQUIRED` с рекомендацией подключения по QR-коду.
+  2. `frontend/src/components/integrations/ConnectMaxModal.tsx`: добавлена подсказка про ограничение капчи VK на стороне `web.max.ru`, сохранение выбранного QR-провайдера при переключении вкладок и кнопка быстрого переключения `Подключить по QR-коду` при `MAX_CAPTCHA_REQUIRED`.
+  3. `backend/src/tests/max-phone-auth.test.ts`: добавлены unit-тесты на маппинг `CAPTCHA_VALIDATION_FAILED -> MAX_CAPTCHA_REQUIRED`, `language: "ru"` и `callOutParams.trackId`.

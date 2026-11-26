@@ -627,17 +627,40 @@ export class MaxNativeAuthService {
     const socket = await this.openInitializedSocket(deviceId);
 
     try {
-      const res = await socket.rpc(MaxOpcode.AUTH_REQUEST, {
-        phone: normalizedPhone,
-        type: "START_AUTH",
-      });
+      let res: Record<string, unknown>;
+      try {
+        res = await socket.rpc(MaxOpcode.AUTH_REQUEST, {
+          phone: normalizedPhone,
+          type: "START_AUTH",
+          language: "ru",
+        });
+      } catch (err) {
+        if (
+          err instanceof AppError &&
+          (err.code === "CAPTCHA_VALIDATION_FAILED" || /captcha/i.test(err.message))
+        ) {
+          throw new AppError(
+            400,
+            "MAX_CAPTCHA_REQUIRED",
+            "MAX требует прохождения капчи VK (id.vk.ru), доступной только на официальном сайте web.max.ru. Используйте подключение по QR-коду.",
+          );
+        }
+        throw err;
+      }
+
       const authToken = String(res.token ?? "");
       if (!authToken) {
         throw new AppError(502, "MAX_AUTH_REQUEST_FAILED", "MAX не выдал токен подтверждения телефона");
       }
 
       const authSessionId = randomUUID();
-      const trackId = typeof res.trackId === "string" ? res.trackId : undefined;
+      const callOutParams = res.callOutParams as { trackId?: string } | undefined;
+      const trackId =
+        typeof res.trackId === "string"
+          ? res.trackId
+          : typeof callOutParams?.trackId === "string"
+            ? callOutParams.trackId
+            : undefined;
 
       this.phoneStates.set(authSessionId, {
         authSessionId,
