@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   X,
   Loader2,
@@ -10,13 +10,22 @@ import {
   Plus,
   ChevronDown,
   Check,
+  Search,
+  CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useUpdateSupplierOrder,
   type SupplierOrderDTO,
 } from "@/lib/api/use-warehouse";
-import { useCompanies, useCreateCompany, type CompanyDTO } from "@/lib/api/use-companies";
+import {
+  useCompanies,
+  useCompanyInnLookup,
+  useCreateCompany,
+  type CompanyDTO,
+  type CompanyInnLookupResult,
+} from "@/lib/api/use-companies";
+import { apiClient } from "@/lib/api/apiClient";
 
 interface EditSupplierOrderModalProps {
   open: boolean;
@@ -53,6 +62,11 @@ export function EditSupplierOrderModal({
   const [isCreatingCompany, setIsCreatingCompany] = useState(false);
   const [newCompanyInn, setNewCompanyInn] = useState("");
   const [newCompanyPhone, setNewCompanyPhone] = useState("");
+  const [newCompanyKpp, setNewCompanyKpp] = useState("");
+  const [newCompanyOgrn, setNewCompanyOgrn] = useState("");
+  const [newCompanyLegalAddress, setNewCompanyLegalAddress] = useState("");
+  const [isManualInnLookingUp, setIsManualInnLookingUp] = useState(false);
+  const lastAutoAppliedInnRef = useRef<string>("");
 
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<FormItemState[]>([]);
@@ -61,6 +75,8 @@ export function EditSupplierOrderModal({
     search: supplierInput.trim() || undefined,
     limit: 50,
   });
+  const cleanNewInn = newCompanyInn.replace(/\D/g, "").trim();
+  const innLookupQuery = useCompanyInnLookup(isCreatingCompany ? cleanNewInn : "");
   const createCompanyMutation = useCreateCompany();
   const updateOrderMutation = useUpdateSupplierOrder();
 
@@ -70,6 +86,12 @@ export function EditSupplierOrderModal({
     setNotes(order.notes || "");
     setIsCompanyDropdownOpen(false);
     setIsCreatingCompany(false);
+    setNewCompanyInn("");
+    setNewCompanyPhone("");
+    setNewCompanyKpp("");
+    setNewCompanyOgrn("");
+    setNewCompanyLegalAddress("");
+    lastAutoAppliedInnRef.current = "";
 
     const initialItems: FormItemState[] = (order.items || []).map((it) => ({
       id: it.id,
@@ -86,6 +108,19 @@ export function EditSupplierOrderModal({
     }));
     setItems(initialItems);
   }, [open, order]);
+
+  useEffect(() => {
+    if (!isCreatingCompany) return;
+    const data = innLookupQuery.data;
+    if (!data || !data.inn) return;
+    if (lastAutoAppliedInnRef.current === data.inn) return;
+    lastAutoAppliedInnRef.current = data.inn;
+    if (data.name) setSupplierInput(data.name);
+    setNewCompanyKpp(data.kpp ?? "");
+    setNewCompanyOgrn(data.ogrn ?? "");
+    setNewCompanyLegalAddress(data.legalAddress ?? "");
+    toast.success(`Реквизиты найдены по ИНН: ${data.name}`);
+  }, [isCreatingCompany, innLookupQuery.data]);
 
   const totalSum = useMemo(() => {
     return items.reduce((sum, it) => sum + it.quantity * it.price, 0);
@@ -122,20 +157,65 @@ export function EditSupplierOrderModal({
     setIsCreatingCompany(false);
   };
 
+  const handleLookupCompanyByInn = async () => {
+    const inn = newCompanyInn.replace(/\D/g, "").trim();
+    if (inn.length !== 10 && inn.length !== 12) {
+      toast.error("Укажите корректный ИНН (10 или 12 цифр)");
+      return;
+    }
+    setIsManualInnLookingUp(true);
+    try {
+      const res = await apiClient.get<CompanyInnLookupResult>("/api/v1/crm/companies/lookup-inn", {
+        query: { inn },
+      });
+      const data = res.data;
+      if (!data) {
+        toast.error("Организация с таким ИНН не найдена");
+        return;
+      }
+      lastAutoAppliedInnRef.current = data.inn;
+      if (data.name) setSupplierInput(data.name);
+      setNewCompanyKpp(data.kpp ?? "");
+      setNewCompanyOgrn(data.ogrn ?? "");
+      setNewCompanyLegalAddress(data.legalAddress ?? "");
+      toast.success(`Заполнено по ИНН: ${data.name}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Организация по ИНН не найдена");
+    } finally {
+      setIsManualInnLookingUp(false);
+    }
+  };
+
   const handleQuickCreateCompany = async () => {
     const trimmed = supplierInput.trim();
     if (!trimmed) {
       toast.error("Укажите наименование компании-поставщика");
       return;
     }
+    const cleanInn = newCompanyInn.replace(/\D/g, "").trim();
+    if (cleanInn.length > 0 && cleanInn.length !== 10 && cleanInn.length !== 12) {
+      toast.error("ИНН должен содержать 10 или 12 цифр");
+      return;
+    }
+    const cleanKpp = newCompanyKpp.replace(/\D/g, "").trim();
+    const cleanOgrn = newCompanyOgrn.replace(/\D/g, "").trim();
     try {
       const created = await createCompanyMutation.mutateAsync({
         name: trimmed,
-        inn: newCompanyInn.trim() || undefined,
+        inn: cleanInn || undefined,
+        kpp: cleanKpp.length === 9 ? cleanKpp : undefined,
+        ogrn: cleanOgrn.length === 13 || cleanOgrn.length === 15 ? cleanOgrn : undefined,
+        legal_address: newCompanyLegalAddress.trim() || undefined,
         phone: newCompanyPhone.trim() || undefined,
       });
       setSelectedCompany(created);
       setSupplierInput(created.name);
+      setNewCompanyInn("");
+      setNewCompanyPhone("");
+      setNewCompanyKpp("");
+      setNewCompanyOgrn("");
+      setNewCompanyLegalAddress("");
+      lastAutoAppliedInnRef.current = "";
       setIsCreatingCompany(false);
       setIsCompanyDropdownOpen(false);
       toast.success(`Компания «${created.name}» добавлена в справочник`);
@@ -303,9 +383,28 @@ export function EditSupplierOrderModal({
                     </button>
                   </div>
                 ) : (
-                  <div className="p-3 bg-[#fafafa] space-y-2">
-                    <div className="text-[11px] font-semibold text-[#111111]">
-                      Новый контрагент-поставщик
+                  <div className="p-3 bg-[#fafafa] space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-[#111111]">
+                        Новый контрагент-поставщик
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleLookupCompanyByInn}
+                        disabled={
+                          innLookupQuery.isFetching ||
+                          isManualInnLookingUp ||
+                          (cleanNewInn.length !== 10 && cleanNewInn.length !== 12)
+                        }
+                        className="inline-flex items-center gap-1 rounded-[6px] border border-[#4a38f5]/25 bg-white px-2 py-0.5 text-[11px] font-medium text-[#4a38f5] hover:bg-[#4a38f5]/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                      >
+                        {innLookupQuery.isFetching || isManualInnLookingUp ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Search className="h-3 w-3" />
+                        )}
+                        <span>Заполнить по ИНН</span>
+                      </button>
                     </div>
                     <div>
                       <input
@@ -320,9 +419,14 @@ export function EditSupplierOrderModal({
                       <input
                         type="text"
                         value={newCompanyInn}
-                        onChange={(e) => setNewCompanyInn(e.target.value)}
+                        onChange={(e) => {
+                          setNewCompanyInn(e.target.value);
+                          if (e.target.value.replace(/\D/g, "") !== lastAutoAppliedInnRef.current) {
+                            lastAutoAppliedInnRef.current = "";
+                          }
+                        }}
                         placeholder="ИНН (10 или 12 цифр)"
-                        className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
+                        className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 font-mono text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
                       />
                       <input
                         type="text"
@@ -332,6 +436,18 @@ export function EditSupplierOrderModal({
                         className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
                       />
                     </div>
+                    {(newCompanyKpp || newCompanyOgrn || newCompanyLegalAddress) && (
+                      <div className="rounded-[6px] border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] text-emerald-800 space-y-0.5">
+                        <div className="flex items-center gap-1 font-medium">
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+                          <span>Реквизиты из ФНС будут сохранены</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-emerald-700/90 flex flex-wrap gap-x-2">
+                          {newCompanyKpp && <span>КПП: {newCompanyKpp}</span>}
+                          {newCompanyOgrn && <span>ОГРН: {newCompanyOgrn}</span>}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex items-center justify-end gap-2 pt-1">
                       <button
                         type="button"

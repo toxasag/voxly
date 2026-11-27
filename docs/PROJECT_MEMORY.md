@@ -1661,6 +1661,18 @@
 
 ---
 
+### 2026-11-27 — Модалка «Новый заказ поставщику»: заполнение новой компании по ИНН, удаление дубля кнопки и создание товара в базе
+- **Root cause:**
+  1. В `CreateSupplierOrderModal.tsx` и `EditSupplierOrderModal.tsx` блок создания нового контрагента не вызывал `/api/v1/crm/companies/lookup-inn` и передавал в `useCreateCompany` только `name`/`inn`/`phone`.
+  2. В `CreateSupplierOrderModal.tsx` в шапке таблицы позиций и под ней были две одинаковые кнопки (`+ Добавить товар` и `+ Добавить ещё одну позицию`).
+  3. Поле товара использовало нативный `<datalist>` без возможности создать отсутствующий товар в `warehouse_items`, а `handleItemNameChange` не сбрасывал `itemId` при изменении названия; в `useCreateWarehouseItem` инвалидировался точный ключ `["warehouse", "items", ""]` вместо префикса `["warehouse", "items"]`.
+- **Что сделано:**
+  1. `CreateSupplierOrderModal.tsx` и `EditSupplierOrderModal.tsx`: подключён `useCompanyInnLookup` + кнопка «Заполнить по ИНН», автоподстановка названия, КПП, ОГРН и юр. адреса из ФНС/DaData и сохранение полных реквизитов при создании компании.
+  2. `CreateSupplierOrderModal.tsx`: удалена дублирующая кнопка `+ Добавить товар`, оставлена только `+ Добавить ещё одну позицию`; `<datalist>` заменён на интерактивный комбобокс товаров с кнопкой и inline-формой «Создать в базе и добавить» (`useCreateWarehouseItem`).
+  3. `frontend/src/lib/api/use-warehouse.ts`: исправлена инвалидация `["warehouse", "items"]` и `["warehouse", "categories"]` в `useCreateWarehouseItem` и `useUpdateWarehouseItem`.
+
+---
+
 ### 24.11.2026 — Автоскролл при печати и 2x замедление набора в онлайн-виджете
 - **Контекст и задача:**
   - В процессе посимвольного вывода сообщения бота (`typeWriter`) текст сообщений накапливался и уходил вниз под поле ввода, если пользователь не прокручивал чат вручную.
