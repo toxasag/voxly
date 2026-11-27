@@ -289,6 +289,7 @@ export default async function financeRoutes(app: FastifyInstance): Promise<void>
     const sampleInvoice = {
       id: "00000000-0000-0000-0000-000000000000",
       invoiceNumber: `${prefix}-${new Date().getFullYear()}-0001`,
+      documentType: "invoice" as const,
       status: "sent" as const,
       issueDate: new Date().toISOString(),
       dueDate: new Date(Date.now() + 3 * 86400 * 1000).toISOString(),

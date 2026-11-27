@@ -7,6 +7,7 @@ describe("generateInvoicePdfBuffer (A4 PDF счета на оплату)", () =>
   const sampleInvoice: InvoiceDTO = {
     id: "8e8a1932-5da0-489d-a0da-5088b4d9ac58",
     invoiceNumber: "СЧ-2026-0006",
+    documentType: "invoice",
     status: "sent",
     issueDate: "2026-11-23T11:03:49.927Z",
     dueDate: "2026-11-26T12:00:00.000Z",
