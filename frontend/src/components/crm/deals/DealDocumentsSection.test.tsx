@@ -34,6 +34,20 @@ vi.mock("@/lib/api/apiClient", () => ({
   },
 }));
 
+const mockOrganizations = [
+  {
+    id: "org-1",
+    name: "ИП Иванов",
+    inn: "7700123456",
+    isDefault: true,
+    vatMode: "none" as const,
+    elbaEnabled: false,
+    elbaHasApiKey: false,
+    elbaOrganizationId: "",
+    elbaAutoSyncInvoices: false,
+  },
+];
+
 vi.mock("@/lib/api/use-invoices", () => ({
   useInvoices: vi.fn(() => ({
     data: { items: mockDocuments, total: mockDocuments.length, limit: 50, offset: 0 },
@@ -41,19 +55,7 @@ vi.mock("@/lib/api/use-invoices", () => ({
     refetch: refetchMock,
   })),
   useFinanceOrganizations: vi.fn(() => ({
-    data: [
-      {
-        id: "org-1",
-        name: "ИП Иванов",
-        inn: "7700123456",
-        isDefault: true,
-        vatMode: "none",
-        elbaEnabled: false,
-        elbaHasApiKey: false,
-        elbaOrganizationId: "",
-        elbaAutoSyncInvoices: false,
-      },
-    ],
+    data: mockOrganizations,
     isLoading: false,
   })),
   useCreateInvoice: vi.fn(() => ({

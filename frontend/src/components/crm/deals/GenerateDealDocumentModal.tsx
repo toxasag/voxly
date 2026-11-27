@@ -76,6 +76,8 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
   const [syncToElba, setSyncToElba] = useState<boolean>(false);
 
   const masterCheckboxRef = useRef<HTMLInputElement>(null);
+  const initializedKeyRef = useRef<string | null>(null);
+  const appliedCompanyRef = useRef<string | null>(null);
 
   const selectedOrg = useMemo(
     () =>
@@ -85,11 +87,12 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
     [organizations, issuerOrgId],
   );
 
-  // Автовыбор организации-поставщика и режима НДС
+  // Автовыбор организации-поставщика и режима НДС (один раз при появлении списка)
   useEffect(() => {
     if (!open || organizations.length === 0) return;
+    if (issuerOrgId && organizations.some((o) => o.id === issuerOrgId)) return;
     const def = organizations.find((o) => o.isDefault) ?? organizations[0];
-    if (def && (!issuerOrgId || !organizations.some((o) => o.id === issuerOrgId))) {
+    if (def) {
       setIssuerOrgId(def.id);
       setVatMode(def.vatMode || "none");
       setSyncToElba(
@@ -103,12 +106,22 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
     [items],
   );
 
-  // Инициализация полей при открытии
+  // Инициализация полей строго один раз при открытии шторки (не сбрасываем ввод пользователя при рефетчах)
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      initializedKeyRef.current = null;
+      appliedCompanyRef.current = null;
+      return;
+    }
+    const initKey = `${deal.id}:${documentType}`;
+    if (initializedKeyRef.current === initKey) return;
+    initializedKeyRef.current = initKey;
+
     setSelectedIds(selectableItems.map((it) => it.id));
     setDueDate(defaultDueDate(documentType));
     setCompanyName((deal.companyName || deal.contactName || deal.title || "").trim());
+    setCompanyInn("");
+    setCompanyAddress("");
     setContactName((deal.contactName || "").trim());
     setContactPhone((deal.contactPhone || deal.companyPhone || "").trim());
     setNotes("");
@@ -124,9 +137,11 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
     }
   }, [open, documentType, deal, selectableItems, isProposal, selectedOrg]);
 
-  // Дозаполнение ИНН и юр. адреса из карточки компании, когда запрос завершится
+  // Дозаполнение ИНН и юр. адреса из карточки компании (один раз на компанию)
   useEffect(() => {
     if (!open || !companyDetail) return;
+    if (appliedCompanyRef.current === companyDetail.id) return;
+    appliedCompanyRef.current = companyDetail.id;
     setCompanyName((prev) => prev || companyDetail.name || "");
     const inn = companyDetail.requisites?.inn || "";
     if (inn) {
