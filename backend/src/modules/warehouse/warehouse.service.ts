@@ -2703,6 +2703,67 @@ export class WarehouseService {
     userId: string | null,
     payload: CreatePurchaseRequestPayload,
   ): Promise<PurchaseRequestDTO> {
+    // Защита от дублей: если для этой позиции сделки уже есть ожидающая заявка, обновляем её
+    if (payload.deal_item_id) {
+      const existingPending = await queryOne<PurchaseRequestRow>(
+        `UPDATE purchase_requests
+         SET item_id = COALESCE($3, item_id),
+             item_name = $4,
+             sku = $5,
+             quantity = $6,
+             unit = $7,
+             estimated_price = $8,
+             comment = CASE WHEN $9 <> '' THEN $9 ELSE comment END,
+             updated_at = now()
+         WHERE id = (
+           SELECT id
+           FROM purchase_requests
+           WHERE tenant_id = $1
+             AND deal_item_id = $2
+             AND status = 'pending'
+             AND supplier_order_id IS NULL
+           ORDER BY created_at DESC
+           LIMIT 1
+         )
+         RETURNING id, tenant_id, repair_order_id, deal_id, deal_item_id, supplier_order_id, item_id, item_name, sku, quantity, unit,
+                   estimated_price, status, comment, created_by, created_at, updated_at`,
+        [
+          tenantId,
+          payload.deal_item_id,
+          payload.item_id ?? null,
+          payload.item_name,
+          payload.sku ?? "",
+          payload.quantity,
+          payload.unit ?? "шт",
+          payload.estimated_price ?? 0,
+          payload.comment ?? "",
+        ],
+      );
+
+      if (existingPending) {
+        return {
+          id: existingPending.id,
+          repairOrderId: existingPending.repair_order_id,
+          dealId: existingPending.deal_id ?? null,
+          dealItemId: existingPending.deal_item_id ?? null,
+          supplierOrderId: existingPending.supplier_order_id,
+          repairTicketNumber: null,
+          dealTitle: null,
+          itemId: existingPending.item_id,
+          itemName: existingPending.item_name,
+          sku: existingPending.sku,
+          quantity: Number(existingPending.quantity),
+          unit: existingPending.unit,
+          estimatedPrice: Number(existingPending.estimated_price),
+          status: "pending",
+          comment: existingPending.comment,
+          createdByName: null,
+          createdAt: toIso(existingPending.created_at),
+          updatedAt: toIso(existingPending.updated_at),
+        };
+      }
+    }
+
     const row = await queryOneOrThrow<PurchaseRequestRow>(
       `INSERT INTO purchase_requests
          (tenant_id, repair_order_id, deal_id, deal_item_id, item_id, item_name, sku, quantity, unit, estimated_price, comment, created_by)

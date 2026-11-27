@@ -80,6 +80,7 @@ export interface PurchaseRequestDTO {
   repairOrderId: string | null;
   dealId?: string | null;
   dealItemId?: string | null;
+  supplierOrderId?: string | null;
   repairTicketNumber?: string | null;
   dealTitle?: string | null;
   itemId: string | null;
@@ -725,6 +726,8 @@ export function useCreatePurchaseRequest() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -784,6 +787,7 @@ export function useUpdatePurchaseRequest() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -799,6 +803,7 @@ export function useDeletePurchaseRequest() {
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "purchases"] });
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "aggregated-purchases"] });
       void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "supplier-orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

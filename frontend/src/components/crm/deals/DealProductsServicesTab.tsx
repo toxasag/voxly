@@ -33,6 +33,7 @@ import {
   useWarehouseSettings,
   usePurchaseRequests,
   useCreatePurchaseRequest,
+  useDeletePurchaseRequest,
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
 import { useServices, useCreateService, type ServiceItemDTO } from "@/lib/api/use-services";
@@ -81,7 +82,9 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
   const updateItemMutation = useUpdateDealItem(deal.id);
   const deleteItemMutation = useDeleteDealItem(deal.id);
   const createPurchaseRequestMutation = useCreatePurchaseRequest();
+  const deletePurchaseRequestMutation = useDeletePurchaseRequest();
   const createServiceMutation = useCreateService();
+  const [deletingPrId, setDeletingPrId] = useState<string | null>(null);
 
   const {
     data: warehouseItems = [],
@@ -554,60 +557,64 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
     [prodQty],
   );
 
-  const handleAddProduct = useCallback(async () => {
-    const trimmedName = prodName.trim();
-    const qtyNum = parsePositiveNumber(prodQty);
-    if (!trimmedName || qtyNum <= 0) return;
+  const handleAddProduct = useCallback(
+    async (forceAddToPurchase = false) => {
+      const trimmedName = prodName.trim();
+      const qtyNum = parsePositiveNumber(prodQty);
+      if (!trimmedName || qtyNum <= 0) return;
 
-    const retailNum = isNaN(parseFloat(prodRetail)) ? 0 : Math.max(0, parseFloat(prodRetail));
-    const costNum = isNaN(parseFloat(prodCost)) ? 0 : Math.max(0, parseFloat(prodCost));
-    const skuClean = prodSku.trim();
-    const shouldSaveToCatalog = !selectedWarehouseItem && prodSaveToCatalog;
+      const retailNum = isNaN(parseFloat(prodRetail)) ? 0 : Math.max(0, parseFloat(prodRetail));
+      const costNum = isNaN(parseFloat(prodCost)) ? 0 : Math.max(0, parseFloat(prodCost));
+      const skuClean = prodSku.trim();
+      const shouldSaveToCatalog = !selectedWarehouseItem && prodSaveToCatalog;
+      const shouldAddToPurchase = forceAddToPurchase || prodAddToPurchase;
 
-    try {
-      await addItemMutation.mutateAsync({
-        item_type: "product",
-        item_id: selectedWarehouseItem?.id ?? null,
-        name: trimmedName,
-        description: selectedWarehouseItem?.category ? `Категория: ${selectedWarehouseItem.category}` : "",
-        sku: skuClean,
-        price: retailNum,
-        cost_price: costNum,
-        quantity: qtyNum,
-        unit: selectedWarehouseItem?.unit || "шт",
-        save_to_catalog: shouldSaveToCatalog,
-        add_to_purchase_request: prodAddToPurchase,
-      });
+      try {
+        await addItemMutation.mutateAsync({
+          item_type: "product",
+          item_id: selectedWarehouseItem?.id ?? null,
+          name: trimmedName,
+          description: selectedWarehouseItem?.category ? `Категория: ${selectedWarehouseItem.category}` : "",
+          sku: skuClean,
+          price: retailNum,
+          cost_price: costNum,
+          quantity: qtyNum,
+          unit: selectedWarehouseItem?.unit || "шт",
+          save_to_catalog: shouldSaveToCatalog,
+          add_to_purchase_request: shouldAddToPurchase,
+        });
 
-      toast.success(
-        `Товар «${trimmedName}» добавлен${
-          selectedWarehouseItem ? " (со склада)" : shouldSaveToCatalog ? " и сохранён на склад" : ""
-        }${prodAddToPurchase ? " + создана заявка на закупку" : ""}`,
-      );
+        toast.success(
+          `Товар «${trimmedName}» добавлен${
+            selectedWarehouseItem ? " (со склада)" : shouldSaveToCatalog ? " и сохранён на склад" : ""
+          }${shouldAddToPurchase ? " + создана заявка на закупку" : ""}`,
+        );
 
-      setProdName("");
-      setProdSku("");
-      setProdQty("1");
-      setProdRetail("");
-      setProdCost("");
-      setSelectedWarehouseItem(null);
-      setProdAddToPurchase(false);
-      setProdSaveToCatalog(false);
-      setWhCatalogOpen(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось добавить товар");
-    }
-  }, [
-    prodName,
-    prodSku,
-    prodQty,
-    prodRetail,
-    prodCost,
-    selectedWarehouseItem,
-    prodAddToPurchase,
-    prodSaveToCatalog,
-    addItemMutation,
-  ]);
+        setProdName("");
+        setProdSku("");
+        setProdQty("1");
+        setProdRetail("");
+        setProdCost("");
+        setSelectedWarehouseItem(null);
+        setProdAddToPurchase(false);
+        setProdSaveToCatalog(false);
+        setWhCatalogOpen(false);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось добавить товар");
+      }
+    },
+    [
+      prodName,
+      prodSku,
+      prodQty,
+      prodRetail,
+      prodCost,
+      selectedWarehouseItem,
+      prodAddToPurchase,
+      prodSaveToCatalog,
+      addItemMutation,
+    ],
+  );
 
   const handleProdKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
@@ -691,30 +698,23 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
 
   const handleCreatePurchaseFromDraft = useCallback(async () => {
     if (!selectedWarehouseItem) return;
-    try {
-      const reqQty = prodShortage > 0 ? prodShortage : requestedProdQty;
-      await createPurchaseRequestMutation.mutateAsync({
-        deal_id: deal.id,
-        item_id: selectedWarehouseItem.id,
-        item_name: selectedWarehouseItem.name,
-        sku: selectedWarehouseItem.sku || undefined,
-        quantity: reqQty,
-        unit: selectedWarehouseItem.unit || "шт",
-        estimated_price: selectedWarehouseItem.fifoCostPrice ?? selectedWarehouseItem.costPrice ?? 0,
-        comment: `Заявка из сделки «${deal.title}»`,
-      });
-      toast.success(`Заявка на закупку «${selectedWarehouseItem.name}» создана`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось создать заявку на закупку");
-    }
-  }, [
-    selectedWarehouseItem,
-    prodShortage,
-    requestedProdQty,
-    createPurchaseRequestMutation,
-    deal.id,
-    deal.title,
-  ]);
+    await handleAddProduct(true);
+  }, [selectedWarehouseItem, handleAddProduct]);
+
+  const handleDeletePurchaseRequest = useCallback(
+    async (prId: string, itemName: string) => {
+      setDeletingPrId(prId);
+      try {
+        await deletePurchaseRequestMutation.mutateAsync(prId);
+        toast.success(`Заявка на закупку «${itemName}» удалена`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось удалить заявку на закупку");
+      } finally {
+        setDeletingPrId(null);
+      }
+    },
+    [deletePurchaseRequestMutation],
+  );
 
   const handleDeleteItem = useCallback(
     async (itemId: string, name: string) => {
@@ -1919,11 +1919,12 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
                   <button
                     type="button"
                     onClick={() => void handleCreatePurchaseFromDraft()}
-                    disabled={createPurchaseRequestMutation.isPending}
+                    disabled={addItemMutation.isPending}
+                    title="Добавить товар в сделку и создать привязанную заявку на закупку"
                     className="flex items-center gap-1.5 rounded-[4px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50"
                   >
                     <ShoppingCart className="h-3 w-3" />
-                    Заказать сейчас
+                    Добавить и в закупку
                   </button>
                 )}
               </div>
@@ -1990,7 +1991,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
               </h4>
             </div>
             <Link
-              href="/warehouse"
+              href="/warehouse?section=purchases"
               className="inline-flex items-center gap-1 text-[11px] font-medium text-[#4a38f5] hover:underline"
             >
               <span>Открыть на складе</span>
@@ -2005,9 +2006,10 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
                 received: { label: "Поступило", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
                 cancelled: { label: "Отменено", cls: "bg-rose-50 text-rose-700 border-rose-200" },
               }[pr.status];
+              const canDeletePr = pr.status === "pending" && !pr.supplierOrderId;
               return (
                 <div key={pr.id} className="py-2 flex items-center justify-between gap-2 text-xs">
-                  <div>
+                  <div className="min-w-0">
                     <span className="font-medium text-[#111111]">{pr.itemName}</span>
                     {pr.sku && (
                       <span className="ml-1.5 font-mono text-[11px] text-[#888888]">{pr.sku}</span>
@@ -2026,6 +2028,22 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
                     >
                       {badge.label}
                     </span>
+                    {canDeletePr && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDeletePurchaseRequest(pr.id, pr.itemName)}
+                        disabled={deletingPrId === pr.id}
+                        title="Удалить заявку на закупку"
+                        aria-label={`Удалить заявку ${pr.itemName}`}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-[#888888] hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {deletingPrId === pr.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               );

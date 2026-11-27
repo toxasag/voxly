@@ -10,6 +10,7 @@ const addItemMutateAsync = vi.fn();
 const updateItemMutateAsync = vi.fn();
 const deleteItemMutateAsync = vi.fn();
 const createPurchaseMutateAsync = vi.fn();
+const deletePurchaseMutateAsync = vi.fn();
 const createServiceMutateAsync = vi.fn();
 const deleteServiceMutateAsync = vi.fn();
 
@@ -141,6 +142,10 @@ vi.mock("@/lib/api/use-warehouse", () => ({
   })),
   useCreatePurchaseRequest: vi.fn(() => ({
     mutateAsync: createPurchaseMutateAsync,
+    isPending: false,
+  })),
+  useDeletePurchaseRequest: vi.fn(() => ({
+    mutateAsync: deletePurchaseMutateAsync,
     isPending: false,
   })),
 }));
@@ -342,5 +347,27 @@ describe("DealProductsServicesTab (Service Center WorkItemsTable + PartsTable pa
         }),
       );
     });
+  });
+
+  it("adds product to deal with linked purchase request on deficit CTA without creating orphan request", async () => {
+    render(<DealProductsServicesTab deal={makeDeal()} />);
+
+    const whInput = screen.getByPlaceholderText(/Поиск по складу или название товара/i);
+    fireEvent.focus(whInput);
+    fireEvent.change(whInput, { target: { value: "6204 SKF" } });
+    fireEvent.click(screen.getByRole("button", { name: /Подшипник шпинделя 6204/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Добавить и в закупку/i }));
+
+    await waitFor(() => {
+      expect(addItemMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          item_type: "product",
+          item_id: "wh-2",
+          add_to_purchase_request: true,
+        }),
+      );
+    });
+    expect(createPurchaseMutateAsync).not.toHaveBeenCalled();
   });
 });
