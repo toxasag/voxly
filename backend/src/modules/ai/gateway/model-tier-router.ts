@@ -87,12 +87,112 @@ export const MODEL_PROFILES_CATALOG: Record<string, ModelProfile> = {
   },
 
   // --- TIER: FAST_CHEAP (NoirLight / Chinese Providers) ---
+  "qwen-plus-latest": {
+    id: "qwen-plus-latest",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
+    fallbackModelId: "qwen-plus",
+    priority: 8,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "qwen-plus": {
+    id: "qwen-plus",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
+    fallbackModelId: "step-3.5-flash",
+    priority: 9,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "qwen-max": {
+    id: "qwen-max",
+    provider: "custom",
+    tier: "REASONING_HEAVY",
+    limits: { rpm: 30, tpm: 100_000, maxContext: 128_000 },
+    fallbackModelId: "qwen-plus-latest",
+    priority: 10,
+    costInPer1k: 20,
+    costOutPer1k: 60,
+  },
+  "qwen-long": {
+    id: "qwen-long",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 256_000 },
+    fallbackModelId: "qwen-plus",
+    priority: 11,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "step-3.5-flash": {
+    id: "step-3.5-flash",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
+    fallbackModelId: "qwen-plus-latest",
+    priority: 9,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "step-3.7-flash": {
+    id: "step-3.7-flash",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
+    fallbackModelId: "step-3.5-flash",
+    priority: 10,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "deepseek-v4-flash": {
+    id: "deepseek-v4-flash",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
+    fallbackModelId: "qwen-plus-latest",
+    priority: 9,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "deepseek-v4.1-flash": {
+    id: "deepseek-v4.1-flash",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
+    fallbackModelId: "deepseek-v4-flash",
+    priority: 10,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
+  "deepseek-v4-284b": {
+    id: "deepseek-v4-284b",
+    provider: "custom",
+    tier: "REASONING_HEAVY",
+    limits: { rpm: 30, tpm: 100_000, maxContext: 128_000 },
+    fallbackModelId: "deepseek-v4.1-flash",
+    priority: 11,
+    costInPer1k: 15,
+    costOutPer1k: 45,
+  },
+  "glm-5.3-flash": {
+    id: "glm-5.3-flash",
+    provider: "custom",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
+    fallbackModelId: "qwen-plus-latest",
+    priority: 11,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
   "agnes-3.0-flash": {
     id: "agnes-3.0-flash",
     provider: "custom",
     tier: "FAST_CHEAP",
     limits: { rpm: 60, tpm: 200_000, maxContext: 128_000 },
-    fallbackModelId: "glm-4-flash",
+    fallbackModelId: "qwen-plus-latest",
     priority: 11,
     costInPer1k: 5,
     costOutPer1k: 20,
@@ -256,20 +356,29 @@ export const HIERARCHICAL_FALLBACK_MATRIX: Record<string, string[]> = {
   "deepseek-v3": ["gpt-4o-mini", "gemini-3.5-flash-lite", "agnes-3.0-flash", "glm-4-flash"],
 
   // NoirLight / Custom Chinese Models Fallbacks
-  "glm-4.5": ["qwen3.8-27b", "qwen-omni-plus", "glm-5.3", "glm-4-flash", "agnes-3.0-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
-  "qwen3.8-27b": ["glm-4.5", "qwen-omni-plus", "glm-4-flash", "agnes-3.0-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
+  "qwen-plus-latest": ["qwen-plus", "step-3.5-flash", "deepseek-v4-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
+  "qwen-plus": ["qwen-plus-latest", "step-3.5-flash", "deepseek-v4-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
+  "qwen-max": ["qwen-plus-latest", "qwen-plus", "deepseek-v4-flash", "gemini-3.5-flash"],
+  "step-3.5-flash": ["qwen-plus-latest", "qwen-plus", "deepseek-v4-flash", "gemini-3.5-flash-lite"],
+  "step-3.7-flash": ["step-3.5-flash", "qwen-plus-latest", "qwen-plus", "gemini-3.5-flash-lite"],
+  "deepseek-v4-flash": ["deepseek-v4.1-flash", "qwen-plus-latest", "qwen-plus", "gemini-3.5-flash-lite"],
+  "deepseek-v4.1-flash": ["deepseek-v4-flash", "qwen-plus-latest", "qwen-plus", "gemini-3.5-flash-lite"],
+  "deepseek-v4-284b": ["deepseek-v4.1-flash", "deepseek-v4-flash", "qwen-max", "gemini-3.5-flash"],
+  "glm-5.3-flash": ["qwen-plus-latest", "qwen-plus", "gemini-3.5-flash-lite"],
+  "glm-4.5": ["qwen3.8-27b", "qwen-omni-plus", "glm-5.3", "glm-4-flash", "qwen-plus-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
+  "qwen3.8-27b": ["glm-4.5", "qwen-plus-latest", "qwen-plus", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
   "glm-5.3": ["glm-4.5", "qwen3.8-27b", "gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
-  "qwen-omni-plus": ["qwen3.8-27b", "glm-4.5", "glm-4-flash", "agnes-3.0-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
+  "qwen-omni-plus": ["qwen3.8-27b", "glm-4.5", "glm-4-flash", "qwen-plus-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
   "nemotron-super": ["glm-4.5", "qwen3.8-27b", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
-  "agnes-3.0-flash": ["glm-4.5", "qwen3.8-27b", "glm-4-flash", "qwen-omni-plus", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
-  "glm-4-flash": ["glm-4.5", "qwen3.8-27b", "agnes-3.0-flash", "qwen-omni-plus", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
-  "qwen-omni-flash": ["qwen3.8-27b", "glm-4.5", "agnes-3.0-flash", "glm-4-flash", "gemini-3.5-flash-lite"],
-  "laguna": ["glm-4.5", "agnes-3.0-flash", "glm-4-flash", "gemini-3.5-flash-lite"],
-  "muse": ["glm-4.5", "agnes-3.0-flash", "glm-4-flash", "gemini-3.5-flash-lite"],
-  "llama": ["glm-4.5", "agnes-3.0-flash", "glm-4-flash", "gemini-3.5-flash-lite"],
-  "deepseek": ["glm-4.5", "agnes-3.0-flash", "glm-4-flash", "gemini-3.5-flash-lite"],
-  "kimi-k3": ["glm-4.5", "agnes-3.0-flash", "glm-4-flash", "gemini-3.5-flash-lite"],
-  "kimi-k3.1-pro": ["glm-4.5", "agnes-3.0-flash", "glm-4-flash", "gemini-3.5-flash-lite"],
+  "agnes-3.0-flash": ["qwen-plus-latest", "qwen-plus", "step-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
+  "glm-4-flash": ["glm-4.5", "qwen3.8-27b", "qwen-plus-latest", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
+  "qwen-omni-flash": ["qwen3.8-27b", "glm-4.5", "qwen-plus-latest", "gemini-3.5-flash-lite"],
+  "laguna": ["glm-4.5", "qwen-plus-latest", "gemini-3.5-flash-lite"],
+  "muse": ["glm-4.5", "qwen-plus-latest", "gemini-3.5-flash-lite"],
+  "llama": ["glm-4.5", "qwen-plus-latest", "gemini-3.5-flash-lite"],
+  "deepseek": ["glm-4.5", "qwen-plus-latest", "gemini-3.5-flash-lite"],
+  "kimi-k3": ["glm-4.5", "qwen-plus-latest", "gemini-3.5-flash-lite"],
+  "kimi-k3.1-pro": ["glm-4.5", "qwen-plus-latest", "gemini-3.5-flash-lite"],
 };
 
 export class ModelTierRouter {
@@ -282,7 +391,9 @@ export class ModelTierRouter {
     if (clean.startsWith("models/")) clean = clean.replace(/^models\//, "");
     if (clean.startsWith("google/")) clean = clean.replace(/^google\//, "");
     if (clean.startsWith("gemini/")) clean = clean.replace(/^gemini\//, "");
-    return clean.toLowerCase();
+    const lower = clean.toLowerCase();
+    if (lower === "agnes-3.0-flash") return "qwen-plus-latest";
+    return lower;
   }
 
   /**
@@ -298,7 +409,7 @@ export class ModelTierRouter {
     if (url.includes("api.openai.com") || norm.startsWith("gpt-") || norm.startsWith("o1-") || norm.startsWith("o3-")) {
       return "openai";
     }
-    if (url.includes("api.deepseek.com") || norm.includes("deepseek")) {
+    if (url.includes("api.deepseek.com") || (norm.includes("deepseek") && !url.includes("noirlight") && !norm.includes("v4"))) {
       return "deepseek";
     }
     if (url.includes("api.anthropic.com") || norm.includes("claude")) {
