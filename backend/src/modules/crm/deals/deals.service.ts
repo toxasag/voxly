@@ -32,7 +32,7 @@ import type {
   UpdateStagePayload,
 } from "./deals.types.js";
 import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
-import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
+import { query, queryOne, withTenant, type SqlParam, type TransactionClient } from "../../../db/client.js";
 import { NotFoundError, ValidationError, UnprocessableEntityError } from "../../../plugins/errorHandler.js";
 import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
@@ -2173,6 +2173,47 @@ export class DealsService {
     });
   }
 
+  private async recalculateDealBudgetInTx(
+    tx: TransactionClient,
+    tenantId: string,
+    dealId: string,
+  ): Promise<number> {
+    const budgetRow = await tx.queryOne<{ total: string }>(
+      `WITH order_totals AS (
+         SELECT
+           ro.id,
+           ro.final_cost,
+           ro.estimated_cost,
+           COALESCE((SELECT SUM(cost) FROM repair_works WHERE repair_order_id = ro.id), 0) +
+           COALESCE((SELECT SUM(retail_price * quantity) FROM repair_parts WHERE repair_order_id = ro.id), 0) AS calc_total
+         FROM repair_orders ro
+         WHERE ro.tenant_id = $1 AND ro.deal_id = $2 AND ro.deleted_at IS NULL
+       )
+       SELECT (
+         COALESCE((SELECT SUM(total_amount) FROM deal_items WHERE tenant_id = $1 AND deal_id = $2), 0) +
+         COALESCE((
+           SELECT SUM(
+             CASE
+               WHEN final_cost IS NOT NULL AND final_cost > 0 THEN final_cost
+               WHEN calc_total > 0 THEN calc_total
+               ELSE COALESCE(estimated_cost, 0)
+             END
+           )
+           FROM order_totals
+         ), 0)
+       )::text AS total`,
+      [tenantId, dealId],
+    );
+    const totalBudget = Number(budgetRow?.total ?? 0);
+
+    await tx.query(
+      `UPDATE deals SET budget = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, dealId, totalBudget],
+    );
+
+    return totalBudget;
+  }
+
   async addDealItem(
     tenantId: string,
     dealId: string,
@@ -2186,21 +2227,91 @@ export class DealsService {
       );
       if (!deal) throw new NotFoundError("Сделка не найдена");
 
+      const trimmedName = payload.name.trim();
+      const trimmedSku = payload.sku?.trim() ?? "";
+      const trimmedUnit = payload.unit?.trim() || (payload.item_type === "product" ? "шт" : "усл");
+      const trimmedDescription = payload.description?.trim() ?? "";
+
       const price = Number(payload.price ?? 0);
       const quantity = Number(payload.quantity ?? 1);
       const discountPercent = Number(payload.discount_percent ?? 0);
       const discountAmount = Number(payload.discount_amount ?? 0);
       const totalAmount = calculateItemTotal(price, quantity, discountPercent, discountAmount);
 
+      let resolvedItemId: string | null = payload.item_id ?? null;
       let costPrice = payload.cost_price !== undefined ? Number(payload.cost_price) : 0;
       let costSource: DealItemCostSource = "manual";
 
-      if (payload.item_type === "product" && payload.item_id) {
-        const fifoEst = await warehouseService.estimateFifoUnitCost(tx, tenantId, payload.item_id, quantity);
-        if (payload.cost_price === undefined) {
-          costPrice = fifoEst.unitCost;
+      if (payload.item_type === "product") {
+        // Автопривязка к номенклатуре склада по артикулу или точному наименованию (как в СЦ)
+        if (!resolvedItemId && trimmedSku && trimmedSku.toUpperCase() !== "Б/А") {
+          const existingBySku = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM warehouse_items
+             WHERE tenant_id = $1 AND lower(btrim(sku)) = lower(btrim($2)) AND deleted_at IS NULL
+             ORDER BY updated_at DESC
+             LIMIT 1`,
+            [tenantId, trimmedSku],
+          );
+          if (existingBySku) {
+            resolvedItemId = existingBySku.id;
+          }
         }
-        costSource = fifoEst.hasBatches ? "estimated_fifo" : "manual";
+
+        if (!resolvedItemId && trimmedName) {
+          const existingByName = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM warehouse_items
+             WHERE tenant_id = $1 AND lower(btrim(name)) = lower(btrim($2)) AND deleted_at IS NULL
+             ORDER BY updated_at DESC
+             LIMIT 1`,
+            [tenantId, trimmedName],
+          );
+          if (existingByName) {
+            resolvedItemId = existingByName.id;
+          }
+        }
+
+        if (payload.save_to_catalog && !resolvedItemId && trimmedName) {
+          const newWarehouseRow = await tx.queryOne<{ id: string }>(
+            `INSERT INTO warehouse_items
+               (tenant_id, sku, name, unit, retail_price, cost_price)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id`,
+            [
+              tenantId,
+              trimmedSku.toUpperCase() === "Б/А" ? "" : trimmedSku,
+              trimmedName,
+              trimmedUnit,
+              price,
+              costPrice,
+            ],
+          );
+          if (newWarehouseRow) {
+            resolvedItemId = newWarehouseRow.id;
+          }
+        }
+
+        if (resolvedItemId) {
+          const fifoEst = await warehouseService.estimateFifoUnitCost(tx, tenantId, resolvedItemId, quantity);
+          if (payload.cost_price === undefined) {
+            costPrice = fifoEst.unitCost;
+          }
+          costSource = fifoEst.hasBatches ? "estimated_fifo" : "manual";
+        }
+      } else if (payload.item_type === "service" && payload.save_to_catalog && !resolvedItemId && trimmedName) {
+        const savedService = await tx.queryOne<{ id: string }>(
+          `INSERT INTO repair_services_catalog (tenant_id, name, description, default_price, unit, updated_at)
+           VALUES ($1, $2, $3, $4, $5, now())
+           ON CONFLICT (tenant_id, name)
+           DO UPDATE SET default_price = EXCLUDED.default_price,
+                         description = EXCLUDED.description,
+                         unit = EXCLUDED.unit,
+                         updated_at = now()
+           RETURNING id`,
+          [tenantId, trimmedName, trimmedDescription, price, trimmedUnit],
+        );
+        if (savedService) {
+          resolvedItemId = savedService.id;
+        }
       }
 
       const row = await tx.queryOneOrThrow<DealItemRow>(
@@ -2215,15 +2326,15 @@ export class DealsService {
           tenantId,
           dealId,
           payload.item_type,
-          payload.item_id ?? null,
-          payload.name.trim(),
-          payload.description?.trim() ?? "",
-          payload.sku?.trim() ?? "",
+          resolvedItemId,
+          trimmedName,
+          trimmedDescription,
+          trimmedSku,
           price,
           costPrice,
           costSource,
           quantity,
-          payload.unit?.trim() ?? "шт",
+          trimmedUnit,
           discountPercent,
           discountAmount,
           totalAmount,
@@ -2234,13 +2345,13 @@ export class DealsService {
       let createdPurchaseReq: { id: string; status: string } | null = null;
       if (payload.item_type === "product" && payload.add_to_purchase_request) {
         let reqQty = quantity;
-        if (payload.item_id) {
+        if (resolvedItemId) {
           const stockRow = await tx.queryOne<{ available: string }>(
             `SELECT (
                COALESCE((SELECT SUM(b.remaining_quantity) FROM warehouse_batches b WHERE b.tenant_id = $1 AND b.item_id = $2), 0)
                - COALESCE((SELECT SUM(r.quantity) FROM warehouse_reservations r WHERE r.tenant_id = $1 AND r.item_id = $2 AND r.status = 'reserved'), 0)
              )::numeric(10,2)::text AS available`,
-            [tenantId, payload.item_id],
+            [tenantId, resolvedItemId],
           );
           const avail = Math.max(0, Number(stockRow?.available ?? 0));
           const shortage = Math.round((quantity - avail) * 100) / 100;
@@ -2258,11 +2369,11 @@ export class DealsService {
             tenantId,
             dealId,
             row.id,
-            payload.item_id ?? null,
-            payload.name.trim(),
-            payload.sku?.trim() ?? "",
+            resolvedItemId,
+            trimmedName,
+            trimmedSku,
             reqQty,
-            payload.unit?.trim() ?? "шт",
+            trimmedUnit,
             costPrice,
             `Заявка из сделки «${deal.title}»`,
             userId ?? null,
@@ -2271,17 +2382,7 @@ export class DealsService {
         createdPurchaseReq = pr;
       }
 
-      // Recalculate deal budget
-      const budgetRow = await tx.queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(total_amount), 0) AS total FROM deal_items WHERE tenant_id = $1 AND deal_id = $2`,
-        [tenantId, dealId],
-      );
-      const totalBudget = Number(budgetRow?.total ?? 0);
-
-      await tx.query(
-        `UPDATE deals SET budget = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, dealId, totalBudget],
-      );
+      const totalBudget = await this.recalculateDealBudgetInTx(tx, tenantId, dealId);
 
       return { item: toDealItemDTO(row, undefined, createdPurchaseReq), totalBudget };
     });
@@ -2357,17 +2458,7 @@ export class DealsService {
         ],
       );
 
-      // Recalculate deal budget
-      const budgetRow = await tx.queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(total_amount), 0) AS total FROM deal_items WHERE tenant_id = $1 AND deal_id = $2`,
-        [tenantId, dealId],
-      );
-      const totalBudget = Number(budgetRow?.total ?? 0);
-
-      await tx.query(
-        `UPDATE deals SET budget = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, dealId, totalBudget],
-      );
+      const totalBudget = await this.recalculateDealBudgetInTx(tx, tenantId, dealId);
 
       return { item: toDealItemDTO(row), totalBudget };
     });
@@ -2387,17 +2478,7 @@ export class DealsService {
         [tenantId, dealId, itemId],
       );
 
-      // Recalculate deal budget
-      const budgetRow = await tx.queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(total_amount), 0) AS total FROM deal_items WHERE tenant_id = $1 AND deal_id = $2`,
-        [tenantId, dealId],
-      );
-      const totalBudget = Number(budgetRow?.total ?? 0);
-
-      await tx.query(
-        `UPDATE deals SET budget = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, dealId, totalBudget],
-      );
+      const totalBudget = await this.recalculateDealBudgetInTx(tx, tenantId, dealId);
 
       return { success: true, totalBudget };
     });
