@@ -214,7 +214,15 @@ function WarehouseContent() {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
-  const [activeTab, setActiveTab] = useState<WarehouseTab>("items");
+  const sectionParam = searchParams.get("section");
+  const initialActiveTab: WarehouseTab =
+    sectionParam === "batches" ||
+    sectionParam === "purchases" ||
+    sectionParam === "supplier_orders" ||
+    sectionParam === "movements"
+      ? sectionParam
+      : "items";
+  const [activeTab, setActiveTab] = useState<WarehouseTab>(initialActiveTab);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Параметры серверной пагинации и фильтрации номенклатуры склада

@@ -1106,6 +1106,14 @@ export class DealsService {
         `DELETE FROM deal_messages WHERE tenant_id = $1 AND deal_id = $2`,
         [tenantId, id],
       );
+      await query(
+        `DELETE FROM purchase_requests
+         WHERE tenant_id = $1
+           AND deal_id = $2
+           AND status = 'pending'
+           AND supplier_order_id IS NULL`,
+        [tenantId, id],
+      );
       return true;
     }
 
@@ -2458,9 +2466,68 @@ export class DealsService {
         ],
       );
 
+      // Синхронизируем связанную ожидающую заявку на закупку при изменении позиции сделки
+      let linkedPurchaseReq: { id: string; status: string } | null = null;
+      if (row.item_type === "product") {
+        const pendingPr = await tx.queryOne<{ id: string }>(
+          `SELECT id
+           FROM purchase_requests
+           WHERE tenant_id = $1
+             AND deal_id = $2
+             AND deal_item_id = $3
+             AND status = 'pending'
+             AND supplier_order_id IS NULL
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [tenantId, dealId, itemId],
+        );
+
+        if (pendingPr) {
+          let reqQty = quantity;
+          if (row.item_id) {
+            const stockRow = await tx.queryOne<{ available: string }>(
+              `SELECT (
+                 COALESCE((SELECT SUM(b.remaining_quantity) FROM warehouse_batches b WHERE b.tenant_id = $1 AND b.item_id = $2), 0)
+                 - COALESCE((SELECT SUM(r.quantity) FROM warehouse_reservations r WHERE r.tenant_id = $1 AND r.item_id = $2 AND r.status = 'reserved'), 0)
+               )::numeric(10,2)::text AS available`,
+              [tenantId, row.item_id],
+            );
+            const avail = Math.max(0, Number(stockRow?.available ?? 0));
+            const shortage = Math.round((quantity - avail) * 100) / 100;
+            if (shortage > 0) {
+              reqQty = shortage;
+            }
+          }
+
+          const updatedPr = await tx.queryOne<{ id: string; status: string }>(
+            `UPDATE purchase_requests
+             SET item_name = $3,
+                 sku = $4,
+                 quantity = $5,
+                 unit = $6,
+                 estimated_price = $7,
+                 updated_at = now()
+             WHERE tenant_id = $1 AND id = $2
+             RETURNING id, status`,
+            [tenantId, pendingPr.id, name, sku, reqQty, unit, costPrice],
+          );
+          linkedPurchaseReq = updatedPr ?? null;
+        } else {
+          const latestPr = await tx.queryOne<{ id: string; status: string }>(
+            `SELECT id, status
+             FROM purchase_requests
+             WHERE tenant_id = $1 AND deal_id = $2 AND deal_item_id = $3
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [tenantId, dealId, itemId],
+          );
+          linkedPurchaseReq = latestPr ?? null;
+        }
+      }
+
       const totalBudget = await this.recalculateDealBudgetInTx(tx, tenantId, dealId);
 
-      return { item: toDealItemDTO(row), totalBudget };
+      return { item: toDealItemDTO(row, undefined, linkedPurchaseReq), totalBudget };
     });
   }
 
@@ -2473,6 +2540,17 @@ export class DealsService {
       throw new ValidationError("Услуги и запчасти из наряда удаляются в наряде СЦ", {});
     }
     return withTenant(tenantId, async (tx) => {
+      // Удаляем связанные не заказанные заявки на закупку до удаления позиции сделки
+      await tx.query(
+        `DELETE FROM purchase_requests
+         WHERE tenant_id = $1
+           AND deal_id = $2
+           AND deal_item_id = $3
+           AND status = 'pending'
+           AND supplier_order_id IS NULL`,
+        [tenantId, dealId, itemId],
+      );
+
       await tx.query(
         `DELETE FROM deal_items WHERE tenant_id = $1 AND deal_id = $2 AND id = $3`,
         [tenantId, dealId, itemId],
