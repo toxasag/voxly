@@ -17,6 +17,7 @@ import {
   type ServiceItemDTO,
 } from "@/lib/api/use-services";
 import { EditServiceModal } from "@/components/services/EditServiceModal";
+import { CreateOrEditServiceModal } from "@/components/warehouse/CreateOrEditServiceModal";
 import { cn, matchesSearchTokens } from "@/lib/utils";
 
 export interface ServiceCatalogDialogProps {
@@ -150,9 +151,7 @@ function ServiceCatalogDialogView({
   useOverlay(open, { onEscape: onClose });
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newDescription, setNewDescription] = useState("");
-  const [newPrice, setNewPrice] = useState("");
+  const [createServiceOpen, setCreateServiceOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingService, setEditingService] = useState<ServiceItemDTO | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -217,30 +216,8 @@ function ServiceCatalogDialogView({
     setSelectedIds(new Set());
   }, [onSelectServices, selectedServicesList]);
 
-  const handleCreate = useCallback(async () => {
-    const trimmed = newName.trim();
-    if (!trimmed) {
-      toast.error("Укажите наименование услуги");
-      return;
-    }
-
-    const priceNum = parseFloat(newPrice);
-    const default_price = !isNaN(priceNum) && priceNum >= 0 ? priceNum : undefined;
-
-    try {
-      await onCreateService({
-        name: trimmed,
-        description: newDescription.trim() || undefined,
-        default_price,
-      });
-      toast.success(`Услуга «${trimmed}» добавлена в справочник`);
-      setNewName("");
-      setNewDescription("");
-      setNewPrice("");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось добавить услугу");
-    }
-  }, [newName, newDescription, newPrice, onCreateService]);
+  void isAdding;
+  void onCreateService;
 
   const handleDelete = useCallback(
     async (id: string, name: string) => {
@@ -279,77 +256,22 @@ function ServiceCatalogDialogView({
               <p className="text-[11px] text-[#666666]">{subtitle}</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-[6px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Add Service Bar */}
-        <div className="border-b border-[#e5e5e5] bg-white p-4">
-          <span className="block text-[11px] font-medium uppercase tracking-wider text-[#666666] mb-2">
-            Новая услуга в справочнике
-          </span>
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-              <input
-                type="text"
-                placeholder="Наименование работы или услуги..."
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleCreate();
-                  }
-                }}
-                className="flex-1 h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-              />
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  placeholder="Цена, ₽"
-                  value={newPrice}
-                  onChange={(e) => setNewPrice(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void handleCreate();
-                    }
-                  }}
-                  className="w-28 h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-mono tabular-nums text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleCreate()}
-                  disabled={isAdding || !newName.trim()}
-                  className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shrink-0"
-                >
-                  {isAdding ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Plus className="h-3.5 w-3.5" />
-                  )}
-                  Добавить
-                </button>
-              </div>
-            </div>
-            <input
-              type="text"
-              placeholder="Описание услуги (необязательно)..."
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void handleCreate();
-                }
-              }}
-              className="w-full h-7 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
-            />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCreateServiceOpen(true)}
+              className="h-7 rounded-[7px] bg-[#4a38f5] px-2.5 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer inline-flex items-center gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Добавить услугу</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-[6px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
@@ -555,6 +477,13 @@ function ServiceCatalogDialogView({
           </div>
         </div>
       </div>
+
+      {/* Единая каноническая модалка создания услуги из /warehouse */}
+      <CreateOrEditServiceModal
+        open={createServiceOpen}
+        onClose={() => setCreateServiceOpen(false)}
+        initialName={searchQuery.trim()}
+      />
 
       {/* Edit Service Modal */}
       <EditServiceModal

@@ -114,6 +114,7 @@ export function useCreateService() {
       void queryClient.invalidateQueries({ queryKey: serviceKeys.all });
       // Invalidate service center catalog queries as well for cross-compatibility
       void queryClient.invalidateQueries({ queryKey: ["repairs", "services-catalog"] });
+      void queryClient.invalidateQueries({ queryKey: ["repair-services-catalog"] });
     },
   });
 }

@@ -64,6 +64,11 @@
 - **Sticky Auto-Scroll During Typing**: В React-виджете (`ChatWidget.tsx`) и standalone embed-скрипте (`widget.js`, `widget-script.ts`) внедрена sticky-логика прокрутки на каждом тике посимвольной печати (`typeWriter` / `typeNextChar`). Сообщение больше не сползает под поле ввода, удерживая нижний край над полем ввода; при ручном чтении истории пользователем вверх (>100px) автоскролл не перехватывает экран до отправки нового сообщения или возврата к низу.
 - **2x Slower Realistic Typing Speed**: Скорость печати замедлена в 2 раза — интервал между символами увеличен с 12 мс до 24 мс синхронно во всех компонентах (`ChatWidget.tsx`, `WidgetSettings.tsx`, `widget/page.tsx`, `widget.js`, `widget-script.ts`). Обновлены пресеты скорости в настройках: 48 мс («Плавная»), 24 мс («Норм»), 12 мс («Быстрая»).
 
+### Changed · Единые модалки создания товаров и услуг из /warehouse во всех модулях (2026-11-27)
+
+- **Unified Item Creation (`CreateItemModal`)**: Все точки создания нового товара — заказ поставщику (`CreateSupplierOrderModal`), карточка наряда (`PartAddModal` в `/repairs/[id]`) и карточка сделки CRM (`DealProductAddModal` в `/crm/deals/[id]`) — переведены на единую каноническую модалку `CreateItemModal` из `/warehouse` (с полными полями: Наименование, Артикул/SKU, Бренд, Категория, Подходит к моделям, Ед. изм., Мин. остаток, Себестоимость, Розничная цена) и автоматической привязкой созданного `warehouse_item_id`.
+- **Unified Service Creation (`CreateOrEditServiceModal`)**: Все точки создания новой услуги — диалог справочника (`ServiceCatalogDialog`), таблица работ наряда (`WorkItemsTable`) и вкладка сделок (`DealProductsServicesTab`) — переведены на единую каноническую модалку `CreateOrEditServiceModal` из `/warehouse` (Наименование, Описание, Базовая цена, Ед. измерения, Длительность) с синхронной инвалидацией кэшей `/services` и `/repairs/catalog/services`.
+
 ### Fixed · Модалка заказа поставщику: автозаполнение по ИНН и создание товара (2026-11-27)
 
 - **INN Lookup for New Suppliers**: В `CreateSupplierOrderModal.tsx` и `EditSupplierOrderModal.tsx` в блоке создания нового контрагента-поставщика добавлен автоматический поиск реквизитов через `GET /api/v1/crm/companies/lookup-inn` при вводе 10/12 цифр ИНН и кнопка «Заполнить по ИНН» с сохранением названия, КПП, ОГРН и юридического адреса.

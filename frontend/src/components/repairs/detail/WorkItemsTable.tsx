@@ -17,6 +17,8 @@ import {
   type RepairServiceCatalogItemDTO,
 } from "@/lib/api/use-repairs";
 import { ServiceCatalogDialog } from "./ServiceCatalogDialog";
+import { CreateOrEditServiceModal } from "@/components/warehouse/CreateOrEditServiceModal";
+import type { ServiceItemDTO } from "@/lib/api/use-services";
 import { cn, matchesSearchTokens } from "@/lib/utils";
 import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
@@ -259,22 +261,24 @@ export function WorkItemsTable({ orderId, items, onChange, onDraftStateChange }:
     }
   };
 
-  const handleCreateCatalogItem = async () => {
+  const [createServiceModalOpen, setCreateServiceModalOpen] = useState(false);
+
+  const handleCreateCatalogItem = () => {
     const trimmed = newDesc.trim();
     if (!trimmed) return;
-    const priceNum = parseFloat(newUnitPrice) || parseFloat(newCost);
-    const default_price = !isNaN(priceNum) && priceNum >= 0 ? priceNum : undefined;
+    setCatalogOpen(false);
+    setCreateServiceModalOpen(true);
+  };
 
-    try {
-      await addServiceMutation.mutateAsync({
-        name: trimmed,
-        default_price,
-      });
-      toast.success(`Услуга «${trimmed}» добавлена в справочник`);
-      setCatalogOpen(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось сохранить услугу в справочник");
+  const handleServiceCreatedInCatalog = (created: ServiceItemDTO) => {
+    const priceVal = Number(created.price ?? created.defaultPrice ?? 0);
+    setNewDesc(created.name);
+    if (priceVal > 0) {
+      const q = parseFloat(newQty) || 1;
+      setNewUnitPrice(String(priceVal));
+      setNewCost(String(Math.round(priceVal * q * 100) / 100));
     }
+    toast.success(`Услуга «${created.name}» добавлена в справочник`);
   };
 
   const handleAdd = useCallback(async () => {
@@ -1109,6 +1113,15 @@ export function WorkItemsTable({ orderId, items, onChange, onDraftStateChange }:
         onClose={() => setIsCatalogDialogOpen(false)}
         onSelectServices={handleAddServicesFromDialog}
         isSubmittingMultiple={createWorksBatchMutation.isPending}
+      />
+
+      {/* Единая каноническая модалка создания услуги из /warehouse */}
+      <CreateOrEditServiceModal
+        open={createServiceModalOpen}
+        onClose={() => setCreateServiceModalOpen(false)}
+        initialName={newDesc.trim()}
+        initialPrice={newUnitPrice || newCost}
+        onCreated={handleServiceCreatedInCatalog}
       />
     </div>
   );
