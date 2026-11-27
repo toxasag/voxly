@@ -492,14 +492,19 @@ export class RepairsService {
              FROM repair_orders ro
              WHERE ro.tenant_id = $1 AND ro.deal_id = $2 AND ro.deleted_at IS NULL
            )
-           SELECT COALESCE(SUM(
-             CASE
-               WHEN final_cost IS NOT NULL AND final_cost > 0 THEN final_cost
-               WHEN calc_total > 0 THEN calc_total
-               ELSE COALESCE(estimated_cost, 0)
-             END
-           ), 0)::text AS total
-           FROM order_totals`,
+           SELECT (
+             COALESCE((SELECT SUM(total_amount) FROM deal_items WHERE tenant_id = $1 AND deal_id = $2), 0) +
+             COALESCE((
+               SELECT SUM(
+                 CASE
+                   WHEN final_cost IS NOT NULL AND final_cost > 0 THEN final_cost
+                   WHEN calc_total > 0 THEN calc_total
+                   ELSE COALESCE(estimated_cost, 0)
+                 END
+               )
+               FROM order_totals
+             ), 0)
+           )::text AS total`,
           [tenantId, dealId],
         );
 

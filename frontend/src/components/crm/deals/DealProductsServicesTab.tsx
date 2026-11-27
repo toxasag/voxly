@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback, type KeyboardEvent } from "react";
 import {
   PackagePlus,
   Boxes,
@@ -14,6 +14,9 @@ import {
   Calculator,
   ShoppingCart,
   ExternalLink,
+  Search,
+  X,
+  Warehouse,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -25,37 +28,54 @@ import {
 } from "@/lib/api/use-deals";
 import {
   useWarehouseItems,
+  useWarehouseSettings,
   usePurchaseRequests,
   useCreatePurchaseRequest,
+  type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
-import { useServices } from "@/lib/api/use-services";
+import { useServices, useCreateService, type ServiceItemDTO } from "@/lib/api/use-services";
 import { useDealEconomics } from "@/lib/api/use-invoices";
 import { useAuth } from "@/lib/auth/use-auth";
 import { isModuleInstalled } from "@/lib/context/tenant";
-import { cn } from "@/lib/utils";
+import { cn, matchesSearchTokens, matchesWarehouseItem } from "@/lib/utils";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import { Skeleton } from "@/components/shared/Skeleton";
 
 import { formatRub } from "@/lib/utils/format";
+
+const MAX_DROPDOWN_ITEMS = 80;
 
 export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
   const { tenant } = useAuth();
   const hasFinance = isModuleInstalled(tenant?.installedModules ?? [], "finance");
   const { data: dealEconomics } = useDealEconomics(deal.id, hasFinance);
   const { data: dealItemsData, isLoading: isItemsLoading } = useDealItems(deal.id);
-  const items = dealItemsData?.data ?? [];
+  const items = useMemo(() => dealItemsData?.data ?? [], [dealItemsData?.data]);
   const totalBudget = dealItemsData?.totalBudget ?? deal.budget ?? 0;
 
   const addItemMutation = useAddDealItem(deal.id);
   const deleteItemMutation = useDeleteDealItem(deal.id);
   const createPurchaseRequestMutation = useCreatePurchaseRequest();
+  const createServiceMutation = useCreateService();
 
-  const { data: warehouseItems = [] } = useWarehouseItems();
-  const { data: services = [] } = useServices();
+  const {
+    data: warehouseItems = [],
+    isLoading: isWarehouseLoading,
+    isError: isWarehouseError,
+  } = useWarehouseItems();
+  const { data: warehouseSettings } = useWarehouseSettings();
+  const allowNegativeStock = warehouseSettings ? Boolean(warehouseSettings.allowNegativeStock) : true;
+  const {
+    data: services = [],
+    isLoading: isServicesLoading,
+    isError: isServicesError,
+  } = useServices();
   const { data: purchaseRequests = [] } = usePurchaseRequests(undefined, undefined, deal.id);
 
   // Add Item Bar State
   const [itemType, setItemType] = useState<"product" | "service">("product");
   const [selectedCatalogId, setSelectedCatalogId] = useState<string>("");
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customDescription, setCustomDescription] = useState("");
   const [customSku, setCustomSku] = useState("");
@@ -64,14 +84,23 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
   const [quantity, setQuantity] = useState("1");
   const [unit, setUnit] = useState("шт");
   const [discountPercent, setDiscountPercent] = useState("0");
+  const [saveToCatalog, setSaveToCatalog] = useState(false);
   const [addToPurchaseRequest, setAddToPurchaseRequest] = useState(false);
   const [isAddFormOpen, setIsAddFormOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [requestingId, setRequestingId] = useState<string | null>(null);
 
+  const comboboxRef = useRef<HTMLDivElement>(null);
+  useClickOutside(comboboxRef, () => setCatalogOpen(false), catalogOpen);
+
   const warehouseMap = useMemo(
     () => new Map(warehouseItems.map((w) => [w.id, w])),
     [warehouseItems],
+  );
+
+  const servicesMap = useMemo(
+    () => new Map(services.map((s) => [s.id, s])),
+    [services],
   );
 
   const selectedWarehouseItem = useMemo(
@@ -79,10 +108,33 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
     [itemType, selectedCatalogId, warehouseMap],
   );
 
+  const selectedServiceItem = useMemo(
+    () => (itemType === "service" && selectedCatalogId ? servicesMap.get(selectedCatalogId) ?? null : null),
+    [itemType, selectedCatalogId, servicesMap],
+  );
+
+  // Многословный поиск по номенклатуре склада (как в PartsTable СЦ)
+  const filteredWarehouseItems = useMemo(
+    () => warehouseItems.filter((wi) => matchesWarehouseItem(wi, customName)),
+    [warehouseItems, customName],
+  );
+
+  // Многословный поиск по справочнику услуг (как в WorkItemsTable СЦ)
+  const filteredServices = useMemo(
+    () => services.filter((s) => matchesSearchTokens(customName, [s.name, s.description])),
+    [services, customName],
+  );
+
+  const exactServiceMatchExists = useMemo(() => {
+    const trimmed = customName.trim().toLowerCase();
+    if (!trimmed) return false;
+    return services.some((s) => s.name.trim().toLowerCase() === trimmed);
+  }, [services, customName]);
+
   const parsedQtyNum = parseFloat(quantity) || 1;
   const formShortage = useMemo(() => {
     if (itemType !== "product") return 0;
-    if (!selectedWarehouseItem) return parsedQtyNum;
+    if (!selectedWarehouseItem) return 0;
     const avail = Math.max(0, Number(selectedWarehouseItem.availableStock ?? 0));
     return Math.max(0, Math.round((parsedQtyNum - avail) * 100) / 100);
   }, [itemType, selectedWarehouseItem, parsedQtyNum]);
@@ -128,56 +180,88 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
     };
   }, [items]);
 
-  // Handle Catalog Selection
-  const handleSelectCatalogItem = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    setSelectedCatalogId(id);
+  const handleSelectWarehouseItem = useCallback(
+    (w: WarehouseItemDTO) => {
+      setSelectedCatalogId(w.id);
+      setCustomName(w.name);
+      setCustomDescription(w.category ? `Категория: ${w.category}` : "");
+      setCustomSku(w.sku || "");
+      setPrice(String(w.retailPrice || w.costPrice || 0));
+      const fifoCost = w.fifoCostPrice && w.fifoCostPrice > 0 ? w.fifoCostPrice : w.costPrice;
+      setCostPrice(String(fifoCost || 0));
+      setUnit(w.unit || "шт");
+      const qtyVal = parseFloat(quantity) || 1;
+      setAddToPurchaseRequest((w.availableStock ?? 0) < qtyVal);
+      setSaveToCatalog(false);
+      setCatalogOpen(false);
+    },
+    [quantity],
+  );
 
-    if (!id) {
-      setCustomName("");
-      setCustomDescription("");
-      setCustomSku("");
-      setPrice("");
-      setCostPrice("");
-      setAddToPurchaseRequest(false);
-      return;
-    }
+  const handleSelectServiceItem = useCallback((s: ServiceItemDTO) => {
+    setSelectedCatalogId(s.id);
+    setCustomName(s.name);
+    setCustomDescription(s.description ?? "");
+    setCustomSku("");
+    setPrice(String(s.price || s.defaultPrice || 0));
+    setCostPrice("0");
+    setUnit(s.unit || "усл");
+    setAddToPurchaseRequest(false);
+    setSaveToCatalog(false);
+    setCatalogOpen(false);
+  }, []);
 
-    if (itemType === "service") {
-      const s = services.find((srv) => srv.id === id);
-      if (s) {
-        setCustomName(s.name);
-        setCustomDescription(s.description ?? "");
-        setPrice(String(s.price || s.defaultPrice || 0));
-        setCostPrice("0");
-        setUnit(s.unit || "усл");
-        setAddToPurchaseRequest(false);
-      }
-    } else {
-      const w = warehouseItems.find((wh) => wh.id === id);
-      if (w) {
-        setCustomName(w.name);
-        setCustomDescription(w.category ? `Категория: ${w.category}` : "");
-        setCustomSku(w.sku || "");
-        setPrice(String(w.retailPrice || w.costPrice || 0));
-        const fifoCost = w.fifoCostPrice && w.fifoCostPrice > 0 ? w.fifoCostPrice : w.costPrice;
-        setCostPrice(String(fifoCost || 0));
-        setUnit(w.unit || "шт");
-        const qtyVal = parseFloat(quantity) || 1;
-        setAddToPurchaseRequest((w.availableStock ?? 0) < qtyVal);
-      }
-    }
-  };
-
-  // Switch between Product / Service tab in Add Form
-  const handleSwitchType = (type: "product" | "service") => {
-    setItemType(type);
+  const handleClearCatalogSelection = useCallback(() => {
     setSelectedCatalogId("");
     setCustomName("");
     setCustomDescription("");
     setCustomSku("");
     setPrice("");
     setCostPrice("");
+    setSaveToCatalog(false);
+    setAddToPurchaseRequest(false);
+    setCatalogOpen(true);
+  }, []);
+
+  const handleCreateServiceCatalogItem = useCallback(async () => {
+    const trimmed = customName.trim();
+    if (!trimmed) return;
+    const priceNum = parseFloat(price);
+    const parsedPrice = !isNaN(priceNum) && priceNum >= 0 ? priceNum : 0;
+    try {
+      const created = await createServiceMutation.mutateAsync({
+        name: trimmed,
+        description: customDescription.trim() || undefined,
+        default_price: parsedPrice,
+        price: parsedPrice,
+        unit: unit.trim() || "усл",
+      });
+      setSelectedCatalogId(created.id);
+      setSaveToCatalog(false);
+      setCatalogOpen(false);
+      toast.success(`Услуга «${trimmed}» сохранена в справочник`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось сохранить услугу в справочник");
+    }
+  }, [customName, customDescription, price, unit, createServiceMutation]);
+
+  const handleSearchKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      setCatalogOpen(false);
+    }
+  }, []);
+
+  // Switch between Product / Service tab in Add Form
+  const handleSwitchType = (type: "product" | "service") => {
+    setItemType(type);
+    setSelectedCatalogId("");
+    setCatalogOpen(false);
+    setCustomName("");
+    setCustomDescription("");
+    setCustomSku("");
+    setPrice("");
+    setCostPrice("");
+    setSaveToCatalog(false);
     setAddToPurchaseRequest(false);
     setUnit(type === "product" ? "шт" : "усл");
   };
@@ -199,6 +283,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
     const parsedQty = !isNaN(qtyNum) && qtyNum > 0 ? qtyNum : 1;
     const discNum = parseFloat(discountPercent);
     const parsedDisc = !isNaN(discNum) && discNum >= 0 && discNum <= 100 ? discNum : 0;
+    const shouldSaveToCatalog = !selectedCatalogId && saveToCatalog;
 
     try {
       await addItemMutation.mutateAsync({
@@ -212,15 +297,24 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
         quantity: parsedQty,
         unit: unit.trim() || (itemType === "product" ? "шт" : "усл"),
         discount_percent: parsedDisc,
+        save_to_catalog: shouldSaveToCatalog,
         add_to_purchase_request: itemType === "product" ? addToPurchaseRequest : false,
       });
 
+      const suffixes: string[] = [];
+      if (shouldSaveToCatalog) {
+        suffixes.push(itemType === "product" ? "сохранена на склад" : "сохранена в справочник");
+      }
+      if (itemType === "product" && addToPurchaseRequest) {
+        suffixes.push("создана заявка на закупку");
+      }
       toast.success(
-        itemType === "product" && addToPurchaseRequest
-          ? `Позиция «${trimmedName}» добавлена, заявка на закупку создана на /warehouse`
+        suffixes.length > 0
+          ? `Позиция «${trimmedName}» добавлена (${suffixes.join(", ")})`
           : `Позиция «${trimmedName}» добавлена в сделку`,
       );
       setSelectedCatalogId("");
+      setCatalogOpen(false);
       setCustomName("");
       setCustomDescription("");
       setCustomSku("");
@@ -228,6 +322,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
       setCostPrice("");
       setQuantity("1");
       setDiscountPercent("0");
+      setSaveToCatalog(false);
       setAddToPurchaseRequest(false);
       setIsAddFormOpen(false);
     } catch (err) {
@@ -255,7 +350,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
         estimated_price: item.costPrice ?? 0,
         comment: `Заявка из сделки «${deal.title}»`,
       });
-      toast.success(`Заявка на закупку (${reqQty} ${item.unit || "шт"}) отправлена на /warehouse`);
+      toast.success(`Заявка на закупку (${reqQty} ${item.unit || "шт"}) отправлена в закупки склада`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Не удалось создать заявку на закупку");
     } finally {
@@ -363,7 +458,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
               )}
             </div>
             <p className="text-[11px] text-[#888888] mt-1">
-              При закрытии сделки в «Успешно» товары автоматически списываются по FIFO; при нехватке на складе создаётся заявка на закупку на /warehouse
+              При закрытии сделки в «Успешно» товары автоматически списываются по FIFO; при нехватке на складе создаётся заявка на закупку
             </p>
           </div>
         </div>
@@ -373,7 +468,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
           onClick={() => setIsAddFormOpen(!isAddFormOpen)}
           className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer shrink-0"
         >
-          <Plus className="h-3.5 w-3.5" />
+          {isAddFormOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
           {isAddFormOpen ? "Скрыть форму" : "Добавить позицию"}
         </button>
       </div>
@@ -415,52 +510,302 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
             </div>
 
             <span className="text-[11px] text-[#888888]">
-              {itemType === "service" ? "Выбор из справочника услуг" : "Выбор из номенклатуры склада (FIFO)"}
+              {itemType === "service"
+                ? `Справочник услуг (${services.length})`
+                : `Номенклатура склада (${warehouseItems.length})`}
             </span>
           </div>
 
           <form onSubmit={handleAddItem} className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-medium text-[#666666] mb-1">
-                  Выбрать из каталога
-                </label>
-                <select
-                  value={selectedCatalogId}
-                  onChange={handleSelectCatalogItem}
-                  className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                >
-                  <option value="">— Быстрый выбор или ввести вручную —</option>
-                  {itemType === "service" ? (
-                    services.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} ({s.price > 0 ? `${s.price} ₽` : "0 ₽"})
-                      </option>
-                    ))
-                  ) : (
-                    warehouseItems.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name} {w.sku ? `[${w.sku}]` : ""} — ост. {w.availableStock} {w.unit} (
-                        {w.retailPrice || w.costPrice} ₽)
-                      </option>
-                    ))
+            <div className={cn("grid grid-cols-1 gap-3", itemType === "product" ? "sm:grid-cols-3" : "sm:grid-cols-1")}>
+              {/* Поисковый автокомплит-комбобокс как в СЦ (PartsTable / WorkItemsTable) */}
+              <div ref={comboboxRef} className={cn("relative", itemType === "product" ? "sm:col-span-2" : "")}>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-medium text-[#666666]">
+                    {itemType === "product"
+                      ? "Поиск по складу или наименование товара"
+                      : "Поиск по справочнику или наименование услуги"}{" "}
+                    <span className="text-rose-500">*</span>
+                  </label>
+                  {(selectedWarehouseItem || selectedServiceItem) && (
+                    <span className="inline-flex items-center gap-1 rounded-[4px] bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-medium text-[#4a38f5]">
+                      {itemType === "product" ? "Привязано к складу" : "Из справочника услуг"}
+                      <button
+                        type="button"
+                        onClick={handleClearCatalogSelection}
+                        className="ml-0.5 text-[#4a38f5]/70 hover:text-[#4a38f5] cursor-pointer"
+                        title="Отвязать и выбрать другую позицию"
+                        aria-label="Сбросить выбор из каталога"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
                   )}
-                </select>
+                </div>
+
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
+                  <input
+                    type="text"
+                    required
+                    role="combobox"
+                    aria-expanded={catalogOpen}
+                    aria-controls="deal-catalog-listbox"
+                    aria-autocomplete="list"
+                    placeholder={
+                      itemType === "product"
+                        ? "Поиск по названию, артикулу, бренду, модели или введите вручную..."
+                        : "Поиск по справочнику услуг или введите название..."
+                    }
+                    value={customName}
+                    onChange={(e) => {
+                      setCustomName(e.target.value);
+                      if (selectedCatalogId) {
+                        setSelectedCatalogId("");
+                      }
+                      setCatalogOpen(true);
+                    }}
+                    onFocus={() => setCatalogOpen(true)}
+                    onKeyDown={handleSearchKeyDown}
+                    className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white pl-8 pr-8 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  {customName ? (
+                    <button
+                      type="button"
+                      onClick={handleClearCatalogSelection}
+                      aria-label="Очистить поиск"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[#888888] hover:text-[#111111] cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : itemType === "product" ? (
+                    <Boxes className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
+                  ) : (
+                    <BookOpen className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
+                  )}
+                </div>
+
+                {catalogOpen && (
+                  <div
+                    id="deal-catalog-listbox"
+                    role="listbox"
+                    className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-lg"
+                  >
+                    <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
+                      <span>{itemType === "product" ? "Номенклатура склада" : "Справочник услуг"}</span>
+                      <span className="font-mono font-normal normal-case text-[10px]">
+                        {itemType === "product"
+                          ? `Найдено: ${filteredWarehouseItems.length}`
+                          : `Найдено: ${filteredServices.length}`}
+                      </span>
+                    </div>
+
+                    {itemType === "product" ? (
+                      <>
+                        {isWarehouseLoading && (
+                          <div className="flex items-center justify-center py-3 text-xs text-[#888888]">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> Загрузка номенклатуры склада...
+                          </div>
+                        )}
+                        {!isWarehouseLoading && isWarehouseError && (
+                          <div className="px-2.5 py-2 text-xs text-rose-600">
+                            Не удалось загрузить справочник склада. Вы можете ввести позицию вручную.
+                          </div>
+                        )}
+                        {!isWarehouseLoading && !isWarehouseError && filteredWarehouseItems.length > 0 && (
+                          <div className="space-y-0.5">
+                            {filteredWarehouseItems.slice(0, MAX_DROPDOWN_ITEMS).map((wi) => {
+                              const isOutOfStock = wi.availableStock <= 0;
+                              const effectiveCost = wi.fifoCostPrice ?? wi.costPrice ?? 0;
+                              const margin = (wi.retailPrice ?? 0) - effectiveCost;
+                              const markupPct = effectiveCost > 0 ? Math.round((margin / effectiveCost) * 100) : 0;
+                              const isSelected = selectedCatalogId === wi.id;
+                              return (
+                                <button
+                                  key={wi.id}
+                                  type="button"
+                                  onClick={() => handleSelectWarehouseItem(wi)}
+                                  className={cn(
+                                    "flex w-full items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer",
+                                    isSelected ? "bg-[#4a38f5]/8" : "hover:bg-[#fafafa]",
+                                  )}
+                                >
+                                  <div className="min-w-0 flex-1 pr-2">
+                                    <span className="font-medium text-[#111111] truncate block">{wi.name}</span>
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[#888888]">
+                                      {wi.sku && <span className="font-mono">{wi.sku}</span>}
+                                      {wi.brand && <span>{wi.sku ? "· " : ""}{wi.brand}</span>}
+                                      {wi.category && <span>{wi.sku || wi.brand ? "· " : ""}{wi.category}</span>}
+                                      {wi.modelNames && wi.modelNames.length > 0 && (
+                                        <span className="truncate text-[#666666]">
+                                          · {wi.modelNames.join(", ")}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <span
+                                      className={cn(
+                                        "inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold font-mono",
+                                        isOutOfStock
+                                          ? "bg-rose-50 text-rose-700 border border-rose-200"
+                                          : "bg-emerald-50 text-emerald-700 border border-emerald-200",
+                                      )}
+                                    >
+                                      Доступно: {wi.availableStock} {wi.unit}
+                                    </span>
+                                    <div className="flex items-center justify-end gap-2 text-[11px] font-mono mt-0.5">
+                                      <span className="text-[#111111] font-medium">
+                                        Розница: {formatRub(wi.retailPrice)}
+                                      </span>
+                                      <span className="text-[#666666]">
+                                        Закупка{(wi.activeBatchesCount ?? 0) > 0 ? " FIFO" : ""}: {formatRub(effectiveCost)}
+                                      </span>
+                                      {margin > 0 && effectiveCost > 0 && (
+                                        <span className="text-emerald-700 font-medium">+{markupPct}%</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                            {filteredWarehouseItems.length > MAX_DROPDOWN_ITEMS && (
+                              <div className="px-2.5 py-1.5 text-[11px] text-[#888888] border-t border-[#f0f0f0]">
+                                Показаны первые {MAX_DROPDOWN_ITEMS} из {filteredWarehouseItems.length} позиций — уточните запрос
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!isWarehouseLoading && !isWarehouseError && filteredWarehouseItems.length === 0 && (
+                          <div className="p-2 space-y-1.5">
+                            <div className="text-xs text-[#888888]">
+                              {warehouseItems.length === 0
+                                ? "Склад пока пуст. Товар можно добавить вручную и сохранить в номенклатуру."
+                                : "На складе позиций по запросу не найдено."}
+                            </div>
+                            {customName.trim().length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSaveToCatalog(true);
+                                  setCatalogOpen(false);
+                                }}
+                                className="flex w-full items-center gap-1.5 rounded-[6px] bg-[#4a38f5]/5 border border-[#4a38f5]/20 px-2.5 py-1.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors text-left cursor-pointer"
+                              >
+                                <Warehouse className="h-3.5 w-3.5 shrink-0" />
+                                <span>
+                                  Добавить «<span className="font-semibold">{customName.trim()}</span>» с сохранением на склад
+                                </span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {isServicesLoading && (
+                          <div className="flex items-center justify-center py-3 text-xs text-[#888888]">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> Загрузка справочника услуг...
+                          </div>
+                        )}
+                        {!isServicesLoading && isServicesError && (
+                          <div className="px-2.5 py-2 text-xs text-rose-600">
+                            Не удалось загрузить справочник услуг. Вы можете ввести услугу вручную.
+                          </div>
+                        )}
+                        {!isServicesLoading && !isServicesError && filteredServices.length > 0 && (
+                          <div className="space-y-0.5">
+                            {filteredServices.slice(0, MAX_DROPDOWN_ITEMS).map((svc) => {
+                              const svcPrice = svc.price || svc.defaultPrice || 0;
+                              const isSelected = selectedCatalogId === svc.id;
+                              return (
+                                <button
+                                  key={svc.id}
+                                  type="button"
+                                  onClick={() => handleSelectServiceItem(svc)}
+                                  className={cn(
+                                    "flex w-full items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer",
+                                    isSelected ? "bg-[#4a38f5]/8" : "hover:bg-[#fafafa]",
+                                  )}
+                                >
+                                  <div className="min-w-0 flex-1 pr-2">
+                                    <span className="font-medium text-[#111111] truncate block">{svc.name}</span>
+                                    {svc.description && (
+                                      <span className="text-[11px] text-[#888888] truncate block">
+                                        {svc.description}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <span
+                                      className={cn(
+                                        "font-mono text-[11px] font-semibold tabular-nums",
+                                        svcPrice > 0 ? "text-[#4a38f5]" : "text-[#888888]",
+                                      )}
+                                    >
+                                      {formatRub(svcPrice)}
+                                    </span>
+                                    {svc.unit && (
+                                      <span className="ml-1 text-[10px] text-[#888888]">/ {svc.unit}</span>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                            {filteredServices.length > MAX_DROPDOWN_ITEMS && (
+                              <div className="px-2.5 py-1.5 text-[11px] text-[#888888] border-t border-[#f0f0f0]">
+                                Показаны первые {MAX_DROPDOWN_ITEMS} из {filteredServices.length} услуг — уточните запрос
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!isServicesLoading && !isServicesError && filteredServices.length === 0 && (
+                          <div className="px-2.5 py-2 text-xs text-[#888888]">
+                            {services.length === 0
+                              ? "Справочник услуг пока пуст. Вы можете сохранить первую услугу ниже."
+                              : "Услуг по запросу не найдено."}
+                          </div>
+                        )}
+                        {customName.trim().length > 0 && !exactServiceMatchExists && (
+                          <div className="mt-1 border-t border-[#f0f0f0] pt-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleCreateServiceCatalogItem()}
+                              disabled={createServiceMutation.isPending}
+                              className="flex w-full items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-left text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {createServiceMutation.isPending ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Plus className="h-3 w-3" />
+                              )}
+                              <span>
+                                Сохранить в справочник «<span className="font-semibold">{customName.trim()}</span>»
+                                {parseFloat(price) > 0 && ` (${formatRub(parseFloat(price))})`}
+                              </span>
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="block text-[11px] font-medium text-[#666666] mb-1">
-                  Наименование в сделке <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Название товара или услуги..."
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
-                />
-              </div>
+              {itemType === "product" && (
+                <div>
+                  <label className="block text-[11px] font-medium text-[#666666] mb-1">
+                    Артикул (SKU)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Б/А"
+                    value={customSku}
+                    onChange={(e) => setCustomSku(e.target.value)}
+                    className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                  />
+                </div>
+              )}
             </div>
 
             <div className={cn("grid grid-cols-1 gap-3", itemType === "product" ? "sm:grid-cols-5" : "sm:grid-cols-4")}>
@@ -559,48 +904,98 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
               </div>
             </div>
 
-            {itemType === "product" && (
+            {itemType === "product" && (selectedWarehouseItem !== null || customName.trim().length > 0) && (
               <div
                 className={cn(
                   "rounded-[8px] border px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs",
-                  formShortage > 0
-                    ? "border-amber-200 bg-amber-50/70 text-amber-900"
+                  selectedWarehouseItem && formShortage > 0
+                    ? allowNegativeStock
+                      ? "border-amber-200 bg-amber-50/70 text-amber-900"
+                      : "border-rose-200 bg-rose-50/70 text-rose-900"
                     : "border-[#e5e5e5] bg-[#fbfbfb] text-[#666666]",
                 )}
               >
                 <div className="flex items-center gap-2">
-                  <AlertCircle className={cn("h-4 w-4 shrink-0", formShortage > 0 ? "text-amber-600" : "text-[#888888]")} />
                   {selectedWarehouseItem ? (
                     formShortage > 0 ? (
-                      <span>
-                        Недостаточно на складе: доступно{" "}
-                        <strong className="font-mono">{selectedWarehouseItem.availableStock} {selectedWarehouseItem.unit}</strong>,
-                        не хватает <strong className="font-mono">{formShortage} {selectedWarehouseItem.unit}</strong>.
-                      </span>
+                      <>
+                        <AlertCircle
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            allowNegativeStock ? "text-amber-600" : "text-rose-600",
+                          )}
+                        />
+                        <span>
+                          Недостаточно на складе: доступно{" "}
+                          <strong className="font-mono">
+                            {selectedWarehouseItem.availableStock} {selectedWarehouseItem.unit}
+                          </strong>
+                          , не хватает{" "}
+                          <strong className="font-mono">
+                            {formShortage} {selectedWarehouseItem.unit}
+                          </strong>
+                          .
+                        </span>
+                      </>
                     ) : (
-                      <span>
-                        В наличии на складе:{" "}
-                        <strong className="font-mono text-emerald-700">
-                          {selectedWarehouseItem.availableStock} {selectedWarehouseItem.unit}
-                        </strong>
-                        {selectedWarehouseItem.fifoCostPrice && selectedWarehouseItem.fifoCostPrice > 0
-                          ? ` · FIFO ${formatRub(selectedWarehouseItem.fifoCostPrice)}`
-                          : ""}
-                      </span>
+                      <>
+                        <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                        <span>
+                          В наличии на складе:{" "}
+                          <strong className="font-mono text-emerald-700">
+                            {selectedWarehouseItem.availableStock} {selectedWarehouseItem.unit}
+                          </strong>
+                          {selectedWarehouseItem.fifoCostPrice && selectedWarehouseItem.fifoCostPrice > 0
+                            ? ` · FIFO ${formatRub(selectedWarehouseItem.fifoCostPrice)}`
+                            : ""}
+                        </span>
+                      </>
                     )
                   ) : (
-                    <span>Товар введён вручную (вне каталога склада) — можно сразу оформить заявку на закупку.</span>
+                    <>
+                      <Warehouse className="h-4 w-4 shrink-0 text-[#888888]" />
+                      <span>Товар введён вручную (вне каталога склада).</span>
+                    </>
                   )}
                 </div>
 
+                <div className="flex flex-wrap items-center gap-4">
+                  {!selectedWarehouseItem && (
+                    <label className="inline-flex items-center gap-2 font-medium text-[#111111] cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={saveToCatalog}
+                        onChange={(e) => setSaveToCatalog(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded-[4px] border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
+                      />
+                      <span>Сохранить в номенклатуру склада</span>
+                    </label>
+                  )}
+
+                  <label className="inline-flex items-center gap-2 font-medium text-[#111111] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={addToPurchaseRequest}
+                      onChange={(e) => setAddToPurchaseRequest(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded-[4px] border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
+                    />
+                    <span>Создать заявку на закупку</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {itemType === "service" && !selectedServiceItem && customName.trim().length > 0 && !exactServiceMatchExists && (
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] px-3 py-2 flex items-center justify-between gap-2 text-xs text-[#666666]">
+                <span>Новая услуга (нет в справочнике)</span>
                 <label className="inline-flex items-center gap-2 font-medium text-[#111111] cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    checked={addToPurchaseRequest}
-                    onChange={(e) => setAddToPurchaseRequest(e.target.checked)}
+                    checked={saveToCatalog}
+                    onChange={(e) => setSaveToCatalog(e.target.checked)}
                     className="h-3.5 w-3.5 rounded-[4px] border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
                   />
-                  <span>Создать заявку на закупку на /warehouse</span>
+                  <span>Сохранить в справочник услуг</span>
                 </label>
               </div>
             )}
@@ -792,7 +1187,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
                             type="button"
                             onClick={() => void handleQuickPurchaseRequest(item)}
                             disabled={requestingId === item.id}
-                            title="Нет на складе — создать заявку на закупку на /warehouse"
+                            title="Нет на складе — создать заявку на закупку"
                             className="rounded-[6px] p-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 transition-colors cursor-pointer disabled:opacity-40"
                           >
                             {requestingId === item.id ? (
