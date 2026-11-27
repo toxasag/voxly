@@ -530,7 +530,8 @@ export function useCreateWarehouseItem() {
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "items"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.categories() });
     },
   });
 }
@@ -543,7 +544,8 @@ export function useUpdateWarehouseItem() {
       return res.data;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: warehouseKeys.items() });
+      void queryClient.invalidateQueries({ queryKey: [...warehouseKeys.all, "items"] });
+      void queryClient.invalidateQueries({ queryKey: warehouseKeys.categories() });
     },
   });
 }

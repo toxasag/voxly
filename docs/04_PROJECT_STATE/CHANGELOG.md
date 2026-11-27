@@ -58,6 +58,12 @@
 - **Sticky Auto-Scroll During Typing**: В React-виджете (`ChatWidget.tsx`) и standalone embed-скрипте (`widget.js`, `widget-script.ts`) внедрена sticky-логика прокрутки на каждом тике посимвольной печати (`typeWriter` / `typeNextChar`). Сообщение больше не сползает под поле ввода, удерживая нижний край над полем ввода; при ручном чтении истории пользователем вверх (>100px) автоскролл не перехватывает экран до отправки нового сообщения или возврата к низу.
 - **2x Slower Realistic Typing Speed**: Скорость печати замедлена в 2 раза — интервал между символами увеличен с 12 мс до 24 мс синхронно во всех компонентах (`ChatWidget.tsx`, `WidgetSettings.tsx`, `widget/page.tsx`, `widget.js`, `widget-script.ts`). Обновлены пресеты скорости в настройках: 48 мс («Плавная»), 24 мс («Норм»), 12 мс («Быстрая»).
 
+### Fixed · Модалка заказа поставщику: автозаполнение по ИНН и создание товара (2026-11-27)
+
+- **INN Lookup for New Suppliers**: В `CreateSupplierOrderModal.tsx` и `EditSupplierOrderModal.tsx` в блоке создания нового контрагента-поставщика добавлен автоматический поиск реквизитов через `GET /api/v1/crm/companies/lookup-inn` при вводе 10/12 цифр ИНН и кнопка «Заполнить по ИНН» с сохранением названия, КПП, ОГРН и юридического адреса.
+- **Deduplicated Add Item Button**: В `CreateSupplierOrderModal.tsx` удалена дублирующая кнопка `+ Добавить товар` в шапке таблицы позиций, оставлена единственная кнопка `+ Добавить ещё одну позицию`.
+- **Inline Warehouse Item Creation**: HTML `<datalist>` заменён на интерактивный комбобокс поиска по номенклатуре (название/артикул, остаток, закупочная цена) с формой быстрого создания нового товара в базе склада (`POST /api/v1/warehouse/items`) и мгновенной привязкой `itemId`; в `useCreateWarehouseItem` исправлена инвалидация префикса `["warehouse", "items"]`.
+
 ### Added · Частичное оприходование заказов поставщикам и Landed Cost (2026-11-24)
 
 - **Partial Receiving & Receipt History**: Добавлена миграция `0137_supplier_order_partial_receipts_and_landed_cost.sql` (`supplier_order_items.received_quantity`, таблицы `supplier_order_receipts`, `supplier_order_receipt_items`, `supplier_order_receipt_costs` с RLS, поля себестоимости в `warehouse_batches` и флаг `is_capitalized_cost` в `transactions`). При приёмке можно указывать фактическое количество по каждой строке (`0 <= qty <= remaining`, серверная блокировка `FOR UPDATE`), заказ получает статус «Частично оприходован» (`partially_received`) с прогрессом `Принято X из Y` и кнопкой «Доприходовать», а история всех приёмок хранится в карточке заказа.
