@@ -21,7 +21,7 @@ import {
   type InvoiceDTO,
   type VatMode,
 } from "@/lib/api/use-invoices";
-import { cn, toLocalDateKey } from "@/lib/utils";
+import { cn, localDateInputToIso, toLocalDateKey } from "@/lib/utils";
 import { formatRub } from "@/lib/utils/format";
 
 interface GenerateDealDocumentModalProps {
@@ -215,6 +215,9 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
         };
       });
 
+      const dueDateIso =
+        localDateInputToIso(dueDate) ?? new Date(Date.now() + 3 * 86400 * 1000).toISOString();
+
       const created = await createInvoice.mutateAsync({
         document_type: documentType,
         issuer_organization_id: selectedOrg?.id || undefined,
@@ -225,7 +228,7 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
         contact_name: contactName.trim(),
         contact_phone: contactPhone.trim(),
         deal_id: deal.id,
-        due_date: dueDate,
+        due_date: dueDateIso,
         vat_mode: vatMode,
         vat_rate: vatModeToRate(vatMode),
         currency: deal.currency || "RUB",
@@ -301,7 +304,7 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
                 добавить организацию в разделе «Финансы».
               </div>
             ) : (
-              <div className="relative">
+              <div className="relative min-w-0">
                 <Building2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
                 <select
                   value={selectedOrg?.id ?? ""}
@@ -321,7 +324,7 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
                       );
                     }
                   }}
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-8 pr-3 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  className="block w-full min-w-0 max-w-full truncate rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-8 pr-8 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 >
                   {organizations.map((o) => (
                     <option key={o.id} value={o.id}>
@@ -480,12 +483,12 @@ export const GenerateDealDocumentModal = memo(function GenerateDealDocumentModal
                 className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 font-mono text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               />
             </div>
-            <div>
+            <div className="min-w-0">
               <label className="mb-1 block text-xs font-medium text-[#111111]">Режим НДС</label>
               <select
                 value={vatMode}
                 onChange={(e) => setVatMode(e.target.value as VatMode)}
-                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                className="block w-full min-w-0 max-w-full truncate rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               >
                 {VAT_OPTIONS.map((v) => (
                   <option key={v.mode} value={v.mode}>

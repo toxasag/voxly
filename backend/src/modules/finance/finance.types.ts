@@ -12,7 +12,14 @@ export const transactionTypeSchema = z.enum(["income", "expense"]);
 export const invoiceStatusSchema = z.enum(["draft", "sent", "paid", "overdue", "cancelled"]);
 
 const optionalUuid = z.string().uuid().optional().nullable().or(z.literal(""));
-const isoDate = z.string().datetime("Use an ISO 8601 timestamp");
+const isoDate = z
+  .string()
+  .trim()
+  .refine(
+    (val) => /^\d{4}-\d{2}-\d{2}$/.test(val) || !isNaN(Date.parse(val)),
+    "Use an ISO 8601 timestamp or YYYY-MM-DD date",
+  )
+  .transform((val) => (/^\d{4}-\d{2}-\d{2}$/.test(val) ? `${val}T12:00:00.000Z` : val));
 const flexibleDate = z.string().optional().nullable().or(z.literal("")).refine((val) => {
   if (!val || !val.trim()) return true;
   return !isNaN(Date.parse(val));

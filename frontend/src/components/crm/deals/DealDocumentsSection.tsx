@@ -39,7 +39,7 @@ import {
   type InvoiceDTO,
   type SendInvoicePayload,
 } from "@/lib/api/use-invoices";
-import { cn, toLocalDateKey } from "@/lib/utils";
+import { cn, localDateInputToIso, toLocalDateKey } from "@/lib/utils";
 import { formatRub } from "@/lib/utils/format";
 
 interface DealDocumentsSectionProps {
@@ -241,7 +241,9 @@ export const DealDocumentsSection = memo(function DealDocumentsSection({
           contact_name: proposal.contactName || deal.contactName || "",
           contact_phone: proposal.contactPhone || deal.contactPhone || "",
           deal_id: deal.id,
-          due_date: toLocalDateKey(new Date(Date.now() + 3 * 86400 * 1000)),
+          due_date:
+            localDateInputToIso(toLocalDateKey(new Date(Date.now() + 3 * 86400 * 1000))) ??
+            new Date(Date.now() + 3 * 86400 * 1000).toISOString(),
           vat_mode: proposal.vatMode,
           vat_rate: proposal.vatRate,
           currency: proposal.currency || "RUB",

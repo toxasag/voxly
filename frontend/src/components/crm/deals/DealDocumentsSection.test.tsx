@@ -202,6 +202,7 @@ describe("DealDocumentsSection", () => {
           document_type: "proposal",
           deal_id: "deal-1",
           company_name: "ООО Тоя Сервис",
+          due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
           line_items: [
             expect.objectContaining({
               description: "GSN50 поз.39 Поршень (Б/А)",
