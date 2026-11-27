@@ -126,7 +126,14 @@ export function DrawerCreateContact({
   const tenantUsers = useTenantUsers();
   const companies = useCompanies({ limit: 50 });
   const createContact = useCreateContact();
-  const duplicatesQuery = useFindDuplicateContacts(phone);
+  const [debouncedPhone, setDebouncedPhone] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedPhone(phone.trim());
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [phone]);
+  const duplicatesQuery = useFindDuplicateContacts(debouncedPhone);
   const duplicates = duplicatesQuery.data ?? [];
 
   const currentUserName = useMemo(() => {
@@ -142,17 +149,23 @@ export function DrawerCreateContact({
     const lastName = parts.slice(1).join(" ") || "";
 
     const socialsList: Array<{ kind: "max" | "telegram" | "whatsapp"; value: string }> = [];
-    const cleanMax = maxAccount.trim() || phone.trim();
-    if (cleanMax) {
-      socialsList.push({ kind: "max", value: cleanMax });
+    if (maxAccount.trim()) {
+      socialsList.push({ kind: "max", value: maxAccount.trim() });
     }
     if (telegram.trim()) {
       socialsList.push({ kind: "telegram", value: telegram.trim() });
     }
-    const cleanWa = whatsapp.trim() || phone.trim();
-    if (cleanWa) {
-      socialsList.push({ kind: "whatsapp", value: cleanWa });
+    if (whatsapp.trim()) {
+      socialsList.push({ kind: "whatsapp", value: whatsapp.trim() });
     }
+
+    const explicitChannel = maxAccount.trim()
+      ? "max"
+      : telegram.trim()
+        ? "telegram"
+        : whatsapp.trim()
+          ? "whatsapp"
+          : "phone";
 
     createContact.mutate(
       {
@@ -165,7 +178,7 @@ export function DrawerCreateContact({
         company_name: companyName.trim() || undefined,
         company_id: companyId || undefined,
         job_title: jobTitle.trim() || undefined,
-        channel: cleanMax ? "max" : "phone",
+        channel: explicitChannel,
         linkedin_link: linkedin.trim() || undefined,
         city: city.trim() || undefined,
         address: address.trim() || undefined,
@@ -469,7 +482,7 @@ export function DrawerCreateContact({
               <FieldRow icon={MessageCircle} label="MAX">
                 <input
                   type="text"
-                  placeholder={phone.trim() ? phone.trim() : "@username или номер"}
+                  placeholder="Найдётся после сохранения или введите вручную"
                   value={maxAccount}
                   onChange={(e) => setMaxAccount(e.target.value)}
                   className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
@@ -478,7 +491,7 @@ export function DrawerCreateContact({
               <FieldRow icon={Send} label="Telegram">
                 <input
                   type="text"
-                  placeholder="@username или ID"
+                  placeholder="Найдётся после сохранения или @username"
                   value={telegram}
                   onChange={(e) => setTelegram(e.target.value)}
                   className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
@@ -487,7 +500,7 @@ export function DrawerCreateContact({
               <FieldRow icon={Phone} label="WhatsApp">
                 <input
                   type="text"
-                  placeholder={phone.trim() ? phone.trim() : "+7 999 123 45 67"}
+                  placeholder="Найдётся после сохранения или введите номер"
                   value={whatsapp}
                   onChange={(e) => setWhatsapp(e.target.value)}
                   className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"

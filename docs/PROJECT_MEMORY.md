@@ -2070,3 +2070,17 @@
   2. `backend/src/modules/ai/ai.routes.ts`: опрос и сбор моделей со всех активных сконфигурированных провайдеров (`activeProvidersList`), а не только от дефолтного.
   3. Проведен полный аудит маршрутизации моделей (`SmartModelRouter`, `ModelTierRouter`, `KeyPoolManager`, `ai_usage_log`).
 
+
+## 2026-11-27 — Устранение бесконечного цикла `/notifications/read-by-entity` (шторм `429`), ложного MAX при создании контакта и UI-ошибок сделки
+- **Контекст и root cause (сделка `9ece85ce-d44b-4228-9a50-41918d1d94a2`, контакт `c44216e4-742e-4d13-b08d-8023f4e3013d`):**
+  1. В `useMarkEntityNotificationsRead` (`use-inapp-notifications.ts`) `markEntityRead` зависел от `[mutation]`, который меняется при каждом переходе статуса, а `DealDrawer.tsx` и `crm/deals/[id]/page.tsx` вызывали его в `useEffect([open, dealId, markDealLeadRead])` без `useRef`-гарда → шторм 6 000–12 000 req/min на `/notifications/read-by-entity` и `/notifications`, выбивавший `429 Rate limit exceeded` на все действия с IP `109.95.217.174`.
+  2. `DealDrawer.tsx` отображал любую ошибку загрузки (`429`/сеть) как «Сделка не найдена».
+  3. `DrawerCreateContact.tsx` слепо записывал `socials: max / whatsapp` и `channel: "max"` из введённого телефона до запуска `CrmEnrichmentService.enrichContact`, показывал телефон серым плейсхолдером в полях MAX/WA и дергал `/contacts/duplicates` без debounce на каждую цифру.
+  4. `DrawerCreateDeal.tsx` выводил `selectedOwner.fullName` дважды (внутри `UserAvatar` и отдельным `<span>`).
+- **Что изменено:**
+  1. `use-inapp-notifications.ts`: `markEntityRead`, `markOneRead`, `markAllRead` переведены на стабильный `mutate` + `onSuccess` вместо `onSettled`.
+  2. `DealDrawer.tsx` и `crm/deals/[id]/page.tsx`: добавлен `lastMarkedDealIdRef`; в `DealDrawer` разделены 404 («Сделка не найдена») и временные ошибки («Не удалось загрузить сделку» + кнопка «Повторить»).
+  3. `DrawerCreateContact.tsx`: убрана слепая подстановка `max/whatsapp` в `socials`, добавлен debounce 350 мс на поиск дублей, исправлены плейсхолдеры.
+  4. `DrawerCreateDeal.tsx`: убран дублирующийся `<span>` имени владельца.
+  5. Прод-БД (`remtoua`): у контакта `c44216e4-742e-4d13-b08d-8023f4e3013d` (`Фетисов Григорий`) удалён неподтверждённый `socials: max` (`max.exists = false`), оставлены подтверждённые `whatsapp` и `telegram`, `channel = 'phone'`.
+  6. Тест: добавлен `frontend/src/lib/notifications/use-inapp-notifications.test.tsx`.

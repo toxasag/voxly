@@ -1196,10 +1196,7 @@ export function DrawerCreateDeal({
                         className="text-left cursor-pointer hover:opacity-85 transition-opacity"
                       >
                         {selectedOwner ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
-                            <UserAvatar user={selectedOwner} fallbackLabel="?" size="sm" />
-                            <span>{selectedOwner.fullName}</span>
-                          </span>
+                          <UserAvatar user={selectedOwner} fallbackLabel="?" size="sm" className="[&>span:last-child]:text-[#111111]" />
                         ) : (
                           <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
                         )}

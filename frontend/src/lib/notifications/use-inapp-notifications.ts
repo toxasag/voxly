@@ -65,17 +65,19 @@ export function useMarkEntityNotificationsRead() {
         };
       });
     },
-    onSettled: () => {
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: INAPP_NOTIFICATIONS_QUERY_KEY });
     },
   });
 
+  const { mutate: markEntityMutate } = mutation;
+
   const markEntityRead = useCallback(
     (params: MarkEntityReadParams) => {
       if (!params.entity_id) return;
-      mutation.mutate(params);
+      markEntityMutate(params);
     },
-    [mutation],
+    [markEntityMutate],
   );
 
   return { markEntityRead, isPending: mutation.isPending };
@@ -188,11 +190,13 @@ export function useInAppNotifications() {
     },
   });
 
+  const { mutate: markOneMutate } = markOneMutation;
+
   const markOneRead = useCallback(
     (id: string) => {
-      markOneMutation.mutate(id);
+      markOneMutate(id);
     },
-    [markOneMutation],
+    [markOneMutate],
   );
 
   const markOneReadRef = useRef(markOneRead);
@@ -316,9 +320,11 @@ export function useInAppNotifications() {
     };
   }, [queryClient, router]);
 
+  const { mutate: markAllMutate } = markAllMutation;
+
   const markAllRead = useCallback(() => {
-    markAllMutation.mutate();
-  }, [markAllMutation]);
+    markAllMutate();
+  }, [markAllMutate]);
 
   return {
     notifications,
