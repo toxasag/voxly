@@ -177,12 +177,22 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     }> = [];
 
     let isProviderConfigured = (_provider: string) => false;
+    let activeProvidersList: Array<{
+      id: string;
+      name: string;
+      baseUrl?: string;
+      providerType: string;
+      chatModel?: string;
+      isActive: boolean;
+      apiKeys: string[];
+    }> = [];
 
     try {
       const effective = await platformConfigService.getEffectiveIntegrations();
       const activeProviders = effective.llmProviders.filter(
         (p) => p.isActive && p.apiKeys.length > 0 && Boolean(p.baseUrl),
       );
+      activeProvidersList = activeProviders;
 
       isProviderConfigured = (targetProvider: string) => {
         const lower = targetProvider.toLowerCase();
@@ -218,8 +228,56 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       _request.log.warn({ err }, "Не удалось прочитать конфигурацию интеграций для каталога моделей");
     }
 
-    // Запрашиваем РЕАЛЬНО доступные чат-модели у активного провайдера отдельным изолированным вызовом
-    if (activeProvider && activeProvider.isConfigured) {
+    // Запрашиваем РЕАЛЬНО доступные чат-модели у всех активных провайдеров
+    if (activeProvidersList.length > 0) {
+      for (const prov of activeProvidersList) {
+        try {
+          const available = await platformConfigService.fetchAvailableModels({
+            providerId: prov.id,
+            baseUrl: prov.baseUrl,
+          });
+          if (available.success && available.models.length > 0) {
+            const chatOnly = available.models.filter((m) => {
+              if (m.type !== "chat") return false;
+              const id = m.id.toLowerCase();
+              if (id.includes("tts") || id.includes("audio") || id.includes("transcribe")) return false;
+              if (id.includes("banana") || id.includes("robotics") || id.includes("lyria") || id.includes("clip")) return false;
+              if (id === "aqa") return false;
+              return true;
+            });
+
+            for (const m of chatOnly) {
+              if (!dynamicModels.some((dm) => dm.id === m.id)) {
+                dynamicModels.push({
+                  id: m.id,
+                  label: m.name,
+                  provider: prov.providerType || "custom",
+                  contextWindow: 128_000,
+                  costInPer1k: 5,
+                  costOutPer1k: 15,
+                  isConfigured: true,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          _request.log.warn({ err, provId: prov.id }, "Не удалось запросить динамический список моделей от провайдера");
+        }
+
+        // Гарантируем присутствие chatModel провайдера
+        if (prov.chatModel && !dynamicModels.some((m) => m.id === prov.chatModel)) {
+          dynamicModels.push({
+            id: prov.chatModel,
+            label: prov.chatModel,
+            provider: prov.providerType || "custom",
+            contextWindow: 128_000,
+            costInPer1k: 5,
+            costOutPer1k: 15,
+            isConfigured: true,
+          });
+        }
+      }
+    } else if (activeProvider && activeProvider.isConfigured) {
       try {
         const available = await platformConfigService.fetchAvailableModels();
         if (available.success && available.models.length > 0) {
