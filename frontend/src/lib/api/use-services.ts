@@ -41,7 +41,7 @@ export const serviceKeys = {
   detail: (id: string) => [...serviceKeys.all, "detail", id] as const,
 };
 
-export function useServices(search?: string) {
+export function useServices(search?: string, enabled = true) {
   return useQuery({
     queryKey: serviceKeys.list(search),
     queryFn: async () => {
@@ -50,6 +50,7 @@ export function useServices(search?: string) {
       return res.data;
     },
     staleTime: 30_000,
+    enabled,
   });
 }
 

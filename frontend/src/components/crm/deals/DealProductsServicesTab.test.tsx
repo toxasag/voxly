@@ -7,9 +7,11 @@ import type { WarehouseItemDTO } from "@/lib/api/use-warehouse";
 import type { ServiceItemDTO } from "@/lib/api/use-services";
 
 const addItemMutateAsync = vi.fn();
+const updateItemMutateAsync = vi.fn();
 const deleteItemMutateAsync = vi.fn();
 const createPurchaseMutateAsync = vi.fn();
 const createServiceMutateAsync = vi.fn();
+const deleteServiceMutateAsync = vi.fn();
 
 const mockWarehouseItems: WarehouseItemDTO[] = [
   {
@@ -115,6 +117,10 @@ vi.mock("@/lib/api/use-deals", () => ({
     mutateAsync: addItemMutateAsync,
     isPending: false,
   })),
+  useUpdateDealItem: vi.fn(() => ({
+    mutateAsync: updateItemMutateAsync,
+    isPending: false,
+  })),
   useDeleteDealItem: vi.fn(() => ({
     mutateAsync: deleteItemMutateAsync,
     isPending: false,
@@ -147,6 +153,25 @@ vi.mock("@/lib/api/use-services", () => ({
   })),
   useCreateService: vi.fn(() => ({
     mutateAsync: createServiceMutateAsync,
+    isPending: false,
+  })),
+  useDeleteService: vi.fn(() => ({
+    mutateAsync: deleteServiceMutateAsync,
+    isPending: false,
+  })),
+}));
+
+vi.mock("@/lib/api/use-repairs", () => ({
+  useRepairServicesCatalog: vi.fn(() => ({
+    data: [],
+    isLoading: false,
+  })),
+  useAddRepairServiceToCatalog: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useDeleteRepairServiceFromCatalog: vi.fn(() => ({
+    mutateAsync: vi.fn(),
     isPending: false,
   })),
 }));
@@ -185,7 +210,7 @@ function makeDeal(): DealDTO {
   };
 }
 
-describe("DealProductsServicesTab", () => {
+describe("DealProductsServicesTab (Service Center WorkItemsTable + PartsTable pattern)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     addItemMutateAsync.mockResolvedValue({ id: "di-1" });
@@ -201,124 +226,119 @@ describe("DealProductsServicesTab", () => {
     });
   });
 
-  it("searches warehouse catalog like Service Center and submits selected product with item_id and FIFO cost", async () => {
+  it("renders separate Services and Products cards with always-visible quick-add rows (no toggle form)", () => {
     render(<DealProductsServicesTab deal={makeDeal()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Добавить позицию/i }));
+    expect(screen.getByText("Услуги")).toBeDefined();
+    expect(screen.getByText("Товары")).toBeDefined();
+    expect(screen.getByRole("button", { name: /^Справочник услуг$/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^Добавить товар$/i })).toBeDefined();
 
-    // При пустой форме не должно быть преждевременного предупреждения о ручном товаре
-    expect(screen.queryByText(/Товар введён вручную/i)).toBeNull();
+    // Обе строки ввода сразу доступны без клика по «Добавить позицию»
+    expect(screen.getByPlaceholderText(/Выберите из каталога или введите услугу/i)).toBeDefined();
+    expect(screen.getByPlaceholderText(/Поиск по складу или название товара/i)).toBeDefined();
+  });
 
-    const searchInput = screen.getByRole("combobox");
-    fireEvent.focus(searchInput);
+  it("supports multi-select services from catalog popover like WorkItemsTable", async () => {
+    render(<DealProductsServicesTab deal={makeDeal()} />);
 
-    // Ищем по комбинации токенов (артикул + модель, как в СЦ matchesWarehouseItem)
-    fireEvent.change(searchInput, { target: { value: "TYA-001 TOYA-300" } });
+    const svcInput = screen.getByPlaceholderText(/Выберите из каталога или введите услугу/i);
+    fireEvent.focus(svcInput);
+
+    // Выбираем обе услуги галочками в поповере
+    fireEvent.click(screen.getByText("Диагностика оборудования Тоя"));
+    fireEvent.click(screen.getByText("Замена платы управления"));
+
+    expect(screen.getByText(/Выбранные услуги \(2\)/i)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: /Добавить выбранные \(2\)/i }));
+
+    await waitFor(() => {
+      expect(addItemMutateAsync).toHaveBeenCalledTimes(2);
+    });
+
+    expect(addItemMutateAsync).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        item_type: "service",
+        item_id: "srv-1",
+        name: "Диагностика оборудования Тоя",
+        price: 1500,
+        quantity: 1,
+      }),
+    );
+    expect(addItemMutateAsync).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        item_type: "service",
+        item_id: "srv-2",
+        name: "Замена платы управления",
+        price: 3000,
+        quantity: 1,
+      }),
+    );
+  });
+
+  it("searches warehouse catalog like PartsTable, auto-fills SKU/FIFO/retail and submits product with item_id", async () => {
+    render(<DealProductsServicesTab deal={makeDeal()} />);
+
+    const whInput = screen.getByPlaceholderText(/Поиск по складу или название товара/i);
+    fireEvent.focus(whInput);
+    fireEvent.change(whInput, { target: { value: "TYA-001 TOYA-300" } });
 
     expect(screen.getByText("Плата питания Тоя 12В")).toBeDefined();
     expect(screen.queryByText("Подшипник шпинделя 6204")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Плата питания Тоя 12В/i }));
 
-    // Позиция привязана к складу и показано наличие
-    expect(screen.getByText(/Привязано к складу/i)).toBeDefined();
     expect(screen.getByText(/В наличии на складе:/i)).toBeDefined();
 
-    fireEvent.click(screen.getByRole("button", { name: /Добавить в сделку/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Добавить товар в сделку/i }));
 
     await waitFor(() => {
-      expect(addItemMutateAsync).toHaveBeenCalledTimes(1);
+      expect(addItemMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          item_type: "product",
+          item_id: "wh-1",
+          name: "Плата питания Тоя 12В",
+          sku: "TYA-001",
+          price: 4500,
+          cost_price: 2300,
+          quantity: 1,
+          unit: "шт",
+          save_to_catalog: false,
+          add_to_purchase_request: false,
+        }),
+      );
     });
-
-    expect(addItemMutateAsync).toHaveBeenCalledWith(
-      expect.objectContaining({
-        item_type: "product",
-        item_id: "wh-1",
-        name: "Плата питания Тоя 12В",
-        sku: "TYA-001",
-        price: 4500,
-        cost_price: 2300,
-        quantity: 1,
-        unit: "шт",
-        save_to_catalog: false,
-        add_to_purchase_request: false,
-      }),
-    );
   });
 
-  it("auto-enables purchase request on out-of-stock warehouse product and resets item_id when edited manually", async () => {
+  it("auto-enables purchase request on out-of-stock warehouse item and resets selection on manual edit", async () => {
     render(<DealProductsServicesTab deal={makeDeal()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Добавить позицию/i }));
-
-    const searchInput = screen.getByRole("combobox");
-    fireEvent.focus(searchInput);
-    fireEvent.change(searchInput, { target: { value: "6204 SKF" } });
+    const whInput = screen.getByPlaceholderText(/Поиск по складу или название товара/i);
+    fireEvent.focus(whInput);
+    fireEvent.change(whInput, { target: { value: "6204 SKF" } });
     fireEvent.click(screen.getByRole("button", { name: /Подшипник шпинделя 6204/i }));
 
     expect(screen.getByText(/Недостаточно на складе:/i)).toBeDefined();
-    const purchaseCheckbox = screen.getByLabelText(/Создать заявку на закупку/i) as HTMLInputElement;
+    const purchaseCheckbox = screen.getByLabelText(/В заявку на закупку/i) as HTMLInputElement;
     expect(purchaseCheckbox.checked).toBe(true);
 
-    // Если пользователь изменил название вручную — привязка к старому item_id должна сброситься
-    fireEvent.change(searchInput, { target: { value: "Кастомная деталь без каталога" } });
-    expect(screen.queryByText(/Привязано к складу/i)).toBeNull();
-    expect(screen.getByText(/Товар введён вручную/i)).toBeDefined();
-
+    // Ручной ввод сбрасывает привязку к складу и предлагает сохранить в номенклатуру
+    fireEvent.change(whInput, { target: { value: "Кастомная запчасть" } });
     const saveCheckbox = screen.getByLabelText(/Сохранить в номенклатуру склада/i) as HTMLInputElement;
     fireEvent.click(saveCheckbox);
-    expect(saveCheckbox.checked).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", { name: /Добавить в сделку/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Добавить товар в сделку/i }));
 
     await waitFor(() => {
       expect(addItemMutateAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           item_type: "product",
           item_id: null,
-          name: "Кастомная деталь без каталога",
+          name: "Кастомная запчасть",
           save_to_catalog: true,
-        }),
-      );
-    });
-  });
-
-  it("searches services catalog and allows saving a new service to catalog directly from dropdown", async () => {
-    render(<DealProductsServicesTab deal={makeDeal()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Добавить позицию/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^Услуга$/i }));
-
-    const searchInput = screen.getByRole("combobox");
-    fireEvent.focus(searchInput);
-    fireEvent.change(searchInput, { target: { value: "дефектовка" } });
-
-    // Поиск работает и по description (matchesSearchTokens)
-    expect(screen.getByText("Диагностика оборудования Тоя")).toBeDefined();
-    expect(screen.queryByText("Замена платы управления")).toBeNull();
-
-    // Вводим новую услугу — появляется кнопка быстрого сохранения в справочник как в WorkItemsTable
-    fireEvent.change(searchInput, { target: { value: "Калибровка датчика" } });
-    fireEvent.click(screen.getByRole("button", { name: /Сохранить в справочник/i }));
-
-    await waitFor(() => {
-      expect(createServiceMutateAsync).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: "Калибровка датчика",
-        }),
-      );
-    });
-
-    expect(screen.getByText(/Из справочника услуг/i)).toBeDefined();
-
-    fireEvent.click(screen.getByRole("button", { name: /Добавить в сделку/i }));
-
-    await waitFor(() => {
-      expect(addItemMutateAsync).toHaveBeenCalledWith(
-        expect.objectContaining({
-          item_type: "service",
-          item_id: "srv-new",
-          name: "Калибровка датчика",
         }),
       );
     });
