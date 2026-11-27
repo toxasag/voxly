@@ -2046,3 +2046,15 @@
   1. `backend/src/modules/channels/max-native-auth.service.ts` (`startPhoneAuth`): передача `language: "ru"` в `AUTH_REQUEST`, поддержка `res.callOutParams?.trackId` для `checkPhoneCallTrack` и преобразование `CAPTCHA_VALIDATION_FAILED` в явную ошибку `MAX_CAPTCHA_REQUIRED` с рекомендацией подключения по QR-коду.
   2. `frontend/src/components/integrations/ConnectMaxModal.tsx`: добавлена подсказка про ограничение капчи VK на стороне `web.max.ru`, сохранение выбранного QR-провайдера при переключении вкладок и кнопка быстрого переключения `Подключить по QR-коду` при `MAX_CAPTCHA_REQUIRED`.
   3. `backend/src/tests/max-phone-auth.test.ts`: добавлены unit-тесты на маппинг `CAPTCHA_VALIDATION_FAILED -> MAX_CAPTCHA_REQUIRED`, `language: "ru"` и `callOutParams.trackId`.
+
+## 2026-11-27 — Аудит подключения NoirLight, маршрутизации моделей и фикс UI заголовка провайдеров
+- **Контекст и root cause:**
+  - Пользователь запросил проверку работы подключенного провайдера NoirLight (`https://api.noirlight.pro/v1`), использование его моделей ИИ-агентами, реестр мест использования моделей в платформе и логику маршрутизации (со скриншотом настроек платформы).
+  - В БД (`platform_integrations_config`) провайдер `prov-custom-noirlight` был сохранен со старым отозванным ключом (`HTTP 401: Ключ не найден или отозван`), а новый рабочий ключ из скриншота находился только в UI-стейке браузера (кнопка сохранения не была нажата).
+  - Эндпоинт `GET /api/ai/models` возвращал модели только от дефолтного провайдера (Google Gemini), из-за чего в селекторе бота не появлялись модели от других активных провайдеров (NoirLight).
+  - В `AdminIntegrationsEditor.tsx` поле заголовка провайдера обрезалось по ширине (`Свой провайдер (NoirLi`).
+- **Что изменено:**
+  1. `frontend/src/components/admin/AdminIntegrationsEditor.tsx`: динамическая ширина инпута `style={{ width: `${Math.max(provider.name.length + 2, 24)}ch` }}` для исключения обрезки названий карточек провайдеров.
+  2. `backend/src/modules/ai/ai.routes.ts`: опрос и сбор моделей со всех активных сконфигурированных провайдеров (`activeProvidersList`), а не только от дефолтного.
+  3. Проведен полный аудит маршрутизации моделей (`SmartModelRouter`, `ModelTierRouter`, `KeyPoolManager`, `ai_usage_log`).
+
