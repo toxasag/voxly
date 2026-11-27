@@ -37,6 +37,7 @@ import { elbaClient, mapVatModeToElbaNds } from "./elba.client.js";
 interface InvoiceRow {
   id: string;
   invoice_number: string;
+  document_type?: "invoice" | "proposal";
   status: "draft" | "sent" | "paid" | "overdue" | "cancelled";
   issue_date: Date | string;
   due_date: Date | string;
@@ -85,7 +86,7 @@ interface MergeableLineItem {
 
 const iso = (v: Date | string): string => (v instanceof Date ? v.toISOString() : v);
 
-const INVOICE_COLS = `id,invoice_number,status,issue_date,due_date,company_id,company_name,company_inn,company_address,contact_name,contact_phone,deal_id,repair_order_id,subtotal,vat_mode,vat_rate,vat_amount,total,currency,notes,paid_at,paid_account_id,issuer_organization_id,issuer_snapshot,elba_bill_id,elba_synced_at,elba_sync_error`;
+const INVOICE_COLS = `id,invoice_number,document_type,status,issue_date,due_date,company_id,company_name,company_inn,company_address,contact_name,contact_phone,deal_id,repair_order_id,subtotal,vat_mode,vat_rate,vat_amount,total,currency,notes,paid_at,paid_account_id,issuer_organization_id,issuer_snapshot,elba_bill_id,elba_synced_at,elba_sync_error`;
 
 const item = (r: ItemRow): InvoiceItemDTO => ({
   id: r.id,
@@ -199,6 +200,7 @@ export class InvoicesService {
     return {
       id: r.id,
       invoiceNumber: r.invoice_number,
+      documentType: r.document_type === "proposal" ? "proposal" : "invoice",
       status: r.status,
       issueDate: iso(r.issue_date),
       dueDate: iso(r.due_date),
@@ -263,6 +265,8 @@ export class InvoicesService {
     tenant: string,
     options?: {
       companyId?: string;
+      dealId?: string;
+      documentType?: "invoice" | "proposal" | "all";
       status?: string;
       search?: string;
       excludedIds?: string[];
@@ -274,6 +278,18 @@ export class InvoicesService {
     if (options?.companyId) {
       params.push(options.companyId);
       conditions.push(`company_id = $${params.length}`);
+    }
+
+    if (options?.dealId) {
+      params.push(options.dealId);
+      conditions.push(`deal_id = $${params.length}`);
+    }
+
+    const resolvedDocType =
+      options?.documentType ?? (options?.dealId ? "all" : "invoice");
+    if (resolvedDocType !== "all") {
+      params.push(resolvedDocType);
+      conditions.push(`document_type = $${params.length}`);
     }
 
     if (options?.status && options.status !== "all") {
@@ -328,6 +344,8 @@ export class InvoicesService {
       | string
       | {
           companyId?: string;
+          dealId?: string;
+          documentType?: "invoice" | "proposal" | "all";
           status?: string;
           search?: string;
           sortBy?: string;
@@ -377,7 +395,7 @@ export class InvoicesService {
 
   async forRepair(tenant: string, repairOrderId: string): Promise<InvoiceDTO[]> {
     const rows = await query<InvoiceRow>(
-      `SELECT DISTINCT i.id, i.invoice_number, i.status, i.issue_date, i.due_date,
+      `SELECT DISTINCT i.id, i.invoice_number, i.document_type, i.status, i.issue_date, i.due_date,
               i.company_id, i.company_name, i.company_inn, i.company_address,
               i.contact_name, i.contact_phone, i.deal_id, i.repair_order_id,
               i.subtotal, i.vat_mode, i.vat_rate, i.vat_amount, i.total, i.currency, i.notes,
@@ -408,8 +426,11 @@ export class InvoicesService {
         p.issuer_organization_id || null,
       );
       const snapshot = issuerOrg ? buildIssuerSnapshot(issuerOrg) : null;
-      const prefix = issuerOrg?.invoiceConfig.invoiceNumberPrefix || "СЧ";
+      const docType = p.document_type === "proposal" ? "proposal" : "invoice";
+      const isProposal = docType === "proposal";
+      const prefix = isProposal ? "КП" : issuerOrg?.invoiceConfig.invoiceNumberPrefix || "СЧ";
       const number = await this.number(tx, tenant, prefix);
+      const initialStatus = isProposal ? "draft" : "sent";
 
       const mergedItems = mergeInvoiceLineItems(
         p.line_items.map((li) => ({
@@ -427,16 +448,18 @@ export class InvoicesService {
 
       const row = await tx.queryOneOrThrow<InvoiceRow>(
         `INSERT INTO invoices(
-           tenant_id, invoice_number, status, due_date, company_id, company_name,
+           tenant_id, invoice_number, document_type, status, due_date, company_id, company_name,
            company_inn, company_address, contact_name, contact_phone, deal_id,
            repair_order_id, subtotal, vat_mode, vat_rate, vat_amount, total,
            currency, notes, created_by, issuer_organization_id, issuer_snapshot
          )
-         VALUES($1,$2,'sent',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb)
          RETURNING ${INVOICE_COLS}`,
         [
           tenant,
           number,
+          docType,
+          initialStatus,
           p.due_date,
           p.company_id || null,
           p.company_name,
@@ -485,6 +508,7 @@ export class InvoicesService {
       }
 
       if (
+        !isProposal &&
         issuerOrg &&
         issuerOrg.elbaEnabled &&
         issuerOrg.elbaHasApiKey &&
@@ -943,7 +967,8 @@ export class InvoicesService {
       show_accountant: issuer.invoiceConfig.showAccountant,
       show_basis: issuer.invoiceConfig.showBasis,
     });
-    return { buffer, filename: `Invoice-${inv.invoiceNumber}.pdf` };
+    const filePrefix = inv.documentType === "proposal" ? "KP" : "Invoice";
+    return { buffer, filename: `${filePrefix}-${inv.invoiceNumber}.pdf` };
   }
 
   async syncToElba(
@@ -951,6 +976,9 @@ export class InvoicesService {
     id: string,
   ): Promise<{ invoice: InvoiceDTO; elbaBillId: string }> {
     const inv = await this.get(tenant, id);
+    if (inv.documentType === "proposal") {
+      throw new ValidationError("Коммерческое предложение не выгружается в Контур.Эльбу — сформируйте из него счёт");
+    }
 
     // Resolve organization with Elba credentials
     const orgs = await financeOrganizationsService.list(tenant);
@@ -1035,28 +1063,23 @@ export class InvoicesService {
   async sendToMessenger(
     tenant: string,
     id: string,
-    channelType: "telegram" | "whatsapp" | "max" | "all",
+    channelType: "telegram" | "whatsapp" | "max" | "email" | "all",
+    recipientEmail?: string,
   ): Promise<{ success: boolean; channels: string[]; message: string }> {
     const inv = await this.get(tenant, id);
+    const isProposal = inv.documentType === "proposal";
+    const docLabel = isProposal ? "Коммерческое предложение" : "Счёт на оплату";
+    const docShort = isProposal ? "PDF КП" : "PDF-счёт";
     const { buffer, filename } = await this.getPdf(tenant, id);
-
-    const { ChatMediaService } = await import("../crm/chat/media.service.js");
-    const mediaService = new ChatMediaService();
-    const stored = await mediaService.storeBuffer({
-      buffer,
-      originalName: filename,
-      mimeType: "application/pdf",
-      tenantId: tenant,
-    });
 
     const formattedTotal = new Intl.NumberFormat("ru-RU", {
       maximumFractionDigits: 2,
     }).format(inv.total);
     const dueStr = inv.dueDate ? inv.dueDate.slice(0, 10) : "";
     const text = [
-      `Счёт на оплату № ${inv.invoiceNumber}`,
-      `Сумма к оплате: ${formattedTotal} ${inv.currency === "RUB" ? "₽" : inv.currency}`,
-      dueStr ? `Срок оплаты: ${dueStr}` : "",
+      `${docLabel} № ${inv.invoiceNumber}`,
+      `${isProposal ? "Итого по предложению" : "Сумма к оплате"}: ${formattedTotal} ${inv.currency === "RUB" ? "₽" : inv.currency}`,
+      dueStr ? `${isProposal ? "Действительно до" : "Срок оплаты"}: ${dueStr}` : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -1081,6 +1104,80 @@ export class InvoicesService {
       );
       targetDealId = linkedRo?.deal_id ?? null;
     }
+
+    // Отправка на E-mail клиента с PDF-вложением
+    if (channelType === "email") {
+      let toEmail = (recipientEmail ?? "").trim();
+      if (!toEmail && targetDealId) {
+        const dealEmails = await queryOne<{ contact_email: string | null; company_email: string | null }>(
+          `SELECT ct.email AS contact_email, co.email AS company_email
+           FROM deals d
+           LEFT JOIN contacts ct ON ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
+           LEFT JOIN companies co ON co.id = d.company_id AND co.tenant_id = d.tenant_id AND co.deleted_at IS NULL
+           WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+          [tenant, targetDealId],
+        );
+        toEmail = (dealEmails?.contact_email || dealEmails?.company_email || "").trim();
+      }
+      if (!toEmail && inv.companyId) {
+        const comp = await queryOne<{ email: string | null }>(
+          `SELECT email FROM companies WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenant, inv.companyId],
+        );
+        toEmail = (comp?.email || "").trim();
+      }
+      if (!toEmail) {
+        throw new AppError(
+          400,
+          "RECIPIENT_EMAIL_MISSING",
+          "У клиента не указан E-mail — укажите адрес в контакте/компании или введите его при отправке",
+        );
+      }
+
+      const issuer = await this.resolveIssuerSnapshot(tenant, inv);
+      const { EmailService } = await import("../../services/email.service.js");
+      const mailRes = await EmailService.sendDocumentEmail({
+        to: toEmail,
+        documentType: inv.documentType,
+        documentNumber: inv.invoiceNumber,
+        issuerName: issuer.name || "Организация",
+        companyName: inv.companyName || inv.contactName || "Клиент",
+        total: inv.total,
+        currency: inv.currency,
+        dueDate: inv.dueDate,
+        filename,
+        pdfBuffer: buffer,
+      });
+      if (!mailRes.sent) {
+        throw new AppError(
+          400,
+          "INVOICE_SEND_FAILED",
+          `Не удалось отправить письмо на ${toEmail}: ${mailRes.error || "ошибка SMTP"}`,
+        );
+      }
+
+      if (inv.status === "draft") {
+        await query(
+          `UPDATE invoices SET status = 'sent', updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+          [tenant, id],
+        );
+      }
+
+      return {
+        success: true,
+        channels: [`Email (${toEmail})`],
+        message: `${docShort} №${inv.invoiceNumber} отправлен на ${toEmail}`,
+      };
+    }
+
+    const { ChatMediaService } = await import("../crm/chat/media.service.js");
+    const mediaService = new ChatMediaService();
+    const stored = await mediaService.storeBuffer({
+      buffer,
+      originalName: filename,
+      mimeType: "application/pdf",
+      tenantId: tenant,
+    });
 
     const connectedAccounts = await query<{ id: string; channel: string }>(
       `SELECT id, channel
@@ -1185,11 +1282,11 @@ export class InvoicesService {
       throw new AppError(
         400,
         "INVOICE_SEND_FAILED",
-        `Не удалось отправить PDF-счёт: ${errors.join("; ")}`,
+        `Не удалось отправить ${docShort}: ${errors.join("; ")}`,
       );
     }
 
-    // Если счёт был в черновике — переводим в «Выставлен» (sent)
+    // Если документ был в черновике — переводим в «Отправлен» (sent)
     if (inv.status === "draft") {
       await query(
         `UPDATE invoices SET status = 'sent', updated_at = now() WHERE tenant_id = $1 AND id = $2`,
@@ -1204,7 +1301,7 @@ export class InvoicesService {
         [
           tenant,
           inv.repairOrderId,
-          `PDF-счёт №${inv.invoiceNumber} (${filename}) отправлен клиенту: ${sentChannels.join(", ")}`,
+          `${docShort} №${inv.invoiceNumber} (${filename}) отправлен клиенту: ${sentChannels.join(", ")}`,
         ],
       ).catch(() => {});
     }
@@ -1212,7 +1309,7 @@ export class InvoicesService {
     return {
       success: true,
       channels: sentChannels,
-      message: `PDF-счёт №${inv.invoiceNumber} отправлен клиенту (${sentChannels.join(", ")})`,
+      message: `${docShort} №${inv.invoiceNumber} отправлен клиенту (${sentChannels.join(", ")})`,
     };
   }
 
@@ -1542,6 +1639,9 @@ export class InvoicesService {
         [tenant, id],
       );
       if (!inv) throw new NotFoundError("Invoice not found");
+      if (inv.document_type === "proposal") {
+        throw new ValidationError("Коммерческое предложение нельзя отметить оплаченным — сформируйте счёт на оплату");
+      }
       if (inv.status === "paid") throw new AppError(409, "INVOICE_ALREADY_PAID", "Счёт уже оплачен");
 
       let account: { id: string; currency: string } | null = null;

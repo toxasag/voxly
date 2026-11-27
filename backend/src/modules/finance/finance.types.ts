@@ -82,7 +82,11 @@ export const invoiceItemSchema = z.object({
   source_label: z.string().max(200).optional().or(z.literal("")),
 });
 
+export const invoiceDocumentTypeSchema = z.enum(["invoice", "proposal"]);
+export type InvoiceDocumentType = z.infer<typeof invoiceDocumentTypeSchema>;
+
 export const createInvoiceSchema = z.object({
+  document_type: invoiceDocumentTypeSchema.default("invoice"),
   issuer_organization_id: optionalUuid,
   company_id: optionalUuid,
   company_name: z.string().min(1).max(200),
@@ -170,7 +174,8 @@ export const createInvoiceFromActsSchema = z.object({
 });
 
 export const sendInvoiceSchema = z.object({
-  channel_type: z.enum(["telegram", "whatsapp", "max", "all"]).default("all"),
+  channel_type: z.enum(["telegram", "whatsapp", "max", "email", "all"]).default("all"),
+  recipient_email: z.string().trim().email("Некорректный email").optional().or(z.literal("")),
 });
 
 export const bulkTransactionsSchema = bulkActionSchema.superRefine((val, ctx) => {
@@ -306,7 +311,7 @@ export interface InvoiceItemDTO {
 }
 
 export interface InvoiceDTO {
-  id: string; invoiceNumber: string; status: InvoiceStatus; issueDate: string;
+  id: string; invoiceNumber: string; documentType: InvoiceDocumentType; status: InvoiceStatus; issueDate: string;
   dueDate: string; companyId: string | null; companyName: string; companyInn: string;
   companyAddress: string; contactName: string; contactPhone: string;
   dealId: string | null; repairOrderId: string | null; subtotal: number;

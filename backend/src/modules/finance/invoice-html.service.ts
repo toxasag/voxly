@@ -87,11 +87,13 @@ export async function renderInvoiceRfHtml(
   options?: { autoPrint?: boolean },
 ): Promise<string> {
   const cfg = normalizeInvoiceFormConfig(issuer.invoiceConfig);
+  const isProposal = invoice.documentType === "proposal";
   const issueDateText = formatDateLongRu(invoice.issueDate);
+  const dueDateText = invoice.dueDate ? formatDateLongRu(invoice.dueDate) : "";
 
-  // Generate GOST payment QR SVG when enabled and bank requisites are filled
+  // Generate GOST payment QR SVG only for invoices (never for commercial proposals)
   let qrSvg = "";
-  if (cfg.showQrCode) {
+  if (!isProposal && cfg.showQrCode) {
     const qrPayload = buildGostPaymentQrString(invoice, issuer);
     if (qrPayload) {
       try {
@@ -175,11 +177,15 @@ export async function renderInvoiceRfHtml(
 
   const onloadAttr = options?.autoPrint ? ' onload="window.print()"' : "";
 
+  const docTitle = isProposal
+    ? `Коммерческое предложение № ${invoice.invoiceNumber} от ${issueDateText}`
+    : `Счёт на оплату № ${invoice.invoiceNumber} от ${issueDateText}`;
+
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>Счёт на оплату № ${escapeHtml(invoice.invoiceNumber)} от ${escapeHtml(issueDateText)}</title>
+  <title>${escapeHtml(docTitle)}</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -487,9 +493,11 @@ export async function renderInvoiceRfHtml(
         : ""
     }
 
-    ${cfg.showNotice && cfg.noticeText ? `<div class="notice-box">${escapeHtml(cfg.noticeText)}</div>` : ""}
+    ${!isProposal && cfg.showNotice && cfg.noticeText ? `<div class="notice-box">${escapeHtml(cfg.noticeText)}</div>` : ""}
 
-    <table class="bank-table">
+    ${
+      !isProposal
+        ? `<table class="bank-table">
       <tbody>
         <tr>
           <td colspan="2" rowspan="2" style="width: 58%;">
@@ -516,21 +524,31 @@ export async function renderInvoiceRfHtml(
           </td>
         </tr>
       </tbody>
-    </table>
+    </table>`
+        : ""
+    }
 
-    <h1 class="invoice-heading">Счёт на оплату № ${escapeHtml(invoice.invoiceNumber)} от ${escapeHtml(issueDateText)}</h1>
+    <h1 class="invoice-heading">${escapeHtml(docTitle)}</h1>
 
     <div class="parties-row">
       <table class="parties-table">
         <tbody>
           <tr>
-            <td class="parties-label">Поставщик:</td>
+            <td class="parties-label">${isProposal ? "Исполнитель:" : "Поставщик:"}</td>
             <td class="parties-value">${escapeHtml(supplierLine)}</td>
           </tr>
           <tr>
-            <td class="parties-label">Покупатель:</td>
+            <td class="parties-label">${isProposal ? "Заказчик:" : "Покупатель:"}</td>
             <td class="parties-value">${escapeHtml(buyerLine)}</td>
           </tr>
+          ${
+            isProposal && dueDateText
+              ? `<tr>
+                  <td class="parties-label">Действительно до:</td>
+                  <td class="parties-value">${escapeHtml(dueDateText)}</td>
+                </tr>`
+              : ""
+          }
           ${
             cfg.showBasis && acts.length > 0
               ? `<tr>
@@ -574,7 +592,7 @@ export async function renderInvoiceRfHtml(
       <table class="totals-table">
         <tbody>
           <tr class="totals-strong">
-            <td class="totals-label">Итого к оплате:</td>
+            <td class="totals-label">${isProposal ? "Итого по предложению:" : "Итого к оплате:"}</td>
             <td class="totals-val">${formatMoneyRu(invoice.total)}</td>
           </tr>
           <tr>
@@ -586,7 +604,7 @@ export async function renderInvoiceRfHtml(
     </div>
 
     <div class="words-block">
-      Всего к оплате: ${escapeHtml(amountWords)}.
+      ${isProposal ? "Всего по предложению" : "Всего к оплате"}: ${escapeHtml(amountWords)}.
     </div>
 
     ${invoice.notes ? `<div class="notes-block"><strong>Примечание:</strong> ${escapeHtml(invoice.notes)}</div>` : ""}

@@ -26,6 +26,7 @@ export async function processInvoiceReminder(job: InvoiceReminderJob): Promise<v
        LEFT JOIN companies c ON c.id = i.company_id AND c.tenant_id = i.tenant_id
        LEFT JOIN users u ON u.tenant_id = i.tenant_id AND u.role = 'owner' AND u.deleted_at IS NULL
        WHERE i.tenant_id = $1 AND i.id = $2 AND i.deleted_at IS NULL
+         AND i.document_type = 'invoice'
          AND i.status IN ('sent', 'overdue')
          AND i.reminder_sent_at IS NULL
        ORDER BY u.created_at ASC
@@ -59,7 +60,7 @@ export async function processInvoiceReminder(job: InvoiceReminderJob): Promise<v
 export async function enqueueDueInvoiceReminders(): Promise<number> {
   const invoices = await runWithPlatformScope(() => query<{ tenant_id: string; id: string }>(
     `SELECT tenant_id, id FROM invoices
-     WHERE deleted_at IS NULL AND status IN ('sent', 'overdue')
+     WHERE deleted_at IS NULL AND document_type = 'invoice' AND status IN ('sent', 'overdue')
        AND due_date < now() AND reminder_sent_at IS NULL
      ORDER BY due_date ASC LIMIT 100`,
   ));

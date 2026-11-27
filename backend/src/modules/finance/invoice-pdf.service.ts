@@ -327,7 +327,16 @@ export function generateInvoicePdfBuffer(
   let curY = pageHeight - 35;
 
   // 1. Notice / Disclaimer Box at top (optional)
-  if (settings.show_notice && settings.notice_text) {
+  const isProposal = invoice.documentType === "proposal";
+  const bankName = settings.bank_name || "";
+  const bik = settings.bik || "";
+  const corrAcc = settings.corr_account || "";
+  const settAcc = settings.settlement_account || "";
+  const inn = settings.company_inn || "";
+  const kpp = settings.company_kpp || "";
+  const compName = settings.company_name || "Организация";
+
+  if (!isProposal && settings.show_notice && settings.notice_text) {
     const noticeLines = wrapText(settings.notice_text, contentWidth - 16, 7.5, false);
     const boxH = Math.max(16, noticeLines.length * 10 + 8);
     curY -= boxH;
@@ -338,79 +347,70 @@ export function generateInvoicePdfBuffer(
     curY -= 10;
   }
 
-  // 2. Bank Requisites Table (Образец заполнения платежного поручения РФ)
-  const bankTableH = 74;
-  curY -= bankTableH;
-  const bY = curY;
-  const bX = marginX;
-  const bW = contentWidth;
+  // 2. Bank Requisites Table (только для Счёта на оплату, не для КП)
+  if (!isProposal) {
+    const bankTableH = 74;
+    curY -= bankTableH;
+    const bY = curY;
+    const bX = marginX;
+    const bW = contentWidth;
 
-  // Outer border
-  drawRect(bX, bY, bW, bankTableH, 0.75, "0.15 0.15 0.15");
+    // Outer border
+    drawRect(bX, bY, bW, bankTableH, 0.75, "0.15 0.15 0.15");
 
-  const colBankW = 295;
-  const colBikLabelW = 44;
+    const colBankW = 295;
+    const colBikLabelW = 44;
 
-  // Split lines
-  // Vertical: Bank/Beneficiary left column vs BIK/Accounts right column
-  drawLine(bX + colBankW, bY, bX + colBankW, bY + bankTableH, 0.5, "0.15 0.15 0.15");
-  // Vertical: BIK/Acc labels vs numbers
-  drawLine(bX + colBankW + colBikLabelW, bY, bX + colBankW + colBikLabelW, bY + bankTableH, 0.5, "0.15 0.15 0.15");
-  // Horizontal middle dividing line
-  drawLine(bX, bY + 38, bX + bW, bY + 38, 0.5, "0.15 0.15 0.15");
-  // Horizontal right top: BIK vs Corr Acc
-  drawLine(bX + colBankW, bY + 56, bX + bW, bY + 56, 0.5, "0.15 0.15 0.15");
-  // Horizontal left bottom: INN/KPP vs Beneficiary name
-  drawLine(bX, bY + 22, bX + colBankW, bY + 22, 0.5, "0.15 0.15 0.15");
-  // Vertical left bottom: INN vs KPP
-  drawLine(bX + 145, bY + 22, bX + 145, bY + 38, 0.5, "0.15 0.15 0.15");
+    drawLine(bX + colBankW, bY, bX + colBankW, bY + bankTableH, 0.5, "0.15 0.15 0.15");
+    drawLine(bX + colBankW + colBikLabelW, bY, bX + colBankW + colBikLabelW, bY + bankTableH, 0.5, "0.15 0.15 0.15");
+    drawLine(bX, bY + 38, bX + bW, bY + 38, 0.5, "0.15 0.15 0.15");
+    drawLine(bX + colBankW, bY + 56, bX + bW, bY + 56, 0.5, "0.15 0.15 0.15");
+    drawLine(bX, bY + 22, bX + colBankW, bY + 22, 0.5, "0.15 0.15 0.15");
+    drawLine(bX + 145, bY + 22, bX + 145, bY + 38, 0.5, "0.15 0.15 0.15");
 
-  const bankName = settings.bank_name || "";
-  const bik = settings.bik || "";
-  const corrAcc = settings.corr_account || "";
-  const settAcc = settings.settlement_account || "";
-  const inn = settings.company_inn || "";
-  const kpp = settings.company_kpp || "";
-  const compName = settings.company_name || "Организация";
+    // Bank name & caption
+    drawText(bankName, bX + 6, bY + 60, 8.5, false);
+    drawText("Банк получателя", bX + 6, bY + 42, 7, false, "0.45 0.45 0.45");
 
-  // Bank name & caption
-  drawText(bankName, bX + 6, bY + 60, 8.5, false);
-  drawText("Банк получателя", bX + 6, bY + 42, 7, false, "0.45 0.45 0.45");
+    // BIK
+    drawText("БИК", bX + colBankW + 5, bY + 62, 8, false);
+    drawText(bik, bX + colBankW + colBikLabelW + 6, bY + 62, 8.5, false);
 
-  // BIK
-  drawText("БИК", bX + colBankW + 5, bY + 62, 8, false);
-  drawText(bik, bX + colBankW + colBikLabelW + 6, bY + 62, 8.5, false);
+    // Corr Account
+    drawText("Сч. №", bX + colBankW + 5, bY + 44, 8, false);
+    drawText(corrAcc, bX + colBankW + colBikLabelW + 6, bY + 44, 8.5, false);
 
-  // Corr Account
-  drawText("Сч. №", bX + colBankW + 5, bY + 44, 8, false);
-  drawText(corrAcc, bX + colBankW + colBikLabelW + 6, bY + 44, 8.5, false);
+    // INN / KPP
+    drawText("ИНН", bX + 6, bY + 26, 8, false);
+    drawText(inn, bX + 32, bY + 26, 8.5, false);
+    drawText("КПП", bX + 151, bY + 26, 8, false);
+    drawText(kpp, bX + 177, bY + 26, 8.5, false);
 
-  // INN / KPP
-  drawText("ИНН", bX + 6, bY + 26, 8, false);
-  drawText(inn, bX + 32, bY + 26, 8.5, false);
-  drawText("КПП", bX + 151, bY + 26, 8, false);
-  drawText(kpp, bX + 177, bY + 26, 8.5, false);
+    // Settlement Account
+    drawText("Сч. №", bX + colBankW + 5, bY + 16, 8, false);
+    drawText(settAcc, bX + colBankW + colBikLabelW + 6, bY + 16, 8.5, false);
 
-  // Settlement Account
-  drawText("Сч. №", bX + colBankW + 5, bY + 16, 8, false);
-  drawText(settAcc, bX + colBankW + colBikLabelW + 6, bY + 16, 8.5, false);
+    // Beneficiary Name & caption
+    const compLines = wrapText(compName, colBankW - 12, 8.5, false);
+    if (compLines.length === 1) {
+      drawText(compLines[0]!, bX + 6, bY + 11, 8.5, false);
+      drawText("Получатель", bX + 6, bY + 3, 6.5, false, "0.45 0.45 0.45");
+    } else {
+      drawText(compLines[0]!, bX + 6, bY + 12, 7.5, false);
+      drawText(compLines[1]!, bX + 6, bY + 5, 7.5, false);
+      drawText("Получатель", bX + colBankW - measureText("Получатель", 6.5, false) - 6, bY + 3, 6.5, false, "0.45 0.45 0.45");
+    }
 
-  // Beneficiary Name & caption
-  const compLines = wrapText(compName, colBankW - 12, 8.5, false);
-  if (compLines.length === 1) {
-    drawText(compLines[0]!, bX + 6, bY + 11, 8.5, false);
-    drawText("Получатель", bX + 6, bY + 3, 6.5, false, "0.45 0.45 0.45");
+    curY -= 20;
   } else {
-    drawText(compLines[0]!, bX + 6, bY + 12, 7.5, false);
-    drawText(compLines[1]!, bX + 6, bY + 5, 7.5, false);
-    drawText("Получатель", bX + colBankW - measureText("Получатель", 6.5, false) - 6, bY + 3, 6.5, false, "0.45 0.45 0.45");
+    curY -= 8;
   }
 
-  curY -= 20;
-
-  // 3. Invoice Title & Thick Accent Line
+  // 3. Document Title & Thick Accent Line
   const issueDateFormatted = formatDateRu(invoice.issueDate);
-  const titleText = `Счёт на оплату № ${invoice.invoiceNumber} от ${issueDateFormatted}`;
+  const titleText = isProposal
+    ? `Коммерческое предложение № ${invoice.invoiceNumber} от ${issueDateFormatted}`
+    : `Счёт на оплату № ${invoice.invoiceNumber} от ${issueDateFormatted}`;
   drawText(titleText, marginX, curY, 14, true, "0.05 0.05 0.05");
 
   curY -= 6;
@@ -444,7 +444,7 @@ export function generateInvoicePdfBuffer(
     invoiceConfig: normalizeInvoiceFormConfig({}),
   };
 
-  const qrPayload = settings.show_qr_code !== false ? buildGostPaymentQrString(invoice, qrSnapshot) : null;
+  const qrPayload = !isProposal && settings.show_qr_code !== false ? buildGostPaymentQrString(invoice, qrSnapshot) : null;
   const hasQr = Boolean(qrPayload);
 
   // Layout boundaries: QR on the right, Parties on the left
@@ -463,7 +463,7 @@ export function generateInvoicePdfBuffer(
   const supDetails = `${compName}${inn ? `, ИНН ${inn}` : ""}${kpp ? `, КПП ${kpp}` : ""}${supAddress ? `, ${supAddress}` : ""}${supPhone ? `, ${supPhone}` : ""}`;
   const supLines = wrapText(supDetails, valueW, 8.5, false);
 
-  drawText("Поставщик:", marginX, partiesCurY, 8.5, true, "0.1 0.1 0.1");
+  drawText(isProposal ? "Исполнитель:" : "Поставщик:", marginX, partiesCurY, 8.5, true, "0.1 0.1 0.1");
   supLines.forEach((l, idx) => {
     drawText(l, marginX + labelW, partiesCurY - idx * 11, 8.5, false);
   });
@@ -477,11 +477,17 @@ export function generateInvoicePdfBuffer(
   const buyerDetails = [buyerName, buyerInn, buyerAddr, buyerPhone].filter(Boolean).join(", ");
   const buyLines = wrapText(buyerDetails, valueW, 8.5, false);
 
-  drawText("Покупатель:", marginX, partiesCurY, 8.5, true, "0.1 0.1 0.1");
+  drawText(isProposal ? "Заказчик:" : "Покупатель:", marginX, partiesCurY, 8.5, true, "0.1 0.1 0.1");
   buyLines.forEach((l, idx) => {
     drawText(l, marginX + labelW, partiesCurY - idx * 11, 8.5, false);
   });
   partiesCurY -= buyLines.length * 11 + 6;
+
+  if (isProposal && invoice.dueDate) {
+    drawText("Срок действия:", marginX, partiesCurY, 8.5, true, "0.1 0.1 0.1");
+    drawText(`до ${formatDateRu(invoice.dueDate)}`, marginX + labelW, partiesCurY, 8.5, false);
+    partiesCurY -= 16;
+  }
 
   // Basis (if available)
   const lineItems = invoice.lineItems ?? [];
@@ -624,7 +630,7 @@ export function generateInvoicePdfBuffer(
   const totalsX = marginX + contentWidth - 210;
   const totalValStr = formatRubles(invoice.total);
 
-  drawText("Итого к оплате:", totalsX, curY, 9, true);
+  drawText(isProposal ? "Итого по предложению:" : "Итого к оплате:", totalsX, curY, 9, true);
   drawText(totalValStr, marginX + contentWidth - measureText(totalValStr, 9, true) - 6, curY, 9, true);
   curY -= 14;
 
@@ -648,8 +654,17 @@ export function generateInvoicePdfBuffer(
 
   const rubles = Math.floor(invoice.total);
   const kopecks = Math.round((invoice.total - rubles) * 100);
-  const wordsStr = `Всего к оплате: ${amountToWords(rubles, kopecks)}.`;
+  const wordsStr = `${isProposal ? "Всего по предложению" : "Всего к оплате"}: ${amountToWords(rubles, kopecks)}.`;
   drawText(wordsStr, marginX, curY, 8.5, true);
+
+  if (invoice.notes && invoice.notes.trim()) {
+    curY -= 14;
+    const noteLines = wrapText(`Примечание: ${invoice.notes.trim()}`, contentWidth, 8, false);
+    for (const nl of noteLines) {
+      drawText(nl, marginX, curY, 8, false, "0.25 0.25 0.25");
+      curY -= 10;
+    }
+  }
 
   curY -= 6;
   drawLine(marginX, curY, marginX + contentWidth, curY, 1.5, "0 0 0");

@@ -2118,3 +2118,10 @@
   - `backend/src/modules/warehouse/warehouse.service.ts`: `createPurchaseRequest` обновляет существующую `pending`-заявку по `deal_item_id` вместо создания дубля.
   - `frontend/src/components/crm/deals/DealProductsServicesTab.tsx`, `frontend/src/lib/api/use-warehouse.ts`, `frontend/src/app/(dashboard)/warehouse/page.tsx`: кнопка при дефиците «Добавить и в закупку» добавляет товар в сделку с `add_to_purchase_request: true`, добавлено удаление `pending`-заявок прямо из блока сделки, ссылка ведёт на `/warehouse?section=purchases`, добавлена инвалидация `["deals"]`.
 - **Очистка данных:** из сделки `9ece85ce-d44b-4228-9a50-41918d1d94a2` (`remtoua`) удалены 2 осиротевших дубля (`4b07251d-2abd-4778-975d-68a3e33796bc`, `8bb73397-7ec0-4279-b3d2-26c1ce3b15de`, оба `deal_item_id IS NULL`, без привязки к заказам поставщикам).
+
+
+### 2026-11-27 — Коммерческие предложения (КП) и Счета на вкладке «Услуги/Товары» сделки
+- **Что добавлено:**
+  - `backend/src/db/migrations/0143_invoices_document_type.sql`: добавлена колонка `invoices.document_type` (`invoice` / `proposal`) и индекс `(tenant_id, deal_id, document_type)`.
+  - `backend/src/modules/finance/`: поддержка `document_type = 'proposal'` (нумерация `КП-...`, статус `draft`, изоляция от `/finance`, Эльбы, оплаты и напоминаний о просрочке), печатный HTML и PDF для КП (без платёжного поручения и QR, с заголовком «Коммерческое предложение» и сроком действия), фильтр `deal_id` / `document_type` в `GET /api/v1/invoices`, отправка PDF в мессенджеры и на E-mail (`EmailService.sendDocumentEmail`).
+  - `frontend/src/components/crm/deals/DealDocumentsSection.tsx` + `GenerateDealDocumentModal.tsx` + интеграция в `DealProductsServicesTab.tsx`: кнопки «Сформировать КП» и «Сформировать счёт», список документов сделки, печать, скачивание PDF, отправка клиенту (MAX, Telegram, WhatsApp, E-mail), «Счёт из КП», Эльба, отметка оплаты, редактирование и удаление.

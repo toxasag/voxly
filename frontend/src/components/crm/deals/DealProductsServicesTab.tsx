@@ -48,6 +48,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { ServiceCatalogDialog } from "@/components/services/ServiceCatalogDialog";
 import { CreateOrEditServiceModal } from "@/components/warehouse/CreateOrEditServiceModal";
 import { DealProductAddModal } from "./DealProductAddModal";
+import { DealDocumentsSection } from "./DealDocumentsSection";
 
 const MAX_WAREHOUSE_DROPDOWN_ITEMS = 80;
 
@@ -1977,6 +1978,11 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
           </div>
         )}
       </div>
+
+      {/* ===================================================================== */}
+      {/* BLOCK 2.5: ДОКУМЕНТЫ ПО СДЕЛКЕ (КП И СЧЕТА)                           */}
+      {/* ===================================================================== */}
+      {hasFinance && <DealDocumentsSection deal={deal} items={items} />}
 
       {/* ===================================================================== */}
       {/* BLOCK 3: ЗАЯВКИ НА ЗАКУПКУ ПО СДЕЛКЕ                                  */}

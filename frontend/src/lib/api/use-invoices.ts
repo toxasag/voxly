@@ -245,9 +245,12 @@ export interface InvoiceItemDTO {
   sourceLabel: string | null;
 }
 
+export type InvoiceDocumentType = "invoice" | "proposal";
+
 export interface InvoiceDTO {
   id: string;
   invoiceNumber: string;
+  documentType?: InvoiceDocumentType;
   status: InvoiceStatus;
   issueDate: string;
   dueDate: string;
@@ -390,6 +393,7 @@ export interface UpdateTransactionPayload {
 }
 
 export interface CreateInvoicePayload {
+  document_type?: InvoiceDocumentType;
   issuer_organization_id?: string;
   company_id?: string;
   company_name: string;
@@ -488,6 +492,8 @@ export const financeKeys = {
     status?: string;
     search?: string;
     companyId?: string;
+    dealId?: string;
+    documentType?: "invoice" | "proposal" | "all";
     sortBy?: string;
     sortDir?: "asc" | "desc";
   }) => ["finance", "invoices", params] as const,
@@ -596,8 +602,11 @@ export function useInvoices(params: {
   status?: string;
   search?: string;
   companyId?: string;
+  dealId?: string;
+  documentType?: "invoice" | "proposal" | "all";
   sortBy?: string;
   sortDir?: "asc" | "desc";
+  enabled?: boolean;
 } = {}): UseQueryResult<InvoicesListResult, ApiClientError> {
   const limit = params.limit ?? 25;
   const offset = params.offset ?? 0;
@@ -612,6 +621,8 @@ export function useInvoices(params: {
           status: params.status,
           search: params.search,
           company_id: params.companyId,
+          deal_id: params.dealId,
+          document_type: params.documentType,
           sort_by: params.sortBy,
           sort_dir: params.sortDir,
         },
@@ -626,6 +637,7 @@ export function useInvoices(params: {
         offset: typeof meta.offset === "number" ? meta.offset : offset,
       };
     },
+    enabled: params.enabled ?? true,
     placeholderData: (previous) => previous,
   });
 }
@@ -899,7 +911,8 @@ export interface BatchPaymentPayload {
 }
 
 export interface SendInvoicePayload {
-  channel_type: "telegram" | "whatsapp" | "max" | "all";
+  channel_type: "telegram" | "whatsapp" | "max" | "email" | "all";
+  recipient_email?: string;
 }
 
 export function useRepairInvoices(repairOrderId: string | null): UseQueryResult<InvoiceDTO[], ApiClientError> {
@@ -963,24 +976,28 @@ export function useBatchPayment(): UseMutationResult<
 export function useSendInvoice(): UseMutationResult<
   { success: boolean; channels: string[]; message: string },
   ApiClientError,
-  { id: string; channel_type: SendInvoicePayload["channel_type"] }
+  { id: string; channel_type: SendInvoicePayload["channel_type"]; recipient_email?: string }
 > {
   const queryClient = useQueryClient();
 
   return useMutation<
     { success: boolean; channels: string[]; message: string },
     ApiClientError,
-    { id: string; channel_type: SendInvoicePayload["channel_type"] }
+    { id: string; channel_type: SendInvoicePayload["channel_type"]; recipient_email?: string }
   >({
-    mutationFn: async ({ id, channel_type }) => {
+    mutationFn: async ({ id, channel_type, recipient_email }) => {
       const res = await apiClient.post<{ success: boolean; channels: string[]; message: string }>(
         `/api/v1/invoices/${id}/send`,
-        { channel_type },
+        {
+          channel_type,
+          ...(recipient_email ? { recipient_email } : {}),
+        },
       );
       return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["repairs"] });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
       void queryClient.invalidateQueries({ queryKey: financeKeys.all });
     },
   });

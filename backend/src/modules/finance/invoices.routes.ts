@@ -17,6 +17,8 @@ const page = z.object({
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
   company_id: z.string().uuid().optional(),
+  deal_id: z.string().uuid().optional(),
+  document_type: z.enum(["invoice", "proposal", "all"]).optional(),
   status: z.string().max(40).optional(),
   search: z.string().max(200).optional(),
   sort: z.string().max(64).optional(),
@@ -38,6 +40,8 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
     const p = page.parse(r.query);
     const x = await s.list(r.tenant_id, p.limit, p.offset, {
       companyId: p.company_id,
+      dealId: p.deal_id,
+      documentType: p.document_type,
       status: p.status,
       search: p.search,
       sortBy: p.sort_by ?? p.sort,
@@ -135,7 +139,9 @@ export default async function invoiceRoutes(app: FastifyInstance): Promise<void>
 
   app.post("/:id/send", { onRequest: write }, async (r, rep) => {
     const { id: invoiceId } = id.parse(r.params);
-    const { channel_type } = sendInvoiceSchema.parse(r.body);
-    return rep.send({ data: await s.sendToMessenger(r.tenant_id, invoiceId, channel_type) });
+    const { channel_type, recipient_email } = sendInvoiceSchema.parse(r.body);
+    return rep.send({
+      data: await s.sendToMessenger(r.tenant_id, invoiceId, channel_type, recipient_email || undefined),
+    });
   });
 }

@@ -162,6 +162,7 @@ export class EmailService {
     subject: string;
     html: string;
     text: string;
+    attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
   }): Promise<SendResult> {
     if (!EmailService.isConfigured) {
       return { sent: false, error: "SMTP is not configured" };
@@ -176,6 +177,7 @@ export class EmailService {
         // Текстовая версия обязательна: без неё спам-фильтры понижают рейтинг
         // письма, а часть клиентов показывает пустое тело.
         text: options.text,
+        attachments: options.attachments,
       });
 
       return { sent: true, messageId: info.messageId };
@@ -736,6 +738,64 @@ export class EmailService {
       subject: `Voxly: просрочен счёт ${options.invoiceNumber}`,
       html: layout({ title: "Просрочен счёт Voxly", preheader: `Счёт ${options.invoiceNumber} требует внимания.`, body }),
       text: `Просрочен счёт ${options.invoiceNumber}\nКомпания: ${options.companyName}\nК оплате: ${amount}\nСрок оплаты: ${due}\n\nКоманда Voxly · getvoxly.ru`,
+    });
+  }
+
+  /** Отправка PDF-документа (КП или Счёт на оплату) клиенту на E-mail. */
+  static async sendDocumentEmail(options: {
+    to: string;
+    documentType: "invoice" | "proposal";
+    documentNumber: string;
+    issuerName: string;
+    companyName: string;
+    total: number;
+    currency: string;
+    dueDate?: string | null;
+    filename: string;
+    pdfBuffer: Buffer;
+  }): Promise<SendResult> {
+    const isProposal = options.documentType === "proposal";
+    const docLabel = isProposal ? "Коммерческое предложение" : "Счёт на оплату";
+    const formattedTotal = `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(options.total)} ${options.currency === "RUB" ? "₽" : options.currency}`;
+    const dueText = options.dueDate
+      ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeZone: "Europe/Moscow" }).format(
+          new Date(options.dueDate),
+        )
+      : "";
+    const dueLabel = isProposal ? "Действительно до" : "Срок оплаты";
+    const subject = `${docLabel} № ${options.documentNumber} от ${options.issuerName}`;
+    const body = `
+      <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">${escapeHtml(docLabel)} № ${escapeHtml(options.documentNumber)}</h1>
+      <p style="margin:0 0 12px 0;font-size:14px;line-height:22px;color:#475569;">
+        Направляем вам ${isProposal ? "коммерческое предложение" : "счёт на оплату"} во вложении (PDF).
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#0f172a;"><strong>${isProposal ? "Итого по предложению" : "Сумма к оплате"}:</strong> ${escapeHtml(formattedTotal)}</p>
+      ${dueText ? `<p style="margin:0 0 12px 0;font-size:14px;color:#475569;"><strong>${dueLabel}:</strong> ${escapeHtml(dueText)}</p>` : ""}
+      <p style="margin:16px 0 0 0;font-size:13px;color:#64748b;">Отправитель: ${escapeHtml(options.issuerName)}</p>`;
+
+    return EmailService.send({
+      to: options.to,
+      subject,
+      html: layout({
+        title: subject,
+        preheader: `${docLabel} № ${options.documentNumber} на сумму ${formattedTotal}`,
+        body,
+      }),
+      text: [
+        `${docLabel} № ${options.documentNumber}`,
+        `${isProposal ? "Итого по предложению" : "Сумма к оплате"}: ${formattedTotal}`,
+        dueText ? `${dueLabel}: ${dueText}` : "",
+        `Отправитель: ${options.issuerName}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      attachments: [
+        {
+          filename: options.filename,
+          content: options.pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
     });
   }
   /** Проверка соединения и авторизации без отправки письма. */
