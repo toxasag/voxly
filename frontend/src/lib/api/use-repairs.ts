@@ -740,7 +740,9 @@ export function useCreateBrandModel(): UseMutationResult<
   });
 }
 
-export function useRepairServicesCatalog(): UseQueryResult<RepairServiceCatalogItemDTO[], ApiClientError> {
+export function useRepairServicesCatalog(
+  enabled = true,
+): UseQueryResult<RepairServiceCatalogItemDTO[], ApiClientError> {
   return useQuery<RepairServiceCatalogItemDTO[], ApiClientError>({
     queryKey: repairKeys.servicesCatalog,
     queryFn: async () => {
@@ -748,6 +750,7 @@ export function useRepairServicesCatalog(): UseQueryResult<RepairServiceCatalogI
       return res.data;
     },
     staleTime: 60_000,
+    enabled,
   });
 }
 

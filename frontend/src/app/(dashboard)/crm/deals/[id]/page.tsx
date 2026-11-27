@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Handshake } from "lucide-react";
@@ -30,10 +30,13 @@ function DealDetailContent() {
   const { id } = useParams<{ id: string }>();
   const deal = useDeal(id);
   const { markEntityRead: markDealLeadRead } = useMarkEntityNotificationsRead();
+  const lastMarkedDealIdRef = useRef<string | null>(null);
   const pipelines = usePipelines();
 
   useEffect(() => {
     if (!id) return;
+    if (lastMarkedDealIdRef.current === id) return;
+    lastMarkedDealIdRef.current = id;
     markDealLeadRead({
       entity_type: "deal",
       entity_id: id,

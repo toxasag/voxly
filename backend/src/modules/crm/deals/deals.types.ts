@@ -513,6 +513,7 @@ export const createDealItemSchema = z.object({
   discount_percent: z.number().min(0).max(100).optional().default(0),
   discount_amount: z.number().nonnegative().optional().default(0),
   sort_order: z.number().int().optional().default(0),
+  save_to_catalog: z.boolean().optional().default(false),
   add_to_purchase_request: z.boolean().optional().default(false),
 });
 

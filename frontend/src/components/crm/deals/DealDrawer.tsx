@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckSquare, Clock, FileText, Handshake, Heart, Home, Mail, MoreHorizontal, Paperclip, Pencil, ShieldAlert, Trash2, UserX, Wrench } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
@@ -65,11 +65,17 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
   const router = useRouter();
   const deal = useDeal(dealId);
   const { markEntityRead: markDealLeadRead } = useMarkEntityNotificationsRead();
+  const lastMarkedDealIdRef = useRef<string | null>(null);
   const [tab, setTab] = useState("home");
 
-  // При открытии карточки сделки снимаем уведомления «Новая заявка» по этой сделке
+  // При открытии карточки сделки один раз снимаем уведомления «Новая заявка» по этой сделке
   useEffect(() => {
-    if (!open || !dealId) return;
+    if (!open || !dealId) {
+      lastMarkedDealIdRef.current = null;
+      return;
+    }
+    if (lastMarkedDealIdRef.current === dealId) return;
+    lastMarkedDealIdRef.current = dealId;
     markDealLeadRead({
       entity_type: "deal",
       entity_id: dealId,
@@ -291,7 +297,27 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
               </div>
             ) : deal.isError || !deal.data ? (
               <div className="p-5">
-                <EmptyState icon={Handshake} title="Сделка не найдена" description={deal.error?.message ?? "Ошибка загрузки"} />
+                {(() => {
+                  const isNotFound = !deal.isError || deal.error?.status === 404;
+                  return (
+                    <EmptyState
+                      icon={Handshake}
+                      title={isNotFound ? "Сделка не найдена" : "Не удалось загрузить сделку"}
+                      description={deal.error?.message ?? "Ошибка загрузки"}
+                      action={
+                        !isNotFound ? (
+                          <button
+                            type="button"
+                            onClick={() => void deal.refetch()}
+                            className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer"
+                          >
+                            Повторить
+                          </button>
+                        ) : undefined
+                      }
+                    />
+                  );
+                })()}
               </div>
             ) : (
               <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">

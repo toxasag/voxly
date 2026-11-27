@@ -389,6 +389,7 @@ export interface CreateDealItemPayload {
   discount_percent?: number;
   discount_amount?: number;
   sort_order?: number;
+  save_to_catalog?: boolean;
   add_to_purchase_request?: boolean;
 }
 
@@ -429,12 +430,18 @@ export function useAddDealItem(dealId: string) {
       const res = await apiClient.post<DealItemDTO>(`${BASE}/${dealId}/items`, payload);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, payload) => {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["finance", "economics", "deal", dealId] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
+      if (payload.save_to_catalog) {
+        void queryClient.invalidateQueries({ queryKey: ["warehouse", "items"] });
+        void queryClient.invalidateQueries({ queryKey: ["services"] });
+        void queryClient.invalidateQueries({ queryKey: ["repairs", "services-catalog"] });
+      }
     },
   });
 }
@@ -450,6 +457,7 @@ export function useUpdateDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["finance", "economics", "deal", dealId] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
@@ -469,6 +477,7 @@ export function useDeleteDealItem(dealId: string) {
       void queryClient.invalidateQueries({ queryKey: [...dealKeys.detail(dealId), "items"] });
       void queryClient.invalidateQueries({ queryKey: dealKeys.detail(dealId) });
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["finance", "economics", "deal", dealId] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "purchases"] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse", "aggregated-purchases"] });
     },
