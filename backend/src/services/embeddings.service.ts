@@ -191,124 +191,7 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
     // Специализированный умный роутер для эмбеддингов Google Gemini
     // -------------------------------------------------------------------------
     if (isGoogle) {
-      let activeModel = config?.embeddingModel || this.model;
-      if (!activeModel || activeModel.startsWith("text-embedding") || activeModel === "default") {
-        activeModel = "gemini-embedding-001";
-      } else if (activeModel.startsWith("models/")) {
-        activeModel = activeModel.replace(/^models\//, "");
-      }
-
-      const estimatedTokens = Math.ceil(inputs.reduce((acc, str) => acc + str.length, 0) / 4);
-      const allKeys = await geminiKeyPoolService.getAllPoolKeys();
-      const maxAttempts = Math.min(Math.max(allKeys.length * 2, 4), 8);
-      const excludedKeyIds: string[] = [];
-
-      let lastError: Error | null = null;
-
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        let acquisition: AcquiredKeyResult;
-        try {
-          acquisition = await geminiKeyPoolService.acquireKey(activeModel, {
-            estimatedTokens,
-            excludeKeyIds: excludedKeyIds,
-          });
-        } catch (err) {
-          throw err instanceof AppError
-            ? err
-            : new EmbeddingsFailedError(err instanceof Error ? err.message : String(err));
-        }
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-        try {
-          const response = await fetch(`${activeBaseUrl}/embeddings`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${acquisition.apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: acquisition.model,
-              input: [...inputs],
-              dimensions: EMBEDDING_DIMENSIONS,
-            }),
-            signal: controller.signal,
-          });
-
-          if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            const isAuthError =
-              response.status === 401 ||
-              response.status === 403 ||
-              text.includes("deleted or disabled") ||
-              text.includes("API key not valid");
-
-            if (isAuthError) {
-              platformConfigService.markKeyInvalid(acquisition.apiKey);
-              excludedKeyIds.push(acquisition.keyId);
-              continue;
-            }
-
-            if (response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit")) {
-              const retryAfterHeader = response.headers.get("retry-after");
-              const parsedRetryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
-              const isDailyLimit =
-                text.toLowerCase().includes("day") ||
-                text.toLowerCase().includes("rpd") ||
-                text.includes("Requests per day");
-              const limitType = isDailyLimit ? "RPD" : "RPM";
-
-              await geminiKeyPoolService.markRateLimited(
-                acquisition.keyId,
-                acquisition.model,
-                parsedRetryAfter,
-                limitType,
-              );
-              excludedKeyIds.push(acquisition.keyId);
-              lastError = new EmbeddingsFailedError(`Ключ ${acquisition.maskedKey} достиг лимита ${limitType} (HTTP 429)`);
-              continue;
-            }
-
-            if (response.status >= 500 && attempt < maxAttempts - 1) {
-              excludedKeyIds.push(acquisition.keyId);
-              lastError = new EmbeddingsFailedError(`Google Gemini вернул HTTP ${response.status}`);
-              continue;
-            }
-
-            throw new EmbeddingsFailedError(
-              `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
-            );
-          }
-
-          const parsed = parseEmbeddingResponse(await response.json(), inputs.length);
-
-          await geminiKeyPoolService.reportUsage(
-            acquisition.keyId,
-            acquisition.model,
-            parsed.tokensUsed,
-          );
-
-          return {
-            vectors: parsed.vectors,
-            tokensUsed: parsed.tokensUsed,
-            model: parsed.model.length > 0 ? parsed.model : acquisition.model,
-          };
-        } catch (error) {
-          if (attempt < maxAttempts - 1) {
-            excludedKeyIds.push(acquisition.keyId);
-            lastError = error instanceof Error ? error : new Error(String(error));
-            continue;
-          }
-          if (error instanceof AppError) throw error;
-          const reason = error instanceof Error ? error.message : "неизвестная ошибка";
-          throw new EmbeddingsFailedError(reason);
-        } finally {
-          clearTimeout(timeout);
-        }
-      }
-
-      throw lastError || new EmbeddingsFailedError("Все попытки вызова Google Gemini завершились ошибкой");
+      return this.embedGoogle(inputs, activeBaseUrl, config?.embeddingModel);
     }
 
     // -------------------------------------------------------------------------
@@ -318,6 +201,16 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
     const keysToTry = config?.allKeys?.length ? config.allKeys : this.apiKey ? [this.apiKey] : [];
 
     if (keysToTry.length === 0) {
+      try {
+        const integrations = await platformConfigService.getEffectiveIntegrations();
+        const hasGemini = integrations.llmProviders.some(
+          (p) => p.isActive && p.apiKeys.length > 0 && (p.providerType === "gemini" || p.id.includes("gemini") || (p.baseUrl && p.baseUrl.includes("googleapis.com"))),
+        );
+        if (hasGemini) {
+          return await this.embedGoogle(inputs, "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-embedding-001");
+        }
+      } catch {}
+
       throw new EmbeddingsUnavailableError(
         "Векторизация недоступна: на платформе не настроен доступ к моделям. Обратитесь к администратору в панели управления.",
       );
@@ -369,6 +262,19 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
             continue;
           }
 
+          // Если провайдер вернул 404 (эндпоинт /embeddings не поддерживается), переключаемся на Gemini
+          if (response.status === 404 || text.includes("Not Found")) {
+            try {
+              const integrations = await platformConfigService.getEffectiveIntegrations();
+              const hasGemini = integrations.llmProviders.some(
+                (p) => p.isActive && p.apiKeys.length > 0 && (p.providerType === "gemini" || p.id.includes("gemini") || (p.baseUrl && p.baseUrl.includes("googleapis.com"))),
+              );
+              if (hasGemini) {
+                return await this.embedGoogle(inputs, "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-embedding-001");
+              }
+            } catch {}
+          }
+
           throw new EmbeddingsFailedError(
             `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
           );
@@ -382,6 +288,17 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
           model: parsed.model.length > 0 ? parsed.model : this.model,
         };
       } catch (error) {
+        // Проверяем возможность переключения на Google Gemini при фатальной ошибке внешнего шлюза
+        try {
+          const integrations = await platformConfigService.getEffectiveIntegrations();
+          const hasGemini = integrations.llmProviders.some(
+            (p) => p.isActive && p.apiKeys.length > 0 && (p.providerType === "gemini" || p.id.includes("gemini") || (p.baseUrl && p.baseUrl.includes("googleapis.com"))),
+          );
+          if (hasGemini) {
+            return await this.embedGoogle(inputs, "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-embedding-001");
+          }
+        } catch {}
+
         if (i < keysToTry.length - 1) {
           lastError = error instanceof Error ? error : new Error(String(error));
           continue;
@@ -396,5 +313,131 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
     }
 
     throw lastError || new EmbeddingsFailedError("Все API-ключи в пуле исчерпали лимиты запросов");
+  }
+
+  private async embedGoogle(
+    inputs: readonly string[],
+    activeBaseUrl: string,
+    rawModel?: string,
+  ): Promise<EmbeddingResult> {
+    let activeModel = rawModel || this.model;
+    if (!activeModel || activeModel.startsWith("text-embedding") || activeModel === "default") {
+      activeModel = "gemini-embedding-001";
+    } else if (activeModel.startsWith("models/")) {
+      activeModel = activeModel.replace(/^models\//, "");
+    }
+
+    const estimatedTokens = Math.ceil(inputs.reduce((acc, str) => acc + str.length, 0) / 4);
+    const allKeys = await geminiKeyPoolService.getAllPoolKeys();
+    const maxAttempts = Math.min(Math.max(allKeys.length * 2, 4), 8);
+    const excludedKeyIds: string[] = [];
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let acquisition: AcquiredKeyResult;
+      try {
+        acquisition = await geminiKeyPoolService.acquireKey(activeModel, {
+          estimatedTokens,
+          excludeKeyIds: excludedKeyIds,
+        });
+      } catch (err) {
+        throw err instanceof AppError
+          ? err
+          : new EmbeddingsFailedError(err instanceof Error ? err.message : String(err));
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const response = await fetch(`${activeBaseUrl}/embeddings`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${acquisition.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: acquisition.model,
+            input: [...inputs],
+            dimensions: EMBEDDING_DIMENSIONS,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const text = await response.text().catch(() => "");
+          const isAuthError =
+            response.status === 401 ||
+            response.status === 403 ||
+            text.includes("deleted or disabled") ||
+            text.includes("API key not valid");
+
+          if (isAuthError) {
+            platformConfigService.markKeyInvalid(acquisition.apiKey);
+            excludedKeyIds.push(acquisition.keyId);
+            continue;
+          }
+
+          if (response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit")) {
+            const retryAfterHeader = response.headers.get("retry-after");
+            const parsedRetryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
+            const isDailyLimit =
+              text.toLowerCase().includes("day") ||
+              text.toLowerCase().includes("rpd") ||
+              text.includes("Requests per day");
+            const limitType = isDailyLimit ? "RPD" : "RPM";
+
+            await geminiKeyPoolService.markRateLimited(
+              acquisition.keyId,
+              acquisition.model,
+              parsedRetryAfter,
+              limitType,
+            );
+            excludedKeyIds.push(acquisition.keyId);
+            lastError = new EmbeddingsFailedError(`Ключ ${acquisition.maskedKey} достиг лимита ${limitType} (HTTP 429)`);
+            continue;
+          }
+
+          if (response.status >= 500 && attempt < maxAttempts - 1) {
+            excludedKeyIds.push(acquisition.keyId);
+            lastError = new EmbeddingsFailedError(`Google Gemini вернул HTTP ${response.status}`);
+            continue;
+          }
+
+          throw new EmbeddingsFailedError(
+            `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
+          );
+        }
+
+        const parsed = parseEmbeddingResponse(await response.json(), inputs.length);
+
+        await geminiKeyPoolService.reportUsage(
+          acquisition.keyId,
+          acquisition.model,
+          parsed.tokensUsed,
+        );
+
+        return {
+          vectors: parsed.vectors,
+          tokensUsed: parsed.tokensUsed,
+          model: parsed.model.length > 0 ? parsed.model : acquisition.model,
+        };
+      } catch (error) {
+        if (attempt < maxAttempts - 1) {
+          excludedKeyIds.push(acquisition.keyId);
+          lastError = error instanceof Error ? error : new Error(String(error));
+          continue;
+        }
+        if (error instanceof AppError) throw error;
+        const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+        throw new EmbeddingsFailedError(reason);
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    throw lastError || new EmbeddingsFailedError("Все попытки вызова Google Gemini завершились ошибкой");
+  }
   }
 }
