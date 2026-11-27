@@ -439,5 +439,4 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
 
     throw lastError || new EmbeddingsFailedError("Все попытки вызова Google Gemini завершились ошибкой");
   }
-  }
 }
