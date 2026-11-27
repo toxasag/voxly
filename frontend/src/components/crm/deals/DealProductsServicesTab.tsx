@@ -45,6 +45,7 @@ import { useClickOutside } from "@/lib/hooks/use-click-outside";
 import { formatRub } from "@/lib/utils/format";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { ServiceCatalogDialog } from "@/components/services/ServiceCatalogDialog";
+import { CreateOrEditServiceModal } from "@/components/warehouse/CreateOrEditServiceModal";
 import { DealProductAddModal } from "./DealProductAddModal";
 
 const MAX_WAREHOUSE_DROPDOWN_ITEMS = 80;
@@ -121,6 +122,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
   const [selectedServices, setSelectedServices] = useState<SelectedServiceDraft[]>([]);
   const [svcCatalogOpen, setSvcCatalogOpen] = useState(false);
   const [isServiceCatalogDialogOpen, setIsServiceCatalogDialogOpen] = useState(false);
+  const [createServiceModalOpen, setCreateServiceModalOpen] = useState(false);
   const [isSubmittingServicesBatch, setIsSubmittingServicesBatch] = useState(false);
 
   const svcComboboxRef = useRef<HTMLDivElement>(null);
@@ -346,19 +348,16 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
     [svcQty],
   );
 
-  const handleCreateServiceInCatalog = useCallback(async () => {
+  const handleCreateServiceInCatalog = useCallback(() => {
     const trimmed = svcDesc.trim();
     if (!trimmed) return;
-    const priceNum = parseFloat(svcUnitPrice || svcTotal);
-    const parsedPrice = !isNaN(priceNum) && priceNum >= 0 ? priceNum : 0;
-    try {
-      const created = await createServiceMutation.mutateAsync({
-        name: trimmed,
-        default_price: parsedPrice,
-        price: parsedPrice,
-        unit: "усл",
-      });
-      toast.success(`Услуга «${trimmed}» сохранена в справочник`);
+    setSvcCatalogOpen(false);
+    setCreateServiceModalOpen(true);
+  }, [svcDesc]);
+
+  const handleServiceCreatedInCatalog = useCallback(
+    (created: ServiceItemDTO) => {
+      toast.success(`Услуга «${created.name}» сохранена в справочник`);
       setSelectedServices((prev) => {
         if (prev.some((s) => s.serviceId === created.id)) return prev;
         return [
@@ -369,7 +368,7 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
             description: created.description ?? "",
             unit: created.unit || "усл",
             quantity: svcQty || "1",
-            unitPrice: String(created.price || created.defaultPrice || parsedPrice),
+            unitPrice: String(created.price || created.defaultPrice || 0),
           },
         ];
       });
@@ -377,11 +376,9 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
       setSvcUnitPrice("");
       setSvcTotal("");
       setSvcQty("1");
-      setSvcCatalogOpen(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось сохранить услугу в справочник");
-    }
-  }, [svcDesc, svcUnitPrice, svcTotal, svcQty, createServiceMutation]);
+    },
+    [svcQty],
+  );
 
   const submitServicesList = useCallback(
     async (
@@ -2045,6 +2042,15 @@ export function DealProductsServicesTab({ deal }: { deal: DealDTO }) {
         isSubmittingMultiple={isSubmittingServicesBatch}
         catalogSource="services"
         subtitle="Каталог типовых услуг и базовых цен"
+      />
+
+      {/* Единая каноническая модалка создания услуги из /warehouse */}
+      <CreateOrEditServiceModal
+        open={createServiceModalOpen}
+        onClose={() => setCreateServiceModalOpen(false)}
+        initialName={svcDesc.trim()}
+        initialPrice={svcUnitPrice || svcTotal}
+        onCreated={handleServiceCreatedInCatalog}
       />
 
       <DealProductAddModal

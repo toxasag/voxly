@@ -1671,6 +1671,14 @@
   2. `CreateSupplierOrderModal.tsx`: удалена дублирующая кнопка `+ Добавить товар`, оставлена только `+ Добавить ещё одну позицию`; `<datalist>` заменён на интерактивный комбобокс товаров с кнопкой и inline-формой «Создать в базе и добавить» (`useCreateWarehouseItem`).
   3. `frontend/src/lib/api/use-warehouse.ts`: исправлена инвалидация `["warehouse", "items"]` и `["warehouse", "categories"]` в `useCreateWarehouseItem` и `useUpdateWarehouseItem`.
 
+### 2026-11-27 — Унификация создания товаров и услуг во всём приложении на единые модалки из `/warehouse`
+- **Root cause:** В заказе поставщику (`CreateSupplierOrderModal`), карточке наряда (`PartAddModal`, `WorkItemsTable`), карточке сделки (`DealProductAddModal`, `DealProductsServicesTab`) и справочнике услуг (`ServiceCatalogDialog`) использовались урезанные дублирующие формы без бренда, категории, моделей (для товаров) и без ед. измерения / длительности (для услуг).
+- **Что сделано:**
+  1. `CreateItemModal.tsx`: добавлены опциональные пропсы `initialName`/`initialSku`/`initialUnit`/`initialCostPrice`/`initialRetailPrice`, `showQuantity`, `showPurchaseRequestOption` и `onCreated(item, extra)` при 100% сохранении эталонного вида `/warehouse`.
+  2. `CreateOrEditServiceModal.tsx`: добавлены опциональные пропсы `initialName`, `initialPrice`, `submitLabel`, `onCreated(service)`.
+  3. Переведены на `CreateItemModal`: `CreateSupplierOrderModal.tsx` (удалена самодельная inline-форма), `PartAddModal.tsx` (наряды `/repairs/[id]`), `DealProductAddModal.tsx` (сделки CRM `/crm/deals/[id]`).
+  4. Переведены на `CreateOrEditServiceModal`: `ServiceCatalogDialog.tsx` (кнопка «Добавить услугу» вместо урезанного inline-бара), `WorkItemsTable.tsx`, `DealProductsServicesTab.tsx`; в `useCreateService` добавлена инвалидация `["repair-services-catalog"]`.
+
 ---
 
 ### 24.11.2026 — Автоскролл при печати и 2x замедление набора в онлайн-виджете

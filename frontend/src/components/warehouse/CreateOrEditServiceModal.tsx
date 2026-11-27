@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { X, Loader2, Sparkles, BookOpen } from "lucide-react";
+import { X, Loader2, BookOpen } from "lucide-react";
 import { toast } from "sonner";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 import {
@@ -10,16 +10,29 @@ import {
   type ServiceItemDTO,
 } from "@/lib/api/use-services";
 
-interface CreateOrEditServiceModalProps {
+export interface CreateOrEditServiceModalProps {
   open: boolean;
   onClose: () => void;
   service?: ServiceItemDTO | null;
+  initialName?: string;
+  initialPrice?: number | string;
+  submitLabel?: string;
+  onCreated?: (service: ServiceItemDTO) => void | Promise<void>;
 }
 
-export function CreateOrEditServiceModal({
+export function CreateOrEditServiceModal(props: CreateOrEditServiceModalProps) {
+  if (!props.open) return null;
+  return <CreateOrEditServiceModalInner {...props} />;
+}
+
+function CreateOrEditServiceModalInner({
   open,
   onClose,
   service,
+  initialName = "",
+  initialPrice = "",
+  submitLabel,
+  onCreated,
 }: CreateOrEditServiceModalProps) {
   useOverlay(open, { onEscape: onClose });
 
@@ -28,14 +41,16 @@ export function CreateOrEditServiceModal({
   const [price, setPrice] = useState("");
   const [unit, setUnit] = useState("усл");
   const [durationMinutes, setDurationMinutes] = useState("");
+  const [isPostProcessing, setIsPostProcessing] = useState(false);
 
   const createMutation = useCreateService();
   const updateMutation = useUpdateService();
 
   const isEditing = Boolean(service);
-  const isPending = createMutation.isPending || updateMutation.isPending;
+  const isPending = createMutation.isPending || updateMutation.isPending || isPostProcessing;
 
   useEffect(() => {
+    if (!open) return;
     if (service) {
       setName(service.name);
       setDescription(service.description ?? "");
@@ -43,64 +58,96 @@ export function CreateOrEditServiceModal({
       setUnit(service.unit ?? "усл");
       setDurationMinutes(service.durationMinutes ? String(service.durationMinutes) : "");
     } else {
-      setName("");
+      setName(initialName || "");
       setDescription("");
-      setPrice("");
+      setPrice(
+        initialPrice !== undefined && initialPrice !== null && String(initialPrice).trim() !== ""
+          ? String(initialPrice)
+          : "",
+      );
       setUnit("усл");
       setDurationMinutes("");
     }
-  }, [service, open]);
+  }, [service, open, initialName, initialPrice]);
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      toast.error("Укажите наименование услуги");
-      return;
-    }
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const trimmedName = name.trim();
+      if (!trimmedName) {
+        toast.error("Укажите наименование услуги");
+        return;
+      }
 
-    const priceNum = parseFloat(price);
-    const parsedPrice = !isNaN(priceNum) && priceNum >= 0 ? priceNum : 0;
-    const durationNum = parseInt(durationMinutes, 10);
-    const parsedDuration = !isNaN(durationNum) && durationNum > 0 ? durationNum : null;
+      const priceNum = parseFloat(price);
+      const parsedPrice = !isNaN(priceNum) && priceNum >= 0 ? priceNum : 0;
+      const durationNum = parseInt(durationMinutes, 10);
+      const parsedDuration = !isNaN(durationNum) && durationNum > 0 ? durationNum : null;
 
-    try {
-      if (isEditing && service) {
-        await updateMutation.mutateAsync({
-          id: service.id,
-          payload: {
+      try {
+        if (isEditing && service) {
+          await updateMutation.mutateAsync({
+            id: service.id,
+            payload: {
+              name: trimmedName,
+              description: description.trim(),
+              price: parsedPrice,
+              default_price: parsedPrice,
+              unit: unit.trim() || "усл",
+              duration_minutes: parsedDuration,
+            },
+          });
+          toast.success(`Услуга «${trimmedName}» успешно обновлена`);
+        } else {
+          const created = await createMutation.mutateAsync({
             name: trimmedName,
             description: description.trim(),
             price: parsedPrice,
             default_price: parsedPrice,
             unit: unit.trim() || "усл",
             duration_minutes: parsedDuration,
-          },
-        });
-        toast.success(`Услуга «${trimmedName}» успешно обновлена`);
-      } else {
-        await createMutation.mutateAsync({
-          name: trimmedName,
-          description: description.trim(),
-          price: parsedPrice,
-          default_price: parsedPrice,
-          unit: unit.trim() || "усл",
-          duration_minutes: parsedDuration,
-        });
-        toast.success(`Услуга «${trimmedName}» добавлена в справочник`);
+          });
+          if (onCreated) {
+            setIsPostProcessing(true);
+            try {
+              await onCreated(created);
+            } finally {
+              setIsPostProcessing(false);
+            }
+          } else {
+            toast.success(`Услуга «${trimmedName}» добавлена в справочник`);
+          }
+        }
+        onClose();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Произошла ошибка при сохранении услуги");
       }
-      onClose();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Произошла ошибка при сохранении услуги");
-    }
-  }, [name, description, price, unit, durationMinutes, isEditing, service, updateMutation, createMutation, onClose]);
+    },
+    [
+      name,
+      description,
+      price,
+      unit,
+      durationMinutes,
+      isEditing,
+      service,
+      updateMutation,
+      createMutation,
+      onCreated,
+      onClose,
+    ],
+  );
 
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClose();
+      }}
     >
       <div
         className="w-full max-w-lg rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
@@ -118,15 +165,16 @@ export function CreateOrEditServiceModal({
               </h2>
               <p className="text-[11px] text-[#666666]">
                 {isEditing
-                  ? "Изменение параметров и описания услуги"
-                  : "Добавление услуги в каталог для сделок и сервиса"}
+                  ? "Изменение параметров услуги в общем каталоге"
+                  : "Добавление услуги в единый прайс-лист (CRM и Сервисный центр)"}
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[6px] p-1.5 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+            aria-label="Закрыть окно услуги"
+            className="rounded-[6px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -141,10 +189,11 @@ export function CreateOrEditServiceModal({
             <input
               type="text"
               required
-              placeholder="Например: Замена дисплейного модуля, Диагностика..."
+              autoFocus
+              placeholder="Например: Диагностика оборудования, Замена аккумулятора..."
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              className="w-full h-9 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
             />
           </div>
 
@@ -225,7 +274,7 @@ export function CreateOrEditServiceModal({
               className="h-8 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {isEditing ? "Сохранить изменения" : "Добавить услугу"}
+              {submitLabel ?? (isEditing ? "Сохранить изменения" : "Добавить услугу")}
             </button>
           </div>
         </form>

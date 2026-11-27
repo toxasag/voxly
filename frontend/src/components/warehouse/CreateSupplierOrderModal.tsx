@@ -12,18 +12,16 @@ import {
   Check,
   Trash2,
   Search,
-  Package,
   CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useCreateSupplierOrder,
-  useCreateWarehouseItem,
-  useWarehouseCategories,
   useWarehouseItems,
   type AggregatedPurchaseRequestDTO,
   type WarehouseItemDTO,
 } from "@/lib/api/use-warehouse";
+import { CreateItemModal } from "@/components/warehouse/CreateItemModal";
 import {
   useCompanies,
   useCompanyInnLookup,
@@ -54,14 +52,12 @@ interface FormItemState {
   requestIds: string[];
 }
 
-interface QuickCreateItemState {
+interface CreateItemModalTarget {
   rowIdx: number;
   name: string;
   sku: string;
-  category: string;
   unit: string;
-  costPrice: string;
-  retailPrice: string;
+  costPrice: number;
 }
 
 export function CreateSupplierOrderModal({
@@ -90,7 +86,7 @@ export function CreateSupplierOrderModal({
   // Редактируемые позиции и комбобокс товаров
   const [items, setItems] = useState<FormItemState[]>([]);
   const [openItemDropdownIdx, setOpenItemDropdownIdx] = useState<number | null>(null);
-  const [quickCreateItem, setQuickCreateItem] = useState<QuickCreateItemState | null>(null);
+  const [createItemTarget, setCreateItemTarget] = useState<CreateItemModalTarget | null>(null);
 
   // Хуки
   const { data: companiesData, isLoading: isCompaniesLoading } = useCompanies({
@@ -100,9 +96,7 @@ export function CreateSupplierOrderModal({
   const cleanNewInn = newCompanyInn.replace(/\D/g, "").trim();
   const innLookupQuery = useCompanyInnLookup(isCreatingCompany ? cleanNewInn : "");
   const { data: allWarehouseItems = [] } = useWarehouseItems();
-  const { data: warehouseCategories = [] } = useWarehouseCategories();
   const createCompanyMutation = useCreateCompany();
-  const createWarehouseItemMutation = useCreateWarehouseItem();
   const createOrderMutation = useCreateSupplierOrder();
 
   // Инициализация позиций и сброс при открытии
@@ -154,7 +148,7 @@ export function CreateSupplierOrderModal({
     setNewCompanyLegalAddress("");
     lastAutoAppliedInnRef.current = "";
     setOpenItemDropdownIdx(null);
-    setQuickCreateItem(null);
+    setCreateItemTarget(null);
     setStatus("pending_payment");
     setNotes("");
   }, [open, selectedRequests]);
@@ -239,7 +233,7 @@ export function CreateSupplierOrderModal({
 
   const handleRemoveItem = (idx: number) => {
     if (openItemDropdownIdx === idx) setOpenItemDropdownIdx(null);
-    if (quickCreateItem?.rowIdx === idx) setQuickCreateItem(null);
+    if (createItemTarget?.rowIdx === idx) setCreateItemTarget(null);
     setItems((prev) => {
       const filtered = prev.filter((_, i) => i !== idx);
       if (filtered.length === 0) {
@@ -278,7 +272,7 @@ export function CreateSupplierOrderModal({
       return copy;
     });
     setOpenItemDropdownIdx(null);
-    if (quickCreateItem?.rowIdx === idx) setQuickCreateItem(null);
+    if (createItemTarget?.rowIdx === idx) setCreateItemTarget(null);
   };
 
   const handleItemNameChange = (idx: number, val: string) => {
@@ -310,66 +304,38 @@ export function CreateSupplierOrderModal({
     const row = items[idx];
     if (!row) return;
     setOpenItemDropdownIdx(null);
-    setQuickCreateItem({
+    setCreateItemTarget({
       rowIdx: idx,
       name: row.itemName.trim(),
       sku: row.sku.trim(),
-      category: "Запчасти",
-      unit: row.unit.trim() || "шт",
-      costPrice: row.price > 0 ? String(row.price) : "",
-      retailPrice: "",
+      unit: row.unit.trim() || "шт.",
+      costPrice: row.price > 0 ? row.price : 0,
     });
   };
 
-  const handleQuickCreateItemSubmit = async () => {
-    if (!quickCreateItem) return;
-    const trimmedName = quickCreateItem.name.trim();
-    if (!trimmedName) {
-      toast.error("Укажите наименование нового товара");
-      return;
-    }
-    const costVal = quickCreateItem.costPrice.trim()
-      ? parseFloat(quickCreateItem.costPrice.replace(",", "."))
-      : 0;
-    const retailVal = quickCreateItem.retailPrice.trim()
-      ? parseFloat(quickCreateItem.retailPrice.replace(",", "."))
-      : 0;
-
-    try {
-      const created = await createWarehouseItemMutation.mutateAsync({
-        name: trimmedName,
-        sku: quickCreateItem.sku.trim() || undefined,
-        category: quickCreateItem.category.trim() || "Запчасти",
-        unit: quickCreateItem.unit.trim() || "шт",
-        cost_price: Number.isFinite(costVal) && costVal >= 0 ? costVal : 0,
-        retail_price: Number.isFinite(retailVal) && retailVal >= 0 ? retailVal : 0,
-      });
-
-      const targetIdx = quickCreateItem.rowIdx;
-      setItems((prev) => {
-        const copy = [...prev];
-        const cur = copy[targetIdx];
-        if (!cur) return prev;
-        copy[targetIdx] = {
-          ...cur,
-          itemId: created.id,
-          itemName: created.name,
-          sku: created.sku || quickCreateItem.sku.trim(),
-          unit: created.unit || quickCreateItem.unit.trim() || "шт",
-          price:
-            Number(created.costPrice) > 0
-              ? Number(created.costPrice)
-              : Number.isFinite(costVal) && costVal > 0
-                ? costVal
-                : cur.price,
-        };
-        return copy;
-      });
-      setQuickCreateItem(null);
-      toast.success(`Товар «${created.name}» создан в базе и добавлен в заказ`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось создать товар");
-    }
+  const handleWarehouseItemCreated = (created: WarehouseItemDTO) => {
+    if (!createItemTarget) return;
+    const targetIdx = createItemTarget.rowIdx;
+    setItems((prev) => {
+      const copy = [...prev];
+      const cur = copy[targetIdx];
+      if (!cur) return prev;
+      copy[targetIdx] = {
+        ...cur,
+        itemId: created.id,
+        itemName: created.name,
+        sku: created.sku || cur.sku,
+        unit: created.unit || cur.unit || "шт",
+        price:
+          Number(created.costPrice) > 0
+            ? Number(created.costPrice)
+            : Number(created.retailPrice) > 0 && cur.price === 0
+              ? Number(created.retailPrice)
+              : cur.price,
+      };
+      return copy;
+    });
+    toast.success(`Товар «${created.name}» создан в номенклатуре и добавлен в заказ`);
   };
 
   const handleItemQuantityChange = (idx: number, val: number) => {
@@ -787,7 +753,6 @@ export function CreateSupplierOrderModal({
                     (searchTerm &&
                       allWarehouseItems.some((wi) => wi.name.trim().toLowerCase() === searchTerm)),
                 );
-                const isQuickCreatingThisRow = quickCreateItem?.rowIdx === idx;
 
                 return (
                   <div key={it.key} className="p-3 hover:bg-[#fbfbfb] transition-colors space-y-2">
@@ -873,152 +838,20 @@ export function CreateSupplierOrderModal({
                               </div>
                             )}
 
-                            {/* Быстрая кнопка создания товара под строкой, если введённого названия нет в базе */}
-                            {!it.itemId &&
-                              it.itemName.trim().length > 0 &&
-                              !isQuickCreatingThisRow && (
-                                <div className="mt-1 flex items-center justify-between gap-2 rounded-[6px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2.5 py-1 text-[11px]">
-                                  <span className="text-[#666666] truncate">
-                                    Товара нет в номенклатуре склада
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenQuickCreateItem(idx)}
-                                    className="inline-flex items-center gap-1 font-medium text-[#4a38f5] hover:text-[#3d2ee0] shrink-0 cursor-pointer"
-                                  >
-                                    <Plus className="h-3 w-3" />
-                                    <span>Создать в базе и добавить</span>
-                                  </button>
-                                </div>
-                              )}
-
-                            {/* Inline-форма создания нового товара в базе склада */}
-                            {isQuickCreatingThisRow && quickCreateItem && (
-                              <div className="mt-2 rounded-[8px] border border-[#4a38f5]/25 bg-[#fafafa] p-3 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[11px] font-semibold text-[#111111] flex items-center gap-1.5">
-                                    <Package className="h-3.5 w-3.5 text-[#4a38f5]" />
-                                    Новый товар в номенклатуре склада
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setQuickCreateItem(null)}
-                                    aria-label="Закрыть форму создания товара"
-                                    className="text-[#888888] hover:text-[#111111] cursor-pointer"
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-
-                                <div>
-                                  <input
-                                    type="text"
-                                    value={quickCreateItem.name}
-                                    onChange={(e) =>
-                                      setQuickCreateItem((prev) =>
-                                        prev ? { ...prev, name: e.target.value } : prev,
-                                      )
-                                    }
-                                    placeholder="Наименование товара *"
-                                    aria-label="Наименование нового товара"
-                                    className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                                  />
-                                </div>
-
-                                <div className="grid grid-cols-3 gap-2">
-                                  <input
-                                    type="text"
-                                    value={quickCreateItem.sku}
-                                    onChange={(e) =>
-                                      setQuickCreateItem((prev) =>
-                                        prev ? { ...prev, sku: e.target.value } : prev,
-                                      )
-                                    }
-                                    placeholder="Артикул (SKU)"
-                                    aria-label="Артикул нового товара"
-                                    className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                                  />
-                                  <input
-                                    type="text"
-                                    list="quick-create-wh-categories"
-                                    value={quickCreateItem.category}
-                                    onChange={(e) =>
-                                      setQuickCreateItem((prev) =>
-                                        prev ? { ...prev, category: e.target.value } : prev,
-                                      )
-                                    }
-                                    placeholder="Категория"
-                                    aria-label="Категория нового товара"
-                                    className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                                  />
-                                  <input
-                                    type="text"
-                                    value={quickCreateItem.unit}
-                                    onChange={(e) =>
-                                      setQuickCreateItem((prev) =>
-                                        prev ? { ...prev, unit: e.target.value } : prev,
-                                      )
-                                    }
-                                    placeholder="Ед. (шт)"
-                                    aria-label="Единица измерения нового товара"
-                                    className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                                  />
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    step="0.01"
-                                    value={quickCreateItem.costPrice}
-                                    onChange={(e) =>
-                                      setQuickCreateItem((prev) =>
-                                        prev ? { ...prev, costPrice: e.target.value } : prev,
-                                      )
-                                    }
-                                    placeholder="Закупочная цена, ₽"
-                                    aria-label="Закупочная цена нового товара"
-                                    className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono tabular-nums text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                                  />
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    step="0.01"
-                                    value={quickCreateItem.retailPrice}
-                                    onChange={(e) =>
-                                      setQuickCreateItem((prev) =>
-                                        prev ? { ...prev, retailPrice: e.target.value } : prev,
-                                      )
-                                    }
-                                    placeholder="Розничная цена, ₽"
-                                    aria-label="Розничная цена нового товара"
-                                    className="w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono tabular-nums text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none"
-                                  />
-                                </div>
-
-                                <div className="flex items-center justify-end gap-2 pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setQuickCreateItem(null)}
-                                    className="px-2.5 py-1 rounded-[6px] border border-[#e5e5e5] bg-white text-xs text-[#666666] hover:bg-neutral-50 cursor-pointer"
-                                  >
-                                    Отмена
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={handleQuickCreateItemSubmit}
-                                    disabled={
-                                      createWarehouseItemMutation.isPending ||
-                                      !quickCreateItem.name.trim()
-                                    }
-                                    className="inline-flex items-center gap-1 px-3 py-1 rounded-[6px] bg-[#4a38f5] text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
-                                  >
-                                    {createWarehouseItemMutation.isPending && (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    )}
-                                    <span>Создать и добавить</span>
-                                  </button>
-                                </div>
+                            {/* Быстрая кнопка открытия единой модалки создания товара в базе склада */}
+                            {!it.itemId && it.itemName.trim().length > 0 && (
+                              <div className="mt-1 flex items-center justify-between gap-2 rounded-[6px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2.5 py-1 text-[11px]">
+                                <span className="text-[#666666] truncate">
+                                  Товара нет в номенклатуре склада
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenQuickCreateItem(idx)}
+                                  className="inline-flex items-center gap-1 font-medium text-[#4a38f5] hover:text-[#3d2ee0] shrink-0 cursor-pointer"
+                                >
+                                  <Plus className="h-3 w-3" />
+                                  <span>Создать товар в базе</span>
+                                </button>
                               </div>
                             )}
                           </div>
@@ -1038,7 +871,7 @@ export function CreateSupplierOrderModal({
                           </div>
                         )}
 
-                        {isManual && !isQuickCreatingThisRow && (
+                        {isManual && (
                           <div className="flex items-center gap-2 text-[11px] text-[#666666]">
                             <input
                               type="text"
@@ -1137,13 +970,6 @@ export function CreateSupplierOrderModal({
               })}
             </div>
 
-            <datalist id="quick-create-wh-categories">
-              <option value="Запчасти" />
-              {warehouseCategories.map((cat) => (
-                <option key={cat} value={cat} />
-              ))}
-            </datalist>
-
             <button
               type="button"
               onClick={handleAddItem}
@@ -1220,6 +1046,20 @@ export function CreateSupplierOrderModal({
           </div>
         </form>
       </div>
+
+      {/* Единая каноническая модалка создания товара из /warehouse */}
+      <CreateItemModal
+        open={createItemTarget !== null}
+        onClose={() => setCreateItemTarget(null)}
+        title="Новый товар в номенклатуру"
+        subtitle="Добавление позиции в каталог склада и привязка к заказу"
+        submitLabel="Создать и добавить"
+        initialName={createItemTarget?.name ?? ""}
+        initialSku={createItemTarget?.sku ?? ""}
+        initialUnit={createItemTarget?.unit ?? "шт."}
+        initialCostPrice={createItemTarget?.costPrice ?? ""}
+        onCreated={handleWarehouseItemCreated}
+      />
     </div>
   );
 }
