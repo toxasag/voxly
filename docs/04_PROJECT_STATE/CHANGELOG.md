@@ -17,6 +17,11 @@
   - `frontend/src/lib/api/use-repairs.ts`: добавлен хук `useCreateWorksBatch()`.
   - `frontend/src/components/repairs/detail/WorkItemsTable.tsx` и `ServiceCatalogDialog.tsx`: реализован мультивыбор услуг чекбоксами прямо в выпадающем каталоге «Выполненные работы» (с «Выбрать все» / «Снять все», счётчиком количества в списке, панелью редактирования выбранных услуг и пакетной кнопкой «Добавить выбранные (N)») и в модальном окне «Справочник услуг».
 
+- **Fixed MAX Phone Auth Captcha Handling & QR Fallback UX (2026-11-26)**:
+  - Диагностировано на живом WebSocket MAX (`wss://api.oneme.ru/websocket`): отправка SMS через `opcode 17 (START_AUTH)` требует `captchaToken` от VK Captcha (`opcode 224` → `https://id.vk.ru/not_robot_captcha?domain=web.max.ru...`), которая жёстко ограничена заголовком `Content-Security-Policy: frame-ancestors web.max.ru ...` и возвращает `captcha.validation-failed` («Проверка не пройдена, попробуйте ещё раз») вне домена `web.max.ru`.
+  - `max-native-auth.service.ts`: добавлены `language: "ru"` в `START_AUTH`, извлечение `callOutParams.trackId` и понятная ошибка `MAX_CAPTCHA_REQUIRED` вместо «Проверка не пройдена».
+  - `ConnectMaxModal.tsx`: добавлено предупреждение о капче VK в SMS-вкладке, кнопка быстрого перехода к QR-коду при `MAX_CAPTCHA_REQUIRED` и корректный перезапуск QR без сброса выбранного провайдера при переключении вкладок.
+
 - **Fixed MAX Forwarded Multi-Photo Ingestion & `.bin` Media Serving (2026-11-26)**:
   - `mime.utils.ts`, `media.service.ts`, `app.ts`: добавлено определение MIME по magic bytes (`detectMimeFromBuffer` / `detectMimeFromFileHeader`), замена заглушки `file.bin` на реальное расширение (`.webp`, `.jpg`, `.png`, `.mp4`, `.ogg`) при сохранении и корректный `Content-Type` / `inline` на `GET /uploads/:filename` даже для уже сохранённых legacy `_file.bin` вложений (ранее блокировались браузером из-за `X-Content-Type-Options: nosniff` + `application/octet-stream`).
   - `MaxTsAdapter.ts`, `max-attachments.ts`, `messaging-registry.ts`, `max-integration.routes.ts`, `crm-pipeline.service.ts`: обход вложенных `FORWARD`-ссылок MAX и сохранение **всех** вложений сообщения (`[0..N]` вместо одного `attachments[0]`) с ключами `msgId` / `${msgId}:att:${idx}`, метаданными `is_forwarded` / `external_attachment_id` и защитой текстовой дедупликации от коллизий при разных `external_message_id`.

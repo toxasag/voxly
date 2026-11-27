@@ -1189,7 +1189,8 @@ export function AdminIntegrationsEditor() {
                             providers.map((p) => (p.id === provider.id ? { ...p, name: val } : p)),
                           );
                         }}
-                        className="h-7 rounded-[4px] border border-transparent px-1.5 text-base font-semibold text-[#111111] hover:border-[#e5e5e5] focus:border-[#4a38f5] focus:outline-none"
+                        style={{ width: `${Math.max(provider.name.length + 2, 24)}ch` }}
+                        className="h-7 max-w-full rounded-[4px] border border-transparent px-1.5 text-base font-semibold text-[#111111] hover:border-[#e5e5e5] focus:border-[#4a38f5] focus:outline-none"
                       />
                       {provider.isDefault && (
                         <span className="inline-flex items-center gap-1 rounded-full border border-[#4a38f5]/30 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">

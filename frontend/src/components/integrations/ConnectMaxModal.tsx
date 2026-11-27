@@ -25,6 +25,7 @@ import {
   type MaxProviderType,
 } from "@/lib/api/use-max-auth";
 import type { ChannelAccountDTO } from "@/lib/api/use-channels";
+import { ApiClientError } from "@/lib/api/apiClient";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +62,7 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
   const [phoneHasCallTrack, setPhoneHasCallTrack] = useState(false);
   const [phonePasswordHint, setPhonePasswordHint] = useState<string | null>(null);
   const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [phoneCaptchaBlocked, setPhoneCaptchaBlocked] = useState(false);
   const [phoneUserLabel, setPhoneUserLabel] = useState<string | null>(null);
 
   const startedRef = useRef(false);
@@ -157,6 +159,7 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
       setPhoneAuthSessionId(null);
       setPhonePasswordHint(null);
       setPhoneError(null);
+      setPhoneCaptchaBlocked(false);
       setPhoneUserLabel(null);
       handleStart(initialName, initialAccount?.id, initialProv);
     } else if (!open) {
@@ -166,6 +169,7 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
       setPhoneStep("input");
       setSmsCode("");
       setPhoneError(null);
+      setPhoneCaptchaBlocked(false);
     }
   }, [open, initialAccount]);
 
@@ -199,9 +203,19 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
     }
   };
 
+  const switchToQrTab = () => {
+    setAuthMode("qr");
+    setPhoneError(null);
+    setPhoneCaptchaBlocked(false);
+    if (!activeQr && !isPreparing && !isWaitingPassword && !isQrConnected) {
+      handleStart(name, initialAccount?.id, provider);
+    }
+  };
+
   const handlePhoneStart = async (e: React.FormEvent) => {
     e.preventDefault();
     setPhoneError(null);
+    setPhoneCaptchaBlocked(false);
     try {
       const res = await startPhone.mutateAsync({
         phone,
@@ -213,7 +227,15 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
       setPhoneStep("code");
       toast.success("Запрос отправлен — введите код из SMS или подтвердите звонок в MAX");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Не удалось запросить код MAX";
+      const isCaptchaErr =
+        (err instanceof ApiClientError && err.code === "MAX_CAPTCHA_REQUIRED") ||
+        (err instanceof Error && /капч|Проверка не пройдена/i.test(err.message));
+      const msg = isCaptchaErr
+        ? "MAX запросил капчу VK (id.vk.ru), которая работает только на официальном домене web.max.ru. Подключите аккаунт по QR-коду."
+        : err instanceof Error
+          ? err.message
+          : "Не удалось запросить код MAX";
+      setPhoneCaptchaBlocked(isCaptchaErr);
       setPhoneError(msg);
       toast.error(msg);
     }
@@ -402,7 +424,7 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
               <div className="grid grid-cols-2 gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-1">
                 <button
                   type="button"
-                  onClick={() => setAuthMode("qr")}
+                  onClick={switchToQrTab}
                   className={cn(
                     "flex items-center justify-center gap-1.5 rounded-[6px] px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
                     authMode === "qr"
@@ -417,7 +439,8 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
                   type="button"
                   onClick={() => {
                     setAuthMode("phone");
-                    setProvider("native-ts");
+                    setPhoneError(null);
+                    setPhoneCaptchaBlocked(false);
                   }}
                   className={cn(
                     "flex items-center justify-center gap-1.5 rounded-[6px] px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
@@ -572,6 +595,9 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
                 </>
               ) : phoneStep === "input" ? (
                 <form onSubmit={handlePhoneStart} className="space-y-4 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4">
+                  <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-[11px] leading-relaxed text-[#666666]">
+                    Сервер MAX защищает отправку SMS-кода капчей VK (<span className="font-mono text-[#111111]">id.vk.ru</span>), которая ограничена официальным доменом <span className="font-mono text-[#111111]">web.max.ru</span>. Основной и надёжный способ подключения — по QR-коду.
+                  </div>
                   <div className="space-y-1.5">
                     <label htmlFor="max_phone" className="block text-xs font-medium text-[#666666]">
                       Номер телефона MAX
@@ -580,16 +606,32 @@ export function ConnectMaxModal({ open, onClose, initialAccount }: ConnectMaxMod
                       id="max_phone"
                       type="tel"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        if (phoneError) setPhoneError(null);
+                        if (phoneCaptchaBlocked) setPhoneCaptchaBlocked(false);
+                      }}
                       placeholder="+79991234567"
                       required
                       className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] font-mono text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                     />
                   </div>
                   {phoneError && (
-                    <div className="flex gap-2 rounded-[8px] border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
-                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>{phoneError}</span>
+                    <div className="space-y-2 rounded-[8px] border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
+                      <div className="flex gap-2">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{phoneError}</span>
+                      </div>
+                      {phoneCaptchaBlocked && (
+                        <button
+                          type="button"
+                          onClick={switchToQrTab}
+                          className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-rose-200 bg-white px-2.5 text-[11px] font-medium text-[#111111] hover:bg-[#fafafa] cursor-pointer"
+                        >
+                          <QrCode className="h-3.5 w-3.5 text-[#4a38f5]" />
+                          Подключить по QR-коду
+                        </button>
+                      )}
                     </div>
                   )}
                   <button

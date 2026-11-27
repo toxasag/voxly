@@ -2037,3 +2037,24 @@
   2. Все 8 перечисленных компонентов переведены на `toLocalDateTimeInput` / `localDateTimeToIso` / `toLocalDateKey` / `localDateInputToIso` (во всём `frontend/src/` не осталось ни одного `.toISOString().slice(...)` для дат форм).
   3. Добавлен unit-тест `frontend/src/lib/utils.datetime.test.ts`.
   4. В прод-БД (`remtoua`) скорректированы на `+3 hours` 3 ручные операции от `2026-11-26` (`17cf586a`, `2177cf2c`, `8af39165`), записанные со сдвигом `diff_min = 180..181`.
+
+## 2026-11-26: Диагностика входа MAX по телефону (`START_AUTH` / VK Captcha) и переход на QR
+- **Контекст и root cause (скриншот `yandex-eda.getvoxly.ru` + тест `wss://api.oneme.ru/websocket`):**
+  1. На `MaxOpcode.AUTH_REQUEST (17)` (`START_AUTH`) сервер MAX возвращает `error: "captcha.validation-failed"` (`localizedMessage: "Проверка не пройдена, попробуйте ещё раз"`).
+  2. Проверка JS-клиента `web.max.ru` и живого WebSocket подтвердила, что перед `opcode 17` клиент вызывает `opcode 224` (`{ source: "auth", identifier: phone }`) и получает ссылку `https://id.vk.ru/not_robot_captcha?domain=web.max.ru&...`, которая отдаёт HTTP-заголовок `Content-Security-Policy: frame-ancestors web.max.ru web-test.oneme.ru *.web-test.oneme.ru web.messaging-service.ru`. Встраивание виджета капчи VK в `<iframe>` на стороннем домене (`*.getvoxly.ru`) запрещено политикой `id.vk.ru`.
+- **Что изменено:**
+  1. `backend/src/modules/channels/max-native-auth.service.ts` (`startPhoneAuth`): передача `language: "ru"` в `AUTH_REQUEST`, поддержка `res.callOutParams?.trackId` для `checkPhoneCallTrack` и преобразование `CAPTCHA_VALIDATION_FAILED` в явную ошибку `MAX_CAPTCHA_REQUIRED` с рекомендацией подключения по QR-коду.
+  2. `frontend/src/components/integrations/ConnectMaxModal.tsx`: добавлена подсказка про ограничение капчи VK на стороне `web.max.ru`, сохранение выбранного QR-провайдера при переключении вкладок и кнопка быстрого переключения `Подключить по QR-коду` при `MAX_CAPTCHA_REQUIRED`.
+  3. `backend/src/tests/max-phone-auth.test.ts`: добавлены unit-тесты на маппинг `CAPTCHA_VALIDATION_FAILED -> MAX_CAPTCHA_REQUIRED`, `language: "ru"` и `callOutParams.trackId`.
+
+## 2026-11-27 — Аудит подключения NoirLight, маршрутизации моделей и фикс UI заголовка провайдеров
+- **Контекст и root cause:**
+  - Пользователь запросил проверку работы подключенного провайдера NoirLight (`https://api.noirlight.pro/v1`), использование его моделей ИИ-агентами, реестр мест использования моделей в платформе и логику маршрутизации (со скриншотом настроек платформы).
+  - В БД (`platform_integrations_config`) провайдер `prov-custom-noirlight` был сохранен со старым отозванным ключом (`HTTP 401: Ключ не найден или отозван`), а новый рабочий ключ из скриншота находился только в UI-стейке браузера (кнопка сохранения не была нажата).
+  - Эндпоинт `GET /api/ai/models` возвращал модели только от дефолтного провайдера (Google Gemini), из-за чего в селекторе бота не появлялись модели от других активных провайдеров (NoirLight).
+  - В `AdminIntegrationsEditor.tsx` поле заголовка провайдера обрезалось по ширине (`Свой провайдер (NoirLi`).
+- **Что изменено:**
+  1. `frontend/src/components/admin/AdminIntegrationsEditor.tsx`: динамическая ширина инпута `style={{ width: `${Math.max(provider.name.length + 2, 24)}ch` }}` для исключения обрезки названий карточек провайдеров.
+  2. `backend/src/modules/ai/ai.routes.ts`: опрос и сбор моделей со всех активных сконфигурированных провайдеров (`activeProvidersList`), а не только от дефолтного.
+  3. Проведен полный аудит маршрутизации моделей (`SmartModelRouter`, `ModelTierRouter`, `KeyPoolManager`, `ai_usage_log`).
+
